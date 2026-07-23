@@ -1,0 +1,163 @@
+spring:
+  config:
+    import: optional:file:.env[.properties]
+  application:
+    name: NEXUS
+  servlet:
+    multipart:
+      max-file-size: 20MB
+      max-request-size: 20MB
+  ai:
+    chat:
+      client:
+        enabled: false
+    openai:
+      api-key: ${OPENAI_API_KEY}
+      base-url: ${OPENAI_BASE_URL:http://ai-gateway.momo.com}
+      chat:
+        options:
+          model: ${OPENAI_CHAT_MODEL:claude-sonnet-4.6}
+      embedding:
+        enabled: false
+        options:
+          model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+    ollama:
+      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat:
+        enabled: false
+      embedding:
+        enabled: true
+        options:
+          model: ${OLLAMA_EMBEDDING_MODEL:bge-m3}
+
+server:
+  port: ${SERVER_PORT:8080}
+
+webhook:
+  secret: ${WEBHOOK_SECRET:}
+
+logging:
+  level:
+    org.springframework.ai: INFO
+  structured:
+    format:
+      console: ${STRUCTURED_LOG_FORMAT:logstash}
+
+management:
+  otlp:
+    metrics:
+      export:
+        enabled: ${OTLP_METRICS_ENABLED:false}
+  opentelemetry:
+    tracing:
+      export:
+        otlp:
+          endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+  tracing:
+    export:
+      otlp:
+        enabled: ${OTLP_TRACING_ENABLED:false}
+    sampling:
+      probability: ${TRACING_SAMPLING_PROBABILITY:1.0}
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: when-authorized
+  metrics:
+    tags:
+      application: ${spring.application.name}
+    distribution:
+      percentiles-histogram:
+        rag.stage: true
+        http.server.requests: true
+      percentiles:
+        rag.stage: 0.5,0.95,0.99
+
+app:
+  rag:
+    qdrant:
+      base-url: ${QDRANT_URL:http://localhost:6333}
+      collection: ${QDRANT_COLLECTION:requirement_chunks}
+    code:
+      project-id: ${CODE_PROJECT_ID:immortal-game-service}
+      repository-path: ${CODE_REPOSITORY_PATH:/Users/user/immortal-game-service}
+      collection: ${CODE_QDRANT_COLLECTION:code_chunks}
+      include-path-substrings:
+        - ${CODE_INCLUDE_1:/hero/}
+        - ${CODE_INCLUDE_2:/union/}
+        - ${CODE_INCLUDE_3:/compact/}
+        - ${CODE_INCLUDE_4:/worldwar/}
+        - ${CODE_INCLUDE_5:/mine/}
+      exclude-path-substrings:
+        - /target/
+        - /.git/
+        - /node_modules/
+        - /build/
+      max-file-bytes: ${CODE_MAX_FILE_BYTES:1000000}
+    bge:
+      base-url: ${BGE_RERANK_URL:http://localhost:8081}
+      path: ${BGE_RERANK_PATH:/rerank}
+      api-key: ${BGE_RERANK_API_KEY:}
+    llm:
+      generation-model: ${GENERATION_MODEL:claude-sonnet-4.6}
+      reranker-model: ${LLM_RERANK_MODEL:claude-haiku-4-5-20251001}
+      routing-model: ${LLM_ROUTING_MODEL:}
+    retrieval:
+      dense-top-k: 50
+      sparse-top-k: 50
+      hybrid-top-k: 40
+      bge-top-k: 20
+      llm-top-k: 10
+    knowledge:
+      bootstrap-enabled: ${KNOWLEDGE_BOOTSTRAP_ENABLED:true}
+      zip-path: ${KNOWLEDGE_ZIP_PATH:产品文档.zip}
+      xlsx-path: ${KNOWLEDGE_XLSX_PATH:封神版本问题整理.xlsx}
+      document-id: ${KNOWLEDGE_DOCUMENT_ID:fengshen}
+      version: ${KNOWLEDGE_VERSION:5.1}
+      zip-folder-prefix: ${KNOWLEDGE_ZIP_FOLDER_PREFIX:5.1}
+      xlsx-sheet-prefix: ${KNOWLEDGE_XLSX_SHEET_PREFIX:封神}
+      min-html-bytes: ${KNOWLEDGE_MIN_HTML_BYTES:800}
+    review:
+      min-questions: ${REVIEW_MIN_QUESTIONS:12}
+      max-questions: ${REVIEW_MAX_QUESTIONS:15}
+      current-version-questions: ${REVIEW_CURRENT_VERSION_QUESTIONS:12}
+      prior-version-questions: ${REVIEW_PRIOR_VERSION_QUESTIONS:3}
+    auth:
+      enabled: ${AUTH_ENABLED:false}
+      users:
+        - username: ${AUTH_USER_1_NAME:admin}
+          api-key: ${AUTH_USER_1_KEY:}
+          role: ${AUTH_USER_1_ROLE:SUPER_ADMIN}
+          projects:
+            - "*"
+        # - username: ${AUTH_USER_2_NAME:developer}
+        #   api-key: ${AUTH_USER_2_KEY:}
+        #   role: ${AUTH_USER_2_ROLE:DEVELOPER}
+        #   projects:
+        #     - ${AUTH_USER_2_PROJECT:fengshen-server}
+
+    # 多项目注册表。为空时自动基于上方 knowledge/code 构造默认项目。
+    # 每个项目独立 collection，互不干扰。
+    projects:
+      - id: ${PROJECT_1_ID:}
+        name: ${PROJECT_1_NAME:}
+        group: ${PROJECT_1_GROUP:}
+        side: ${PROJECT_1_SIDE:server}
+        requirement-collection: ${PROJECT_1_REQ_COLLECTION:}
+        code-collection: ${PROJECT_1_CODE_COLLECTION:}
+        repository-path: ${PROJECT_1_REPO_PATH:}
+        git-path: ${PROJECT_1_GIT_PATH:}
+        knowledge:
+          bootstrap-enabled: ${PROJECT_1_BOOTSTRAP:false}
+          zip-path: ${PROJECT_1_ZIP_PATH:}
+          xlsx-path: ${PROJECT_1_XLSX_PATH:}
+          document-id: ${PROJECT_1_DOC_ID:}
+          version: ${PROJECT_1_VERSION:}
+          zip-folder-prefix: ${PROJECT_1_ZIP_PREFIX:}
+          xlsx-sheet-prefix: ${PROJECT_1_XLSX_PREFIX:}
+          min-html-bytes: ${PROJECT_1_MIN_HTML:800}

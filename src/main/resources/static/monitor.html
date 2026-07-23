@@ -1,0 +1,2213 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NEXUS 代码理解工作台</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg:#071018;
+      --surface:#0b1723;
+      --surface2:#102235;
+      --card:#0e1d2c;
+      --card2:#07111c;
+      --line:#20374e;
+      --line2:#375875;
+      --text:#eaf6ff;
+      --muted:#8fa8bd;
+      --faint:#5f7689;
+      --accent:#6de7f2;
+      --accent2:#62a8ff;
+      --gold:#d4a574;
+      --purple:#a78bfa;
+      --pink:#f472b6;
+      --yellow:#ffd166;
+      --green:#38d996;
+      --red:#ff6b7a;
+      --shadow:0 24px 70px rgba(0,0,0,.34);
+    }
+    * { box-sizing:border-box; }
+    body {
+      margin:0;
+      min-height:100vh;
+      color:var(--text);
+      font-family:"Inter","SF Pro Text","PingFang SC","Segoe UI",system-ui,sans-serif;
+      background:
+        radial-gradient(circle at 8% -12%, rgba(98,168,255,.18), transparent 35%),
+        radial-gradient(circle at 88% 0%, rgba(109,231,242,.14), transparent 32%),
+        linear-gradient(180deg,#091722 0%, var(--bg) 52%, #03080d 100%);
+    }
+    button,input,select,textarea {
+      font:inherit;
+      font-size:13px;
+      color:var(--text);
+      background:#07111c;
+      border:1px solid var(--line);
+      border-radius:9px;
+      padding:7px 9px;
+      outline:none;
+    }
+    input,select,textarea { width:100%; }
+    input:focus,select:focus,textarea:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(120,231,255,.10); }
+    button { cursor:pointer; transition:.18s ease; }
+    button:hover { border-color:var(--accent); color:var(--accent); transform:translateY(-1px); }
+    button:disabled { opacity:.55; cursor:not-allowed; transform:none; }
+    button.primary {
+      border-color:transparent;
+      color:white;
+      background:linear-gradient(135deg,#2b8cff,#5fe6ef);
+      box-shadow:0 12px 34px rgba(95,230,239,.18);
+    }
+    button.soft { background:rgba(109,231,242,.07); }
+    button.icon { padding:6px 9px; border-radius:10px; }
+    a { color:var(--accent); text-decoration:none; }
+    h1,h2,h3,p { margin-top:0; }
+    h1 { margin:0; font-size:18px; letter-spacing:-.04em; line-height:1.1; font-weight:850; }
+    h2 { margin-bottom:0; font-size:16px; letter-spacing:-.03em; }
+    h3 { margin-bottom:7px; font-size:12px; }
+    .muted { color:var(--muted); }
+    .faint { color:var(--faint); }
+    .compact-text {
+      display:-webkit-box;
+      -webkit-line-clamp:2;
+      -webkit-box-orient:vertical;
+      overflow:hidden;
+      line-height:1.42;
+      font-size:12px;
+      margin:6px 0;
+    }
+    #app { width:min(1900px,100%); margin:0 auto; padding:12px clamp(10px,1.2vw,18px) 18px; }
+    .hero {
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:12px;
+      align-items:start;
+      padding:10px 14px;
+      border:1px solid rgba(109,231,242,.14);
+      border-radius:18px;
+      background:linear-gradient(135deg,rgba(14,29,44,.88),rgba(7,17,28,.72));
+      box-shadow:var(--shadow);
+      overflow:hidden;
+      position:relative;
+    }
+    .hero:after {
+      content:"";
+      position:absolute;
+      width:160px;
+      height:160px;
+      right:-60px;
+      top:-90px;
+      border-radius:50%;
+      background:radial-gradient(circle,rgba(120,231,255,.22),transparent 65%);
+      pointer-events:none;
+    }
+    .hero p { display:none; }
+    .hero-links { display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end; position:relative; z-index:1; }
+    .hero-links a { padding:5px 8px; border:1px solid rgba(109,231,242,.17); border-radius:999px; background:rgba(7,17,28,.56); font-size:11px; }
+    .shell { display:block; margin-top:10px; }
+    .sidebar {
+      display:grid;
+      grid-template-columns:minmax(620px,1fr) minmax(300px,520px);
+      gap:10px;
+      align-items:stretch;
+      margin-bottom:10px;
+    }
+    .panel {
+      border:1px solid var(--line);
+      border-radius:15px;
+      background:rgba(11,23,35,.88);
+      box-shadow:0 18px 52px rgba(0,0,0,.23);
+      backdrop-filter:blur(12px);
+      overflow:hidden;
+    }
+    .panel-pad { padding:11px; }
+    .sidebar > .panel { min-height:0; }
+    .sidebar > .panel:first-child .panel-pad { grid-template-columns:minmax(420px,1fr) 142px 210px; align-items:end; gap:10px !important; }
+    .sidebar > .panel:first-child .actions { flex-wrap:nowrap; }
+    .sidebar > .panel:first-child textarea { height:86px; min-height:86px; resize:none; line-height:1.4; }
+    .card {
+      border:1px solid var(--line);
+      border-radius:14px;
+      background:linear-gradient(180deg,rgba(14,29,44,.94),rgba(7,17,28,.94));
+      padding:10px;
+    }
+    .card > p.muted {
+      display:-webkit-box;
+      -webkit-line-clamp:2;
+      -webkit-box-orient:vertical;
+      overflow:hidden;
+      line-height:1.42;
+      font-size:12px;
+    }
+    .field { display:grid; gap:5px; }
+    .field label { color:var(--muted); font-size:11px; }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; }
+    .actions > button { flex:1; min-width:88px; }
+    .tools-panel { align-self:start; }
+    .tools-head {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:10px;
+      padding:10px 11px;
+      min-height:48px;
+    }
+    .tools-title { min-width:0; display:grid; gap:2px; }
+    .tools-title strong { font-size:13px; font-weight:800; color:var(--text); }
+    .tools-title span { font-size:10px; color:var(--faint); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .collapse-btn {
+      flex:0 0 auto;
+      width:32px;
+      height:32px;
+      padding:0;
+      border-radius:10px;
+      font-size:15px;
+      line-height:1;
+    }
+    .tools-body {
+      border-top:1px solid rgba(106,133,170,.18);
+      max-height:210px;
+      overflow:hidden;
+      transition:max-height .18s ease, opacity .18s ease;
+    }
+    .tools-panel.collapsed .tools-body { max-height:0; opacity:0; border-top-color:transparent; }
+    .tabs { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; }
+    .tab {
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:7px;
+      width:100%;
+      border-radius:10px;
+      background:#07111c;
+      color:var(--muted);
+      text-align:left;
+      padding:8px 9px;
+      font-size:11px;
+    }
+    .tab.active { color:white; border-color:var(--accent); background:rgba(120,231,255,.10); }
+    .pill {
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      width:max-content;
+      max-width:100%;
+      padding:4px 8px;
+      border-radius:999px;
+      background:#102235;
+      color:var(--muted);
+      font-size:11px;
+      white-space:nowrap;
+    }
+    .pill.ok { color:var(--green); }
+    .pill.warn { color:var(--yellow); }
+    .pill.bad { color:var(--red); }
+    .dot { width:9px; height:9px; border-radius:99px; display:inline-block; background:var(--faint); }
+    .dot.up { background:var(--green); box-shadow:0 0 18px rgba(56,217,150,.8); }
+    .dot.down { background:var(--red); box-shadow:0 0 18px rgba(255,107,122,.8); }
+    .main { min-width:0; display:grid; gap:10px; }
+    .graph-panel { overflow:visible; }
+    .topbar {
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      align-items:center;
+      padding:10px 12px;
+      border-bottom:1px solid var(--line);
+      background:rgba(7,17,28,.72);
+    }
+    .topbar-title { min-width:0; }
+    .topbar-title p { display:none; }
+    .notice {
+      display:grid;
+      grid-template-columns:28px minmax(0,1fr);
+      gap:8px;
+      padding:9px;
+      border:1px solid rgba(120,231,255,.22);
+      border-radius:13px;
+      background:rgba(120,231,255,.075);
+    }
+    .notice .badge {
+      width:28px;
+      height:28px;
+      display:grid;
+      place-items:center;
+      border-radius:10px;
+      background:rgba(120,231,255,.13);
+    }
+    .graph-workbench {
+      display:grid;
+      grid-template-columns:minmax(0,1fr) minmax(320px,360px);
+      gap:10px;
+      padding:10px;
+      height:calc(100vh - 208px);
+      min-height:600px;
+      overflow:hidden;
+    }
+    .graph-zone {
+      min-width:0;
+      height:100%;
+      border:1px solid var(--line);
+      border-radius:15px;
+      background:
+        radial-gradient(circle at 50% 28%, rgba(109,231,242,.08), transparent 34%),
+        linear-gradient(rgba(109,231,242,.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(109,231,242,.045) 1px, transparent 1px),
+        #030a12;
+      background-size:auto,32px 32px,32px 32px,auto;
+      overflow:hidden;
+      position:relative;
+      display:flex;
+      flex-direction:column;
+    }
+    .graph-toolbar {
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      gap:10px;
+      padding:8px;
+      border-bottom:1px solid var(--line);
+      background:rgba(7,17,28,.76);
+    }
+    .graph-floating-tools {
+      position:absolute;
+      top:10px;
+      right:10px;
+      z-index:5;
+      display:flex;
+      gap:5px;
+      padding:5px;
+      border:1px solid rgba(55,88,117,.9);
+      border-radius:11px;
+      background:rgba(4,13,22,.88);
+      box-shadow:0 12px 30px rgba(0,0,0,.28);
+      backdrop-filter:blur(10px);
+    }
+    .graph-floating-tools .icon { min-width:34px; height:30px; padding:4px 9px; transform:none; }
+    .graph-floating-tools .fit { min-width:52px; }
+    .graph-floating-tools .path { min-width:76px; }
+    .graph-canvas-stats {
+      position:absolute;
+      left:12px;
+      bottom:10px;
+      z-index:4;
+      padding:5px 8px;
+      border:1px solid rgba(55,88,117,.58);
+      border-radius:8px;
+      color:var(--faint);
+      background:rgba(4,13,22,.76);
+      font-size:10px;
+      pointer-events:none;
+    }
+    .legend { display:flex; gap:7px; flex-wrap:wrap; align-items:center; }
+    .legend span { font-size:11px; color:var(--muted); }
+    .legend i { width:8px; height:8px; border-radius:99px; display:inline-block; margin-right:4px; }
+    svg { width:100%; flex:1; min-height:0; display:block; cursor:grab; user-select:none; }
+    svg:active { cursor:grabbing; }
+    .edge { stroke:#6f7fa1; stroke-width:1.25; marker-end:url(#arrow); opacity:.28; transition:.18s ease; }
+    .edge.next { stroke:var(--gold); stroke-width:2.6; }
+    .edge.contains { stroke:var(--accent); stroke-width:1.9; }
+    .edge.depends_on { stroke:var(--purple); }
+    .edge.focus { stroke:var(--accent); stroke-width:2.8; opacity:1; }
+    .edge.dimmed { opacity:.12; }
+    .edge-label { fill:#a9b8d2; font-size:9px; paint-order:stroke; stroke:#050b16; stroke-width:4px; }
+    .node { cursor:pointer; transition:.18s ease; }
+    .node rect,.node circle { stroke:rgba(210,230,246,.58); stroke-width:1.1; filter:drop-shadow(0 10px 18px rgba(0,0,0,.45)); }
+    .node .node-card { fill:rgba(14,29,44,.94); }
+    .node .node-strip { stroke:none; filter:none; }
+    .node text { fill:var(--text); font-size:10px; paint-order:stroke; stroke:#050b16; stroke-width:4px; }
+    .node .role { fill:#a9b8d2; font-size:8px; }
+    .node.selected rect,.node.selected circle { stroke:var(--accent); stroke-width:3; }
+    .node.path rect,.node.path circle { stroke:var(--gold); stroke-width:2.2; }
+    .node.dimmed { opacity:.2; }
+    .type-file { fill:#6d5dfc; }
+    .type-class { fill:#d4a574; }
+    .type-method,.type-function { fill:#f472b6; }
+    .type-other { fill:#38d996; }
+    .right-rail {
+      display:flex;
+      flex-direction:column;
+      min-width:0;
+      max-height:100%;
+      overflow:hidden;
+      border:1px solid var(--line);
+      border-radius:15px;
+      background:linear-gradient(180deg,rgba(10,25,37,.98),rgba(5,14,23,.98));
+    }
+    .rail-tabs {
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:6px;
+      padding:8px;
+      border-bottom:1px solid var(--line);
+      background:rgba(7,17,28,.86);
+      flex:0 0 auto;
+    }
+    .rail-tab {
+      border:0;
+      background:transparent;
+      color:var(--muted);
+      border-radius:9px;
+      padding:8px 10px;
+      transform:none;
+    }
+    .rail-tab.active { background:rgba(109,231,242,.12); color:var(--accent); }
+    .rail-body { flex:1; min-height:0; overflow:auto; }
+    .plain-action {
+      width:auto;
+      padding:4px 6px;
+      border:0;
+      color:var(--faint);
+      background:transparent;
+      transform:none !important;
+    }
+    .tour-overview,.node-inspector,.file-browser { padding:18px; }
+    .tour-overview h2,.node-inspector h2,.file-browser h2,.tour-content h2 { margin:0 0 6px; font-size:18px; }
+    .tour-overview > p,.file-browser-head p { margin:0 0 18px; color:var(--faint); font-size:12px; }
+    .tour-start,.source-open,.neighbor-action {
+      width:100%;
+      padding:11px 14px;
+      border-color:rgba(109,231,242,.45);
+      color:var(--accent);
+      background:rgba(109,231,242,.08);
+      font-weight:750;
+    }
+    .tour-overview > h3 { margin:22px 0 9px; color:var(--accent); font-size:11px; }
+    .tour-step-list,.file-list { display:grid; gap:7px; }
+    .tour-step-row,.file-row,.connection-row {
+      width:100%;
+      display:grid;
+      grid-template-columns:30px minmax(0,1fr);
+      gap:8px;
+      align-items:center;
+      padding:10px 12px;
+      border-color:var(--line);
+      background:rgba(13,29,43,.82);
+      text-align:left;
+      transform:none !important;
+    }
+    .tour-step-row span { color:var(--accent2); }
+    .tour-step-row strong { color:var(--muted); font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .tour-step-row:hover strong { color:var(--text); }
+    .tour-active { min-height:100%; display:flex; flex-direction:column; }
+    .tour-active-head {
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      padding:12px 16px;
+      color:var(--faint);
+      font-size:12px;
+    }
+    .tour-active-head strong { color:var(--accent); }
+    .tour-progress { height:3px; background:rgba(95,118,137,.22); }
+    .tour-progress i { display:block; height:100%; background:var(--accent2); transition:width .22s ease; }
+    .tour-content { flex:1; padding:22px 18px; }
+    .tour-content p,.node-summary { color:var(--muted); line-height:1.65; font-size:13px; }
+    .tour-content h3,.inspector-section h3 { margin:22px 0 9px; color:var(--accent); font-size:10px; letter-spacing:.08em; }
+    .reference-chips { display:flex; gap:7px; flex-wrap:wrap; }
+    .reference-chips button { width:auto; padding:6px 9px; border-radius:999px; color:var(--muted); background:#07111c; }
+    .tour-footer { padding:12px 16px; border-top:1px solid var(--line); }
+    .tour-dots { display:flex; justify-content:center; gap:7px; margin-bottom:12px; }
+    .tour-dots button { width:7px; min-width:7px; height:7px; padding:0; border:0; border-radius:50%; background:#1a2b3b; }
+    .tour-dots button.active { background:var(--accent2); }
+    .tour-nav { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .inspector-heading { display:flex; align-items:start; justify-content:space-between; gap:8px; }
+    .inspector-badges { display:flex; gap:5px; flex-wrap:wrap; }
+    .node-inspector h2 { margin-top:14px; overflow-wrap:anywhere; }
+    .source-file-card {
+      display:grid;
+      gap:5px;
+      margin-top:16px;
+      padding:12px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#06101a;
+    }
+    .source-file-card span { color:var(--faint); font-size:10px; }
+    .source-file-card strong,.source-file-card small { overflow-wrap:anywhere; }
+    .source-file-card small { color:var(--muted); }
+    .source-file-card .source-open { margin-top:7px; }
+    .connection-row { grid-template-columns:minmax(0,1fr) auto; }
+    .connection-row span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .connection-row small { color:var(--faint); }
+    .neighbor-action { margin-top:16px; }
+    .file-row { grid-template-columns:1fr; gap:4px; }
+    .file-row span { color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .file-row small { color:var(--faint); overflow-wrap:anywhere; }
+    .empty-state { color:var(--faint); font-size:12px; line-height:1.5; }
+    .source-viewer { height:100%; display:flex; flex-direction:column; min-height:0; }
+    .source-viewer-head {
+      display:flex;
+      justify-content:space-between;
+      align-items:start;
+      gap:10px;
+      padding:14px 16px;
+      border-bottom:1px solid var(--line);
+    }
+    .source-viewer-head > div { min-width:0; display:grid; gap:4px; }
+    .source-viewer-head span { color:var(--accent); font-size:10px; text-transform:uppercase; }
+    .source-viewer-head strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .source-viewer-head small { color:var(--faint); overflow-wrap:anywhere; }
+    .source-viewer pre { flex:1; min-height:0; max-height:none; border:0; border-radius:0; font-size:10px; white-space:pre; }
+    .source-drawer-backdrop {
+      position:fixed;
+      inset:0;
+      z-index:39;
+      background:rgba(1,7,12,.52);
+      backdrop-filter:blur(2px);
+    }
+    .source-drawer {
+      position:fixed;
+      z-index:40;
+      display:flex;
+      flex-direction:column;
+      min-width:0;
+      overflow:hidden;
+      border:1px solid var(--line2);
+      background:linear-gradient(180deg,#0d1b29,#050d15);
+      box-shadow:0 -22px 70px rgba(0,0,0,.55);
+      transition:inset .18s ease, border-radius .18s ease;
+    }
+    .source-drawer.flat { left:10px; right:10px; bottom:10px; height:38vh; min-height:280px; border-radius:15px; }
+    .source-drawer.fullscreen { inset:18px; border-radius:15px; }
+    .source-drawer-head {
+      display:flex;
+      align-items:flex-start;
+      justify-content:space-between;
+      gap:16px;
+      padding:12px 14px;
+      border-bottom:1px solid var(--line);
+      background:rgba(15,31,46,.96);
+    }
+    .source-drawer-title { min-width:0; display:grid; gap:4px; }
+    .source-drawer-title > div { display:flex; gap:8px; align-items:center; color:var(--faint); font-size:10px; }
+    .source-kind { padding:3px 6px; border:1px solid var(--line2); border-radius:6px; color:var(--accent); }
+    .source-drawer-title strong,.source-drawer-title small { overflow-wrap:anywhere; }
+    .source-drawer-title small { color:var(--faint); }
+    .source-drawer-actions { flex:0 0 auto; display:flex; gap:6px; }
+    .source-drawer-actions button { width:auto; padding:6px 9px; background:#07111c; }
+    .source-code {
+      flex:1;
+      min-height:0;
+      max-height:none;
+      overflow:auto;
+      border:0;
+      border-radius:0;
+      padding:14px 18px;
+      color:#b7e8ff;
+      background:linear-gradient(90deg,rgba(98,168,255,.04),transparent 25%),#030a11;
+      font-family:"SFMono-Regular","Cascadia Code","JetBrains Mono",monospace;
+      font-size:12px;
+      line-height:1.58;
+      white-space:pre;
+      word-break:normal;
+    }
+    .tour-list,.layer-list,.list { display:grid; gap:7px; }
+    .compact-list {
+      grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+    }
+    .layer-card,.tour-card,.item {
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#07111c;
+      padding:9px;
+      min-width:0;
+    }
+    .layer-card.active,.tour-card:hover,.item:hover { border-color:var(--accent); }
+    .layer-head { display:flex; justify-content:space-between; gap:8px; align-items:center; }
+    .layer-count { color:var(--accent); font-size:12px; }
+    .tour-card { cursor:pointer; }
+    .tour-card.active { border-color:var(--accent); background:rgba(109,231,242,.08); }
+    .tour-card strong,.item strong { display:block; margin-bottom:4px; overflow:hidden; text-overflow:ellipsis; }
+    .mini-actions { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+    .detail-row { display:grid; gap:5px; padding:8px 0; border-top:1px solid rgba(36,53,83,.72); }
+    .detail-row:first-of-type { border-top:0; padding-top:0; }
+    .detail-row small { color:var(--faint); font-size:10px; }
+    .detail-row strong { font-size:13px; line-height:1.35; }
+    .empty-guide { display:grid; gap:8px; }
+    .guide-step {
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#071020;
+      padding:8px;
+      color:var(--muted);
+      font-size:12px;
+      line-height:1.45;
+    }
+    .guide-step strong { display:block; color:var(--text); margin-bottom:3px; }
+    pre {
+      margin:0;
+      padding:10px;
+      max-height:250px;
+      overflow:auto;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#050b16;
+      color:#cbd8f7;
+      white-space:pre-wrap;
+      word-break:break-word;
+      line-height:1.45;
+      font-size:12px;
+    }
+    .plan-view { --plan-body-size:12px; --plan-heading-size:13px; --plan-meta-size:10px; font-size:var(--plan-body-size); }
+    .plan-view .topbar h2 { font-size:16px; font-weight:700; }
+    .plan-view .card,.plan-view .section-card,.plan-view .step,.plan-view .target,.plan-view .plain-list { font-size:var(--plan-body-size); line-height:1.55; }
+    .plan-view .card h3,.plan-view .section-card h3,.plan-view .section-card > strong { font-size:var(--plan-heading-size); line-height:1.4; }
+    .plan-view .section-card strong { font-size:var(--plan-body-size); }
+    .plan-view .faint,.plan-view .target-relation,.plan-view .match-kind,.plan-view .section-rule,.plan-view .plan-chain-legend,.plan-view .plan-chain-actions button { font-size:var(--plan-meta-size); }
+    .plan-view .card > p.muted,.plan-view .section-card > p.muted { display:block; -webkit-line-clamp:unset; margin-bottom:5px; font-size:var(--plan-body-size); line-height:1.55; }
+    .plan-view .plan-main-column { display:grid; gap:10px; min-width:0; }
+    .plan-view .plan-overview .card { padding:9px 10px; }
+    .plan-view .plan-overview .plain-list { columns:2; column-gap:24px; }
+    .plan-view .plan-overview .plain-list li { break-inside:avoid; }
+    .plan-layout { display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:10px; padding:10px; }
+    .plan-layout > *,.plan-layout .two > *,.section-card > * { min-width:0; }
+    .plan-layout p,.plan-layout li,.plan-layout .item,.plan-layout .step,.plan-layout .target { overflow-wrap:anywhere; word-break:break-word; }
+    .plan-stage { display:flex; align-items:center; gap:7px; margin-top:6px; color:var(--muted); font-size:11px; }
+    .plan-stage i { width:7px; height:7px; flex:0 0 auto; border-radius:50%; background:var(--faint); }
+    .plan-stage i.idle { background:var(--faint); }
+    .plan-stage i.running { background:var(--accent); box-shadow:0 0 0 0 rgba(109,231,242,.4); animation:streamPulse 1.3s infinite; }
+    .plan-stage i.success { background:var(--green); box-shadow:0 0 0 2px rgba(56,217,150,.12); }
+    .plan-stage i.error { background:var(--red); box-shadow:0 0 0 3px rgba(255,107,122,.14); }
+    @keyframes streamPulse { 70% { box-shadow:0 0 0 7px rgba(109,231,242,0); } 100% { box-shadow:0 0 0 0 rgba(109,231,242,0); } }
+    .two { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
+    .section-card { display:grid; gap:8px; border:1px solid var(--line); border-radius:14px; background:#091121; padding:10px; }
+    .section-card h3 { color:var(--accent); margin:0; }
+    .plain-list { margin:0; padding-left:16px; color:var(--muted); line-height:1.5; font-size:12px; }
+    .plain-list li + li { margin-top:3px; }
+    .step-list { counter-reset:step; display:grid; gap:7px; }
+    .step {
+      display:grid;
+      grid-template-columns:24px minmax(0,1fr);
+      gap:7px;
+      align-items:start;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#091121;
+      padding:8px;
+      color:var(--muted);
+      font-size:12px;
+    }
+    .step:before {
+      counter-increment:step;
+      content:counter(step);
+      width:22px;
+      height:22px;
+      display:grid;
+      place-items:center;
+      border-radius:8px;
+      color:white;
+      background:linear-gradient(135deg,var(--accent2),#6d5dfc);
+    }
+    .target {
+      padding:8px;
+      border:1px solid var(--line);
+      border-radius:11px;
+      font-size:12px;
+      background:#050b16;
+      cursor:pointer;
+    }
+    .target:hover { border-color:var(--accent); }
+    .plan-chain-card { overflow:hidden; }
+    .plan-chain-card.fullscreen { position:fixed; inset:10px; z-index:90; padding:12px; border:1px solid var(--line2); border-radius:16px; background:#07111c; box-shadow:0 30px 100px rgba(0,0,0,.7); }
+    .plan-chain-card.fullscreen .plan-chain-graph { height:calc(100vh - 84px); }
+    .plan-chain-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+    .plan-chain-head h3 { margin:0; }
+    .plan-chain-actions { display:flex; gap:5px; margin-left:auto; }
+    .plan-chain-actions button { width:auto; padding:4px 8px; color:var(--muted); font-size:10px; }
+    .plan-chain-legend { display:flex; gap:10px; color:var(--faint); font-size:10px; }
+    .plan-chain-legend span { display:flex; align-items:center; gap:5px; }
+    .plan-chain-legend i { width:18px; border-top:2px solid var(--accent); }
+    .plan-chain-legend i.planned { border-top-style:dashed; border-top-color:#69d8cb; }
+    .plan-chain-graph {
+      height:310px;
+      min-height:220px;
+      position:relative;
+      border:1px solid rgba(95,118,137,.34);
+      border-radius:12px;
+      color:var(--faint);
+      background-color:#040d16;
+      background-image:linear-gradient(rgba(95,118,137,.08) 1px,transparent 1px),linear-gradient(90deg,rgba(95,118,137,.08) 1px,transparent 1px);
+      background-size:32px 32px;
+      overflow:hidden;
+    }
+    .plan-chain-graph svg { width:100%; height:100%; min-height:0; cursor:grab; }
+    .plan-chain-graph svg:active { cursor:grabbing; }
+    .plan-graph-empty { position:absolute; inset:0; display:grid; place-items:center; padding:20px; color:var(--faint); text-align:center; pointer-events:none; }
+    .plan-edge { fill:none; stroke:#65bfd4; stroke-width:2; opacity:.68; marker-end:url(#plan-arrow); }
+    .plan-edge.planned { stroke:#69d8cb; stroke-dasharray:8 7; opacity:.88; }
+    .plan-edge-label { fill:#87a8ba; font-size:9px; paint-order:stroke; stroke:#040d16; stroke-width:4px; }
+    .plan-node { cursor:pointer; }
+    .plan-node rect { fill:#0d2030; stroke:#6d9eb8; stroke-width:1.3; filter:drop-shadow(0 8px 15px rgba(0,0,0,.35)); }
+    .plan-node.planned rect { fill:#0c292d; stroke:#69d8cb; stroke-width:1.6; stroke-dasharray:7 5; }
+    .plan-node text { fill:var(--text); font-size:10px; paint-order:stroke; stroke:#040d16; stroke-width:3px; }
+    .plan-node .plan-node-kind { fill:#7e9caf; font-size:8px; }
+    .plan-node.planned .plan-node-kind { fill:#69d8cb; }
+    .section-card.focused { border-color:var(--accent); box-shadow:0 0 0 2px rgba(109,231,242,.12); }
+    .section-rules { display:flex; flex-wrap:wrap; gap:5px; margin-top:7px; }
+    .section-rule { padding:4px 7px; border:1px solid rgba(109,231,242,.24); border-radius:999px; color:#b7d7e8; background:rgba(109,231,242,.06); font-size:10px; }
+    .target-head { display:flex; align-items:flex-start; justify-content:space-between; gap:8px; }
+    .match-kind { flex:0 0 auto; color:var(--accent); font-size:9px; }
+    .target-relation { margin-top:5px; color:var(--muted); font-size:10px; line-height:1.45; }
+    .source-inline { width:auto; margin-top:7px; padding:4px 8px; border-radius:7px; color:var(--accent); font-size:10px; }
+    .timeline { display:grid; gap:7px; }
+    .stage {
+      display:grid;
+      grid-template-columns:120px minmax(0,1fr) auto;
+      gap:8px;
+      align-items:center;
+      padding:8px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:#091121;
+    }
+    .stage.success { border-color:rgba(56,217,150,.35); }
+    .stage.failure { border-color:rgba(255,107,122,.45); }
+    .stage-name { color:var(--accent); font-weight:800; }
+    .review-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)) auto; gap:10px; align-items:end; }
+    .progress { height:12px; border:1px solid var(--line); border-radius:999px; background:#050b16; overflow:hidden; }
+    .bar { height:100%; background:linear-gradient(90deg,var(--accent2),var(--accent)); }
+    .toast {
+      position:fixed;
+      right:18px;
+      bottom:18px;
+      z-index:50;
+      max-width:min(540px,calc(100vw - 36px));
+      padding:10px 12px;
+      border:1px solid var(--line2);
+      border-radius:12px;
+      background:#111b31;
+      box-shadow:var(--shadow);
+    }
+    [hidden] { display:none !important; }
+    #app { padding:10px; }
+    .workbench-header {
+      min-height:52px;
+      display:flex;
+      align-items:center;
+      gap:14px;
+      padding:8px 12px;
+      border:1px solid var(--line);
+      border-radius:14px 14px 0 0;
+      background:rgba(7,17,28,.92);
+      box-shadow:0 16px 42px rgba(0,0,0,.24);
+    }
+    .workbench-brand {
+      display:flex;
+      align-items:baseline;
+      gap:8px;
+      padding-right:14px;
+      border-right:1px solid rgba(95,118,137,.28);
+      white-space:nowrap;
+    }
+    .workbench-brand strong { font-size:14px; letter-spacing:.08em; }
+    .workbench-brand span { color:var(--muted); font-size:10px; }
+    .intent-strip,.mode-strip,.node-strip-filter,.workspace-strip {
+      display:flex;
+      align-items:center;
+      gap:4px;
+      min-width:0;
+    }
+    .intent-button,.mode-button,.filter-button,.workspace-button {
+      width:auto;
+      min-height:30px;
+      padding:5px 9px;
+      border-color:transparent;
+      border-radius:7px;
+      color:var(--muted);
+      background:transparent;
+      font-size:11px;
+      white-space:nowrap;
+      transform:none !important;
+    }
+    .intent-button.active {
+      color:#041018;
+      border-color:transparent;
+      background:var(--accent);
+      font-weight:800;
+    }
+    .mode-button.active,.filter-button.active,.workspace-button.active {
+      color:var(--text);
+      border-color:var(--line);
+      background:var(--surface2);
+    }
+    .mode-label { color:var(--faint); font-size:10px; }
+    .filter-dot { width:6px; height:6px; display:inline-block; margin-right:4px; border-radius:50%; }
+    .workspace-strip { margin-left:auto; }
+    .search-strip {
+      padding:7px 10px;
+      border:1px solid var(--line);
+      border-top:0;
+      background:rgba(7,17,28,.84);
+    }
+    .search-form {
+      height:38px;
+      display:flex;
+      align-items:center;
+      gap:8px;
+      padding:0 5px 0 11px;
+      border:1px solid var(--line);
+      border-radius:9px;
+      background:#06101a;
+    }
+    .search-form:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px rgba(109,231,242,.08); }
+    .search-form input { height:100%; min-width:0; padding:0; border:0; box-shadow:none; background:transparent; }
+    .search-mark {
+      width:10px;
+      height:10px;
+      flex:0 0 auto;
+      position:relative;
+      border:1.5px solid var(--faint);
+      border-radius:50%;
+    }
+    .search-mark:after { content:""; position:absolute; width:5px; height:1px; right:-4px; bottom:-2px; background:var(--faint); transform:rotate(45deg); }
+    .search-hint { color:var(--faint); font-size:10px; white-space:nowrap; }
+    .search-submit { width:auto; min-width:82px; height:28px; padding:0 12px; white-space:nowrap; flex:0 0 auto; border:0; border-radius:6px; color:#041018; background:var(--accent); font-weight:800; }
+    .shell { margin-top:0; }
+    .main { gap:0; }
+    .main > .panel { border-radius:0 0 15px 15px; }
+    .graph-workbench { height:calc(100vh - 124px); min-height:590px; }
+    .query-feedback { color:var(--faint); font-size:10px; }
+    .topbar .pill { font-size:10px; }
+    @media (max-width:1040px) {
+      .workbench-header { flex-wrap:wrap; gap:8px; }
+      .node-strip-filter { order:5; width:100%; padding-top:6px; border-top:1px solid rgba(95,118,137,.22); }
+      .shell,.graph-workbench,.plan-layout { grid-template-columns:1fr; }
+      .graph-workbench { height:auto; }
+      .graph-zone { min-height:620px; }
+      .right-rail { max-height:none; min-height:560px; }
+    }
+    @media (max-width:860px) {
+      #app { padding:0; }
+      .workbench-header { border-radius:0; }
+      .workbench-brand { width:100%; }
+      .mode-strip { width:100%; overflow-x:auto; }
+      .workspace-strip { position:absolute; right:8px; top:8px; }
+      .topbar,.review-grid,.two,.stage { grid-template-columns:1fr; }
+      svg { height:560px; }
+      .panel-pad,.graph-workbench,.plan-layout { padding:14px; }
+      .source-drawer.flat { left:6px; right:6px; bottom:6px; height:52vh; }
+      .source-drawer.fullscreen { inset:6px; }
+      .source-drawer-head { align-items:stretch; }
+      .source-drawer-actions { flex-direction:column; }
+    }
+    @media (prefers-reduced-motion:reduce) {
+      *,*:before,*:after { scroll-behavior:auto !important; transition:none !important; animation:none !important; }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <header class="workbench-header">
+    <div class="workbench-brand"><strong>NEXUS</strong><span>代码理解工作台</span></div>
+    <div class="project-selector" v-if="projects.length > 1">
+      <select v-model="currentProjectId" @change="onProjectChange" style="width:auto;min-width:120px;font-size:12px;padding:4px 8px;border-radius:8px;background:var(--card2);border-color:var(--line);">
+        <option v-for="p in projects" :key="p.id" :value="p.id">{{ p.name || p.id }}</option>
+      </select>
+      <span class="muted" style="font-size:11px;margin-left:6px;" v-if="currentProject">
+        需求 {{ currentProject.requirementChunks }} 块 · 代码 {{ currentProject.codeChunks }} 块
+      </span>
+    </div>
+    <input v-model="apiKey" @change="saveApiKey" type="password" placeholder="API Key" title="启用认证时填写 X-API-Key"
+      style="width:120px;font-size:11px;padding:4px 8px;border-radius:8px;background:var(--card2);border:1px solid var(--line);color:var(--text);" />
+    <nav class="intent-strip" aria-label="需求类型">
+      <button data-intent="graph" :class="['intent-button', intentTab === 'graph' ? 'active':'']" @click="selectIntent('graph')">理解代码</button>
+      <button data-intent="plan" :class="['intent-button', intentTab === 'plan' ? 'active':'']" @click="selectIntent('plan')">开发方案</button>
+    </nav>
+    <div v-if="intentTab === 'graph'" class="mode-strip" aria-label="图谱模式">
+      <span class="mode-label">视图</span>
+      <button v-for="mode in graphModes" :key="mode.value" :class="['mode-button', graphMode === mode.value ? 'active':'']" @click="setGraphMode(mode.value)">{{ mode.label }}</button>
+    </div>
+    <div v-if="intentTab === 'graph'" class="node-strip-filter" aria-label="节点类型">
+      <button :class="['filter-button', nodeFilter === 'all' ? 'active':'']" @click="nodeFilter='all'">全部</button>
+      <button :class="['filter-button', nodeFilter === 'file' ? 'active':'']" @click="nodeFilter='file'"><i class="filter-dot" style="background:#6d5dfc"></i>文件</button>
+      <button :class="['filter-button', nodeFilter === 'class' ? 'active':'']" @click="nodeFilter='class'"><i class="filter-dot" style="background:#ffd166"></i>类</button>
+      <button :class="['filter-button', nodeFilter === 'method' ? 'active':'']" @click="nodeFilter='method'"><i class="filter-dot" style="background:#f472b6"></i>方法</button>
+    </div>
+    <nav class="workspace-strip" aria-label="工具页面">
+      <button :class="['workspace-button', activeTab === 'rag' ? 'active':'']" @click="activeTab='rag'">检索链路</button>
+      <button :class="['workspace-button', activeTab === 'status' ? 'active':'']" @click="activeTab='status'">索引</button>
+    </nav>
+  </header>
+
+  <section class="search-strip">
+    <form class="search-form" @submit.prevent="runCurrentIntent">
+      <span class="search-mark" aria-hidden="true"></span>
+      <input v-model="query" :placeholder="intentTab === 'graph' ? '搜索类、方法或业务链路…' : '描述准备开发的需求…'" aria-label="问题">
+      <span class="search-hint">{{ intentTab === 'graph' ? graphModeLabel : '开发方案' }}</span>
+      <button class="search-submit" type="submit" :disabled="busy">{{ intentTab === 'graph' ? '开始' : '生成方案' }}</button>
+    </form>
+  </section>
+
+  <main class="shell">
+    <section class="main">
+      <section v-if="activeTab === 'graph'" class="panel graph-panel">
+        <div class="graph-workbench">
+          <div style="display:grid; gap:10px; min-width:0;">
+            <div class="graph-zone">
+              <div class="graph-floating-tools">
+                <button class="icon" @click="zoomOut" aria-label="缩小">−</button>
+                <button class="icon fit" @click="resetGraphView">适配</button>
+                <button class="icon" @click="zoomIn" aria-label="放大">＋</button>
+                <button class="icon path" @click="togglePathMode" :disabled="!graph.tour?.length">{{ pathOnly ? '显示全部' : '只看路径' }}</button>
+              </div>
+              <div class="graph-canvas-stats" v-if="graph.nodes.length">{{ graph.nodes.length }} 个节点 · {{ graph.edges.length }} 条关系</div>
+              <svg v-bind="{ viewBox: graphViewBox }" preserveAspectRatio="xMidYMid meet" role="img" aria-label="代码图谱"
+                   @wheel.prevent="zoomWheel" @mousedown="startPan" @mousemove="panMove" @mouseup="endPan" @mouseleave="endPan">
+                <defs>
+                  <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto">
+                    <path d="M0,0 L0,6 L8,3 z" fill="#8fa0c2"></path>
+                  </marker>
+                </defs>
+                <g>
+                  <path v-for="edge in laidOutEdges" :key="edge.key" :d="edge.path" fill="none" :class="['edge', edge.type, edge.focus ? 'focus':'', edge.dimmed ? 'dimmed':'']"></path>
+                  <template v-for="edge in laidOutEdges" :key="edge.key + ':label'">
+                    <text v-if="edge.showLabel" :x="edge.labelX" :y="edge.labelY" text-anchor="middle" class="edge-label">
+                      <title>{{ edge.label }}</title>{{ edge.labelShort }}
+                    </text>
+                  </template>
+                </g>
+                <g>
+                  <g v-for="node in laidOutNodes" :key="node.id" :class="['node', selectedNode?.id === node.id ? 'selected':'', isPathNode(node.id) ? 'path':'', isNodeDimmed(node.id) ? 'dimmed':'']" @click="selectNode(node)">
+                    <rect :x="node.x - node.w/2" :y="node.y - node.h/2" :width="node.w" :height="node.h" rx="12" class="node-card"></rect>
+                    <rect :x="node.x - node.w/2" :y="node.y - node.h/2" width="5" :height="node.h" rx="3" :class="['node-strip', nodeTypeClass(node.type)]"></rect>
+                    <text :x="node.x - node.w/2 + 14" :y="node.y - 6" text-anchor="start">{{ truncate(node.label, nodeLabelLength) }}</text>
+                    <text class="role" :x="node.x - node.w/2 + 14" :y="node.y + 12" text-anchor="start">{{ truncate(node.role || node.type, 18) }}</text>
+                  </g>
+                </g>
+              </svg>
+            </div>
+          </div>
+
+          <aside class="right-rail">
+            <div class="rail-tabs">
+              <button :class="['rail-tab', sidebarTab === 'info' ? 'active':'']" @click="sidebarTab = 'info'">信息</button>
+              <button :class="['rail-tab', sidebarTab === 'files' ? 'active':'']" @click="sidebarTab = 'files'">文件</button>
+            </div>
+
+            <div v-if="sidebarTab === 'info'" class="rail-body">
+              <section v-if="selectedNode" class="node-inspector">
+                <div class="inspector-heading">
+                  <div class="inspector-badges">
+                    <span class="pill">{{ nodeTypeName(selectedNode.type) }}</span>
+                    <span class="pill">{{ selectedNode.role || '相关实现' }}</span>
+                  </div>
+                  <button class="plain-action" @click="closeNode">关闭</button>
+                </div>
+                <h2>{{ selectedNode.label }}</h2>
+                <p class="node-summary">{{ selectedNode.relevance || nodeRelationText(selectedNode) }}</p>
+
+                <div v-if="selectedNode.filePath" class="source-file-card">
+                  <span>代码文件</span>
+                  <strong>{{ compactPath(selectedNode.filePath) }}</strong>
+                  <small v-if="selectedNode.startLine">第 {{ selectedNode.startLine }}–{{ selectedNode.endLine }} 行</small>
+                  <button class="source-open" @click="loadSource(selectedNode)">打开代码</button>
+                </div>
+
+                <div class="inspector-section" v-if="selectedConnections.length">
+                  <h3>关联节点</h3>
+                  <button v-for="connection in selectedConnections" :key="connection.edgeKey" class="connection-row" @click="selectNode(connection.node)">
+                    <span>{{ connection.node.label }}</span>
+                    <small>{{ connection.label }}</small>
+                  </button>
+                </div>
+
+                <button class="neighbor-action" @click="focusNode(selectedNode)">{{ focusNodeId ? '恢复完整图谱' : '聚焦相邻节点' }}</button>
+              </section>
+
+              <section v-else-if="tourActive" class="tour-active">
+                <div class="tour-active-head">
+                  <span><strong>导览</strong> {{ activeTourIndex + 1 }} / {{ sortedTour.length }}</span>
+                  <button class="plain-action" @click="stopTour">退出导览</button>
+                </div>
+                <div class="tour-progress"><i :style="{ width: tourProgress + '%' }"></i></div>
+                <div class="tour-content">
+                  <h2>{{ activeTour.title }}</h2>
+                  <p>{{ activeTour.description }}</p>
+                  <template v-if="referencedNodes.length">
+                    <h3>引用组件</h3>
+                    <div class="reference-chips">
+                      <button v-for="node in referencedNodes" :key="node.id" @click="selectNode(node)">{{ node.label }}</button>
+                    </div>
+                  </template>
+                </div>
+                <div class="tour-footer">
+                  <div class="tour-dots">
+                    <button v-for="(step,index) in sortedTour" :key="step.order || index" :class="index === activeTourIndex ? 'active':''" @click="selectTour(index)" :aria-label="'第 ' + (index + 1) + ' 步'"></button>
+                  </div>
+                  <div class="tour-nav">
+                    <button @click="previousTourStep" :disabled="activeTourIndex === 0">上一步</button>
+                    <button class="source-open" @click="nextTourStep">{{ activeTourIndex === sortedTour.length - 1 ? '完成' : '下一步' }}</button>
+                  </div>
+                </div>
+              </section>
+
+              <section v-else class="tour-overview">
+                <h2>项目导览</h2>
+                <p>{{ sortedTour.length }} 步 · 代码索引导式讲解</p>
+                <button class="tour-start" @click="startTour" :disabled="!sortedTour.length">开始导览</button>
+                <h3>步骤</h3>
+                <div class="tour-step-list">
+                  <button v-for="(step,index) in sortedTour" :key="step.order || index" class="tour-step-row" @click="selectTour(index)">
+                    <span>{{ index + 1 }}.</span>
+                    <strong>{{ step.title }}</strong>
+                  </button>
+                  <p v-if="!sortedTour.length" class="empty-state">搜索代码或业务链路后，这里会生成阅读步骤。</p>
+                </div>
+              </section>
+            </div>
+
+            <div v-else-if="sidebarTab === 'files'" class="rail-body files-panel">
+              <section class="file-browser">
+                <div class="file-browser-head">
+                  <div><h2>代码文件</h2><p>{{ fileNodes.length }} 个相关文件</p></div>
+                </div>
+                <div class="file-list">
+                  <button v-for="file in fileNodes" :key="file.filePath" class="file-row" @click="loadSource(file)">
+                    <span>{{ file.label || compactPath(file.filePath) }}</span>
+                    <small>{{ file.filePath }}</small>
+                  </button>
+                  <p v-if="!fileNodes.length" class="empty-state">搜索后可在这里查看相关代码文件。</p>
+                </div>
+              </section>
+            </div>
+          </aside>
+        </div>
+
+        <teleport to="body">
+          <div v-if="sourceDrawerOpen" class="source-drawer-backdrop" @click="closeSourceDrawer"></div>
+          <section v-if="sourceDrawerOpen && sourceNode" :class="['source-drawer', sourceFullscreen ? 'fullscreen':'flat']" aria-label="源码查看器">
+            <header class="source-drawer-head">
+              <div class="source-drawer-title">
+                <div><span class="source-kind">{{ nodeTypeName(sourceNode.type || sourceNode.symbolType) }}</span><span v-if="sourceNode.startLine">第 {{ sourceNode.startLine }}–{{ sourceNode.endLine }} 行</span></div>
+                <strong>{{ sourceNode.label || sourceNode.symbolName }}</strong>
+                <small>{{ sourceNode.filePath }}</small>
+              </div>
+              <div class="source-drawer-actions">
+                <button @click="toggleSourceFullscreen" :aria-label="sourceFullscreen ? '还原源码窗口' : '全屏查看源码'">{{ sourceFullscreen ? '还原' : '全屏' }}</button>
+                <button @click="closeSourceDrawer" aria-label="关闭源码">关闭</button>
+              </div>
+            </header>
+            <pre class="source-code">{{ sourceText }}</pre>
+          </section>
+        </teleport>
+      </section>
+
+      <section v-if="activeTab === 'plan'" class="panel plan-view">
+        <div class="topbar">
+          <div class="topbar-title">
+            <h2>开发方案</h2>
+            <p>{{ plan.summary || '这里是“怎么开发”的答案，不再混入产品存疑；缺失信息会表达成实现假设或开发约束。' }}</p>
+            <div class="plan-stage" v-if="planStreaming || planStage"><i :class="planStatus"></i>{{ planStage }}</div>
+          </div>
+          <button class="primary" @click="loadPlan" :disabled="busy">重新生成</button>
+        </div>
+
+        <div class="plan-layout">
+          <div class="plan-main-column">
+            <div class="two plan-overview">
+              <div class="card">
+                <h3>产品规则理解</h3>
+                <ul class="plain-list">
+                  <li v-for="item in plan.productUnderstanding || []" :key="item">{{ item }}</li>
+                </ul>
+                <p v-if="!(plan.productUnderstanding || []).length" class="muted">暂无产品规则理解。请先导入需求文档向量库。</p>
+              </div>
+              <div class="card">
+                <h3>开发约束与影响</h3>
+                <ul class="plain-list">
+                  <li v-for="item in plan.developmentConstraints || []" :key="item">{{ item }}</li>
+                </ul>
+                <p v-if="!(plan.developmentConstraints || []).length" class="muted">暂无开发约束。</p>
+              </div>
+            </div>
+
+            <div class="card" v-if="plan.similarModule">
+              <h3>最接近的现有模块：{{ plan.similarModule.name }}</h3>
+              <p class="muted">{{ plan.similarModule.reason }}</p>
+              <div class="list compact-list">
+                <div class="target" v-for="hit in plan.similarModule.references || []" :key="hit.id" @click="loadSource(hit)">
+                  <strong>{{ symbolTypeName(hit.symbolType) }} · {{ hit.symbolName }}</strong>
+                  <div class="faint">{{ hit.filePath }}:{{ hit.startLine }}-{{ hit.endLine }}</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h3>现有完整链路应该这样看</h3>
+              <div :class="['plan-chain-card', planGraphFullscreen ? 'fullscreen':'']">
+                <div class="plan-chain-head">
+                  <span class="faint">现有实现与建议新增内容</span>
+                  <div class="plan-chain-actions">
+                    <button @click="planGraphZoomOut">－</button>
+                    <button @click="fitPlanGraph">适配</button>
+                    <button @click="planGraphZoomIn">＋</button>
+                    <button @click="togglePlanGraphFullscreen">{{ planGraphFullscreen ? '还原' : '全屏' }}</button>
+                  </div>
+                  <div class="plan-chain-legend"><span><i></i>现有代码</span><span><i class="planned"></i>规划节点</span></div>
+                </div>
+                <div class="plan-chain-graph" @wheel.prevent="planGraphWheel" @mousedown="startPlanGraphPan" @mousemove="movePlanGraphPan" @mouseup="endPlanGraphPan" @mouseleave="endPlanGraphPan">
+                  <svg v-if="planGraphNodes.length" v-bind="{ viewBox: planGraphViewBox }" aria-label="开发方案完整代码链路">
+                    <defs><marker id="plan-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#65bfd4"></path></marker></defs>
+                    <g>
+                      <path v-for="edge in planGraphEdges" :key="edge.key" :class="['plan-edge', edge.planned ? 'planned':'']" :d="edge.path"></path>
+                      <text v-for="edge in planGraphEdges" :key="edge.key + '-label'" class="plan-edge-label" :x="edge.labelX" :y="edge.labelY" text-anchor="middle">{{ edge.label }}</text>
+                    </g>
+                    <g v-for="node in planGraphNodes" :key="node.id" :class="['plan-node', node.planned ? 'planned':'']" :transform="`translate(${node.x},${node.y})`" @click.stop="handlePlanGraphNode(node)">
+                      <rect :x="-node.w/2" :y="-node.h/2" :width="node.w" :height="node.h" rx="10"></rect>
+                      <text text-anchor="middle" y="-3">{{ truncate(node.label || node.symbolName, 23) }}</text>
+                      <text class="plan-node-kind" text-anchor="middle" y="14">{{ node.planned ? '规划新增' : (node.role || symbolTypeName(node.type || node.symbolType)) }}</text>
+                    </g>
+                  </svg>
+                  <div v-else class="plan-graph-empty">{{ planGraph.error || (planGraph.loading ? '正在整理代码链路…' : '代码证据返回后生成完整链路图') }}</div>
+                </div>
+              </div>
+              <div class="step-list">
+                <div class="step" v-for="item in plan.chainOverview || []" :key="item">{{ item }}</div>
+              </div>
+              <p v-if="!(plan.chainOverview || []).length" class="muted">暂无链路。</p>
+            </div>
+
+            <div :id="'plan-section-' + sectionIndex" :class="['section-card', focusedPlanSection === sectionIndex ? 'focused':'']" v-for="(section,sectionIndex) in plan.sections || []" :key="section.title">
+              <h3>{{ section.title }}</h3>
+              <p class="muted">{{ section.purpose }}</p>
+              <div v-if="(section.relatedRules || []).length">
+                <strong>关联产品规则</strong>
+                <div class="section-rules">
+                  <span class="section-rule" v-for="rule in section.relatedRules" :key="rule">{{ rule }}</span>
+                </div>
+              </div>
+              <div class="two">
+                <div>
+                  <strong>先看这些代码</strong>
+                  <div class="list compact-list" style="margin-top:8px;">
+                    <div class="target" v-for="hit in section.inspectTargets || []" :key="hit.id">
+                      <div class="target-head"><strong>{{ symbolTypeName(hit.symbolType) }} · {{ hit.symbolName }}</strong><span class="match-kind">{{ hit.matchType === 'recommended' ? '推荐参考' : '相关代码' }}</span></div>
+                      <div class="faint">{{ hit.filePath }}:{{ hit.startLine }}-{{ hit.endLine }}</div>
+                      <div class="target-relation">{{ hit.relation }}</div>
+                      <button class="source-inline" @click="loadSource(hit)">查看源码</button>
+                    </div>
+                    <p v-if="!(section.inspectTargets || []).length && (plan.retrieval?.codeCount || 0) === 0" class="muted">未检索到代码，请检查代码索引或调整业务名称。</p>
+                    <p v-else-if="!(section.inspectTargets || []).length" class="muted">代码证据正在匹配。</p>
+                  </div>
+                </div>
+                <div>
+                  <strong>实现假设与约束</strong>
+                  <ul class="plain-list">
+                    <li v-for="question in section.keyQuestions || []" :key="question">{{ question }}</li>
+                  </ul>
+                  <strong style="display:block;margin-top:12px;">建议改动</strong>
+                  <ul class="plain-list">
+                    <li v-for="suggestion in section.changeSuggestions || []" :key="suggestion">{{ suggestion }}</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <aside class="right-rail">
+            <div class="card">
+              <h3>推荐实施顺序</h3>
+              <div class="step-list">
+                <div class="step" v-for="step in plan.implementationOrder || plan.steps || []" :key="step">{{ step }}</div>
+              </div>
+            </div>
+            <div class="card">
+              <h3>风险提醒</h3>
+              <div class="list compact-list">
+                <div class="item" v-for="risk in plan.risks || []" :key="risk">{{ risk }}</div>
+              </div>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section v-if="activeTab === 'rag'" class="panel">
+        <div class="topbar">
+          <div class="topbar-title">
+            <h2>检索增强链路状态</h2>
+            <p>{{ ragExplanation }}</p>
+          </div>
+        </div>
+        <div class="panel-pad" style="display:grid; gap:16px;">
+          <div class="review-grid">
+            <div class="field"><label>文档编号</label><input v-model="review.documentId"></div>
+            <div class="field"><label>版本号</label><input v-model="review.version"></div>
+            <div class="field"><label>模块，可空</label><input v-model="review.module"></div>
+            <button class="primary" @click="runReview" :disabled="busy">运行评审</button>
+          </div>
+            <div class="notice">
+            <div class="badge">RAG</div>
+            <div>
+              <strong>完成评审：{{ metrics.reviewsCompleted || 0 }} · 阶段失败：{{ metrics.stageFailures || 0 }} · 令牌指标项：{{ Object.keys(rag.tokenUsage || {}).length }}</strong>
+              <p class="muted" style="margin:6px 0 0;">这里用于检测整条检索增强链路：检索、重排、大模型生成、失败阶段和令牌消耗指标。</p>
+            </div>
+          </div>
+          <div class="two">
+            <div>
+              <h3>最近链路事件</h3>
+              <div class="timeline">
+                <div v-for="event in rag.recentStages || []" :key="event.at + event.stage" :class="['stage', event.status]">
+                  <div class="stage-name">{{ explainStage(event.stage) }}</div>
+                  <div>
+                    <div>{{ event.documentId }} / {{ event.version }}</div>
+                    <div class="faint">{{ event.stage }}<span v-if="event.error"> · {{ event.error }}</span></div>
+                  </div>
+                  <div>{{ event.durationMs }}ms</div>
+                </div>
+                <p v-if="!rag.recentStages?.length" class="muted">暂无链路事件。导入文档或运行评审后会出现。</p>
+              </div>
+            </div>
+            <div>
+              <h3>令牌消耗 / 工具指标</h3>
+              <pre>{{ JSON.stringify({ tokenUsage: rag.tokenUsage, toolMetrics: rag.toolMetrics }, null, 2) }}</pre>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section v-if="activeTab === 'status'" class="panel">
+        <div class="topbar">
+          <div class="topbar-title">
+            <h2>索引与导入</h2>
+            <p>文档导入和 Java 代码索引单独放这里，不干扰日常代码理解。</p>
+          </div>
+          <span :class="['pill', bootstrapTone]">{{ stateLabel(bootstrap.state) }}</span>
+        </div>
+        <div class="panel-pad" style="display:grid; gap:14px;">
+          <div class="progress"><div class="bar" :style="{width: bootstrapPercent + '%'}"></div></div>
+          <p class="muted">阶段：{{ bootstrap.phase || '等待启动' }} · 进度：{{ bootstrap.filesProcessed || 0 }}/{{ bootstrap.filesTotal || 0 }}</p>
+          <p class="muted">当前知识库：{{ knowledge.documentId || '-' }} / {{ knowledge.version || '-' }} · 分块数：{{ knowledge.chunkCount || 0 }}</p>
+          <div class="actions" style="max-width:520px;">
+            <button class="primary" @click="bootstrapKnowledge" :disabled="busy">重新导入文档</button>
+            <button class="soft" @click="indexCode" :disabled="busy">索引 Java 代码</button>
+          </div>
+        </div>
+      </section>
+    </section>
+  </main>
+
+  <div class="toast" v-if="toast">{{ toast }}</div>
+</div>
+
+<script>
+const { createApp } = Vue;
+
+createApp({
+  data() {
+    return {
+      busy:false,
+      toast:'',
+      toastTimer:null,
+      projects:[],
+      currentProjectId:'',
+      apiKey:localStorage.getItem('nexus_api_key') || '',
+      activeTab:'graph',
+      intentTab:'graph',
+      toolsCollapsed:true,
+      query:'',
+      graphMode:'auto',
+      nodeFilter:'all',
+      graphModes:[
+        { value:'auto', label:'自动' },
+        { value:'flow', label:'链路' },
+        { value:'structure', label:'结构' },
+        { value:'class', label:'类' },
+        { value:'method', label:'方法' }
+      ],
+      status:{},
+      knowledge:{},
+      bootstrap:{},
+      metrics:{},
+      rag:{},
+      review:{ documentId:'fengshen', version:'5.1', module:'' },
+      graph:{ query:'', view:'', intent:'', summary:'', layers:[], tour:[], nodes:[], edges:[], hits:[] },
+      plan:{},
+      planGraph:{ nodes:[], edges:[], loading:false, error:'' },
+      planGraphZoom:0.84,
+      planGraphPan:{ x:0, y:0 },
+      planGraphPanning:false,
+      planGraphFullscreen:false,
+      focusedPlanSection:null,
+      planStreaming:false,
+      planStage:'',
+      planStatus:'idle',
+      planAbortController:null,
+      selectedNode:null,
+      sidebarTab:'info',
+      activeTourIndex:null,
+      pathOnly:false,
+      focusNodeId:null,
+      sourceText:'',
+      sourceNode:null,
+      sourceDrawerOpen:false,
+      sourceFullscreen:false,
+      refreshTimer:null,
+      svg:{ width:1500, height:900 },
+      graphZoom:0.62,
+      graphPan:{ x:0, y:0 },
+      panning:false,
+      tabs:[
+        { value:'graph', label:'代码图谱', hint:'理解链路' },
+        { value:'plan', label:'开发方案', hint:'怎么入手' },
+        { value:'rag', label:'检索链路', hint:'运行状态' },
+        { value:'status', label:'索引状态', hint:'导入/索引' }
+      ],
+      stageText:{
+        'document.parse':'解析文档',
+        'text.clean':'清洗文本',
+        'parent_child.chunk':'父子分块',
+        'content.deduplicate':'内容去重',
+        'qdrant.upsert':'写入向量库',
+        'qdrant.scroll':'读取版本分块',
+        'qdrant.hybrid_search':'混合检索',
+        'bge.rerank':'BGE 重排',
+        'llm.rerank':'大模型重排',
+        'llm.generate.current':'生成当前版本存疑',
+        'llm.generate.prior':'生成历史遗留存疑',
+        'review_completed':'评审完成'
+      }
+    };
+  },
+  computed:{
+    currentProject() {
+      return this.projects.find(p => p.id === this.currentProjectId);
+    },
+    activeTabMeta() {
+      return this.tabs.find(tab => tab.value === this.activeTab) || this.tabs[0];
+    },
+    bootstrapPercent() {
+      const total = this.bootstrap.filesTotal || 0;
+      const done = this.bootstrap.filesProcessed || 0;
+      return total > 0 ? Math.min(100, Math.round(done * 100 / total)) : 0;
+    },
+    bootstrapTone() {
+      return { COMPLETED:'ok', FAILED:'bad', RUNNING:'warn' }[this.bootstrap.state] || '';
+    },
+    graphModeLabel() {
+      const labels = { auto:'自动识别', flow:'链路图', structure:'结构图', class:'类图', method:'方法图' };
+      return labels[this.graph.view || this.graphMode] || '图谱';
+    },
+    nodeLabelLength() {
+      return (this.graph.nodes || []).length > 30 ? 13 : 20;
+    },
+    laidOutNodes() {
+      const nodes = this.visibleNodes();
+      if (!nodes.length) return [];
+      const view = this.graph.view || this.graphMode;
+      if (view === 'flow') return this.layoutFlow(nodes);
+      if (view === 'class' || view === 'method') return this.layoutRadial(nodes);
+      return this.layoutLayered(nodes);
+    },
+    laidOutEdges() {
+      const byId = new Map(this.laidOutNodes.map(node => [node.id, node]));
+      return (this.graph.edges || []).map((edge,index) => {
+        const source = byId.get(edge.source);
+        const target = byId.get(edge.target);
+        if (!source || !target) return null;
+        const midX = (source.x + target.x) / 2;
+        const midY = (source.y + target.y) / 2;
+        const bend = Math.abs(source.y - target.y) < 40 ? 0 : 34;
+        const path = `M ${source.x} ${source.y} C ${midX} ${source.y + bend}, ${midX} ${target.y - bend}, ${target.x} ${target.y}`;
+        return {
+          ...edge,
+          key:edge.source + edge.target + index,
+          path,
+          labelX:midX,
+          labelY:midY - 8,
+          labelShort:this.truncate(edge.label, 14),
+          focus:this.isFocusedEdge(edge),
+          dimmed:this.isEdgeDimmed(edge),
+          showLabel:this.shouldShowEdgeLabel(edge)
+        };
+      }).filter(Boolean);
+    },
+    activeTour() {
+      if (this.activeTourIndex === null || this.activeTourIndex === undefined) return null;
+      return this.sortedTour[this.activeTourIndex] || null;
+    },
+    sortedTour() {
+      return [...(this.graph.tour || [])].sort((a,b) => (a.order || 0) - (b.order || 0));
+    },
+    tourActive() {
+      return this.activeTourIndex !== null && Boolean(this.activeTour);
+    },
+    tourProgress() {
+      if (!this.sortedTour.length || this.activeTourIndex === null) return 0;
+      return Math.round((this.activeTourIndex + 1) * 100 / this.sortedTour.length);
+    },
+    referencedNodes() {
+      const ids = this.activeTourNodeIds;
+      return (this.graph.nodes || []).filter(node => ids.has(node.id));
+    },
+    fileNodes() {
+      const result = [];
+      const seen = new Set();
+      for (const node of this.graph.nodes || []) {
+        if (!node.filePath || seen.has(node.filePath)) continue;
+        seen.add(node.filePath);
+        result.push(node);
+      }
+      return result.sort((a,b) => String(a.filePath).localeCompare(String(b.filePath)));
+    },
+    selectedConnections() {
+      if (!this.selectedNode) return [];
+      const nodes = new Map((this.graph.nodes || []).map(node => [node.id, node]));
+      const connections = [];
+      (this.graph.edges || []).forEach((edge,index) => {
+        let node = null;
+        if (edge.source === this.selectedNode.id) node = nodes.get(edge.target);
+        if (edge.target === this.selectedNode.id) node = nodes.get(edge.source);
+        if (node) connections.push({ node, label:edge.label || edge.type || '关联', edgeKey:`${edge.source}-${edge.target}-${index}` });
+      });
+      return connections.slice(0, 12);
+    },
+    pathNodeIds() {
+      const ids = new Set();
+      const tour = this.graph.tour || [];
+      for (const step of tour) {
+        for (const id of step.nodeIds || []) ids.add(id);
+      }
+      return ids;
+    },
+    activeTourNodeIds() {
+      return new Set(this.activeTour?.nodeIds || []);
+    },
+    neighborNodeIds() {
+      if (!this.focusNodeId && !this.selectedNode?.id) return new Set();
+      const focus = this.focusNodeId || this.selectedNode.id;
+      const ids = new Set([focus]);
+      for (const edge of this.graph.edges || []) {
+        if (edge.source === focus) ids.add(edge.target);
+        if (edge.target === focus) ids.add(edge.source);
+      }
+      return ids;
+    },
+    visibleLayers() {
+      const layers = this.graph.layers || [];
+      if (!layers.length) return [];
+      const activeIds = this.pathNodeIds;
+      if (!activeIds.size) return layers;
+      return layers.map(layer => ({
+        ...layer,
+        nodeIds:(layer.nodeIds || []).filter(id => activeIds.has(id))
+      })).filter(layer => layer.nodeIds.length);
+    },
+    graphViewBox() {
+      const nodes = this.laidOutNodes || [];
+      if (!nodes.length) {
+        return `0 0 ${this.svg.width} ${this.svg.height}`;
+      }
+      const padding = 150;
+      const bounds = nodes.reduce((acc, node) => {
+        const halfW = node.type === 'file' ? node.w / 2 : node.r;
+        const halfH = node.type === 'file' ? node.h / 2 : node.r + 34;
+        acc.minX = Math.min(acc.minX, node.x - halfW);
+        acc.maxX = Math.max(acc.maxX, node.x + halfW);
+        acc.minY = Math.min(acc.minY, node.y - halfH);
+        acc.maxY = Math.max(acc.maxY, node.y + halfH);
+        return acc;
+      }, { minX:Infinity, maxX:-Infinity, minY:Infinity, maxY:-Infinity });
+
+      let width = Math.max(560, bounds.maxX - bounds.minX + padding * 2);
+      let height = Math.max(420, bounds.maxY - bounds.minY + padding * 2);
+      const targetAspect = 1.55;
+      const currentAspect = width / height;
+      if (currentAspect > targetAspect) {
+        height = width / targetAspect;
+      } else {
+        width = height * targetAspect;
+      }
+      const zoom = Math.min(2.2, Math.max(0.55, this.graphZoom || 0.78));
+      const viewWidth = width / zoom;
+      const viewHeight = height / zoom;
+      const centerX = (bounds.minX + bounds.maxX) / 2 + (this.graphPan?.x || 0);
+      const centerY = (bounds.minY + bounds.maxY) / 2 + (this.graphPan?.y || 0);
+      const x = centerX - viewWidth / 2;
+      const y = centerY - viewHeight / 2;
+      return `${x} ${y} ${viewWidth} ${viewHeight}`;
+    },
+    planGraphNodes() {
+      const targetIds = new Set();
+      for (const section of this.plan.sections || []) {
+        for (const target of section.inspectTargets || []) targetIds.add(this.planTargetGraphId(target));
+      }
+      let actual = (this.planGraph.nodes || []).filter(node => node.type !== 'file');
+      const related = actual.filter(node => targetIds.has(node.id));
+      actual = (related.length ? related : actual).slice(0, 16);
+      const positioned = this.positionPlanNodes(actual.map(node => ({ ...node, planned:false })), 74);
+      const planned = [];
+      (this.plan.sections || []).forEach((section, sectionIndex) => {
+        (section.plannedNodes || []).slice(0, 3).forEach((node, nodeIndex) => {
+          planned.push({
+            ...node,
+            id:`planned-${sectionIndex}-${node.id || nodeIndex}`,
+            label:node.label || node.description || `规划节点 ${nodeIndex + 1}`,
+            type:node.type || 'planned',
+            planned:true,
+            sectionIndex
+          });
+        });
+      });
+      const actualRows = Math.max(1, Math.ceil(positioned.length / 5));
+      return positioned.concat(this.positionPlanNodes(planned.slice(0, 15), 74 + actualRows * 116 + 30));
+    },
+    planGraphEdges() {
+      const nodes = new Map(this.planGraphNodes.map(node => [node.id, node]));
+      const edges = [];
+      (this.planGraph.edges || []).forEach((edge, index) => {
+        if (!nodes.has(edge.source) || !nodes.has(edge.target)) return;
+        edges.push(this.decoratePlanEdge(edge, false, `actual-${index}`, nodes));
+      });
+      (this.plan.sections || []).forEach((section, sectionIndex) => {
+        const target = (section.inspectTargets || []).map(this.planTargetGraphId).find(id => nodes.has(id));
+        (section.plannedNodes || []).slice(0, 3).forEach((node, nodeIndex) => {
+          const plannedId = `planned-${sectionIndex}-${node.id || nodeIndex}`;
+          if (!nodes.has(plannedId)) return;
+          const source = target || [...nodes.values()].find(item => !item.planned)?.id;
+          if (source) edges.push(this.decoratePlanEdge({ source, target:plannedId, label:node.relation || '建议扩展' }, true, `planned-${sectionIndex}-${nodeIndex}`, nodes));
+        });
+      });
+      return edges;
+    },
+    planGraphViewBox() {
+      const nodes = this.planGraphNodes;
+      if (!nodes.length) return '0 0 1200 420';
+      const bounds = nodes.reduce((acc,node) => ({
+        minX:Math.min(acc.minX,node.x-node.w/2), maxX:Math.max(acc.maxX,node.x+node.w/2),
+        minY:Math.min(acc.minY,node.y-node.h/2), maxY:Math.max(acc.maxY,node.y+node.h/2)
+      }), { minX:Infinity,maxX:-Infinity,minY:Infinity,maxY:-Infinity });
+      const contentWidth = Math.max(720, bounds.maxX - bounds.minX);
+      const contentHeight = Math.max(280, bounds.maxY - bounds.minY);
+      const paddingX = contentWidth * .15;
+      const paddingY = contentHeight * .18;
+      const zoom = Math.min(1.8, Math.max(.55, this.planGraphZoom));
+      const width = (contentWidth + paddingX * 2) / zoom;
+      const height = (contentHeight + paddingY * 2) / zoom;
+      const centerX = (bounds.minX + bounds.maxX) / 2 + this.planGraphPan.x;
+      const centerY = (bounds.minY + bounds.maxY) / 2 + this.planGraphPan.y;
+      return `${centerX-width/2} ${centerY-height/2} ${width} ${height}`;
+    },
+    ragExplanation() {
+      const events = this.rag.recentStages || [];
+      if (!events.length) return '还没有可解释的链路事件。先导入文档、生成方案或运行一次评审。';
+      const failed = events.find(event => event.status === 'failure');
+      if (failed) return `最近链路在「${this.explainStage(failed.stage)}」失败，需要先看错误信息和对应服务状态。`;
+      const slow = [...events].sort((a,b) => (b.durationMs || 0) - (a.durationMs || 0))[0];
+      return `最近链路记录了 ${events.length} 个阶段，当前最耗时的是「${this.explainStage(slow.stage)}」约 ${slow.durationMs || 0}ms。`;
+    }
+  },
+  mounted() {
+    this.loadProjects();
+    this.refreshAll();
+    this.refreshTimer = setInterval(this.refreshAll, 2500);
+    document.addEventListener('keydown', this.handleKeyDown);
+  },
+  beforeUnmount() {
+    clearInterval(this.refreshTimer);
+    this.cancelPlanStream();
+    document.removeEventListener('keydown', this.handleKeyDown);
+  },
+  methods:{
+    selectIntent(tab) {
+      this.intentTab = tab;
+      this.activeTab = tab;
+      this.sidebarTab = 'info';
+      if (tab !== 'graph') this.closeSourceDrawer();
+    },
+    async loadProjects() {
+      try {
+        this.projects = await this.api('/api/projects');
+        const saved = localStorage.getItem('nexus_project_id');
+        if (saved && this.projects.find(p => p.id === saved)) {
+          this.currentProjectId = saved;
+        } else if (this.projects.length > 0) {
+          this.currentProjectId = this.projects[0].id;
+        }
+      } catch(e) {
+        this.projects = [];
+      }
+    },
+    onProjectChange() {
+      localStorage.setItem('nexus_project_id', this.currentProjectId);
+      if (this.currentProject) {
+        this.review.documentId = this.currentProject.group || this.currentProject.id;
+        this.review.version = this.currentProject.version || '5.1';
+      }
+    },
+    setGraphMode(mode) {
+      this.graphMode = mode;
+      if ((this.graph.nodes || []).length) this.loadGraph();
+    },
+    async runCurrentIntent() {
+      if (this.intentTab === 'plan') {
+        await this.loadPlan(true);
+      } else {
+        this.activeTab = 'graph';
+        await this.loadGraph();
+      }
+    },
+    saveApiKey() {
+      if (this.apiKey) localStorage.setItem('nexus_api_key', this.apiKey);
+      else localStorage.removeItem('nexus_api_key');
+    },
+    authHeaders(extra = {}) {
+      const headers = { ...extra };
+      if (this.apiKey) headers['X-API-Key'] = this.apiKey;
+      return headers;
+    },
+    async api(path, options = {}) {
+      const response = await fetch(path, {
+        ...options,
+        headers: this.authHeaders(options.headers || {})
+      });
+      if (!response.ok) throw new Error(await response.text());
+      return response.json();
+    },
+    async refreshAll() {
+      try {
+        const [status, rag] = await Promise.all([
+          this.api('/api/monitor/status' + (this.currentProjectId ? '?projectId=' + encodeURIComponent(this.currentProjectId) : '')),
+          this.api('/api/monitor/rag-chain')
+        ]);
+        this.status = status;
+        this.knowledge = status.knowledge || {};
+        this.bootstrap = status.bootstrap || {};
+        this.metrics = status.metrics || {};
+        this.rag = rag;
+      } catch (error) {
+        this.showToast('状态刷新失败：' + error.message);
+      }
+    },
+    async smartSearch() {
+      await this.runCurrentIntent();
+    },
+    async loadGraph() {
+      await this.run('图谱已更新', async () => {
+        const data = await this.api('/api/code/graph', {
+          method:'POST',
+          headers:{ 'content-type':'application/json' },
+          body:JSON.stringify({ query:this.query, projectId:this.currentProjectId, view:this.graphMode, crossSide:true, limit:24 })
+        });
+        this.graph = { layers:[], tour:[], nodes:[], edges:[], hits:[], ...data };
+        this.selectedNode = null;
+        this.focusNodeId = null;
+        this.activeTourIndex = null;
+        this.pathOnly = false;
+        this.sourceText = '';
+        this.sourceNode = null;
+        this.sourceDrawerOpen = false;
+        this.sourceFullscreen = false;
+        this.sidebarTab = 'info';
+        this.resetGraphView();
+      });
+    },
+    async loadPlan(switchTab = true) {
+      await this.streamDevelopmentPlan(switchTab);
+    },
+    async loadPlanGraph() {
+      if (!this.query || !(this.plan.codeReferences || []).length) {
+        this.planGraph = { nodes:[], edges:[], loading:false, error:'未检索到代码，请检查代码索引或调整业务名称。' };
+        return;
+      }
+      this.planGraph = { nodes:[], edges:[], loading:true, error:'' };
+      try {
+        const data = await this.api('/api/code/graph', {
+          method:'POST',
+          headers:{ 'content-type':'application/json' },
+          body:JSON.stringify({ query:this.query, projectId:this.currentProjectId, view:'flow', crossSide:true, limit:24 })
+        });
+        this.planGraph = { nodes:data.nodes || [], edges:data.edges || [], loading:false, error:'' };
+        this.fitPlanGraph();
+      } catch (error) {
+        this.planGraph = { nodes:[], edges:[], loading:false, error:'链路图加载失败，可重新生成方案后重试。' };
+      }
+    },
+    emptyPlan() {
+      return {
+        summary:'',
+        productUnderstanding:[],
+        developmentConstraints:[],
+        chainOverview:[],
+        sections:[],
+        implementationOrder:[],
+        steps:[],
+        risks:[],
+        documentReferences:[],
+        codeReferences:[]
+      };
+    },
+    cancelPlanStream() {
+      if (this.planAbortController) this.planAbortController.abort();
+      this.planAbortController = null;
+      this.planStreaming = false;
+    },
+    async streamDevelopmentPlan(switchTab = true) {
+      this.cancelPlanStream();
+      const controller = new AbortController();
+      this.planAbortController = controller;
+      this.plan = this.emptyPlan();
+      this.planGraph = { nodes:[], edges:[], loading:false, error:'' };
+      this.fitPlanGraph();
+      this.planStreaming = true;
+      this.planStatus = 'running';
+      this.planStage = '正在连接开发方案生成服务';
+      this.busy = true;
+      if (switchTab) {
+        this.intentTab = 'plan';
+        this.activeTab = 'plan';
+      }
+      try {
+        const response = await fetch('/api/assistant/development-plan/stream', {
+          method:'POST',
+          headers:this.authHeaders({ 'content-type':'application/json', 'accept':'text/event-stream' }),
+          signal:controller.signal,
+          body:JSON.stringify({
+            query:this.query,
+            documentId:this.knowledge.documentId,
+            version:this.knowledge.version,
+            projectId:this.currentProjectId,
+            limit:8
+          })
+        });
+        if (!response.ok || !response.body) throw new Error(await response.text());
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+        while (true) {
+          const { value, done } = await reader.read();
+          buffer += decoder.decode(value || new Uint8Array(), { stream:!done }).replace(/\r\n/g, '\n');
+          let boundary;
+          while ((boundary = buffer.indexOf('\n\n')) >= 0) {
+            const block = buffer.slice(0, boundary);
+            buffer = buffer.slice(boundary + 2);
+            const event = this.parseSseBlock(block);
+            if (event) this.applyPlanEvent(event);
+          }
+          if (done) break;
+        }
+        const finalEvent = this.parseSseBlock(buffer);
+        if (finalEvent) this.applyPlanEvent(finalEvent);
+        if (this.planStatus === 'running') throw new Error('流式连接提前结束');
+      } catch (error) {
+        if (error.name !== 'AbortError') {
+          this.planStreaming = false;
+          this.planStatus = 'error';
+          this.planStage = '生成中断，可重新生成';
+          this.showToast(this.planStage + '：' + error.message);
+        }
+      } finally {
+        if (this.planAbortController === controller) {
+          this.planAbortController = null;
+          this.planStreaming = false;
+          this.busy = false;
+        }
+      }
+    },
+    parseSseBlock(block) {
+      const data = String(block || '').split('\n')
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trimStart())
+        .join('\n');
+      if (!data) return null;
+      try { return JSON.parse(data); }
+      catch (error) { return null; }
+    },
+    applyPlanEvent(event) {
+      const payload = event.payload || {};
+      if (event.message) this.planStage = event.message;
+      if (event.type !== 'completed' && event.type !== 'error') this.planStatus = 'running';
+      const append = (key,value) => {
+        if (value) this.plan[key].push(value);
+      };
+      if (event.type === 'summary') this.plan.summary = payload.text || '';
+      if (event.type === 'product-understanding') append('productUnderstanding', payload.text);
+      if (event.type === 'constraint') append('developmentConstraints', payload.text);
+      if (event.type === 'chain') append('chainOverview', payload.text);
+      if (event.type === 'implementation-step') append('implementationOrder', payload.text);
+      if (event.type === 'risk') append('risks', payload.text);
+      if (event.type === 'section') append('sections', {
+        title:payload.title || '开发环节',
+        purpose:payload.purpose || '',
+        relatedRules:payload.relatedRules || [],
+        inspectTargets:payload.inspectTargets || [],
+        keyQuestions:payload.keyQuestions || [],
+        changeSuggestions:payload.changeSuggestions || [],
+        plannedNodes:payload.plannedNodes || []
+      });
+      if (event.type === 'references') {
+        this.plan.documentReferences = payload.documents || [];
+        this.plan.codeReferences = payload.code || [];
+        this.loadPlanGraph();
+      }
+      if (event.type === 'retrieval') this.plan.retrieval = payload;
+      if (event.type === 'completed') {
+        this.planStreaming = false;
+        this.planStatus = 'success';
+        this.planStage = event.message || '开发方案生成完成';
+      }
+      if (event.type === 'error') {
+        this.planStreaming = false;
+        this.planStatus = 'error';
+        this.planStage = event.message || payload.message || '生成中断，可重新生成';
+      }
+    },
+    async bootstrapKnowledge() {
+      const bsUrl = this.currentProjectId ? `/api/monitor/bootstrap?projectId=${encodeURIComponent(this.currentProjectId)}` : '/api/monitor/bootstrap';
+      await this.run('已触发文档导入', () => this.api(bsUrl, { method:'POST' }));
+    },
+    async indexCode() {
+      await this.run('代码索引完成', async () => {
+        const idxUrl = this.currentProjectId ? `/api/code/index?projectId=${encodeURIComponent(this.currentProjectId)}` : '/api/code/index';
+        const data = await this.api(idxUrl, { method:'POST' });
+        this.showToast(`代码索引完成：${data.chunks} 个分块`);
+        await this.loadGraph();
+      });
+    },
+    async runReview() {
+      await this.run('评审链路完成', async () => {
+        await this.api('/api/requirements/reviews', {
+          method:'POST',
+          headers:{ 'content-type':'application/json' },
+          body:JSON.stringify({ ...this.review, projectId:this.currentProjectId })
+        });
+        await this.refreshAll();
+        this.activeTab = 'rag';
+      });
+    },
+    async loadSource(nodeOrHit) {
+      const filePath = nodeOrHit.filePath;
+      if (!filePath) return;
+      const start = nodeOrHit.startLine || 1;
+      const end = nodeOrHit.endLine || start + 90;
+      const pidParam = this.currentProjectId ? `&projectId=${encodeURIComponent(this.currentProjectId)}` : '';
+      try {
+        const data = await this.api(`/api/code/source?filePath=${encodeURIComponent(filePath)}&startLine=${start}&endLine=${end}${pidParam}`);
+        this.sourceText = data.text;
+      } catch (error) {
+        this.sourceText = `// 无法读取源码：${error.message}\n// 文件路径：${filePath}\n// 行范围：${start}-${end}\n//\n// 可能原因：\n//   1. 代码仓库路径未配置或不可访问\n//   2. 文件已被删除或移动\n//   3. projectId 未正确关联到仓库\n//\n// 请检查 application.yml 中的 repository-path 配置`;
+      }
+      this.sourceNode = nodeOrHit;
+      this.sourceDrawerOpen = true;
+      this.sourceFullscreen = false;
+    },
+    planTargetGraphId(target) {
+      return `${target.symbolType}:${target.filePath}:${target.symbolName}:${target.startLine}`;
+    },
+    positionPlanNodes(nodes, top) {
+      const width = 1200;
+      const perRow = Math.min(5, Math.max(1, nodes.length));
+      return nodes.map((node,index) => {
+        const row = Math.floor(index / perRow);
+        const rowStart = row * perRow;
+        const rowItems = nodes.slice(rowStart, rowStart + perRow);
+        const rawIndex = index - rowStart;
+        const visualIndex = row % 2 ? rowItems.length - 1 - rawIndex : rawIndex;
+        return { ...node, x:95 + (visualIndex + 1) * ((width - 190) / (rowItems.length + 1)), y:top + row * 116, w:160, h:54 };
+      });
+    },
+    decoratePlanEdge(edge, planned, key, nodes) {
+      const source = nodes.get(edge.source);
+      const target = nodes.get(edge.target);
+      const midX = (source.x + target.x) / 2;
+      const midY = (source.y + target.y) / 2;
+      const bend = source.y === target.y ? 0 : 28;
+      return {
+        ...edge, key, planned,
+        path:`M ${source.x} ${source.y} C ${midX} ${source.y + bend}, ${midX} ${target.y - bend}, ${target.x} ${target.y}`,
+        labelX:midX, labelY:midY - 7, label:this.truncate(edge.label || (planned ? '建议扩展' : '关联'), 12)
+      };
+    },
+    fitPlanGraph() {
+      this.planGraphZoom = .84;
+      this.planGraphPan = { x:0, y:0 };
+    },
+    planGraphZoomIn() {
+      this.planGraphZoom = Math.min(1.8, Math.round((this.planGraphZoom + .12) * 100) / 100);
+    },
+    planGraphZoomOut() {
+      this.planGraphZoom = Math.max(.55, Math.round((this.planGraphZoom - .12) * 100) / 100);
+    },
+    planGraphWheel(event) {
+      if (event.deltaY < 0) this.planGraphZoomIn(); else this.planGraphZoomOut();
+    },
+    startPlanGraphPan(event) {
+      if (event.button === 0) this.planGraphPanning = true;
+    },
+    movePlanGraphPan(event) {
+      if (!this.planGraphPanning) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const parts = this.planGraphViewBox.split(/\s+/).map(Number);
+      this.planGraphPan = {
+        x:this.planGraphPan.x - event.movementX * parts[2] / Math.max(rect.width,1),
+        y:this.planGraphPan.y - event.movementY * parts[3] / Math.max(rect.height,1)
+      };
+    },
+    endPlanGraphPan() {
+      this.planGraphPanning = false;
+    },
+    togglePlanGraphFullscreen() {
+      this.planGraphFullscreen = !this.planGraphFullscreen;
+      this.$nextTick(this.fitPlanGraph);
+    },
+    handlePlanGraphNode(node) {
+      if (node.planned) this.focusPlanSection(node.sectionIndex); else this.loadSource(node);
+    },
+    focusPlanSection(index) {
+      this.focusedPlanSection = index;
+      this.planGraphFullscreen = false;
+      this.$nextTick(() => document.getElementById(`plan-section-${index}`)?.scrollIntoView({ behavior:'smooth', block:'center' }));
+      setTimeout(() => { if (this.focusedPlanSection === index) this.focusedPlanSection = null; }, 1800);
+    },
+    selectNode(node) {
+      this.selectedNode = node;
+      this.focusNodeId = null;
+      this.sidebarTab = 'info';
+    },
+    closeNode() {
+      this.selectedNode = null;
+      this.focusNodeId = null;
+    },
+    closeSource() {
+      this.closeSourceDrawer();
+    },
+    closeSourceDrawer() {
+      this.sourceDrawerOpen = false;
+      this.sourceFullscreen = false;
+      this.sourceText = '';
+      this.sourceNode = null;
+    },
+    toggleSourceFullscreen() {
+      this.sourceFullscreen = !this.sourceFullscreen;
+    },
+    handleKeyDown(event) {
+      if (event.key === 'Escape' && this.planGraphFullscreen) {
+        this.planGraphFullscreen = false;
+      } else if (event.key === 'Escape' && this.sourceFullscreen) {
+        this.sourceFullscreen = false;
+      } else if (event.key === 'Escape' && this.sourceDrawerOpen) {
+        this.closeSourceDrawer();
+      }
+    },
+    focusNode(node) {
+      this.selectedNode = node;
+      this.focusNodeId = this.focusNodeId === node.id ? null : node.id;
+    },
+    zoomIn() {
+      this.graphZoom = Math.min(2.2, Math.round((this.graphZoom + 0.12) * 100) / 100);
+    },
+    zoomOut() {
+      this.graphZoom = Math.max(0.55, Math.round((this.graphZoom - 0.12) * 100) / 100);
+    },
+    resetGraphView() {
+      this.graphZoom = 0.62;
+      this.graphPan = { x:0, y:0 };
+    },
+    zoomWheel(event) {
+      if (event.deltaY < 0) {
+        this.zoomIn();
+      } else {
+        this.zoomOut();
+      }
+    },
+    startPan(event) {
+      if (event.button !== 0) return;
+      this.panning = true;
+    },
+    panMove(event) {
+      if (!this.panning) return;
+      const rect = event.currentTarget.getBoundingClientRect();
+      const parts = this.graphViewBox.split(/\s+/).map(Number);
+      const viewWidth = parts[2] || this.svg.width;
+      const viewHeight = parts[3] || this.svg.height;
+      this.graphPan = {
+        x:this.graphPan.x - event.movementX * viewWidth / Math.max(rect.width, 1),
+        y:this.graphPan.y - event.movementY * viewHeight / Math.max(rect.height, 1)
+      };
+    },
+    endPan() {
+      this.panning = false;
+    },
+    selectTour(index) {
+      const step = this.sortedTour[index];
+      if (!step) return;
+      this.selectedNode = null;
+      this.activeTourIndex = index;
+      this.pathOnly = false;
+      this.focusNodeId = null;
+      this.sidebarTab = 'info';
+      this.resetGraphView();
+    },
+    startTour() {
+      if (!this.sortedTour.length) return;
+      this.selectTour(0);
+    },
+    stopTour() {
+      this.activeTourIndex = null;
+      this.selectedNode = null;
+      this.pathOnly = false;
+      this.focusNodeId = null;
+      this.resetGraphView();
+    },
+    previousTourStep() {
+      if (this.activeTourIndex > 0) this.selectTour(this.activeTourIndex - 1);
+    },
+    nextTourStep() {
+      if (this.activeTourIndex >= this.sortedTour.length - 1) {
+        this.stopTour();
+      } else {
+        this.selectTour(this.activeTourIndex + 1);
+      }
+    },
+    togglePathMode() {
+      this.pathOnly = !this.pathOnly;
+      if (this.pathOnly && this.activeTourIndex === null && (this.graph.tour || []).length) {
+        this.activeTourIndex = 0;
+      }
+      this.focusNodeId = null;
+      this.resetGraphView();
+    },
+    selectLayer(layer) {
+      const firstId = (layer.nodeIds || [])[0];
+      const node = (this.graph.nodes || []).find(item => item.id === firstId);
+      if (node) this.selectNode(node);
+    },
+    visibleNodes() {
+      let nodes = this.graph.nodes || [];
+      if (this.nodeFilter !== 'all') {
+        nodes = nodes.filter(node => {
+          if (this.nodeFilter === 'method') return node.type === 'method' || node.type === 'function';
+          return node.type === this.nodeFilter;
+        });
+      }
+      if (this.focusNodeId) {
+        const ids = this.neighborNodeIds;
+        return nodes.filter(node => ids.has(node.id));
+      }
+      if (this.pathOnly && this.activeTourNodeIds.size) {
+        const ids = this.activeTourNodeIds;
+        return nodes.filter(node => ids.has(node.id));
+      }
+      if (this.pathOnly && this.pathNodeIds.size) {
+        const ids = this.pathNodeIds;
+        return nodes.filter(node => ids.has(node.id));
+      }
+      return nodes;
+    },
+    layoutLayered(nodes) {
+      const layers = this.graph.layers?.length ? this.graph.layers : this.syntheticLayers(nodes);
+      const nodeMap = new Map(nodes.map(node => [node.id, node]));
+      const layerGroups = layers
+        .map(layer => ({ layer, nodes:(layer.nodeIds || []).map(id => nodeMap.get(id)).filter(Boolean) }))
+        .filter(row => row.nodes.length);
+      if (!layerGroups.length) return [];
+
+      const rows = [];
+      for (const group of layerGroups) {
+        const sorted = [...group.nodes].sort((a,b) => this.nodeWeight(b) - this.nodeWeight(a));
+        const perRow = this.nodesPerRow(sorted);
+        for (let i = 0; i < sorted.length; i += perRow) {
+          rows.push({ layer:group.layer, nodes:sorted.slice(i, i + perRow) });
+        }
+      }
+
+      const top = 64;
+      const rowGap = 142;
+      const neededHeight = Math.max(820, top + rows.length * rowGap + 120);
+      this.svg.height = neededHeight;
+      this.svg.width = 1720;
+      const result = [];
+      rows.forEach((row,rowIndex) => {
+        const y = top + rowIndex * rowGap;
+        row.nodes.forEach((node,index) => {
+          const x = 120 + (index + 1) * ((this.svg.width - 240) / (row.nodes.length + 1));
+          result.push(this.decorateNode(node, x, y));
+        });
+      });
+      return result;
+    },
+    nodesPerRow(nodes) {
+      if (!nodes.length) return 1;
+      const hasFiles = nodes.some(node => node.type === 'file');
+      if (hasFiles) return nodes.length > 10 ? 6 : 5;
+      return nodes.length > 12 ? 6 : (nodes.length > 8 ? 5 : 4);
+    },
+    layoutFlow(nodes) {
+      const ordered = [...nodes].sort((a,b) => this.flowOrder(a) - this.flowOrder(b));
+      const perRow = Math.min(6, Math.max(3, Math.ceil(Math.sqrt(ordered.length) * 1.15)));
+      const rows = Math.max(1, Math.ceil(ordered.length / perRow));
+      this.svg.width = 1550;
+      this.svg.height = Math.max(820, 130 + rows * 170);
+      return ordered.map((node,index) => {
+        const row = Math.floor(index / perRow);
+        const rowStart = row * perRow;
+        const rowItems = ordered.slice(rowStart, rowStart + perRow);
+        const indexInRow = index - rowStart;
+        const reversed = row % 2 === 1;
+        const visualIndex = reversed ? rowItems.length - 1 - indexInRow : indexInRow;
+        const x = 115 + (visualIndex + 1) * ((this.svg.width - 230) / (rowItems.length + 1));
+        const y = 110 + row * ((this.svg.height - 220) / Math.max(rows - 1, 1));
+        return this.decorateNode(node, x, y);
+      });
+    },
+    layoutRadial(nodes) {
+      this.svg.width = 1350;
+      this.svg.height = 860;
+      const centerX = this.svg.width / 2;
+      const centerY = this.svg.height / 2;
+      const sorted = [...nodes].sort((a,b) => this.nodeWeight(b) - this.nodeWeight(a));
+      const radius = Math.min(this.svg.width, this.svg.height) * 0.40;
+      return sorted.map((node,index) => {
+        if (index === 0 && sorted.length > 5) return this.decorateNode(node, centerX, centerY);
+        const offset = sorted.length > 5 ? index - 1 : index;
+        const count = sorted.length > 5 ? sorted.length - 1 : sorted.length;
+        const angle = -Math.PI / 2 + offset * Math.PI * 2 / Math.max(count,1);
+        return this.decorateNode(node, centerX + Math.cos(angle) * radius, centerY + Math.sin(angle) * radius);
+      });
+    },
+    decorateNode(node, x, y) {
+      const r = this.radius(node.type);
+      const isFile = node.type === 'file';
+      const isClass = node.type === 'class';
+      return { ...node, x, y, r, w:isFile ? 170 : (isClass ? 150 : 136), h:isFile ? 58 : 52 };
+    },
+    isPathNode(id) {
+      if (this.activeTourNodeIds.size) return this.activeTourNodeIds.has(id);
+      return this.pathNodeIds.has(id);
+    },
+    isNodeDimmed(id) {
+      if (this.focusNodeId) return !this.neighborNodeIds.has(id);
+      if (this.activeTourNodeIds.size && !this.pathOnly) return !this.activeTourNodeIds.has(id);
+      return false;
+    },
+    isFocusedEdge(edge) {
+      if (this.focusNodeId) return edge.source === this.focusNodeId || edge.target === this.focusNodeId;
+      if (this.activeTourNodeIds.size) {
+        return this.activeTourNodeIds.has(edge.source) && this.activeTourNodeIds.has(edge.target);
+      }
+      return false;
+    },
+    isEdgeDimmed(edge) {
+      if (this.focusNodeId) return !(edge.source === this.focusNodeId || edge.target === this.focusNodeId);
+      if (this.activeTourNodeIds.size && !this.pathOnly) {
+        return !(this.activeTourNodeIds.has(edge.source) && this.activeTourNodeIds.has(edge.target));
+      }
+      return false;
+    },
+    shouldShowEdgeLabel(edge) {
+      if (!edge.label) return false;
+      if (this.focusNodeId) return edge.source === this.focusNodeId || edge.target === this.focusNodeId;
+      if (this.pathOnly) return false;
+      if (this.activeTourNodeIds.size) {
+        return this.activeTourNodeIds.has(edge.source) && this.activeTourNodeIds.has(edge.target);
+      }
+      return false;
+    },
+    nodeRelationText(node) {
+      const role = node.role || this.nodeTypeName(node.type);
+      const query = this.query ? `「${this.truncate(this.query, 18)}」` : '当前需求';
+      const map = {
+        '入口/API':`它更像 ${query} 的入口或外部调用点，适合先确认请求从哪里进入系统。`,
+        '业务编排':`它负责把主流程串起来，适合确认新增能力应该挂在哪个业务步骤。`,
+        '规则判断':`它可能包含条件、开关或资格判断，适合检查成长基金的准入规则。`,
+        '配置参数':`它可能承载配置、档位或参数，适合确认是否需要新增配置项。`,
+        '奖励/成长数值':`它靠近奖励、成长值或权益计算，适合确认发放和数值逻辑。`,
+        '状态变更/持久化':`它靠近状态落库或缓存更新，适合确认数据是否需要持久化。`,
+        '数据结构':`它定义请求、响应或领域对象，适合确认字段和返回值。`
+      };
+      return map[role] || `它被检索为和 ${query} 相关，建议结合源码确认它承担的职责。`;
+    },
+    syntheticLayers(nodes) {
+      const map = new Map();
+      for (const node of nodes) {
+        const key = node.layer || node.role || node.type || '相关代码';
+        if (!map.has(key)) map.set(key, []);
+        map.get(key).push(node.id);
+      }
+      return [...map.entries()].map(([key,nodeIds], index) => ({ id:String(key), name:String(key).replace('layer:',''), description:'当前查询命中的相关代码。', nodeIds, index }));
+    },
+    nodeWeight(node) {
+      const roleOrder = { '入口/API':8, '业务编排':7, '规则判断':6, '配置参数':5, '奖励/成长数值':4, '状态变更/持久化':3, '展示/通知':2 };
+      return (roleOrder[node.role] || 1) + (node.type === 'class' ? .5 : 0);
+    },
+    flowOrder(node) {
+      const roleOrder = { '入口/API':0, '业务编排':1, '规则判断':2, '配置参数':3, '奖励/成长数值':4, '状态变更/持久化':5, '展示/通知':6, '数据结构':7 };
+      return roleOrder[node.role] ?? 8;
+    },
+    radius(type) {
+      return { class:24, method:18, function:18 }[type] || 17;
+    },
+    nodeTypeClass(type) {
+      if (type === 'class') return 'type-class';
+      if (type === 'method' || type === 'function') return 'type-method';
+      return 'type-other';
+    },
+    truncate(text, length) {
+      text = String(text || '');
+      return text.length > length ? text.slice(0, length - 1) + '…' : text;
+    },
+    explainStage(stage) {
+      return this.stageText[stage] || stage;
+    },
+    statusLabel(status) {
+      return {
+        UP:'正常',
+        DOWN:'异常',
+        UNKNOWN:'未知'
+      }[status] || '-';
+    },
+    stateLabel(state) {
+      return {
+        COMPLETED:'已完成',
+        FAILED:'失败',
+        RUNNING:'运行中',
+        IDLE:'待启动'
+      }[state] || '待启动';
+    },
+    nodeTypeName(type) {
+      return {
+        file:'文件',
+        class:'类',
+        method:'方法',
+        function:'函数'
+      }[type] || '代码节点';
+    },
+    symbolTypeName(type) {
+      return {
+        file:'文件',
+        class:'类',
+        method:'方法',
+        function:'函数'
+      }[type] || '代码片段';
+    },
+    compactPath(path) {
+      if (!path) return '';
+      const parts = String(path).split('/');
+      return parts.length <= 3 ? path : '…/' + parts.slice(-3).join('/');
+    },
+    looksLikePlan(text) {
+      return /怎么|如何|入手|开发|加入|新增|方案|实现|改造/.test(text || '');
+    },
+    async run(message, action) {
+      this.busy = true;
+      try {
+        await action();
+        this.showToast(message);
+      } catch (error) {
+        this.showToast(error.message);
+      } finally {
+        this.busy = false;
+      }
+    },
+    showToast(message) {
+      this.toast = message;
+      clearTimeout(this.toastTimer);
+      this.toastTimer = setTimeout(() => this.toast = '', 3200);
+    }
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

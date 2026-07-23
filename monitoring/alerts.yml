@@ -1,0 +1,42 @@
+groups:
+  - name: requirement-rag
+    rules:
+      - alert: RequirementRagDown
+        expr: up{job="requirement-rag"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Requirement RAG service is unavailable
+
+      - alert: QdrantDown
+        expr: up{job="qdrant"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Qdrant is unavailable
+
+      - alert: RagStageP95TooSlow
+        expr: histogram_quantile(0.95, sum by (le, rag_stage) (rate(rag_stage_seconds_bucket[5m]))) > 60
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RAG stage {{ $labels.rag_stage }} p95 latency exceeds 60 seconds"
+
+      - alert: RagStageFailures
+        expr: increase(rag_stage_failures_total[5m]) > 2
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RAG stage {{ $labels.stage }} failed repeatedly"
+
+      - alert: EmptyGeneratedQuestions
+        expr: increase(rag_stage_items_sum{stage="llm.generate",kind="questions"}[30m]) == 0 and increase(rag_events_total{type="review_completed"}[30m]) > 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Reviews completed without generated questions

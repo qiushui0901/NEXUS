@@ -1,0 +1,27 @@
+target/
+.m2-cache/
+.idea/
+.vscode/
+*.iml
+.DS_Store
+.env
+
+# Runtime artifacts
+tools/qdrant
+tools/qdrant-data/
+tools/*.log
+tools/*.tar.gz
+
+# Large binary files
+*.zip
+!.env.example
+
+# Local Qdrant state and generated snapshots
+qdrant-storage/*
+!qdrant-storage/.gitkeep
+snapshots/
+storage/
+tools/*.pid
+
+# Local Git worktrees
+.worktrees/
