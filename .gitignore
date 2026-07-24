@@ -28,3 +28,9 @@ tools/*.pid
 
 # Local Git worktrees
 .worktrees/
+
+# Optional IDE/AI tool adapters not used by this project
+.cursor/
+.opencode/
+.understand-anything/
+.superpowers/

@@ -1,69 +1,131 @@
-# 需求存疑 RAG MVP
+# NEXUS：版本化需求、代码和测试知识平台
 
-基于 Spring Boot 4.1、Spring AI 2.0 和 Qdrant 的需求存疑 MVP。上传产品文档后，系统执行降噪、Parent-Child Chunk、去重、Hybrid Search 和双重重排，最终生成最新版本中仍未回答、存在歧义或冲突的原子化存疑。
+NEXUS 面向产品、开发和测试团队，将分散在需求文档、Git 代码和测试设计中的信息整理为一套**按项目、版本和功能组织的可追溯知识库**。
 
-## 能力边界
+平台不再只是“需求存疑 RAG”，而是围绕软件版本持续沉淀以下知识：
 
-- 支持 Tika 可解析的 PDF、DOC/DOCX、PPT/PPTX、HTML、TXT、Markdown。
-- 只生成存疑，不生成答案、方案、负责人和风险描述。
-- 按 `documentId + version` 隔离版本，评审时仅以指定版本正文为事实源。
-- 文档及 Dense/Sparse 向量持久化在 Qdrant，应用重启不会丢失。
-- Child 用于高精度检索，命中后回填 Parent，避免上下文残缺。
+- **产品知识**：功能目标、业务规则、版本变化、风险和待确认事项。
+- **开发知识**：代码仓库、文件、类、方法、调用关系和 Git commit 证据。
+- **测试知识**：验收条件、测试关注点、边界场景和回归范围。
+- **原始证据**：需求文档位置、代码符号、版本、提交记录和引用片段。
 
-## 检索链
+产品、开发和测试可以通过同一个 Wiki 浏览不同版本的功能全貌，并从结论回到原始需求或代码证据。
+
+## 项目目标
 
 ```text
-Tika解析
+原始需求文档 ─┐
+历史版本资料 ─┼─→ 版本化事实层 ─→ Wiki 生成器 ─→ 产品 / 开发 / 测试知识页面
+Git 代码仓库 ─┤                         │
+测试关注点 ───┘                         └─→ JSON API / Markdown / 浏览页面
+
+需求与代码索引 ─→ RetrievalPipeline ─→ 检索、存疑、开发方案和证据回查
+```
+
+NEXUS 的目标是建立一套“版本化的功能真相”：
+
+1. 每项知识都明确属于哪个项目、哪个版本和哪个功能。
+2. 产品规则、代码实现和测试内容可以相互对应。
+3. 结论必须保留来源，不把模型生成内容当作无依据的事实。
+4. 不同版本可以独立浏览，避免使用新版本内容回答旧版本问题。
+5. 名称接近但实际不同的功能使用独立 `featureId`，防止知识串用。
+
+## 当前能力
+
+### 1. 版本化知识模型
+
+Wiki 页面使用以下稳定主键：
+
+```text
+projectId + version + featureId
+```
+
+每个功能页面可以包含：
+
+- 功能概览
+- 产品规则
+- 开发实现
+- 测试点与验收条件
+- 风险和存疑
+- 功能关系
+- 需求证据与代码证据
+- 审核状态和更新时间
+
+页面支持草稿、需求已核验、代码已核验、全部核验、冲突、过期、缺少实现、缺少需求和已驳回等状态。
+
+当前已经整理 `immortal-game-service` 从 **0.1 到 5.1 的 64 个历史版本**。版本源定义和生成结果分别保存在：
+
+```text
+data/wiki-sources/                     版本化结构化事实源
+data/wiki/<projectId>/<version>/       生成后的 JSON、Markdown 和版本索引
+```
+
+### 2. Wiki 生成器
+
+Wiki 生成器把版本化 JSON 源转换为：
+
+```text
+index.json                 版本和页面索引
+pages/<featureId>.json     浏览页面使用的机器可读数据
+pages/<featureId>.md       适合阅读、评审和 Git 管理的 Markdown
+```
+
+生成过程会校验项目、版本和功能标识，并采用临时目录加原子替换，避免浏览到只生成了一部分的内容。
+
+生成指定版本：
+
+```bash
+curl -X POST \
+  "http://localhost:8080/api/wiki/generate?projectId=immortal-game-service&version=5.1"
+```
+
+### 3. 知识库浏览页面
+
+应用启动后访问：
+
+```text
+http://localhost:8080/wiki
+```
+
+页面支持：
+
+- 选择项目和历史版本
+- 搜索功能页面
+- 按状态和分类筛选
+- 分别查看产品、开发、测试和证据视图
+- 查看关联功能、代码 commit、需求来源和审核状态
+
+Wiki 浏览不依赖 Qdrant、Ollama 或 BGE 服务，已有知识文件可以独立读取。
+
+主要 API：
+
+```text
+GET  /api/wiki/projects
+GET  /api/wiki/versions?projectId=...
+GET  /api/wiki/index?projectId=...&version=...
+GET  /api/wiki/page?projectId=...&version=...&featureId=...
+POST /api/wiki/generate?projectId=...&version=...
+```
+
+### 4. 需求知识与存疑分析
+
+系统支持上传 Tika 可解析的 PDF、DOC/DOCX、PPT/PPTX、HTML、TXT 和 Markdown，并执行：
+
+```text
+文档解析
   → 文本降噪
-  → Parent(约2000字符) / Child(约500字符、80字符重叠)
-  → SHA-256父块与子块去重
-  → Qdrant dense + sparse named vectors
-  → Qdrant RRF Hybrid Search Top40
-  → BGE reranker Top20
-  → Parent去重与扩展
-  → LLM reranker Top10
-  → 存疑生成与全文答案回查
+  → Parent / Child 分块
+  → SHA-256 内容去重
+  → Dense + Sparse Hybrid Search
+  → BGE reranker
+  → Parent 回填和证据扩展
+  → LLM reranker
+  → 存疑生成和全文答案回查
 ```
 
-Sparse 检索采用中英文词项哈希向量，Qdrant collection 启用 IDF modifier。Dense 向量由 Spring AI `EmbeddingModel` 生成。
+需求数据按 `documentId + version` 隔离。评审指定版本时，仅允许该版本及明确授权的历史证据参与回答。
 
-## 启动
-
-要求 Java 21、Maven 3.9+、Qdrant，以及提供 `/rerank` 接口的 BGE reranker 服务。推荐模型为 `BAAI/bge-reranker-v2-m3`。
-
-如果电脑主环境仍需保留 Java 8，不需要修改全局 `JAVA_HOME`。本项目启动脚本会优先通过 `/usr/libexec/java_home -v 21` 查找 Java 21；手动执行 Maven 时也可以只在当前命令指定 Java 21：
-
-```bash
-JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn test
-JAVA_HOME=$(/usr/libexec/java_home -v 21) mvn package -DskipTests
-```
-
-启动持久化 Qdrant：
-
-```bash
-./scripts/start-qdrant.sh
-```
-
-`compose.yml` 使用命名卷 `qdrant_data`，删除或重启容器不会删除数据；执行 `docker compose down -v` 才会删除该卷。
-
-复制配置模板，在 `.env` 中填写真实 Token。Spring Boot 会自动读取项目根目录的 `.env`，不需要执行 `source`：
-
-```bash
-cp .env.example .env
-mvn spring-boot:run
-```
-
-本地 Embedding 默认使用 Ollama。首次使用前拉取模型：
-
-```bash
-ollama pull bge-m3
-```
-
-OpenAI 兼容网关只负责 Chat，不负责 Embedding；产品文档的向量化内容不会发送给 Chat 网关。
-
-两次 LLM 调用会在请求级显式指定模型：`deepseek-v4-flash` 负责第二阶段重排，`claude-sonnet-4.6` 负责最终存疑生成。
-
-## 1. 上传最新版本文档
+上传需求文档：
 
 ```bash
 curl -X POST http://localhost:8080/api/requirements/documents \
@@ -72,13 +134,7 @@ curl -X POST http://localhost:8080/api/requirements/documents \
   -F 'documentId=fengshen'
 ```
 
-响应：
-
-```json
-{"documentId":"fengshen","version":"5.1","chunks":12}
-```
-
-## 2. 生成存疑
+生成需求存疑：
 
 ```bash
 curl -X POST http://localhost:8080/api/requirements/reviews \
@@ -86,57 +142,58 @@ curl -X POST http://localhost:8080/api/requirements/reviews \
   -d '{"documentId":"fengshen","version":"5.1","module":"同盟"}'
 ```
 
-响应示例：
+### 5. 代码知识
 
-```json
-{
-  "doubts": [
-    {
-      "module": "同盟",
-      "feature": "解除同盟",
-      "question": "解除同盟后的冷却时间是多少？",
-      "type": "CONFIGURATION",
-      "status": "UNANSWERED",
-      "sourceLocation": "同盟-解除同盟"
-    }
-  ]
-}
+代码知识模块支持：
+
+- 全量代码索引
+- 基于 Git 变更的增量索引
+- 代码语义检索
+- 文件、类、方法和符号定位
+- 调用关系图
+- 源码证据片段读取
+- GitLab Push Webhook 自动触发增量更新
+- 多项目和同组项目联合检索
+
+主要 API：
+
+```text
+POST /api/code/index
+POST /api/code/incremental-index
+POST /api/code/search
+POST /api/code/graph
+GET  /api/code/status
+GET  /api/code/source
+POST /api/search/cross-project
+POST /api/webhooks/gitlab
 ```
 
-## BGE 服务协议
+### 6. 开发方案与统一检索
 
-默认调用：
+需求检索和代码检索通过统一 RetrievalPipeline 提供候选召回、重排、证据归并和降级处理。开发方案接口可以基于需求与代码证据生成实施建议，并支持 SSE 流式返回。
 
-```http
-POST ${BGE_RERANK_URL}/rerank
-Content-Type: application/json
-
-{"query":"检索目标","texts":["候选1","候选2"],"truncate":true}
+```text
+POST /api/assistant/development-plan
+POST /api/assistant/development-plan/stream
 ```
 
-返回值：
+### 7. 监控与数据健康
 
-```json
-[
-  {"index": 1, "score": 0.96},
-  {"index": 0, "score": 0.31}
-]
+访问监控工作台：
+
+```text
+http://localhost:8080/monitor
 ```
 
-如服务路径或鉴权不同，可配置 `BGE_RERANK_PATH`、`BGE_RERANK_API_KEY`。
+监控内容包括：
 
-## 生产化注意事项
+- 需求和代码 Collection 状态
+- 索引与知识初始化状态
+- RAG 各阶段运行状态
+- 检索预览和健康历史
+- Spring Boot Actuator、Prometheus 和 OpenTelemetry 指标
 
-1. Qdrant 开启 API Key、TLS、快照和异地备份。
-2. 为 `documentId`、`version`、`parentId` 建立 payload index。
-3. 增加版本覆盖关系，不依赖调用者手动指定最新版本。
-4. 将历史人工存疑作为独立 collection，只用于检查角度召回。
-5. 对大文档将全文回查改成按模块分批 Map-Reduce，避免上下文截断。
-6. 增加离线评测：人工问题召回率、Top 10 采纳率、已有答案重复提问率。
-
-## 链路监控
-
-应用暴露以下端点：
+常用端点：
 
 ```text
 GET /actuator/health
@@ -144,28 +201,101 @@ GET /actuator/health/liveness
 GET /actuator/health/readiness
 GET /actuator/metrics
 GET /actuator/prometheus
+GET /api/monitor/status
+GET /api/monitor/rag-chain
 ```
 
-Prometheus 配置和告警规则位于 `monitoring/prometheus.yml`、`monitoring/alerts.yml`。同时采集应用 `:8080/actuator/prometheus` 和 Qdrant `:6333/metrics`。
+## 技术架构
 
-自定义指标：
+- Java 21
+- Spring Boot 4.1
+- Spring AI 2.0
+- Qdrant Dense/Sparse 向量检索
+- BGE Reranker
+- Ollama 本地 Embedding
+- OpenAI 兼容 Chat 模型网关
+- Markdown + JSON 版本化 Wiki
+- Maven、Docker Compose、Prometheus、OpenTelemetry
+
+## 本地启动
+
+### 1. 环境要求
+
+- JDK 21
+- Maven 3.9+
+- Docker（用于 Qdrant）
+- Ollama（默认用于本地 Embedding）
+- 提供 `/rerank` 接口的 BGE reranker 服务
+
+如果电脑还需要保留其他 Java 版本，可以只为当前命令指定 JDK 21：
+
+```bash
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw test
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw package -DskipTests
+```
+
+### 2. 配置本地环境
+
+```bash
+cp .env.example .env
+```
+
+在 `.env` 中填写本机服务地址和 Token。`.env` 仅供本地使用，不得提交到 GitHub。
+
+首次使用 Ollama Embedding：
+
+```bash
+ollama pull bge-m3
+```
+
+### 3. 启动 Qdrant
+
+```bash
+./scripts/start-qdrant.sh
+```
+
+Qdrant 数据保存在 Docker 命名卷或本地运行目录中，不提交到 Git。执行 `docker compose down -v` 会删除对应命名卷，请谨慎使用。
+
+### 4. 启动应用
+
+```bash
+./mvnw spring-boot:run
+```
+
+启动后：
 
 ```text
-rag_stage_seconds                  各阶段耗时及 P50/P95/P99
-rag_stage_failures_total           各阶段失败次数
-rag_stage_items_count/sum          输入、输出、去重和问题数量
-rag_events_total                   文档摄取及评审完成次数
-gen_ai_client_operation_seconds    Spring AI 模型调用耗时
-gen_ai_client_token_usage_total    LLM Token 用量
+监控工作台：http://localhost:8080/monitor
+版本化 Wiki：http://localhost:8080/wiki
 ```
 
-阶段包括：`document.parse`、`text.clean`、`parent_child.chunk`、`content.deduplicate`、`qdrant.upsert`、`qdrant.scroll`、`qdrant.hybrid_search`、`bge.rerank`、`llm.rerank`、`llm.generate`。
+## 数据与版本管理原则
 
-控制台默认输出 Logstash JSON，每条阶段日志包含 `stage`、`documentId`、`version`、`status`、`durationMs`。Prometheus 标签不包含 documentId 和 version，避免高基数。
+应提交到 Git：
 
-如需将 Trace 发送到 Jaeger、Tempo 或 OpenTelemetry Collector：
+- 业务代码和测试代码
+- 小型需求结构化数据
+- Wiki JSON/Markdown
+- 版本索引和审核状态
+- 配置模板和项目文档
 
-```dotenv
-OTLP_TRACING_ENABLED=true
-OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:4318/v1/traces
-```
+不得提交到 Git：
+
+- `.env` 和真实凭据
+- Qdrant 数据目录、Collection、Snapshot 和 WAL
+- Dense/Sparse 向量数据
+- 本地模型和二进制文件
+- Maven 缓存、IDE 个人状态和临时工作区
+- 大型原始 ZIP 文档
+
+## 当前阶段边界
+
+当前版本已经具备版本化 Wiki 生成和浏览基础能力，但仍需要继续完善：
+
+1. 从 RetrievalPipeline 和 LLM 自动生成结构化事实层。
+2. 自动关联需求版本、代码 commit 和测试结果。
+3. 增加在线审核、评论和审批流程。
+4. 增加版本差异、影响分析和回归范围推荐。
+5. 建立覆盖需求、代码、测试和 Wiki 正确性的持续评测集。
+
+在自动生成能力完成前，未经原始需求或代码确认的业务规则必须标记为“待核验”，不能作为已确认事实发布。
