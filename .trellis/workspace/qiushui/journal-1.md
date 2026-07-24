@@ -71,3 +71,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 3: 完成版本中心与差异浏览页面
+
+**Date**: 2026-07-24
+**Task**: 完成版本中心与差异浏览页面
+**Branch**: `main`
+
+### Summary
+
+完成 0.4.0-SNAPSHOT 版本中心页面、需求/代码/测试/Wiki 四类差异浏览、Wiki 深链接、页面契约测试和安全降级展示；使用 Java 21 验证 100 条测试通过，并完成任务归档。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `899a33f` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
