@@ -18,11 +18,13 @@ tools/*.tar.gz
 
 # Local Qdrant state and generated snapshots
 .qdrant-initialized
-qdrant-storage/*
-!qdrant-storage/.gitkeep
+qdrant-storage/
 snapshots/
 storage/
 tools/*.pid
+
+# Local code analysis database
+.codegraph/
 
 # Local Git worktrees
 .worktrees/
