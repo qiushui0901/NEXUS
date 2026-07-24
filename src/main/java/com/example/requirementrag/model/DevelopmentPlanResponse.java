@@ -19,7 +19,10 @@ public record DevelopmentPlanResponse(
         List<String> steps,
         List<String> risks,
         List<DocumentReference> documentReferences,
-        List<CodeChunk> codeReferences
+        List<CodeChunk> codeReferences,
+        RagOutcomeStatus status,
+        List<RagWarning> warnings,
+        List<RagStageDiagnostic> stageDiagnostics
 ) {
     /** 最接近当前需求的现有模块，用于复用链路。 */
     public record SimilarModule(String name, String reason, List<CodeChunk> references) {

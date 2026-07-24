@@ -23,7 +23,8 @@
     "07-16-ast-code-indexing",
     "07-16-rag-error-degradation",
     "07-16-evidence-citations",
-    "07-16-large-document-map-reduce"
+    "07-16-large-document-map-reduce",
+    "07-23-build-test-ci-baseline"
   ],
   "parent": null,
   "relatedFiles": [],

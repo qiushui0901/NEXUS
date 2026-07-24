@@ -1,0 +1,529 @@
+{
+  "schemaVersion": 1,
+  "projectId": "immortal-game-service",
+  "codeVersion": "5.1",
+  "sourceRepository": "https://git.wemomo.com/bizgame/immortal-game-service.git",
+  "code": {
+    "baseCommit": "836abbd7f80561cfe6e19ac6ebbfdb1a9ebe3af7",
+    "sourceCommit": "f7e0e22bec3068a45636ec2985e21abc1975c3e5",
+    "collection": "code_chunks_immortal_game_service_v5_1",
+    "incremental": true,
+    "changedJavaFileCount": 76,
+    "changeCounts": {
+      "added": 16,
+      "modified": 59,
+      "deleted": 1
+    },
+    "files": [
+      {
+        "status": "M",
+        "path": "immortal-game-service-api/src/main/java/com/immomo/bizgame/immortal/game/api/IImmortalMoaService.java",
+        "contentHash": "b4ca6886867e1a85e268c1434a6958472cb548953c98e1dcc80bb6a70d16b920",
+        "bytes": 2408
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-api/src/main/java/com/immomo/bizgame/immortal/game/api/request/union/WarGoodsRecordParam.java",
+        "contentHash": "dbfc7f2884fb5301fc699028ccd0cfa338fc1762286253eb3c5fd55531928e19",
+        "bytes": 684
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-api/src/main/java/com/immomo/bizgame/immortal/game/api/response/growFund/GrowFundIndexResp.java",
+        "contentHash": "d8cddfcd41e6a664794ae13cd340d5d8414ac5d6e03276d85b8521464d998dce",
+        "bytes": 1303
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-api/src/main/java/com/immomo/bizgame/immortal/game/api/response/union/WarGoodsRecordNode.java",
+        "contentHash": "fde205ca0ab30723763e1552a850ef9e1756dd1467b3c10d2e61dfdf8ce265bd",
+        "bytes": 1761
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-api/src/main/java/com/immomo/bizgame/immortal/game/api/response/union/WarGoodsRecordResp.java",
+        "contentHash": "3ed567a79444c06633ee28f79cb5ea1e71400f0cbb1001a3b2413a5ed460c06f",
+        "bytes": 788
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-api/src/main/java/com/immomo/bizgame/immortal/game/api/service/IGrowFundMoaService.java",
+        "contentHash": "65a7484dc928369ce293185d03370ad41e6135b77d74a271e4e9a5e2ded0279e",
+        "bytes": 594
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-api/src/main/java/com/immomo/bizgame/immortal/world/api/request/world/BattlefieldShowParam.java",
+        "contentHash": "deab172a6b056c88a8c9d4545bb7751689338737c6a720fe31e640595dd9465a",
+        "bytes": 644
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-api/src/main/java/com/immomo/bizgame/immortal/world/api/request/world/PullFirstFullGameInfoParam.java",
+        "contentHash": "03506a7d88b23bb640408310cbae1a74c9b69e6d5d5c6b8288339605f15145f4",
+        "bytes": 1009
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-api/src/main/java/com/immomo/bizgame/immortal/world/api/response/compact/ResCompactHallIndex.java",
+        "contentHash": "2653fc2197c56ea812ecd174f15fbeb2a0b10e54e0fc2fdb2fddadc047461686",
+        "bytes": 1659
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-api/src/main/java/com/immomo/bizgame/immortal/world/api/service/IWorldHistoryMoaService.java",
+        "contentHash": "107b382d21f06faaec6b54b126599dd7479a7e0908bf9df3318e0e52f3410222",
+        "bytes": 1344
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-api/src/main/java/com/immomo/bizgame/immortal/world/api/service/IWorldMessageMoaService.java",
+        "contentHash": "c739688d3f78e84da5ff717430c22f185a61261a1aee12a445c1046f6292c7fe",
+        "bytes": 3811
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/GameMomoApplication.java",
+        "contentHash": "e66331e660c86737a7c5dc569610ea16dc2d6626a120105a7ae4176d3683fcb1",
+        "bytes": 905
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/bean/config/StageDowngradeConfig.java",
+        "contentHash": "d92ad6e1ec1bd5ca442a82628fbd87aa17c31ef6812aa54a3d96c34584c67e55",
+        "bytes": 1101
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/bean/funcUnlock/FunctionType.java",
+        "contentHash": "d98dd4f71471fd2371afa2c5b540546132fcc6126ce8338dce0cb8c93e126778",
+        "bytes": 6646
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/bean/money/MoneyType.java",
+        "contentHash": "96134434ef021551557c0d74065b85a1c00b943b1f6f1fd9077da64d4b5c4678",
+        "bytes": 3146
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/constant/HistoryConstants.java",
+        "contentHash": "663d1dbf1738419292db1e55fe79cfbf44309037626aa1c3d522b594a9fca13d",
+        "bytes": 343
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/constant/ResultEnum.java",
+        "contentHash": "dedf65ceed244c574f4ef9a193cb499c456dcc3122baf74eaf109fab8fc3e413",
+        "bytes": 33369
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/dao/redis/HistoryDao.java",
+        "contentHash": "575a78c3be25a0d67d4bf6cac76fd71180bd16585c21d4d6a951b0dd614f0256",
+        "bytes": 3453
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/dao/redis/UnionDao.java",
+        "contentHash": "0c635c1f14e92937eb918a146b7205cd9684ea19ddb36fda1778ff23724ae069",
+        "bytes": 54467
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/dao/redis/activity/CrazyDigDao.java",
+        "contentHash": "b95606d9601e4e3c49eea4d67cfd5ce2c6aff914a55477a207059537cf2fd4e0",
+        "bytes": 6017
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/dao/rediskey/UnionCacheKeyUtils.java",
+        "contentHash": "0ceb095c776c124948d43ab1bd60e8f86b1fbf5c2a926df1bd8c822554cef7d1",
+        "bytes": 5838
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/dao/rediskey/activity/CrazyDigCacheKeyUtils.java",
+        "contentHash": "2ba3bbfd17f10588bd42fb6315ca02a689894a5500ae5c53dddf8cade2309926",
+        "bytes": 1165
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/enums/AddSource.java",
+        "contentHash": "c4277fc1b019348271fd1dac5d1b34dcafe2b3caa02f2352352199627cef60ef",
+        "bytes": 5623
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/enums/HistoryType.java",
+        "contentHash": "06473da12cc5fc7d364f4f59f8b9d2aee83ef3304096821b9dc19ad500235ec2",
+        "bytes": 3008
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/enums/RechargeType.java",
+        "contentHash": "9e3028b0fa4fef51b909ce5f2947dd7264299801234edd1d30d010407126cd21",
+        "bytes": 2751
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/enums/Reminder.java",
+        "contentHash": "19a87ea3be27b7375d71757adde80dc2d04888c2910be8b131f954a6710af64f",
+        "bytes": 699
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/enums/RemoveSource.java",
+        "contentHash": "30c503fc8e1463860853224210d973df31528aeb8470349ef885805a9730549d",
+        "bytes": 4503
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/enums/TaskSceneEnum.java",
+        "contentHash": "b6caabd11625ff07019fbdb790d70c55bf2a76a2ddbbf126bfba3d5e01b6c87b",
+        "bytes": 12824
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/enums/WarGoodsOpType.java",
+        "contentHash": "60d2c402d6d89ffbebf320e80a7cdd3d414c9509d4d0baa529dc03019786bbaf",
+        "bytes": 1353
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/activity/crazyDig/CrazyDigExchangeModel.java",
+        "contentHash": "39e0baf87748ec994025622f7df9ad8d73758fc95c2fb9d4157fbc5ad62b757e",
+        "bytes": 9470
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/activity/crazyDig/CrazyDigModel.java",
+        "contentHash": "01503cbb50bf32bc30cec86836badab287d2251e1d6add4d0f50511a8de9f1ba",
+        "bytes": 22587
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/activity/crazyDig/CrazyDigPackModel.java",
+        "contentHash": "2918f602b291186316eea81b1941ae8fe83bd1f909f50f498ab3da4e7ac8f10a",
+        "bytes": 22368
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/activity/crazyDig/CrazyDigRankModel.java",
+        "contentHash": "f3d82d42a4037298702ac227470153d5a877ff2e6bb571451fbd38e85cc60d38",
+        "bytes": 22956
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/growFund/GrowFundModel.java",
+        "contentHash": "85008e1dc37e18dd60782c68f0901592dd0e67d57c6b083c256be79ad8cf9dd1",
+        "bytes": 4800
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/growFund/GrowFundTaskModel.java",
+        "contentHash": "d40ec918cd02ceda7b9ceab29cd5fc8c795d15982080b7820680575cf0cc0a2b",
+        "bytes": 1395
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/monitor/ThreadMonitorModel.java",
+        "contentHash": "1a26f58d2df84f3ac2592267ec1b0a47315fe1b5fc503984035e90236985940d",
+        "bytes": 3475
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/pack/base/AbstractPackHandler.java",
+        "contentHash": "524f8ae36ee59407494553d3547f4aa3a521e1853fa1b17efb521eb08e803849",
+        "bytes": 18817
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/shop/base/AbstractShopHandler.java",
+        "contentHash": "bb8eb4ce88ca20d56191c04eec2b97dcfa68ced471e9b86000b5547ae879644c",
+        "bytes": 11871
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/shop/base/IShopHandler.java",
+        "contentHash": "77714774cf0fbb5483324a2e0dfc038b160941a2849f8326ca9ab9ec6d76350c",
+        "bytes": 2151
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/shop/base/handlers/CrazyDigExchangeShopHandler.java",
+        "contentHash": "0b1f7fc398c308dd53deae9fb020f0e4793e71359563707362042e14da01ca30",
+        "bytes": 1959
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/shop/base/handlers/CrazyDigExchangeShopHandlerV2.java",
+        "contentHash": "5cb9810fcfe2fb6f300ca78a0caeed01cdb58833255189c2e836ed9ea4700c19",
+        "bytes": 1879
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/shop/base/handlers/HunyuanShopHandler.java",
+        "contentHash": "a9e62175da57c2155143de918b4bb9477761c43fe675bde075acef7a6b02ff47",
+        "bytes": 1108
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/shop/base/handlers/SevenDayTaskExchangeShopHandler.java",
+        "contentHash": "a6a59af306ad25433f1e7da51cad4e320ce9ca4679508baad60b314dfaf482eb",
+        "bytes": 7018
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/sign/WelfareModel.java",
+        "contentHash": "c0c3cfee17380c89d41c7f3dcbf3034a30a0f6134fb0ff6ed376b414aeaaacab",
+        "bytes": 7509
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/model/union/WarGoodsRecordModel.java",
+        "contentHash": "4383073e22bc8ff65686e8cffca68129faea28cb032df75e3d9204ca83035d35",
+        "bytes": 6659
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/service/IImmortalMoaServiceImpl.java",
+        "contentHash": "161c3776ed6ca103595cd1688906842372cd64d631895573585a37bc42104df5",
+        "bytes": 8613
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/service/compact/WorldCompactService.java",
+        "contentHash": "5cb68bc87c16ad98c8cd5fe208ef663c5b436c93a7f9040a0dc995e6a9233715",
+        "bytes": 6987
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/service/growFund/GrowFundService.java",
+        "contentHash": "f986a38927d41c320299ed48025074dde69c720069cf8c2debbe8adafe54157e",
+        "bytes": 5173
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/service/impl/BiMoaServiceImpl.java",
+        "contentHash": "9cd1a751a773ae48ebaa840f52076919b392b8078a82d2a72ae44071984540d2",
+        "bytes": 2400
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/service/impl/GrowFundMoaServiceImpl.java",
+        "contentHash": "86baab0e4cbaeb1cabea26aba74ea291f7b797b640e36feec7d789b762a0bc02",
+        "bytes": 3754
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/service/impl/UnionMoaServiceImpl.java",
+        "contentHash": "8dfa54320dbf6fdf35ebbcc6b864ee8d378adbe6963422dca1744074efa40b12",
+        "bytes": 22005
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/service/warGoodsRecord/WarGoodsRecordService.java",
+        "contentHash": "180423b9e3f09d0b9efcc7c6252decce678ec5b647fa0304f206be157d9c9f51",
+        "bytes": 7233
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/utils/AsyncExecPoolUtils.java",
+        "contentHash": "03cb1c790a0847eec01b530ef8e4a151ba712e84a710766fbd1f707be3104f6b",
+        "bytes": 5588
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/bean/cacheBean/team/WorldTeam.java",
+        "contentHash": "66c787b5f54ce28473a26ac6c5c1e70296adb96c042c4f050c085f9291639a76",
+        "bytes": 21509
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/bean/stage/StageBase.java",
+        "contentHash": "603070e313be396df8432b0a48bfcc8f7856b2e62b3f3ada877b92bf26dae10d",
+        "bytes": 22701
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/bean/stage/StageWorld.java",
+        "contentHash": "73f996b9896091764d59c25c17c7f3cc4e6a42081c2168c8ec515d16654702c6",
+        "bytes": 21136
+      },
+      {
+        "status": "A",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/cache/FirstFullSyncCache.java",
+        "contentHash": "9915c6396f0005a501d84110ca5514d88764219d94a96689688e1e90a8018efe",
+        "bytes": 5948
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/config/ImmortalConfig.java",
+        "contentHash": "7c91ebfb89a247375d0b85563de2e23bf04b119c2cc82c35eec75755980ba8a9",
+        "bytes": 3055
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/constant/WorldFightConstants.java",
+        "contentHash": "45ce9a41693f153ef699014577b81e70aea61656b518ecd4a934abd7cd96aace",
+        "bytes": 2074
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/enums/hubble/Title.java",
+        "contentHash": "f58c15d2aeeecfa35c7a0cca012e873cc987613d863252f0f385004568ec21ae",
+        "bytes": 6190
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/model/message/s2c/MessageListProcessor.java",
+        "contentHash": "5c444c0b53f81c57b096377cb6e4c6cff8635b1869ac5d9fc47d18622586035b",
+        "bytes": 4676
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/model/message/s2c/SingleMsgConsumer.java",
+        "contentHash": "6e841b91d082c37acf4892130e3145dab908a817d830fcfabb548b6503ac987a",
+        "bytes": 6725
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/model/message/s2c/VersionRoomMessageProcessor.java",
+        "contentHash": "3ebba134f650f3041b4dcc02d3ad89cc6b903a43b37a825b429fe1beb3795605",
+        "bytes": 5178
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/model/season/RoomSeasonSwitchModel.java",
+        "contentHash": "284689e37b8a89847c723a8f8c45dd035eb82b92d263348f208f7b9c052c8d95",
+        "bytes": 41534
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/plugin/build/BuildPluginWar.java",
+        "contentHash": "4cb36655ec8af0be8790012355607345c4a327597703562593194c6725de4487",
+        "bytes": 76696
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/plugin/fight/FightPluginCommon.java",
+        "contentHash": "1d5cb42cd40d5b60bcd90644d230c3489abfd4dfee17a3769e04aa1534f6061d",
+        "bytes": 60247
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/plugin/fight/FightPluginWar.java",
+        "contentHash": "13aa1e1a10b2b1da1edff88429c6f530a829463bc8096346495752390881c0af",
+        "bytes": 40747
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/plugin/march/IMarchPlugin.java",
+        "contentHash": "dbf9bcc97151ffad2c872e9cbe09e69c3248db27f546dcf1cb8f8f1ce3079160",
+        "bytes": 8470
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/plugin/march/MarchPluginCommon.java",
+        "contentHash": "3ff98c2a085d651e72729ba7a4dc463e9cb1ecda77aa34a4c85edb2b610d3cd2",
+        "bytes": 116427
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/plugin/march/MarchPluginWar.java",
+        "contentHash": "baba7ac818a403ac0745717b3df9bc6c4c919cc5bd06fcb157385f288d18bb70",
+        "bytes": 53710
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/service/IImmortalWorldMoaServiceImpl.java",
+        "contentHash": "fb9d9f955380e5329528a61b42c06259e483ab7a203c7c3230e2da10abf44431",
+        "bytes": 1881
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/service/impl/WorldHistoryMoaServiceImpl.java",
+        "contentHash": "3627678aed5d4b6e850674b06b24ec73bc582c4d5b8b1d47c792e426c7ae8ae6",
+        "bytes": 3806
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/service/impl/WorldMessageMoaServiceImpl.java",
+        "contentHash": "4f396165e4f7fd9fa26b0fd4538438d9fda316476caa3fa212d063ca1de4dd0d",
+        "bytes": 25142
+      },
+      {
+        "status": "D",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/service/message/handler/c2s/FullSyncHandler.java"
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/service/message/handler/common/PongHandler.java",
+        "contentHash": "17c89fd372541fb61e693744b5017f2e4a6ccc1b6436d12f0997be1ce248d4db",
+        "bytes": 5553
+      },
+      {
+        "status": "M",
+        "path": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/world/service/stage/StageGlobalService.java",
+        "contentHash": "3c5dc4a706d21ca6b4ba6f68627a8fac1060d925db564d650a4d1a644e958dd6",
+        "bytes": 6952
+      }
+    ]
+  },
+  "requirements": {
+    "documentId": "fengshen",
+    "version": "5.1",
+    "sources": [
+      {
+        "path": "data/产品文档.zip",
+        "contentHash": "60553be662c5b845d1988170c1777cd3f1e10635997471d2fbeef63e13b5918d",
+        "bytes": 2791787667
+      },
+      {
+        "path": "data/封神版本问题整理.xlsx",
+        "contentHash": "89cd198f598882e0d3b1a769d694831b37b4212e8e0bef4a956bc17098a40daf",
+        "bytes": 85120
+      }
+    ]
+  },
+  "featureBoundaries": {
+    "growthFund": {
+      "version": "5.1",
+      "implementationSymbols": [
+        "IGrowFundMoaService.growFundIndex",
+        "IGrowFundMoaService.growFundBuy",
+        "GrowFundMoaServiceImpl.growFundIndex",
+        "GrowFundMoaServiceImpl.growFundBuy",
+        "GrowFundService.index",
+        "GrowFundService.canBuy",
+        "GrowFundService.buy"
+      ],
+      "implementationPathPrefixes": [
+        "immortal-game-service-api/src/main/java/com/immomo/bizgame/immortal/game/api/",
+        "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/service/growFund/"
+      ],
+      "doNotConfuseWith": [
+        "GrowDiscountService",
+        "成长特价礼包",
+        "v5.0"
+      ]
+    },
+    "growthDiscount": {
+      "version": "5.0",
+      "implementationSymbols": [
+        "GrowDiscountService.growDiscountBuy",
+        "GrowDiscountService.checkBuy",
+        "GrowDiscountService.doBuy"
+      ],
+      "doNotUseAsGrowthFundEvidence": true
+    }
+  },
+  "excludedFromManifest": [
+    "Qdrant point payloads",
+    "dense/sparse vectors",
+    "qdrant-storage",
+    "snapshots",
+    "credentials"
+  ]
+}

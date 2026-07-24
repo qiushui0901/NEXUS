@@ -17,7 +17,7 @@ class DevelopmentPlanStreamServiceTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final DevelopmentPlanStreamService service = new DevelopmentPlanStreamService(
-            null, null, null, null, null, null, objectMapper, new PlanSectionEvidenceMatcher(objectMapper));
+            null, null, null, null, null, null, objectMapper, new PlanSectionEvidenceMatcher(objectMapper), null);
 
     @Test
     void keepsValidSegmentsWhenProviderFailsAfterStreamingContent() {
@@ -30,6 +30,27 @@ class DevelopmentPlanStreamServiceTest {
 
         assertEquals(1, emitted);
         assertEquals("summary", events.getFirst().type());
+    }
+
+    @Test
+    void marksPartialProviderFailureAsDegraded() {
+        Flux<String> chunks = Flux.concat(
+                Flux.just("{\"type\":\"summary\",\"payload\":{\"text\":\"先定位入口\"}}\n"),
+                Flux.error(new RuntimeException("internal provider url")));
+
+        var outcome = service.consumeModelStreamOutcome(chunks, ignored -> { }, System.nanoTime());
+
+        assertEquals(com.example.requirementrag.model.RagOutcomeStatus.DEGRADED, outcome.status());
+        assertEquals("STREAM_PARTIAL_RESULT", outcome.warnings().getFirst().code());
+        assertEquals(1L, outcome.data());
+    }
+
+    @Test
+    void rejectsCompletedStreamWithoutValidEvents() {
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> service.consumeModelStream(Flux.empty(), ignored -> { }));
+
+        assertEquals("Model stream produced no valid events", failure.getMessage());
     }
 
     @Test

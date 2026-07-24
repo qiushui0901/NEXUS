@@ -156,7 +156,7 @@ public class MonitorController {
             return status == null ? "UNKNOWN" : String.valueOf(status);
         }
         catch (RuntimeException exception) {
-            return "UP";
+            return "DOWN";
         }
     }
 
@@ -188,6 +188,9 @@ public class MonitorController {
         metrics.put("documentIngested", counterValue("rag.events", "type", "document_ingested"));
         metrics.put("reviewsCompleted", counterValue("rag.events", "type", "review_completed"));
         metrics.put("stageFailures", counterTotal("rag.stage.failures"));
+        metrics.put("degradedStages", counterTotal("rag.stage.outcomes", "status", "degraded"));
+        metrics.put("failedStages", counterTotal("rag.stage.outcomes", "status", "failed"));
+        metrics.put("stageWarnings", counterTotal("rag.stage.warnings"));
         return metrics;
     }
 
@@ -201,6 +204,15 @@ public class MonitorController {
     private double counterTotal(String name) {
         double total = 0D;
         for (Counter counter : meterRegistry.find(name).counters()) {
+            total += counter.count();
+        }
+        return total;
+    }
+
+    /** 汇总带指定标签的同名 Counter。 */
+    private double counterTotal(String name, String tagKey, String tagValue) {
+        double total = 0D;
+        for (Counter counter : meterRegistry.find(name).tag(tagKey, tagValue).counters()) {
             total += counter.count();
         }
         return total;

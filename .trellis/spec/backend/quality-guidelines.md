@@ -4,48 +4,40 @@
 
 ---
 
-## Overview
+## Build Baseline
 
-<!--
-Document your project's quality standards here.
+- The supported runtime is JDK 21.
+- Use the repository Maven Wrapper: `./mvnw`.
+- Maven Enforcer must reject unsupported Java and Maven versions early.
+- Tests use an explicit Mockito Java agent configured through Surefire; do not rely on dynamic self-attachment.
+- CI runs `./mvnw -B verify` on push and pull requests.
 
-Questions to answer:
-- What patterns are forbidden?
-- What linting rules do you enforce?
-- What are your testing requirements?
-- What code review standards apply?
--->
+## Required Verification
 
-(To be filled by the team)
+Before completing backend work, run:
 
----
+```bash
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B verify
+git diff --check
+```
 
-## Forbidden Patterns
+New behavior and bug fixes require regression tests. Error-handling changes must test both the public safe response and the internal status classification where practical.
 
-<!-- Patterns that should never be used and why -->
+## Repository Hygiene
 
-(To be filled by the team)
+Never commit:
 
----
+- `target/` or local dependency caches
+- `.env` or credentials
+- Qdrant/vector database storage
+- snapshots, PID files, runtime logs, or downloaded runtime archives
 
-## Required Patterns
+Keep wrapper scripts, source code, tests, configuration, documentation, and CI workflows versioned.
 
-<!-- Patterns that must always be used -->
+## Review Checklist
 
-(To be filled by the team)
-
----
-
-## Testing Requirements
-
-<!-- What level of testing is expected -->
-
-(To be filled by the team)
-
----
-
-## Code Review Checklist
-
-<!-- What reviewers should check -->
-
-(To be filled by the team)
+- Existing REST fields and SSE events remain compatible.
+- `SUCCESS`, `NO_RESULTS`, `DEGRADED`, and `FAILED` are not conflated.
+- Public diagnostics contain no internal exception text.
+- New warning and metric tags use bounded, stable values.
+- Java 21 verification passes without Mockito self-attach warnings.

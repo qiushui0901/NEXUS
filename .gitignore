@@ -17,6 +17,7 @@ tools/*.tar.gz
 !.env.example
 
 # Local Qdrant state and generated snapshots
+.qdrant-initialized
 qdrant-storage/*
 !qdrant-storage/.gitkeep
 snapshots/

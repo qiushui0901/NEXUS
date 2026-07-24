@@ -5,6 +5,8 @@ import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.CodeGraphRequest;
 import com.example.requirementrag.model.CodeGraphResponse;
 import com.example.requirementrag.model.CodeIndexResponse;
+import com.example.requirementrag.model.IncrementalCodeIndexResponse;
+import com.example.requirementrag.code.IncrementalCodeIndexService;
 import com.example.requirementrag.model.CodeSearchRequest;
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.SourceSnippet;
@@ -29,11 +31,15 @@ import java.util.Map;
 public class CodeController {
 
     private final CodeKnowledgeService codeKnowledgeService;
+    private final IncrementalCodeIndexService incrementalCodeIndexService;
     private final ProjectAccessGuard accessGuard;
 
     /** 注入代码知识服务。 */
-    public CodeController(CodeKnowledgeService codeKnowledgeService, ProjectAccessGuard accessGuard) {
+    public CodeController(CodeKnowledgeService codeKnowledgeService,
+                          IncrementalCodeIndexService incrementalCodeIndexService,
+                          ProjectAccessGuard accessGuard) {
         this.codeKnowledgeService = codeKnowledgeService;
+        this.incrementalCodeIndexService = incrementalCodeIndexService;
         this.accessGuard = accessGuard;
     }
 
@@ -47,6 +53,18 @@ public class CodeController {
             return codeKnowledgeService.index(projectId);
         }
         return codeKnowledgeService.index();
+    }
+
+    /** 按 Git commit 范围增量更新当前项目的版本化代码 collection。 */
+    @RequiresPermission(Permission.WRITE)
+    @PostMapping("/incremental-index")
+    public IncrementalCodeIndexResponse incrementalIndex(
+            @RequestParam String projectId,
+            @RequestParam String oldSha,
+            @RequestParam String newSha,
+            HttpServletRequest httpRequest) throws IOException, InterruptedException {
+        accessGuard.requireProjectAccess(httpRequest, projectId);
+        return incrementalCodeIndexService.indexWithResult(projectId, oldSha, newSha);
     }
 
     /** 对已索引代码执行语义检索。 */

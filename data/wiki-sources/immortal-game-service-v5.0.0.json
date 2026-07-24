@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "projectId": "immortal-game-service",
+  "projectName": "封神服务端",
+  "version": "5.0.0",
+  "requirementVersion": "5.0.0",
+  "baseCodeCommit": "",
+  "codeCommit": "099915074ce7475ca96278eec583751ac0755eb9",
+  "generatedAt": "2026-07-24T00:00:00+08:00",
+  "pages": [
+    {
+      "featureId": "version-5.0.0-overview",
+      "title": "5.0.0 版本概览",
+      "category": "版本",
+      "introducedVersion": "5.0.0",
+      "status": "CODE_VERIFIED",
+      "aliases": ["V5.0.0"],
+      "summary": "5.0.0 是当前已纳入知识平台的历史版本起点。页面先固定 Git 版本边界；具体需求、功能和测试结论须在原始材料完成核验后逐项补充。",
+      "productRules": [
+        "尚未关联到原始需求的规则不得根据代码名称推断。"
+      ],
+      "codeSymbols": [
+        "Git 分支：origin/V5.0.0",
+        "版本 commit：099915074ce7475ca96278eec583751ac0755eb9"
+      ],
+      "testPoints": [
+        "切换至 5.0.0 时只能读取该版本目录中的知识页面。",
+        "后续补充功能时必须保留本版本 commit 作为代码证据边界。"
+      ],
+      "risks": [
+        "当前只完成版本登记和代码边界核验，需求与测试证据仍待补充。"
+      ],
+      "relations": [],
+      "evidence": [
+        {
+          "type": "GIT",
+          "title": "V5.0.0 分支头提交",
+          "source": "immortal-game-service",
+          "version": "5.0.0",
+          "location": "origin/V5.0.0",
+          "excerpt": "分支头提交已作为 5.0.0 的代码版本边界登记。",
+          "commit": "099915074ce7475ca96278eec583751ac0755eb9",
+          "filePath": "",
+          "symbol": "",
+          "verificationStatus": "VERIFIED"
+        }
+      ]
+    }
+  ]
+}

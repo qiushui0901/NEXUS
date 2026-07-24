@@ -827,6 +827,7 @@
       <button :class="['filter-button', nodeFilter === 'method' ? 'active':'']" @click="nodeFilter='method'"><i class="filter-dot" style="background:#f472b6"></i>方法</button>
     </div>
     <nav class="workspace-strip" aria-label="工具页面">
+      <a class="workspace-button" href="/wiki" style="display:inline-flex;align-items:center;text-decoration:none;">知识库</a>
       <button :class="['workspace-button', activeTab === 'rag' ? 'active':'']" @click="activeTab='rag'">检索链路</button>
       <button :class="['workspace-button', activeTab === 'status' ? 'active':'']" @click="activeTab='status'">索引</button>
     </nav>

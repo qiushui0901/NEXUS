@@ -3,7 +3,7 @@
   "name": "unify-retrieval-rerank",
   "title": "统一检索与重排",
   "description": "统一需求评审、开发方案和代码检索的可配置召回与重排管线",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

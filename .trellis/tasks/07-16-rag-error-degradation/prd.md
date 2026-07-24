@@ -13,7 +13,7 @@
 
 ## Acceptance Criteria
 
-- [ ] Qdrant、Embedding、查询改写、BGE、LLM、路由和生成故障各有测试。
-- [ ] 真零命中不返回依赖故障状态。
-- [ ] 前端现有非 2xx 与 SSE 处理保持兼容。
+- [x] 开发方案链路的文档/代码核心检索（含其内部 Qdrant/Embedding 调用）、路由、同步 LLM 生成和流式生成故障各有测试。
+- [x] 真零命中不返回依赖故障状态。
+- [x] 前端现有非 2xx 与 SSE 处理保持兼容。
 

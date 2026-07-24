@@ -1,6 +1,8 @@
 package com.example.requirementrag.web;
 
 import com.example.requirementrag.service.DocumentNotFoundException;
+import com.example.requirementrag.service.RagUnavailableException;
+import com.example.requirementrag.model.RagOutcomeStatus;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -26,6 +28,12 @@ public class ApiExceptionHandler {
         return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, "请求参数不完整");
     }
 
+    /** 非法业务参数返回 400。 */
+    @ExceptionHandler(IllegalArgumentException.class)
+    ProblemDetail handleIllegalArgument(IllegalArgumentException exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
+    }
+
     /** 授权失败时返回 403。 */
     @ExceptionHandler(AccessDeniedException.class)
     ProblemDetail handleAccessDenied(AccessDeniedException exception) {
@@ -36,5 +44,15 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ResponseStatusException.class)
     ProblemDetail handleResponseStatus(ResponseStatusException exception) {
         return ProblemDetail.forStatusAndDetail(exception.getStatusCode(), exception.getReason());
+    }
+
+    /** 核心 RAG 依赖不可用且没有可用证据时返回 503。 */
+    @ExceptionHandler(RagUnavailableException.class)
+    ProblemDetail handleRagUnavailable(RagUnavailableException exception) {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE,
+                exception.getMessage());
+        detail.setProperty("outcome", RagOutcomeStatus.FAILED);
+        detail.setProperty("warnings", exception.warnings());
+        return detail;
     }
 }

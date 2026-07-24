@@ -1,0 +1,20 @@
+{
+  "schemaVersion" : 1,
+  "projectId" : "immortal-game-service",
+  "projectName" : "封神服务端",
+  "version" : "2.6.0",
+  "requirementVersion" : "2.6.0",
+  "baseCodeCommit" : "",
+  "codeCommit" : "19558a7e2c35521c2fbf2134280de0b8b65dd942",
+  "generatedAt" : "2026-07-24T00:00:00+08:00",
+  "pages" : [ {
+    "featureId" : "version-2.6.0-overview",
+    "title" : "2.6.0 版本概览",
+    "category" : "版本",
+    "introducedVersion" : "2.6.0",
+    "status" : "CODE_VERIFIED",
+    "summary" : "2.6.0 已作为独立历史版本登记。当前页面固定该版本的 Git 代码边界；功能、需求和测试结论将在原始材料完成核验后逐项补充。",
+    "aliases" : [ "V2.6.0" ],
+    "evidenceCount" : 1
+  } ]
+}

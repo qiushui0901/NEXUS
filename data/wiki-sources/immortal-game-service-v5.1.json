@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "projectId": "immortal-game-service",
+  "projectName": "封神服务端",
+  "version": "5.1",
+  "requirementVersion": "5.1",
+  "baseCodeCommit": "836abbd7f80561cfe6e19ac6ebbfdb1a9ebe3af7",
+  "codeCommit": "f7e0e22bec3068a45636ec2985e21abc1975c3e5",
+  "generatedAt": "2026-07-24T00:00:00+08:00",
+  "pages": [
+    {
+      "featureId": "version-5.1-overview",
+      "title": "5.1 版本概览",
+      "category": "版本",
+      "introducedVersion": "5.1",
+      "status": "DRAFT",
+      "aliases": ["V5.1", "5.1增量"],
+      "summary": "5.1 的需求、代码和测试知识入口。当前代码基于 5.0.2 到 5.1 的 Git 增量建立版本边界，页面只收录有来源的事实。",
+      "productRules": [
+        "需求知识按 5.1 独立管理，不与 5.0.2 的需求结论自动合并。",
+        "尚未通过需求原文核验的业务规则保持待审核状态。"
+      ],
+      "codeSymbols": [
+        "基线 commit: 836abbd7f80561cfe6e19ac6ebbfdb1a9ebe3af7",
+        "5.1 commit: f7e0e22bec3068a45636ec2985e21abc1975c3e5",
+        "5.0.2 到 5.1 共识别 76 个变化 Java 文件。"
+      ],
+      "testPoints": [
+        "验证 5.0.2 与 5.1 的检索结果不会跨版本串线。",
+        "验证新增、修改、删除和重命名文件的索引更新。",
+        "验证相似名称功能使用不同 featureId。"
+      ],
+      "risks": [
+        "需求源尚需逐功能完成原文证据核验。",
+        "本页是版本导航，不替代具体功能页面的原始证据。"
+      ],
+      "relations": [
+        {"targetFeatureId":"grow-fund","type":"contains","label":"成长基金","description":"5.1 中确认存在代码实现的成长基金功能。"},
+        {"targetFeatureId":"grow-feature-boundary","type":"contains","label":"成长类功能边界","description":"说明成长基金与成长特价礼包的隔离规则。"}
+      ],
+      "evidence": [
+        {"type":"MANIFEST","title":"5.1 知识清单","source":"data/knowledge-manifests/immortal-game-service-v5.1.json","version":"5.1","location":"code","excerpt":"记录 5.0.2 基线、5.1 commit 和 76 个变化 Java 文件。","commit":"f7e0e22bec3068a45636ec2985e21abc1975c3e5","filePath":"","symbol":"","verificationStatus":"VERIFIED"}
+      ]
+    },
+    {
+      "featureId": "grow-fund",
+      "title": "成长基金",
+      "category": "成长与付费",
+      "introducedVersion": "5.1",
+      "status": "CODE_VERIFIED",
+      "aliases": ["成长基金活动", "Grow Fund"],
+      "summary": "成长基金是 5.1 中独立实现的功能。已确认服务入口、购买校验和购买执行代码；具体产品数值与领取规则仍需依据 5.1 需求原文审核。",
+      "productRules": [
+        "该功能属于 5.1 版本知识范围。",
+        "成长基金不是成长特价礼包，不能使用 GrowDiscountService 作为实现证据。",
+        "具体购买条件、奖励档位和领取规则标记为待需求核验，当前页面不做无证据推断。"
+      ],
+      "codeSymbols": [
+        "IGrowFundMoaService.growFundIndex",
+        "IGrowFundMoaService.growFundBuy",
+        "GrowFundMoaServiceImpl.growFundIndex",
+        "GrowFundMoaServiceImpl.growFundBuy",
+        "GrowFundService.index",
+        "GrowFundService.canBuy",
+        "GrowFundService.buy"
+      ],
+      "testPoints": [
+        "成长基金首页接口能够返回当前玩家的可购买与领取状态。",
+        "购买前必须经过 GrowFundService.canBuy 校验。",
+        "重复购买、条件不足和非法请求不能进入成功购买路径。",
+        "成长基金查询和购买不得路由到 GrowDiscountService。",
+        "需求规则补齐后，为奖励档位、领取条件和边界等级增加验收用例。"
+      ],
+      "risks": [
+        "需求原文中的价格、等级和奖励内容尚未在本页核验。",
+        "名称相似可能导致检索误召回成长特价礼包，需要 featureId 和版本过滤。"
+      ],
+      "relations": [
+        {"targetFeatureId":"grow-discount","type":"easily_confused_with","label":"成长特价礼包","description":"名称相似但代码入口和版本边界不同，不得互相作为证据。"},
+        {"targetFeatureId":"grow-feature-boundary","type":"explained_by","label":"成长类功能边界","description":"查看两项功能的证据隔离规则。"}
+      ],
+      "evidence": [
+        {"type":"CODE","title":"成长基金 MOA 接口","source":"immortal-game-service","version":"5.1","location":"IGrowFundMoaService","excerpt":"提供成长基金首页与购买入口。","commit":"f7e0e22bec3068a45636ec2985e21abc1975c3e5","filePath":"immortal-game-service-api/src/main/java","symbol":"IGrowFundMoaService.growFundIndex / growFundBuy","verificationStatus":"VERIFIED"},
+        {"type":"CODE","title":"成长基金服务实现","source":"immortal-game-service","version":"5.1","location":"GrowFundService","excerpt":"包含首页、购买资格检查和购买执行方法。","commit":"f7e0e22bec3068a45636ec2985e21abc1975c3e5","filePath":"immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/service/growFund/","symbol":"GrowFundService.index / canBuy / buy","verificationStatus":"VERIFIED"},
+        {"type":"REQUIREMENT","title":"5.1 成长基金需求","source":"产品文档.zip","version":"5.1","location":"成长基金相关章节","excerpt":"需求内容等待逐条提取和人工核验，本页不提前生成具体数值规则。","commit":"","filePath":"","symbol":"","verificationStatus":"PENDING_REVIEW"}
+      ]
+    },
+    {
+      "featureId": "grow-discount",
+      "title": "成长特价礼包",
+      "category": "成长与付费",
+      "introducedVersion": "5.0",
+      "status": "CODE_VERIFIED",
+      "aliases": ["成长特价", "成长礼包", "Grow Discount"],
+      "summary": "成长特价礼包是早于 5.1 已存在的独立功能，由 GrowDiscountService 实现。它与 5.1 的成长基金不是同一个功能。",
+      "productRules": [
+        "该功能的已知版本边界早于成长基金。",
+        "不得把成长特价礼包代码解释为 5.1 成长基金的实现。",
+        "产品规则和具体礼包内容仍需对应版本需求证据核验。"
+      ],
+      "codeSymbols": [
+        "GrowDiscountService.growDiscountBuy",
+        "GrowDiscountService.checkBuy",
+        "GrowDiscountService.doBuy"
+      ],
+      "testPoints": [
+        "购买入口执行 GrowDiscountService.checkBuy 校验。",
+        "合法购买进入 GrowDiscountService.doBuy。",
+        "检索成长特价礼包时不应把 GrowFundService 作为主要实现证据。",
+        "版本对比中应标记为既有功能，而不是 5.1 新增成长基金。"
+      ],
+      "risks": [
+        "中文名称与成长基金相似，必须使用 grow-discount 作为稳定标识。",
+        "当前页面只确认代码边界，礼包配置规则仍待需求审核。"
+      ],
+      "relations": [
+        {"targetFeatureId":"grow-fund","type":"easily_confused_with","label":"成长基金","description":"5.1 中独立新增的 GrowFund 实现，不是本功能的别名。"},
+        {"targetFeatureId":"grow-feature-boundary","type":"explained_by","label":"成长类功能边界","description":"查看两个功能的版本和代码隔离。"}
+      ],
+      "evidence": [
+        {"type":"CODE","title":"成长特价礼包服务","source":"immortal-game-service","version":"5.0","location":"GrowDiscountService","excerpt":"购买链路由 growDiscountBuy、checkBuy 和 doBuy 组成。","commit":"836abbd7f80561cfe6e19ac6ebbfdb1a9ebe3af7","filePath":"immortal-game-service-impl/src/main/java","symbol":"GrowDiscountService.growDiscountBuy / checkBuy / doBuy","verificationStatus":"VERIFIED"}
+      ]
+    },
+    {
+      "featureId": "grow-feature-boundary",
+      "title": "成长基金与成长特价礼包边界",
+      "category": "知识边界",
+      "introducedVersion": "5.1",
+      "status": "CODE_VERIFIED",
+      "aliases": ["成长类功能对比", "成长基金与成长特价"],
+      "summary": "这是一条强制知识边界：成长基金和成长特价礼包使用不同的 featureId、版本来源和代码符号，检索、生成和测试均不得自动合并。",
+      "productRules": [
+        "成长基金按 5.1 功能管理。",
+        "成长特价礼包按既有功能管理。",
+        "名称相似只建立容易混淆关系，不建立同义词关系。"
+      ],
+      "codeSymbols": [
+        "成长基金：GrowFundService、IGrowFundMoaService、GrowFundMoaServiceImpl",
+        "成长特价礼包：GrowDiscountService",
+        "禁止将 GrowDiscountService 用作成长基金代码证据。"
+      ],
+      "testPoints": [
+        "查询成长基金时主要代码命中必须包含 GrowFundService。",
+        "查询成长特价礼包时主要代码命中必须包含 GrowDiscountService。",
+        "两张功能页面必须互相链接但保持独立证据列表。",
+        "切换 5.0.2 和 5.1 时不得把功能首次出现版本改写。"
+      ],
+      "risks": [
+        "只用中文关键词而不使用版本和 featureId 过滤时仍可能发生语义误召回。"
+      ],
+      "relations": [
+        {"targetFeatureId":"grow-fund","type":"separates","label":"成长基金","description":"5.1 GrowFund 实现。"},
+        {"targetFeatureId":"grow-discount","type":"separates","label":"成长特价礼包","description":"既有 GrowDiscount 实现。"}
+      ],
+      "evidence": [
+        {"type":"MANIFEST","title":"功能边界声明","source":"data/knowledge-manifests/immortal-game-service-v5.1.json","version":"5.1","location":"featureBoundaries","excerpt":"清单分别记录 growthFund 和 growthDiscount，并声明 doNotConfuseWith / doNotUseAsGrowthFundEvidence。","commit":"f7e0e22bec3068a45636ec2985e21abc1975c3e5","filePath":"","symbol":"","verificationStatus":"VERIFIED"}
+      ]
+    }
+  ]
+}

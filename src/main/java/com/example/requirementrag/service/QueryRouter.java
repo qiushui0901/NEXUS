@@ -3,19 +3,21 @@ package com.example.requirementrag.service;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.model.QueryRouting;
+import com.example.requirementrag.model.RagOutcome;
+import com.example.requirementrag.model.RagOutcomeStatus;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.Locale;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
-/**
- * 智能项目路由：在用户未指定 projectId 时，通过 LLM 分类将查询路由到正确项目。
- */
+/** 智能项目路由：在用户未指定 projectId 时，通过 LLM 分类将查询路由到正确项目。 */
 @Service
 public class QueryRouter {
 
+    private static final String ROUTING_STAGE = "query.route";
     private final ProjectRegistry projectRegistry;
     private final ChatClient chatClient;
     private final RagProperties properties;
@@ -26,13 +28,34 @@ public class QueryRouter {
         this.properties = properties;
     }
 
-    /** 将用户查询路由到目标项目，按 explicit → llm → fallback 三级策略解析。 */
+    /** 兼容旧调用方，只返回最终路由。 */
     public QueryRouting route(String query, String projectId) {
+        return routeWithOutcome(query, projectId).data();
+    }
+
+    /** 返回路由结果及自动路由回退诊断。 */
+    public RagOutcome<QueryRouting> routeWithOutcome(String query, String projectId) {
+        long started = System.nanoTime();
         if (hasText(projectId)) {
-            return explicitRouting(projectId);
+            return RagOutcome.of(RagOutcomeStatus.SUCCESS, explicitRouting(projectId), ROUTING_STAGE,
+                    elapsedMillis(started), 1);
         }
-        QueryRouting llmResult = tryLlmRouting(query);
-        return llmResult != null ? llmResult : fallbackRouting();
+        try {
+            QueryRouting llmResult = tryLlmRouting(query);
+            if (llmResult != null) {
+                return RagOutcome.of(RagOutcomeStatus.SUCCESS, llmResult, ROUTING_STAGE,
+                        elapsedMillis(started), 1);
+            }
+            return routingFallback(started, "ROUTING_INVALID_RESULT");
+        }
+        catch (RuntimeException exception) {
+            return routingFallback(started, "ROUTING_LLM_UNAVAILABLE");
+        }
+    }
+
+    private RagOutcome<QueryRouting> routingFallback(long started, String code) {
+        return RagOutcome.degraded(fallbackRouting(), ROUTING_STAGE, code,
+                "自动项目路由不可用，已使用默认项目", elapsedMillis(started), 1);
     }
 
     private QueryRouting explicitRouting(String projectId) {
@@ -47,40 +70,31 @@ public class QueryRouter {
         if (!hasText(query)) {
             return null;
         }
-        try {
-            LlmRoutingResult result = chatClient.prompt()
-                    .system("""
-                            你是项目路由分类器。根据用户问题判断它属于哪个项目（projectId）以及涉及哪一侧（side）。
-                            只能返回已列出的 projectId，不得编造。side 只能是 server、client 或 both。
-                            如果不确定，confidence 应较低。
-                            """)
-                    .user("可用项目列表：\n" + formatProjects() + "\n\n用户问题：" + query)
-                    .options(GenerationChatOptions.forModel(properties.llm().resolvedRoutingModel()))
-                    .call()
-                    .entity(LlmRoutingResult.class);
-            if (result == null || !hasText(result.projectId())) {
-                return null;
-            }
-            Optional<RagProperties.ProjectConfig> project = projectRegistry.find(result.projectId());
-            if (project.isEmpty()) {
-                return null;
-            }
-            String side = hasText(result.side()) ? result.side() : project.get().side();
-            double confidence = clampConfidence(result.confidence());
-            return new QueryRouting(result.projectId(), normalizeSide(side), confidence, "llm");
-        }
-        catch (RuntimeException ignored) {
+        LlmRoutingResult result = chatClient.prompt()
+                .system("""
+                        你是项目路由分类器。根据用户问题判断它属于哪个项目（projectId）以及涉及哪一侧（side）。
+                        只能返回已列出的 projectId，不得编造。side 只能是 server、client 或 both。
+                        如果不确定，confidence 应较低。
+                        """)
+                .user("可用项目列表：\n" + formatProjects() + "\n\n用户问题：" + query)
+                .options(GenerationChatOptions.forModel(properties.llm().resolvedRoutingModel()))
+                .call()
+                .entity(LlmRoutingResult.class);
+        if (result == null || !hasText(result.projectId())) {
             return null;
         }
+        Optional<RagProperties.ProjectConfig> project = projectRegistry.find(result.projectId());
+        if (project.isEmpty()) {
+            return null;
+        }
+        String side = hasText(result.side()) ? result.side() : project.get().side();
+        double confidence = clampConfidence(result.confidence());
+        return new QueryRouting(result.projectId(), normalizeSide(side), confidence, "llm");
     }
 
     private QueryRouting fallbackRouting() {
         RagProperties.ProjectConfig defaultProject = projectRegistry.defaultProject();
-        return new QueryRouting(
-                defaultProject.id(),
-                normalizeSide(defaultProject.side()),
-                0.0,
-                "fallback");
+        return new QueryRouting(defaultProject.id(), normalizeSide(defaultProject.side()), 0.0, "fallback");
     }
 
     private String formatProjects() {
@@ -110,6 +124,10 @@ public class QueryRouter {
 
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
+    }
+
+    private long elapsedMillis(long started) {
+        return Duration.ofNanos(System.nanoTime() - started).toMillis();
     }
 
     private record LlmRoutingResult(String projectId, String side, double confidence) {

@@ -1,0 +1,29 @@
+{
+  "schemaVersion" : 1,
+  "projectId" : "immortal-game-service",
+  "projectName" : "封神服务端",
+  "version" : "5.0.2",
+  "requirementVersion" : "5.0.2",
+  "baseCodeCommit" : "6b7a154851c6f7979d58c89485eb28899687a234",
+  "codeCommit" : "836abbd7f80561cfe6e19ac6ebbfdb1a9ebe3af7",
+  "generatedAt" : "2026-07-24T00:00:00+08:00",
+  "pages" : [ {
+    "featureId" : "grow-discount",
+    "title" : "成长特价礼包",
+    "category" : "成长与付费",
+    "introducedVersion" : "5.0.2",
+    "status" : "CODE_VERIFIED",
+    "summary" : "成长特价礼包在 5.0.2 中已存在，由 GrowDiscount 的接口、MOA 实现和服务购买链路组成。它不是 5.1 的成长基金。",
+    "aliases" : [ "成长特价", "成长礼包", "Grow Discount" ],
+    "evidenceCount" : 2
+  }, {
+    "featureId" : "version-5.0.2-overview",
+    "title" : "5.0.2 版本概览",
+    "category" : "版本",
+    "introducedVersion" : "5.0.2",
+    "status" : "CODE_VERIFIED",
+    "summary" : "5.0.2 是 5.1 增量知识的代码基线。该版本与 5.1 分别保存，不能把 5.1 新增的成长基金写入本版本。",
+    "aliases" : [ "V5.0.2", "5.0.2基线" ],
+    "evidenceCount" : 1
+  } ]
+}

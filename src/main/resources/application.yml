@@ -85,8 +85,8 @@ app:
       collection: ${QDRANT_COLLECTION:requirement_chunks}
     code:
       project-id: ${CODE_PROJECT_ID:immortal-game-service}
-      repository-path: ${CODE_REPOSITORY_PATH:/Users/user/immortal-game-service}
-      collection: ${CODE_QDRANT_COLLECTION:code_chunks}
+      repository-path: ${CODE_REPOSITORY_PATH:/Users/user/Documents/immortal-game-service}
+      collection: ${CODE_QDRANT_COLLECTION:code_chunks_immortal_game_service_v5_1}
       include-path-substrings:
         - ${CODE_INCLUDE_1:/hero/}
         - ${CODE_INCLUDE_2:/union/}
@@ -122,6 +122,9 @@ app:
       zip-folder-prefix: ${KNOWLEDGE_ZIP_FOLDER_PREFIX:5.1}
       xlsx-sheet-prefix: ${KNOWLEDGE_XLSX_SHEET_PREFIX:封神}
       min-html-bytes: ${KNOWLEDGE_MIN_HTML_BYTES:800}
+    wiki:
+      root-path: ${WIKI_ROOT_PATH:data/wiki}
+      source-path: ${WIKI_SOURCE_PATH:data/wiki-sources}
     review:
       min-questions: ${REVIEW_MIN_QUESTIONS:12}
       max-questions: ${REVIEW_MAX_QUESTIONS:15}

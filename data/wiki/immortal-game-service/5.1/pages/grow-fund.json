@@ -1,0 +1,66 @@
+{
+  "projectId" : "immortal-game-service",
+  "projectName" : "封神服务端",
+  "version" : "5.1",
+  "requirementVersion" : "5.1",
+  "baseCodeCommit" : "836abbd7f80561cfe6e19ac6ebbfdb1a9ebe3af7",
+  "codeCommit" : "f7e0e22bec3068a45636ec2985e21abc1975c3e5",
+  "generatedAt" : "2026-07-24T00:00:00+08:00",
+  "featureId" : "grow-fund",
+  "title" : "成长基金",
+  "category" : "成长与付费",
+  "introducedVersion" : "5.1",
+  "status" : "CODE_VERIFIED",
+  "aliases" : [ "成长基金活动", "Grow Fund" ],
+  "summary" : "成长基金是 5.1 中独立实现的功能。已确认服务入口、购买校验和购买执行代码；具体产品数值与领取规则仍需依据 5.1 需求原文审核。",
+  "productRules" : [ "该功能属于 5.1 版本知识范围。", "成长基金不是成长特价礼包，不能使用 GrowDiscountService 作为实现证据。", "具体购买条件、奖励档位和领取规则标记为待需求核验，当前页面不做无证据推断。" ],
+  "codeSymbols" : [ "IGrowFundMoaService.growFundIndex", "IGrowFundMoaService.growFundBuy", "GrowFundMoaServiceImpl.growFundIndex", "GrowFundMoaServiceImpl.growFundBuy", "GrowFundService.index", "GrowFundService.canBuy", "GrowFundService.buy" ],
+  "testPoints" : [ "成长基金首页接口能够返回当前玩家的可购买与领取状态。", "购买前必须经过 GrowFundService.canBuy 校验。", "重复购买、条件不足和非法请求不能进入成功购买路径。", "成长基金查询和购买不得路由到 GrowDiscountService。", "需求规则补齐后，为奖励档位、领取条件和边界等级增加验收用例。" ],
+  "risks" : [ "需求原文中的价格、等级和奖励内容尚未在本页核验。", "名称相似可能导致检索误召回成长特价礼包，需要 featureId 和版本过滤。" ],
+  "relations" : [ {
+    "targetFeatureId" : "grow-discount",
+    "type" : "easily_confused_with",
+    "label" : "成长特价礼包",
+    "description" : "名称相似但代码入口和版本边界不同，不得互相作为证据。"
+  }, {
+    "targetFeatureId" : "grow-feature-boundary",
+    "type" : "explained_by",
+    "label" : "成长类功能边界",
+    "description" : "查看两项功能的证据隔离规则。"
+  } ],
+  "evidence" : [ {
+    "type" : "CODE",
+    "title" : "成长基金 MOA 接口",
+    "source" : "immortal-game-service",
+    "version" : "5.1",
+    "location" : "IGrowFundMoaService",
+    "excerpt" : "提供成长基金首页与购买入口。",
+    "commit" : "f7e0e22bec3068a45636ec2985e21abc1975c3e5",
+    "filePath" : "immortal-game-service-api/src/main/java",
+    "symbol" : "IGrowFundMoaService.growFundIndex / growFundBuy",
+    "verificationStatus" : "VERIFIED"
+  }, {
+    "type" : "CODE",
+    "title" : "成长基金服务实现",
+    "source" : "immortal-game-service",
+    "version" : "5.1",
+    "location" : "GrowFundService",
+    "excerpt" : "包含首页、购买资格检查和购买执行方法。",
+    "commit" : "f7e0e22bec3068a45636ec2985e21abc1975c3e5",
+    "filePath" : "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/service/growFund/",
+    "symbol" : "GrowFundService.index / canBuy / buy",
+    "verificationStatus" : "VERIFIED"
+  }, {
+    "type" : "REQUIREMENT",
+    "title" : "5.1 成长基金需求",
+    "source" : "产品文档.zip",
+    "version" : "5.1",
+    "location" : "成长基金相关章节",
+    "excerpt" : "需求内容等待逐条提取和人工核验，本页不提前生成具体数值规则。",
+    "commit" : "",
+    "filePath" : "",
+    "symbol" : "",
+    "verificationStatus" : "PENDING_REVIEW"
+  } ],
+  "markdownPath" : "pages/grow-fund.md"
+}

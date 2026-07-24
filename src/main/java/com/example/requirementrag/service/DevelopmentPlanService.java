@@ -6,6 +6,12 @@ import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.DevelopmentPlanResponse;
+import com.example.requirementrag.model.QueryRouting;
+import com.example.requirementrag.model.RagOutcome;
+import com.example.requirementrag.model.RagOutcomeStatus;
+import com.example.requirementrag.model.RagStageDiagnostic;
+import com.example.requirementrag.model.RagWarning;
+import com.example.requirementrag.observability.RagObservability;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
@@ -16,6 +22,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
+import java.time.Duration;
+import java.util.function.Supplier;
 
 /**
  * 面向“某个需求怎么入手”的开发方案服务。
@@ -34,16 +42,19 @@ public class DevelopmentPlanService {
     private final QdrantHybridStore documentStore;
     private final CodeKnowledgeService codeKnowledgeService;
     private final ChatClient chatClient;
+    private final RagObservability observability;
 
     public DevelopmentPlanService(RagProperties properties, ProjectRegistry projectRegistry,
                                   QueryRouter queryRouter, QdrantHybridStore documentStore,
-                                  CodeKnowledgeService codeKnowledgeService, ChatClient chatClient) {
+                                  CodeKnowledgeService codeKnowledgeService, ChatClient chatClient,
+                                  RagObservability observability) {
         this.properties = properties;
         this.projectRegistry = projectRegistry;
         this.queryRouter = queryRouter;
         this.documentStore = documentStore;
         this.codeKnowledgeService = codeKnowledgeService;
         this.chatClient = chatClient;
+        this.observability = observability;
     }
 
     /** 结合需求文档与代码检索结果，生成可落地的开发入手建议。 */
@@ -51,14 +62,35 @@ public class DevelopmentPlanService {
         String resolvedDocumentId = hasText(documentId) ? documentId : properties.knowledge().documentId();
         String resolvedVersion = hasText(version) ? version : properties.knowledge().version();
         int resolvedLimit = Math.min(Math.max(limit == null ? 8 : limit, 3), 20);
-        String resolvedProjectId = hasText(projectId) ? projectId : queryRouter.route(query, projectId).projectId();
+        RagOutcome<QueryRouting> routing = queryRouter.routeWithOutcome(query, projectId);
+        String resolvedProjectId = routing.data().projectId();
+        recordOutcome(routing, resolvedDocumentId, resolvedVersion);
 
-        List<ChunkRecord> documents = safeDocumentSearch(resolvedProjectId, query, resolvedDocumentId, resolvedVersion)
-                .stream()
-                .limit(resolvedLimit)
-                .toList();
-        List<CodeChunk> code = codeKnowledgeService.search(query, resolvedProjectId, resolvedLimit);
-        PlanDraft draft = draftWithProductContext(query, documents, code);
+        RagOutcome<List<ChunkRecord>> documentOutcome = retrieve("qdrant.hybrid_search", resolvedDocumentId,
+                resolvedVersion, "DOCUMENT_RETRIEVAL_UNAVAILABLE", "需求文档检索暂时不可用",
+                () -> documentStore.hybridSearch(resolveRequirementCollection(resolvedProjectId), query,
+                        resolvedDocumentId, resolvedVersion));
+        RagOutcome<List<CodeChunk>> codeOutcome = retrieve("code.hybrid_search", resolvedDocumentId,
+                resolvedVersion, "CODE_RETRIEVAL_UNAVAILABLE", "代码检索暂时不可用",
+                () -> codeKnowledgeService.search(query, resolvedProjectId, resolvedLimit));
+        List<ChunkRecord> documents = documentOutcome.data().stream().limit(resolvedLimit).toList();
+        List<CodeChunk> code = codeOutcome.data();
+
+        List<RagWarning> warnings = new ArrayList<>();
+        List<RagStageDiagnostic> diagnostics = new ArrayList<>();
+        collect(routing, warnings, diagnostics);
+        collect(documentOutcome, warnings, diagnostics);
+        collect(codeOutcome, warnings, diagnostics);
+        if (documents.isEmpty() && code.isEmpty()
+                && (documentOutcome.status() == RagOutcomeStatus.FAILED || codeOutcome.status() == RagOutcomeStatus.FAILED)) {
+            throw new RagUnavailableException(warnings);
+        }
+
+        RagOutcome<PlanDraft> draftOutcome = draftWithProductContext(query, documents, code,
+                resolvedDocumentId, resolvedVersion);
+        collect(draftOutcome, warnings, diagnostics);
+        PlanDraft draft = draftOutcome.data();
+        RagOutcomeStatus status = overallStatus(documents, code, warnings);
 
         return new DevelopmentPlanResponse(
                 query,
@@ -76,21 +108,10 @@ public class DevelopmentPlanService {
                 documents.stream()
                         .map(chunk -> new DevelopmentPlanResponse.DocumentReference(chunk.filename(), excerpt(chunk.parentText(), 260)))
                         .toList(),
-                code);
-    }
-
-    private List<ChunkRecord> safeDocumentSearch(String query, String documentId, String version) {
-        return safeDocumentSearch(null, query, documentId, version);
-    }
-
-    private List<ChunkRecord> safeDocumentSearch(String projectId, String query, String documentId, String version) {
-        try {
-            String collection = resolveRequirementCollection(projectId);
-            return documentStore.hybridSearch(collection, query, documentId, version);
-        }
-        catch (RuntimeException exception) {
-            return List.of();
-        }
+                code,
+                status,
+                warnings,
+                diagnostics);
     }
 
     private String resolveRequirementCollection(String projectId) {
@@ -104,12 +125,17 @@ public class DevelopmentPlanService {
         }
     }
 
-    private PlanDraft draftWithProductContext(String query, List<ChunkRecord> documents, List<CodeChunk> code) {
+    private RagOutcome<PlanDraft> draftWithProductContext(String query, List<ChunkRecord> documents,
+                                                           List<CodeChunk> code, String documentId, String version) {
+        long started = System.nanoTime();
         if (documents.isEmpty()) {
-            return PlanDraft.empty();
+            RagOutcome<PlanDraft> outcome = RagOutcome.of(RagOutcomeStatus.NO_RESULTS, PlanDraft.empty(), "llm.generate.plan",
+                    elapsedMillis(started), 0);
+            recordOutcome(outcome, documentId, version);
+            return outcome;
         }
         try {
-            return chatClient.prompt()
+            PlanDraft draft = chatClient.prompt()
                     .system("""
                             你是一名资深游戏后端主程，任务是基于“产品需求片段 + 当前项目代码命中”输出开发入手方案。
                             要求：
@@ -142,10 +168,71 @@ public class DevelopmentPlanService {
                     .options(GenerationChatOptions.forModel(properties.llm().generationModel()))
                     .call()
                     .entity(PlanDraft.class);
+            if (draft == null) {
+                long durationMs = elapsedMillis(started);
+                RagOutcome<PlanDraft> outcome = RagOutcome.degraded(PlanDraft.empty(), "llm.generate.plan",
+                        "PLAN_GENERATION_FALLBACK", "模型未返回有效方案，已使用规则化方案", durationMs, 0);
+                recordOutcome(outcome, documentId, version);
+                return outcome;
+            }
+            RagOutcome<PlanDraft> outcome = RagOutcome.of(RagOutcomeStatus.SUCCESS, draft,
+                    "llm.generate.plan", elapsedMillis(started), 1);
+            recordOutcome(outcome, documentId, version);
+            return outcome;
         }
         catch (RuntimeException exception) {
-            return PlanDraft.empty();
+            long durationMs = elapsedMillis(started);
+            RagOutcome<PlanDraft> outcome = RagOutcome.degraded(PlanDraft.empty(), "llm.generate.plan",
+                    "PLAN_GENERATION_FALLBACK", "模型生成失败，已使用规则化方案", durationMs, 0);
+            observability.outcome("llm.generate.plan", documentId, version, RagOutcomeStatus.DEGRADED,
+                    durationMs, "PLAN_GENERATION_FALLBACK", exception);
+            return outcome;
         }
+    }
+
+    private <T> RagOutcome<List<T>> retrieve(String stage, String documentId, String version,
+                                              String warningCode, String warningMessage,
+                                              Supplier<List<T>> action) {
+        long started = System.nanoTime();
+        try {
+            List<T> data = action.get();
+            List<T> safeData = data == null ? List.of() : data;
+            RagOutcomeStatus status = safeData.isEmpty() ? RagOutcomeStatus.NO_RESULTS : RagOutcomeStatus.SUCCESS;
+            RagOutcome<List<T>> outcome = RagOutcome.of(status, safeData, stage, elapsedMillis(started), safeData.size());
+            recordOutcome(outcome, documentId, version);
+            return outcome;
+        }
+        catch (RuntimeException exception) {
+            long durationMs = elapsedMillis(started);
+            RagOutcome<List<T>> outcome = RagOutcome.failed(List.of(), stage, warningCode, warningMessage, durationMs);
+            observability.outcome(stage, documentId, version, RagOutcomeStatus.FAILED, durationMs, warningCode, exception);
+            return outcome;
+        }
+    }
+
+    private void collect(RagOutcome<?> outcome, List<RagWarning> warnings, List<RagStageDiagnostic> diagnostics) {
+        warnings.addAll(outcome.warnings());
+        diagnostics.addAll(outcome.stageDiagnostics());
+    }
+
+    private void recordOutcome(RagOutcome<?> outcome, String documentId, String version) {
+        for (RagStageDiagnostic diagnostic : outcome.stageDiagnostics()) {
+            String warningCode = outcome.warnings().isEmpty() ? null : outcome.warnings().getFirst().code();
+            observability.outcome(diagnostic.stage(), documentId, version, diagnostic.status(),
+                    diagnostic.durationMs(), warningCode, null);
+        }
+    }
+
+    private RagOutcomeStatus overallStatus(List<ChunkRecord> documents, List<CodeChunk> code,
+                                           List<RagWarning> warnings) {
+        if (!warnings.isEmpty()) {
+            return RagOutcomeStatus.DEGRADED;
+        }
+        return documents.isEmpty() && code.isEmpty() ? RagOutcomeStatus.NO_RESULTS : RagOutcomeStatus.SUCCESS;
+    }
+
+    private long elapsedMillis(long started) {
+        return Duration.ofNanos(System.nanoTime() - started).toMillis();
     }
 
     private String summary(String query, List<ChunkRecord> documents, List<CodeChunk> code) {

@@ -1,0 +1,47 @@
+{
+  "schemaVersion" : 1,
+  "projectId" : "immortal-game-service",
+  "projectName" : "封神服务端",
+  "version" : "5.1",
+  "requirementVersion" : "5.1",
+  "baseCodeCommit" : "836abbd7f80561cfe6e19ac6ebbfdb1a9ebe3af7",
+  "codeCommit" : "f7e0e22bec3068a45636ec2985e21abc1975c3e5",
+  "generatedAt" : "2026-07-24T00:00:00+08:00",
+  "pages" : [ {
+    "featureId" : "grow-fund",
+    "title" : "成长基金",
+    "category" : "成长与付费",
+    "introducedVersion" : "5.1",
+    "status" : "CODE_VERIFIED",
+    "summary" : "成长基金是 5.1 中独立实现的功能。已确认服务入口、购买校验和购买执行代码；具体产品数值与领取规则仍需依据 5.1 需求原文审核。",
+    "aliases" : [ "成长基金活动", "Grow Fund" ],
+    "evidenceCount" : 3
+  }, {
+    "featureId" : "grow-discount",
+    "title" : "成长特价礼包",
+    "category" : "成长与付费",
+    "introducedVersion" : "5.0",
+    "status" : "CODE_VERIFIED",
+    "summary" : "成长特价礼包是早于 5.1 已存在的独立功能，由 GrowDiscountService 实现。它与 5.1 的成长基金不是同一个功能。",
+    "aliases" : [ "成长特价", "成长礼包", "Grow Discount" ],
+    "evidenceCount" : 1
+  }, {
+    "featureId" : "version-5.1-overview",
+    "title" : "5.1 版本概览",
+    "category" : "版本",
+    "introducedVersion" : "5.1",
+    "status" : "DRAFT",
+    "summary" : "5.1 的需求、代码和测试知识入口。当前代码基于 5.0.2 到 5.1 的 Git 增量建立版本边界，页面只收录有来源的事实。",
+    "aliases" : [ "V5.1", "5.1增量" ],
+    "evidenceCount" : 1
+  }, {
+    "featureId" : "grow-feature-boundary",
+    "title" : "成长基金与成长特价礼包边界",
+    "category" : "知识边界",
+    "introducedVersion" : "5.1",
+    "status" : "CODE_VERIFIED",
+    "summary" : "这是一条强制知识边界：成长基金和成长特价礼包使用不同的 featureId、版本来源和代码符号，检索、生成和测试均不得自动合并。",
+    "aliases" : [ "成长类功能对比", "成长基金与成长特价" ],
+    "evidenceCount" : 1
+  } ]
+}

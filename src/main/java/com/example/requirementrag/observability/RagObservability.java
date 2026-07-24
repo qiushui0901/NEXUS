@@ -1,5 +1,6 @@
 package com.example.requirementrag.observability;
 
+import com.example.requirementrag.model.RagOutcomeStatus;
 import com.example.requirementrag.model.RagStageEvent;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.DistributionSummary;
@@ -58,8 +59,8 @@ public class RagObservability {
                     .addKeyValue("documentId", safe(documentId)).addKeyValue("version", safe(version))
                     .addKeyValue("status", "failure").addKeyValue("durationMs", elapsedMillis(started))
                     .log("RAG stage failed");
-            remember(new RagStageEvent(Instant.now(), stage, safe(documentId), safe(version), "failure",
-                    elapsedMillis(started), exception.getClass().getSimpleName() + ": " + exception.getMessage()));
+            remember(new RagStageEvent(Instant.now(), stage, safe(documentId), safe(version), "failed",
+                    elapsedMillis(started), exception.getClass().getSimpleName()));
             throw exception;
         }
     }
@@ -67,6 +68,36 @@ public class RagObservability {
     /** 观测无返回值的操作。 */
     public void observe(String stage, String documentId, String version, Runnable action) {
         observe(stage, documentId, version, () -> { action.run(); return null; });
+    }
+
+    /** 记录已被调用方归类的阶段结果；公开诊断只保存稳定 warning code。 */
+    public void outcome(String stage, String documentId, String version, RagOutcomeStatus status,
+                        long durationMs, String warningCode, RuntimeException failure) {
+        String normalizedStatus = status.name().toLowerCase();
+        Counter.builder("rag.stage.outcomes").tag("stage", stage).tag("status", normalizedStatus)
+                .register(meterRegistry).increment();
+        if (warningCode != null && !warningCode.isBlank()) {
+            Counter.builder("rag.stage.warnings").tag("stage", stage).tag("code", warningCode)
+                    .register(meterRegistry).increment();
+        }
+        var event = log.atInfo();
+        if (status == RagOutcomeStatus.DEGRADED) {
+            event = log.atWarn();
+        } else if (status == RagOutcomeStatus.FAILED) {
+            Counter.builder("rag.stage.failures").tag("stage", stage)
+                    .tag("exception", failure == null ? "Unknown" : failure.getClass().getSimpleName())
+                    .register(meterRegistry).increment();
+            event = log.atError();
+            if (failure != null) {
+                event.setCause(failure);
+            }
+        }
+        event.addKeyValue("event", "rag_outcome").addKeyValue("stage", stage)
+                .addKeyValue("documentId", safe(documentId)).addKeyValue("version", safe(version))
+                .addKeyValue("status", normalizedStatus).addKeyValue("durationMs", durationMs)
+                .addKeyValue("warningCode", safe(warningCode)).log("RAG stage outcome");
+        remember(new RagStageEvent(Instant.now(), stage, safe(documentId), safe(version), normalizedStatus,
+                durationMs, warningCode == null ? "" : warningCode));
     }
 
     /** 记录某阶段处理的条目数量分布。 */
