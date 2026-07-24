@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 /** Reads published Wiki artifacts without depending on Qdrant or model services. */
@@ -58,6 +59,12 @@ public class WikiRepository {
     public VersionIndex getIndex(String projectId, String version) {
         Path file = WikiPathPolicy.resolveBelow(root, projectId, version).resolve("index.json");
         return read(file, VersionIndex.class, "Wiki 版本不存在: " + projectId + " " + version);
+    }
+
+    /** Returns an index when published, without using exceptions for optional comparison sources. */
+    public Optional<VersionIndex> findIndex(String projectId, String version) {
+        Path file = WikiPathPolicy.resolveBelow(root, projectId, version).resolve("index.json");
+        return Files.isRegularFile(file) ? Optional.of(read(file, VersionIndex.class, "Wiki 版本不存在")) : Optional.empty();
     }
 
     public Page getPage(String projectId, String version, String featureId) {

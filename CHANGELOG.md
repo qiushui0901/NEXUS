@@ -2,6 +2,37 @@
 
 本文件记录 **NEXUS 平台版本**。业务需求版本（例如封神 5.1）继续记录在 Wiki source、knowledge manifest 和构建请求中，两者不得混用。
 
+## 0.3.0-SNAPSHOT — 2026-07-24
+
+### Added
+
+- 新增 `VersionManifestService`，按项目和业务版本安全保存、更新、读取和列出独立版本档案。
+- 新增 `VersionComparisonService`，聚合需求、代码、测试和 Wiki 四类结构化版本差异，并为不可用来源返回明确状态和安全 warning。
+- 新增版本档案保存、列表、读取和版本比较 API，接入项目存在性、项目访问权、`WRITE` 与 `PUBLIC_READ` 权限校验。
+- 新增共享 `GitDiffService`，支持 Git 文件新增、修改、删除、重命名和 Java、测试、配置文件分类统计。
+- 新增共享 `RequirementChunkDiff` 与 `RequirementVersionDiffService`，按稳定父块标识比较需求版本且只读取 Qdrant payload。
+- 新增版本档案、需求差异、多来源比较、Controller 和 Git 文件差异测试。
+
+### Changed
+
+- `IncrementalCodeIndexService` 改为复用统一 `GitDiffService`，移除重复的 Git 进程执行和输出解析。
+- `VersionKnowledgeBuildPipeline` 改为复用统一需求父块差异算法，并使用通用、稳定且唯一的功能标识规则。
+- `WikiRepository` 新增按项目和版本读取索引的 `findIndex` 能力，供版本比较使用。
+- NEXUS 平台版本提升到 `0.3.0-SNAPSHOT`；平台版本继续与业务需求版本严格分离。
+
+### Security and data boundaries
+
+- 版本档案使用安全标识、规范化路径、同目录临时文件和原子替换，拒绝路径穿越。
+- Git 比较只接受 7–64 位十六进制 commit SHA，用户输入不能变成任意 Git 或 shell 参数。
+- 版本档案不保存 vector、embedding、Qdrant point、snapshot、storage、WAL、Token、密码或凭据。
+- 降级 warning 和公开错误不返回依赖异常原文、内部 URL、绝对路径或敏感配置。
+
+### Known limitations
+
+- 代码差异当前是文件级比较，不提供 AST 或符号级调用影响分析。
+- 平台不自动执行测试；测试差异只比较档案中已经记录的真实测试快照。
+- 任一版本的 Wiki 索引缺失时只返回 warning，不阻断需求、代码和测试比较。
+
 ## 0.2.0-SNAPSHOT — 2026-07-24
 
 ### Added

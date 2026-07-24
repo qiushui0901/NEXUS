@@ -85,11 +85,11 @@ class VersionKnowledgeBuildPipelineTest {
     }
 
     @Test
-    void keepsGrowthFundAndGrowthDiscountAsDifferentFeatureIds() throws Exception {
+    void keepsDifferentFeaturesAsDifferentFeatureIds() throws Exception {
         when(documentStore.scrollVersion("requirements_game", "requirements", "5.1"))
                 .thenReturn(List.of(
-                        chunk("fund", "成长基金.html", "fund-hash", "成长基金规则", "5.1"),
-                        chunk("discount", "成长特价礼包.html", "discount-hash", "成长特价规则", "5.1")));
+                        chunk("alpha", "FeatureAlpha.html", "alpha-hash", "Rule alpha", "5.1"),
+                        chunk("beta", "FeatureBeta.html", "beta-hash", "Rule beta", "5.1")));
 
         var result = pipeline.build(new BuildRequest("game", "5.1", null, "requirements", null, "head"));
 
@@ -97,7 +97,7 @@ class VersionKnowledgeBuildPipelineTest {
                 .get("features");
         assertThat(features.get(0).get("featureId").asText())
                 .isNotEqualTo(features.get(1).get("featureId").asText());
-        assertThat(features.toString()).contains("grow-fund", "grow-discount");
+        assertThat(features.toString()).contains("feature-alpha", "feature-beta");
         assertThat(result.missingTests()).isEqualTo(2);
     }
 

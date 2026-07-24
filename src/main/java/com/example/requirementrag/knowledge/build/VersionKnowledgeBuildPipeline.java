@@ -22,6 +22,7 @@ import com.example.requirementrag.wiki.WikiModels.Evidence;
 import com.example.requirementrag.wiki.WikiModels.PageSource;
 import com.example.requirementrag.wiki.WikiModels.Status;
 import com.example.requirementrag.wiki.WikiModels.VersionSource;
+import com.example.requirementrag.versioning.RequirementChunkDiff;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
@@ -223,12 +224,13 @@ public class VersionKnowledgeBuildPipeline {
             return groupCandidates(current.stream().map(chunk -> new VersionedChunk(chunk, chunk.version())).toList(),
                     List.of(), "CURRENT_VERSION");
         }
-        Set<String> currentHashes = current.stream().map(this::versionKey).collect(java.util.stream.Collectors.toSet());
-        Set<String> baseHashes = baseline.stream().map(this::versionKey).collect(java.util.stream.Collectors.toSet());
-        List<VersionedChunk> changed = current.stream().filter(chunk -> !baseHashes.contains(versionKey(chunk)))
-                .map(chunk -> new VersionedChunk(chunk, chunk.version())).toList();
-        List<VersionedChunk> removed = baseline.stream().filter(chunk -> !currentHashes.contains(versionKey(chunk)))
-                .map(chunk -> new VersionedChunk(chunk, chunk.version())).toList();
+        List<RequirementChunkDiff.ParentChange> diff = RequirementChunkDiff.compare(baseline, current);
+        List<VersionedChunk> changed = diff.stream()
+                .filter(change -> change.after() != null)
+                .map(change -> new VersionedChunk(change.after(), change.after().version())).toList();
+        List<VersionedChunk> removed = diff.stream()
+                .filter(change -> change.before() != null && change.type() != RequirementChunkDiff.Type.ADDED)
+                .map(change -> new VersionedChunk(change.before(), change.before().version())).toList();
         return groupCandidates(changed, removed, null);
     }
 
@@ -260,14 +262,7 @@ public class VersionKnowledgeBuildPipeline {
     }
 
     private List<ChunkRecord> deduplicateParents(List<ChunkRecord> chunks) {
-        Map<String, ChunkRecord> unique = new LinkedHashMap<>();
-        for (ChunkRecord chunk : chunks == null ? List.<ChunkRecord>of() : chunks) {
-            if (chunk == null) continue;
-            String key = hasText(chunk.parentId()) ? chunk.parentId()
-                    : filename(chunk) + ':' + chunk.parentOrder() + ':' + stableHash(chunk);
-            unique.putIfAbsent(key, chunk);
-        }
-        return List.copyOf(unique.values());
+        return RequirementChunkDiff.deduplicate(chunks);
     }
 
     private Evidence requirementEvidence(ChunkRecord chunk, String evidenceVersion) {
@@ -283,28 +278,14 @@ public class VersionKnowledgeBuildPipeline {
     }
 
     private List<String> featureConflicts(String title) {
-        String normalized = title.toLowerCase(Locale.ROOT).replace(" ", "");
-        boolean fund = normalized.contains("growfund") || normalized.contains("成长基金");
-        boolean discount = normalized.contains("growdiscount") || normalized.contains("成长特价");
-        if (fund && discount) {
-            return List.of("名称同时包含成长基金与成长特价，禁止自动合并，需人工拆分并核验 featureId。");
-        }
         return List.of();
     }
 
     private String uniqueFeatureId(String title, String filename, Set<String> usedIds) {
-        String normalized = (title + " " + filename).toLowerCase(Locale.ROOT).replace(" ", "");
-        String base;
-        if (normalized.contains("growfund") || normalized.contains("成长基金")) {
-            base = "grow-fund";
-        } else if (normalized.contains("growdiscount") || normalized.contains("成长特价")) {
-            base = "grow-discount";
-        } else {
-            base = title.toLowerCase(Locale.ROOT).replaceAll("([a-z0-9])([A-Z])", "$1-$2")
-                    .replaceAll("[^a-z0-9]+", "-").replaceAll("^-|-$", "");
-            if (base.isBlank()) base = "feature-" + sha256(filename).substring(0, 12);
-            if (base.length() > 60) base = base.substring(0, 60).replaceAll("-$", "");
-        }
+        String base = title.replaceAll("([a-z0-9])([A-Z])", "$1-$2")
+                .toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("^-|-$", "");
+        if (base.isBlank()) base = "feature-" + sha256(filename).substring(0, 12);
+        if (base.length() > 60) base = base.substring(0, 60).replaceAll("-$", "");
         String candidate = base;
         if (usedIds.contains(candidate)) candidate = base + '-' + sha256(filename).substring(0, 8);
         int suffix = 2;
@@ -326,14 +307,6 @@ public class VersionKnowledgeBuildPipeline {
 
     private String filename(String value) {
         return hasText(value) ? value.replace('\\', '/') : "unknown-requirement";
-    }
-
-    private String versionKey(ChunkRecord chunk) {
-        return filename(chunk) + ':' + stableHash(chunk);
-    }
-
-    private String stableHash(ChunkRecord chunk) {
-        return hasText(chunk.contentHash()) ? chunk.contentHash() : sha256(safe(chunk.parentText()));
     }
 
     private String sha256(String value) {

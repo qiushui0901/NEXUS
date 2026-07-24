@@ -200,7 +200,35 @@ POST /api/knowledge/build
 - 草稿不会自动覆盖 `data/wiki-sources/` 或 `data/wiki/`。
 - 草稿不包含向量、Qdrant point、snapshot、WAL 或凭据。
 
-### 7. 监控与数据健康
+### 7. 版本档案与多来源差异分析
+
+NEXUS 使用独立于向量库的版本档案，将一个业务版本对应的需求、代码、测试和 Wiki 基线关联起来：
+
+```text
+data/version-manifests/<projectId>/<version>.json
+```
+
+每份档案只保存小型、可评审的结构化元数据，例如需求文档版本、Git commit SHA、真实测试快照、Wiki 版本和构建编号。档案不保存向量、embedding、Qdrant point、snapshot、WAL、storage 数据或凭据。
+
+主要 API：
+
+```text
+PUT /api/versions/manifests
+GET /api/versions/manifests?projectId=...
+GET /api/versions/manifests/{version}?projectId=...
+GET /api/versions/compare?projectId=...&fromVersion=...&toVersion=...
+```
+
+版本比较报告分别返回：
+
+- **需求差异**：父块新增、修改和删除，附带有限长度的原文摘录。
+- **代码差异**：Git commit 之间的文件新增、修改、删除、重命名及分类统计。
+- **测试差异**：档案中真实测试快照的汇总变化、用例增删和状态变化。
+- **Wiki 差异**：页面增删、审核状态、摘要和证据数量变化。
+
+每个来源都明确标记 `AVAILABLE` 或 `NOT_AVAILABLE`。单个非关键来源缺失时，报告以安全 warning 降级返回，不会把缺失数据伪装成“没有变化”。当前代码比较是可靠的**文件级差异**，尚不宣称提供 AST 或符号级影响分析；测试比较只读取真实快照，不把建议测试点当成测试执行结果。
+
+### 8. 监控与数据健康
 
 访问监控工作台：
 
@@ -318,7 +346,7 @@ Qdrant 数据保存在 Docker 命名卷或本地运行目录中，不提交到 G
 1. 将需求评审的 BGE/LLM 重排也迁移到统一 RetrievalPipeline，并使用 Gold Dataset 比较质量。
 2. 接入真实测试执行结果，把“建议测试点”升级为可追溯的测试证据。
 3. 增加草稿在线审核、评论、拆分/合并和审批发布流程。
-4. 增加代码 commit 差异、影响分析和回归范围推荐。
+4. 文件级代码 commit 差异已经完成；下一步增加符号级影响分析和回归范围推荐。
 5. 将检索评测集从首批 10 条扩展到约 50 条，并持续评估版本串线和相似功能误召回。
 
 自动构建只产生 `DRAFT / PENDING_REVIEW` 内容。未经原始需求、代码或测试结果确认的业务规则不能作为已确认事实发布。

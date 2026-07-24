@@ -58,7 +58,7 @@ class IncrementalCodeIndexServiceTest {
         whenProject(registry, project);
 
         IncrementalCodeIndexResponse response = new IncrementalCodeIndexService(
-                properties, registry, new JavaCodeScanner(), store)
+                registry, new JavaCodeScanner(), store, new GitDiffService(properties, registry))
                 .indexWithResult("project", baseSha, newSha);
 
         assertEquals(2, response.javaFiles());
@@ -72,10 +72,10 @@ class IncrementalCodeIndexServiceTest {
     void zeroShaSkipsRepositoryAndStore() throws Exception {
         ProjectRegistry registry = mock(ProjectRegistry.class);
         CodeQdrantStore store = mock(CodeQdrantStore.class);
-        RagProperties properties = mock(RagProperties.class);
+        GitDiffService gitDiffService = mock(GitDiffService.class);
 
         IncrementalCodeIndexResponse response = new IncrementalCodeIndexService(
-                properties, registry, new JavaCodeScanner(), store)
+                registry, new JavaCodeScanner(), store, gitDiffService)
                 .indexWithResult("project", "0000000000000000000000000000000000000000", "new");
 
         assertEquals(0, response.changedFiles());

@@ -7,7 +7,7 @@ import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
 @Configuration
-@EnableConfigurationProperties({AuthProperties.class, WikiProperties.class})
+@EnableConfigurationProperties({AuthProperties.class, WikiProperties.class, VersioningProperties.class})
 public class WebMvcConfig implements WebMvcConfigurer {
 
     private final ProjectAuthInterceptor projectAuthInterceptor;
