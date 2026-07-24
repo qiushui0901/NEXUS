@@ -6,14 +6,18 @@ import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.DevelopmentPlanResponse;
-import com.example.requirementrag.model.QueryRouting;
 import com.example.requirementrag.model.RagOutcome;
 import com.example.requirementrag.model.RagOutcomeStatus;
 import com.example.requirementrag.model.RagStageDiagnostic;
 import com.example.requirementrag.model.RagWarning;
 import com.example.requirementrag.observability.RagObservability;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
+import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
+import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
+import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
+import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -23,7 +27,6 @@ import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
 import java.time.Duration;
-import java.util.function.Supplier;
 
 /**
  * 面向“某个需求怎么入手”的开发方案服务。
@@ -37,54 +40,40 @@ public class DevelopmentPlanService {
     private static final int MAX_CODE_CONTEXT_CHARS = 8_000;
 
     private final RagProperties properties;
-    private final ProjectRegistry projectRegistry;
-    private final QueryRouter queryRouter;
-    private final QdrantHybridStore documentStore;
-    private final CodeKnowledgeService codeKnowledgeService;
+    private final RetrievalPipeline retrievalPipeline;
     private final ChatClient chatClient;
     private final RagObservability observability;
 
-    public DevelopmentPlanService(RagProperties properties, ProjectRegistry projectRegistry,
-                                  QueryRouter queryRouter, QdrantHybridStore documentStore,
-                                  CodeKnowledgeService codeKnowledgeService, ChatClient chatClient,
-                                  RagObservability observability) {
+    @Autowired
+    public DevelopmentPlanService(RagProperties properties, RetrievalPipeline retrievalPipeline,
+                                  ChatClient chatClient, RagObservability observability) {
         this.properties = properties;
-        this.projectRegistry = projectRegistry;
-        this.queryRouter = queryRouter;
-        this.documentStore = documentStore;
-        this.codeKnowledgeService = codeKnowledgeService;
+        this.retrievalPipeline = retrievalPipeline;
         this.chatClient = chatClient;
         this.observability = observability;
     }
 
+    /** Backward-compatible constructor kept for focused unit tests and embedded consumers. */
+    public DevelopmentPlanService(RagProperties properties, ProjectRegistry projectRegistry,
+                                  QueryRouter queryRouter, QdrantHybridStore documentStore,
+                                  CodeKnowledgeService codeKnowledgeService, ChatClient chatClient,
+                                  RagObservability observability) {
+        this(properties, new RetrievalPipeline(properties, projectRegistry, queryRouter, documentStore,
+                codeKnowledgeService, observability), chatClient, observability);
+    }
+
     /** 结合需求文档与代码检索结果，生成可落地的开发入手建议。 */
     public DevelopmentPlanResponse plan(String query, String documentId, String version, String projectId, Integer limit) {
-        String resolvedDocumentId = hasText(documentId) ? documentId : properties.knowledge().documentId();
-        String resolvedVersion = hasText(version) ? version : properties.knowledge().version();
-        int resolvedLimit = Math.min(Math.max(limit == null ? 8 : limit, 3), 20);
-        RagOutcome<QueryRouting> routing = queryRouter.routeWithOutcome(query, projectId);
-        String resolvedProjectId = routing.data().projectId();
-        recordOutcome(routing, resolvedDocumentId, resolvedVersion);
+        RagOutcome<RetrievalBundle> retrieval = retrievalPipeline.execute(new RetrievalRequest(
+                query, RetrievalProfile.DEVELOPMENT_PLAN, projectId, documentId, version, limit));
+        RetrievalBundle bundle = retrieval.data();
+        String resolvedDocumentId = bundle.documentId();
+        String resolvedVersion = bundle.version();
+        List<ChunkRecord> documents = bundle.requirementEvidence();
+        List<CodeChunk> code = bundle.codeEvidence();
 
-        RagOutcome<List<ChunkRecord>> documentOutcome = retrieve("qdrant.hybrid_search", resolvedDocumentId,
-                resolvedVersion, "DOCUMENT_RETRIEVAL_UNAVAILABLE", "需求文档检索暂时不可用",
-                () -> documentStore.hybridSearch(resolveRequirementCollection(resolvedProjectId), query,
-                        resolvedDocumentId, resolvedVersion));
-        RagOutcome<List<CodeChunk>> codeOutcome = retrieve("code.hybrid_search", resolvedDocumentId,
-                resolvedVersion, "CODE_RETRIEVAL_UNAVAILABLE", "代码检索暂时不可用",
-                () -> codeKnowledgeService.search(query, resolvedProjectId, resolvedLimit));
-        List<ChunkRecord> documents = documentOutcome.data().stream().limit(resolvedLimit).toList();
-        List<CodeChunk> code = codeOutcome.data();
-
-        List<RagWarning> warnings = new ArrayList<>();
-        List<RagStageDiagnostic> diagnostics = new ArrayList<>();
-        collect(routing, warnings, diagnostics);
-        collect(documentOutcome, warnings, diagnostics);
-        collect(codeOutcome, warnings, diagnostics);
-        if (documents.isEmpty() && code.isEmpty()
-                && (documentOutcome.status() == RagOutcomeStatus.FAILED || codeOutcome.status() == RagOutcomeStatus.FAILED)) {
-            throw new RagUnavailableException(warnings);
-        }
+        List<RagWarning> warnings = new ArrayList<>(retrieval.warnings());
+        List<RagStageDiagnostic> diagnostics = new ArrayList<>(retrieval.stageDiagnostics());
 
         RagOutcome<PlanDraft> draftOutcome = draftWithProductContext(query, documents, code,
                 resolvedDocumentId, resolvedVersion);
@@ -112,17 +101,6 @@ public class DevelopmentPlanService {
                 status,
                 warnings,
                 diagnostics);
-    }
-
-    private String resolveRequirementCollection(String projectId) {
-        if (projectId == null || projectId.isBlank()) {
-            return properties.qdrant().collection();
-        }
-        try {
-            return projectRegistry.resolveRequirementCollection(projectId);
-        } catch (IllegalArgumentException ignored) {
-            return properties.qdrant().collection();
-        }
     }
 
     private RagOutcome<PlanDraft> draftWithProductContext(String query, List<ChunkRecord> documents,
@@ -186,26 +164,6 @@ public class DevelopmentPlanService {
                     "PLAN_GENERATION_FALLBACK", "模型生成失败，已使用规则化方案", durationMs, 0);
             observability.outcome("llm.generate.plan", documentId, version, RagOutcomeStatus.DEGRADED,
                     durationMs, "PLAN_GENERATION_FALLBACK", exception);
-            return outcome;
-        }
-    }
-
-    private <T> RagOutcome<List<T>> retrieve(String stage, String documentId, String version,
-                                              String warningCode, String warningMessage,
-                                              Supplier<List<T>> action) {
-        long started = System.nanoTime();
-        try {
-            List<T> data = action.get();
-            List<T> safeData = data == null ? List.of() : data;
-            RagOutcomeStatus status = safeData.isEmpty() ? RagOutcomeStatus.NO_RESULTS : RagOutcomeStatus.SUCCESS;
-            RagOutcome<List<T>> outcome = RagOutcome.of(status, safeData, stage, elapsedMillis(started), safeData.size());
-            recordOutcome(outcome, documentId, version);
-            return outcome;
-        }
-        catch (RuntimeException exception) {
-            long durationMs = elapsedMillis(started);
-            RagOutcome<List<T>> outcome = RagOutcome.failed(List.of(), stage, warningCode, warningMessage, durationMs);
-            observability.outcome(stage, documentId, version, RagOutcomeStatus.FAILED, durationMs, warningCode, exception);
             return outcome;
         }
     }

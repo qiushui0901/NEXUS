@@ -168,14 +168,37 @@ POST /api/search/cross-project
 POST /api/webhooks/gitlab
 ```
 
-### 6. 开发方案与统一检索
+### 6. 开发方案、统一检索与版本知识草稿
 
-需求检索和代码检索通过统一 RetrievalPipeline 提供候选召回、重排、证据归并和降级处理。开发方案接口可以基于需求与代码证据生成实施建议，并支持 SSE 流式返回。
+需求检索和代码检索通过统一 `RetrievalPipeline` 完成项目路由、双源召回、证据去重、数量控制、阶段诊断和降级处理。同步开发方案与 SSE 流式开发方案使用同一条证据管线，不再各自维护检索逻辑。
+
+`VersionKnowledgeBuildPipeline` 可以读取目标需求版本和基线版本的 Qdrant payload，以 `contentHash` 识别新增、修改和删除的父块，再关联候选代码证据，生成待产品、开发和测试审核的知识草稿。
 
 ```text
 POST /api/assistant/development-plan
 POST /api/assistant/development-plan/stream
+POST /api/knowledge/build
 ```
+
+构建请求示例：
+
+```json
+{
+  "projectId": "immortal-game-service",
+  "version": "5.1",
+  "baseVersion": "5.0.2",
+  "documentId": "fengshen",
+  "baseCodeCommit": "836abbd7...",
+  "codeCommit": "f7e0e22b..."
+}
+```
+
+构建结果只写入 `data/wiki-drafts/<project>/<version>/<buildId>/`：
+
+- `build.json`：功能事实草稿、缺代码/缺测试状态、冲突和安全警告。
+- `wiki-source.json`：可在人工审核后整理到正式 Wiki 源定义的草稿。
+- 草稿不会自动覆盖 `data/wiki-sources/` 或 `data/wiki/`。
+- 草稿不包含向量、Qdrant point、snapshot、WAL 或凭据。
 
 ### 7. 监控与数据健康
 
@@ -290,12 +313,12 @@ Qdrant 数据保存在 Docker 命名卷或本地运行目录中，不提交到 G
 
 ## 当前阶段边界
 
-当前版本已经具备版本化 Wiki 生成和浏览基础能力，但仍需要继续完善：
+当前版本已经具备统一证据检索、版本增量知识草稿、版本化 Wiki 生成和浏览基础能力，但仍需要继续完善：
 
-1. 从 RetrievalPipeline 和 LLM 自动生成结构化事实层。
-2. 自动关联需求版本、代码 commit 和测试结果。
-3. 增加在线审核、评论和审批流程。
-4. 增加版本差异、影响分析和回归范围推荐。
-5. 建立覆盖需求、代码、测试和 Wiki 正确性的持续评测集。
+1. 将需求评审的 BGE/LLM 重排也迁移到统一 RetrievalPipeline，并使用 Gold Dataset 比较质量。
+2. 接入真实测试执行结果，把“建议测试点”升级为可追溯的测试证据。
+3. 增加草稿在线审核、评论、拆分/合并和审批发布流程。
+4. 增加代码 commit 差异、影响分析和回归范围推荐。
+5. 将检索评测集从首批 10 条扩展到约 50 条，并持续评估版本串线和相似功能误召回。
 
-在自动生成能力完成前，未经原始需求或代码确认的业务规则必须标记为“待核验”，不能作为已确认事实发布。
+自动构建只产生 `DRAFT / PENDING_REVIEW` 内容。未经原始需求、代码或测试结果确认的业务规则不能作为已确认事实发布。

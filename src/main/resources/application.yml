@@ -125,6 +125,7 @@ app:
     wiki:
       root-path: ${WIKI_ROOT_PATH:data/wiki}
       source-path: ${WIKI_SOURCE_PATH:data/wiki-sources}
+      draft-path: ${WIKI_DRAFT_PATH:data/wiki-drafts}
     review:
       min-questions: ${REVIEW_MIN_QUESTIONS:12}
       max-questions: ${REVIEW_MAX_QUESTIONS:15}
