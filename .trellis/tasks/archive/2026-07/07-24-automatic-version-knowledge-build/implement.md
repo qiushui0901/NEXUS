@@ -29,7 +29,7 @@
 - [x] 运行 `JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B verify`。
 - [x] 运行 `git diff --check`。
 - [x] 执行 Trellis spec update/任务记录。
-- [ ] 检查 Git 变更后提交并推送 main。
+- [x] 检查 Git 变更后提交并推送 main。
 
 ## Verification Record
 

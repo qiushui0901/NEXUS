@@ -34,14 +34,14 @@
 
 ## Acceptance Criteria
 
-- [ ] `RetrievalPipeline` 覆盖成功、零命中、单侧失败降级、双侧无证据失败四类测试。
-- [ ] `DevelopmentPlanService` 与 `DevelopmentPlanStreamService` 不再自行编排路由和两类召回。
-- [ ] `POST /api/knowledge/build` 有权限标记、输入校验和 Controller 测试。
-- [ ] 构建器能根据 baseVersion 排除未变化父块，生成独立 featureId 和可审核草稿文件。
-- [ ] 路径穿越、禁用字段和正式 Wiki 不被覆盖有回归测试。
-- [ ] 默认 `JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B verify` 不依赖外部 Qdrant/模型且通过。
-- [ ] `git diff --check` 通过，Git 变更不包含 Qdrant storage、snapshot、向量或凭据。
-- [ ] 版本记录完成并提交、推送到 GitHub。
+- [x] `RetrievalPipeline` 覆盖成功、零命中、单侧失败降级、双侧无证据失败四类测试。
+- [x] `DevelopmentPlanService` 与 `DevelopmentPlanStreamService` 不再自行编排路由和两类召回。
+- [x] `POST /api/knowledge/build` 有权限标记、输入校验和 Controller 测试。
+- [x] 构建器能根据 baseVersion 排除未变化父块，生成独立 featureId 和可审核草稿文件。
+- [x] 路径穿越、禁用字段和正式 Wiki 不被覆盖有回归测试。
+- [x] 默认 `JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B verify` 不依赖外部 Qdrant/模型且通过。
+- [x] `git diff --check` 通过，Git 变更不包含 Qdrant storage、snapshot、向量或凭据。
+- [x] 版本记录完成并提交、推送到 GitHub。
 
 ## Out of Scope
 
