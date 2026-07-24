@@ -228,7 +228,37 @@ GET /api/versions/compare?projectId=...&fromVersion=...&toVersion=...
 
 每个来源都明确标记 `AVAILABLE` 或 `NOT_AVAILABLE`。单个非关键来源缺失时，报告以安全 warning 降级返回，不会把缺失数据伪装成“没有变化”。当前代码比较是可靠的**文件级差异**，尚不宣称提供 AST 或符号级影响分析；测试比较只读取真实快照，不把建议测试点当成测试执行结果。
 
-### 8. 监控与数据健康
+### 8. 版本中心与差异浏览
+
+应用启动后访问：
+
+```text
+http://localhost:8080/versions
+```
+
+版本中心复用当前账号可访问的项目，读取版本档案并让产品、开发和测试选择两个业务版本进行比较。页面提供：
+
+- 版本状态、基准版本、需求版本、代码 commit、Wiki 版本和更新时间
+- 需求、代码、测试、Wiki 四类独立差异页签
+- 单一来源不可用时的降级状态和安全 warning
+- 测试真实执行快照状态，缺失时明确显示“没有真实执行快照”
+- Wiki 差异回到具体项目、版本和功能页面的深链接
+
+版本中心主要依赖：
+
+```text
+GET /api/wiki/projects
+GET /api/versions/manifests?projectId=...
+GET /api/versions/compare?projectId=...&fromVersion=...&toVersion=...
+```
+
+Wiki 页面也提供“版本中心”入口；从版本中心进入 Wiki 时，可以使用以下查询参数定位页面：
+
+```text
+/wiki?projectId=...&version=...&featureId=...
+```
+
+### 9. 监控与数据健康
 
 访问监控工作台：
 
@@ -318,6 +348,7 @@ Qdrant 数据保存在 Docker 命名卷或本地运行目录中，不提交到 G
 ```text
 监控工作台：http://localhost:8080/monitor
 版本化 Wiki：http://localhost:8080/wiki
+版本中心：http://localhost:8080/versions
 ```
 
 ## 数据与版本管理原则
@@ -341,7 +372,7 @@ Qdrant 数据保存在 Docker 命名卷或本地运行目录中，不提交到 G
 
 ## 当前阶段边界
 
-当前版本已经具备统一证据检索、版本增量知识草稿、版本化 Wiki 生成和浏览基础能力，但仍需要继续完善：
+当前 `0.4.0-SNAPSHOT` 已具备统一证据检索、版本增量知识草稿、版本化 Wiki 生成、版本中心和多来源差异浏览基础能力，但仍需要继续完善：
 
 1. 将需求评审的 BGE/LLM 重排也迁移到统一 RetrievalPipeline，并使用 Gold Dataset 比较质量。
 2. 接入真实测试执行结果，把“建议测试点”升级为可追溯的测试证据。

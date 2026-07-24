@@ -36,6 +36,7 @@
     <div class="selectors"><select id="projectSelect" aria-label="项目"></select><select id="versionSelect" aria-label="版本"></select></div>
     <div class="header-spacer"></div>
     <input id="apiKey" class="api-key" type="password" placeholder="API Key" title="启用认证时填写">
+    <a class="header-link" href="/versions">版本中心</a>
     <a class="header-link" href="/monitor">返回代码工作台</a>
   </header>
   <div class="layout">
@@ -52,16 +53,17 @@
 </div>
 <div id="statusbar" class="statusbar" hidden></div>
 <script>
-const state={projects:[],index:null,page:null,tab:'overview',query:'',category:'',status:''};
+const requested={projectId:new URLSearchParams(location.search).get('projectId')||'',version:new URLSearchParams(location.search).get('version')||'',featureId:new URLSearchParams(location.search).get('featureId')||''};
+const state={projects:[],index:null,page:null,tab:'overview',query:'',category:'',status:'',pendingFeatureId:requested.featureId};
 const $=id=>document.getElementById(id); const esc=value=>String(value??'').replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 const labels={DRAFT:'待审核',REQUIREMENT_VERIFIED:'需求已核验',CODE_VERIFIED:'代码已核验',FULLY_VERIFIED:'全部核验',CONFLICT:'存在冲突',STALE:'可能过期',MISSING_IMPLEMENTATION:'缺少实现',UNDOCUMENTED_IMPLEMENTATION:'缺少需求',REJECTED:'已驳回'};
 function headers(){const key=$('apiKey').value.trim();return key?{'X-API-Key':key}:{}}
 async function api(path,options={}){const response=await fetch(path,{...options,headers:{...headers(),...(options.headers||{})}});if(!response.ok){let detail='请求失败';try{detail=(await response.json()).detail||detail}catch{}throw new Error(detail)}return response.json()}
 function notice(text){const bar=$('statusbar');bar.textContent=text;bar.hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>bar.hidden=true,2800)}
 function params(values){return new URLSearchParams(values).toString()}
-async function loadProjects(){state.projects=await api('/api/wiki/projects');$('projectSelect').innerHTML=state.projects.map(p=>`<option value="${esc(p.projectId)}">${esc(p.projectName||p.projectId)}</option>`).join('');if(!state.projects.length){$('main').innerHTML='<div class="empty">还没有已生成的 Wiki。请先准备版本源定义并生成。</div>';return}await loadVersions()}
-async function loadVersions(){const projectId=$('projectSelect').value;const versions=await api('/api/wiki/versions?'+params({projectId}));$('versionSelect').innerHTML=versions.map(v=>`<option value="${esc(v.version)}">版本 ${esc(v.version)}</option>`).join('');if(versions.length)await loadIndex();else $('main').innerHTML='<div class="empty">这个项目还没有可浏览版本。</div>'}
-async function loadIndex(){const projectId=$('projectSelect').value,version=$('versionSelect').value;state.index=await api('/api/wiki/index?'+params({projectId,version}));populateFilters();renderList();const first=filteredPages()[0]||state.index.pages[0];if(first)await selectPage(first.featureId)}
+async function loadProjects(){state.projects=await api('/api/wiki/projects');$('projectSelect').innerHTML=state.projects.map(p=>`<option value="${esc(p.projectId)}">${esc(p.projectName||p.projectId)}</option>`).join('');if(!state.projects.length){$('main').innerHTML='<div class="empty">还没有已生成的 Wiki。请先准备版本源定义并生成。</div>';return}if(requested.projectId&&state.projects.some(project=>project.projectId===requested.projectId))$('projectSelect').value=requested.projectId;await loadVersions()}
+async function loadVersions(){const projectId=$('projectSelect').value;const versions=await api('/api/wiki/versions?'+params({projectId}));$('versionSelect').innerHTML=versions.map(v=>`<option value="${esc(v.version)}">版本 ${esc(v.version)}</option>`).join('');if(requested.version&&versions.some(version=>version.version===requested.version))$('versionSelect').value=requested.version;if(versions.length)await loadIndex();else $('main').innerHTML='<div class="empty">这个项目还没有可浏览版本。</div>'}
+async function loadIndex(){const projectId=$('projectSelect').value,version=$('versionSelect').value;state.index=await api('/api/wiki/index?'+params({projectId,version}));populateFilters();renderList();const requestedPage=state.pendingFeatureId&&state.index.pages.find(page=>page.featureId===state.pendingFeatureId);const first=requestedPage||filteredPages()[0]||state.index.pages[0];state.pendingFeatureId='';if(first)await selectPage(first.featureId)}
 function populateFilters(){const pages=state.index?.pages||[];const categories=[...new Set(pages.map(p=>p.category))].sort();const statuses=[...new Set(pages.map(p=>p.status))].sort();$('categoryFilter').innerHTML='<option value="">全部分类</option>'+categories.map(x=>`<option>${esc(x)}</option>`).join('');$('statusFilter').innerHTML='<option value="">全部状态</option>'+statuses.map(x=>`<option value="${esc(x)}">${esc(labels[x]||x)}</option>`).join('')}
 function filteredPages(){const q=state.query.trim().toLowerCase();return (state.index?.pages||[]).filter(p=>(!state.category||p.category===state.category)&&(!state.status||p.status===state.status)&&(!q||[p.title,p.featureId,p.summary,...(p.aliases||[])].join(' ').toLowerCase().includes(q)))}
 function renderList(){const pages=filteredPages();$('counts').textContent=`${pages.length} / ${state.index?.pages?.length||0} 个页面`;$('pageList').innerHTML=pages.length?pages.map(p=>`<button class="page-item ${state.page?.featureId===p.featureId?'active':''}" data-id="${esc(p.featureId)}"><strong>${esc(p.title)}</strong><span class="badge ${esc(p.status)}">${esc(labels[p.status]||p.status)}</span> <small>${esc(p.category)}</small></button>`).join(''):'<div class="empty">没有匹配页面</div>';$('pageList').querySelectorAll('[data-id]').forEach(el=>el.onclick=()=>selectPage(el.dataset.id))}

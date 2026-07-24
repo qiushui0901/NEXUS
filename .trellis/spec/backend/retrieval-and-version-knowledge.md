@@ -60,6 +60,16 @@ GET /api/versions/manifests/{version}?projectId=...
 GET /api/versions/compare?projectId=...&fromVersion=...&toVersion=...
 ```
 
+### Version comparison browser
+
+```http
+GET /versions                  # redirects to /versions.html
+GET /wiki?projectId=...&version=...&featureId=...
+```
+
+The native browser page consumes `/api/wiki/projects`, `/api/versions/manifests`,
+and `/api/versions/compare`. It must not introduce a second frontend build chain.
+
 Saving requires `Permission.WRITE`. Listing, reading, and comparing require `Permission.PUBLIC_READ`. Every endpoint must validate the project through `ProjectRegistry` and enforce project access through `ProjectAccessGuard`.
 
 ## 3. Contracts
@@ -114,6 +124,16 @@ Saving requires `Permission.WRITE`. Listing, reading, and comparing require `Per
 - A missing non-critical source returns `NOT_AVAILABLE` and a warning while other sources continue. Manifest absence or invalid identifiers remain hard failures.
 - Public warnings must use stable text and must not expose dependency exception messages, repository absolute paths, internal URLs, commands, or credentials.
 
+### Version comparison browser contract
+
+- The page selects a target manifest first, then uses its `baseVersion` when that manifest exists; otherwise it selects the newest different manifest as the base.
+- The page must disable comparison when fewer than two manifests exist or when the selected versions are equal. It must show a clear empty state rather than calling the compare endpoint.
+- Requirement, code, test, and Wiki sections render independently. `NOT_AVAILABLE` is a visible degraded state and must not be rendered as a successful zero-change result.
+- Missing test snapshots must display that there is no real execution snapshot. Suggested test points and page text must never be presented as executed test evidence.
+- Wiki changes link to `/wiki?projectId=...&version=...&featureId=...`; the Wiki page consumes those parameters and falls back to its existing default selection when a target is absent.
+- API-derived text must pass through one HTML escaping function before insertion into `innerHTML`; API keys are read from `localStorage.nexusApiKey` and sent as `X-API-Key` when present.
+- Warnings and UI errors use safe public messages only. The page must not show dependency exception text, absolute paths, secrets, or vector data.
+
 ### Forbidden persisted fields
 
 Draft and manifest JSON must not contain fields for vectors, embeddings, Qdrant points, snapshots, WAL or storage internals, API keys, passwords, secrets, tokens, authorization, or credentials. Evidence may contain only bounded text excerpts and traceable requirement/code metadata.
@@ -142,6 +162,8 @@ VERSION_MANIFEST_ROOT_PATH=data/version-manifests
 | Draft or manifest serialization contains a forbidden field | Abort the write and publish no partial output |
 | No requirement version delta exists | Return `NO_CHANGES`; do not fabricate features |
 | A comparison source lacks references or data | Mark that section `NOT_AVAILABLE` and add a safe warning |
+| Browser receives fewer than two manifests | Disable compare and show an empty state; do not call `/api/versions/compare` |
+| Browser receives an unavailable source | Keep other tabs usable and show the source's safe warning |
 | Either version manifest does not exist | Return the stable manifest-not-found error |
 | Git commit is not a concrete SHA | Reject before starting Git |
 | Test snapshot contains duplicate `caseId` | Reject the manifest |
@@ -180,6 +202,8 @@ Changes to these contracts require assertions for:
 - no writes to formal Wiki/source roots from draft build
 - forbidden-field absence in serialized drafts and manifests
 - Controller validation, project access, and permission requirements
+- Browser route, static page contract, navigation, deep-link parameter consumption, and HTML escaping
+- Browser empty, loading, error, unavailable-source, and missing-real-test-snapshot states
 - Spring application-context binding for `WikiProperties` and `VersioningProperties`
 
 Run the full Java 21 verification before delivery:
@@ -198,3 +222,7 @@ git diff --check
 **Wrong:** copy Qdrant points or vectors into `wiki-source.json` or a version manifest, publish drafts directly to `data/wiki`, or treat suggested tests as passed execution results.
 
 **Correct:** map payloads to bounded textual evidence, reject forbidden fields, keep drafts and manifests in their dedicated roots, and require real test snapshots for test-result comparison.
+
+**Wrong:** let the browser interpolate API text directly into `innerHTML`, or turn a missing source into a zero-change card.
+
+**Correct:** escape every API-derived value, render `NOT_AVAILABLE` with a safe warning, and keep the other comparison tabs available.

@@ -23,6 +23,11 @@ class WikiKnowledgePageTest {
                 .contains("['evidence','证据']")
                 .contains("/api/wiki/projects")
                 .contains("/api/wiki/generate")
+                .contains("/versions")
+                .contains("new URLSearchParams(location.search).get('projectId')")
+                .contains("new URLSearchParams(location.search).get('version')")
+                .contains("new URLSearchParams(location.search).get('featureId')")
+                .contains("pendingFeatureId")
                 .contains("const esc=")
                 .doesNotContain("unpkg.com")
                 .doesNotContain("cdn.jsdelivr.net");
