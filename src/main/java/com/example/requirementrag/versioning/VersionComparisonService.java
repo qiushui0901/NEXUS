@@ -10,6 +10,7 @@ import com.example.requirementrag.versioning.VersionModels.TestCaseSnapshot;
 import com.example.requirementrag.versioning.VersionModels.TestDiff;
 import com.example.requirementrag.versioning.VersionModels.TestSnapshot;
 import com.example.requirementrag.versioning.VersionModels.VersionComparisonReport;
+import com.example.requirementrag.versioning.VersionModels.ManifestStatus;
 import com.example.requirementrag.versioning.VersionModels.VersionManifest;
 import com.example.requirementrag.versioning.VersionModels.WikiDiff;
 import com.example.requirementrag.versioning.VersionModels.WikiPageChange;
@@ -42,6 +43,45 @@ public class VersionComparisonService {
         this.requirementDiffService = requirementDiffService;
         this.gitDiffService = gitDiffService;
         this.wikiRepository = wikiRepository;
+    }
+
+    /**
+     * Compares two Wiki versions directly when standalone version manifests have not been recorded yet.
+     * The Wiki index is the source of truth for version selection; requirement and test sources remain
+     * explicitly unavailable instead of being inferred from code structure.
+     */
+    public VersionComparisonReport compareWikiVersions(String projectId, String fromVersion, String toVersion) {
+        String project = VersionPathPolicy.identifier(projectId, "projectId");
+        String fromId = VersionPathPolicy.identifier(fromVersion, "fromVersion");
+        String toId = VersionPathPolicy.identifier(toVersion, "toVersion");
+        if (fromId.equals(toId)) throw new IllegalArgumentException("对比版本不能相同");
+
+        VersionIndex fromIndex = wikiRepository.findIndex(project, fromId)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.NOT_FOUND, "起始版本 Wiki 不存在"));
+        VersionIndex toIndex = wikiRepository.findIndex(project, toId)
+                .orElseThrow(() -> new org.springframework.web.server.ResponseStatusException(
+                        org.springframework.http.HttpStatus.NOT_FOUND, "目标版本 Wiki 不存在"));
+        VersionManifest from = wikiManifest(project, fromIndex);
+        VersionManifest to = wikiManifest(project, toIndex);
+        List<RagWarning> warnings = new ArrayList<>();
+        warnings.add(warning("version.requirements", "REQUIREMENT_REFERENCE_MISSING",
+                "当前比较直接使用 Wiki 版本，未绑定需求版本档案"));
+        warnings.add(warning("version.tests", "TEST_SNAPSHOT_MISSING",
+                "没有真实执行快照，因此不能展示测试执行结论"));
+        GitDiffResult code = compareCode(project, from, to, warnings);
+        TestDiff tests = TestDiff.unavailable();
+        WikiDiff wiki = compareWiki(project, from, to, warnings);
+        return new VersionComparisonReport(project, fromId, toId, Instant.now().toString(),
+                VersionModels.RequirementDiff.unavailable(), code, tests, wiki, warnings);
+    }
+
+    private VersionManifest wikiManifest(String project, VersionIndex index) {
+        String generatedAt = hasText(index.generatedAt()) ? index.generatedAt() : Instant.now().toString();
+        return new VersionManifest(1, project, index.version(), null, null, null,
+                index.baseCodeCommit(), index.codeCommit(), null, index.version(),
+                "wiki-" + index.version(), ManifestStatus.RELEASED, generatedAt, generatedAt, List.of(
+                        "由 Wiki 版本索引生成的比较视图"));
     }
 
     public VersionComparisonReport compare(String projectId, String fromVersion, String toVersion) {

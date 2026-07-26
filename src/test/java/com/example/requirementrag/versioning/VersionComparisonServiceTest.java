@@ -60,6 +60,29 @@ class VersionComparisonServiceTest {
     }
 
     @Test
+    void comparesWikiVersionsWithoutStandaloneManifests() throws Exception {
+        VersionManifestService manifests = mock(VersionManifestService.class);
+        RequirementVersionDiffService requirements = mock(RequirementVersionDiffService.class);
+        GitDiffService git = mock(GitDiffService.class);
+        WikiRepository wiki = mock(WikiRepository.class);
+        when(wiki.findIndex("game", "5.0")).thenReturn(Optional.of(indexWithCode("5.0", "aaaaaaa", "bbbbbbb")));
+        when(wiki.findIndex("game", "5.1")).thenReturn(Optional.of(indexWithCode("5.1", "bbbbbbb", "ccccccc")));
+        when(git.diff("game", "bbbbbbb", "ccccccc")).thenReturn(new GitDiffResult(
+                GitDiffService.Availability.AVAILABLE, 2, 1, 1, 0, 0, 1, 1, 0, List.of()));
+
+        var report = new VersionComparisonService(manifests, requirements, git, wiki)
+                .compareWikiVersions("game", "5.0", "5.1");
+
+        assertThat(report.code().availability()).isEqualTo(GitDiffService.Availability.AVAILABLE);
+        assertThat(report.code().changedFiles()).isEqualTo(2);
+        assertThat(report.requirements().availability()).isEqualTo(Availability.NOT_AVAILABLE);
+        assertThat(report.tests().availability()).isEqualTo(Availability.NOT_AVAILABLE);
+        assertThat(report.wiki().availability()).isEqualTo(Availability.AVAILABLE);
+        assertThat(report.warnings()).extracting(warning -> warning.code())
+                .containsExactly("REQUIREMENT_REFERENCE_MISSING", "TEST_SNAPSHOT_MISSING");
+    }
+
+    @Test
     void marksMissingOptionalSourcesAsUnavailableWithSafeWarnings() throws Exception {
         VersionManifestService manifests = mock(VersionManifestService.class);
         RequirementVersionDiffService requirements = mock(RequirementVersionDiffService.class);
@@ -101,5 +124,9 @@ class VersionComparisonServiceTest {
 
     private VersionIndex index(String version, PageSummary... pages) {
         return new VersionIndex(1, "game", "Game", version, version, "", "", "now", List.of(pages));
+    }
+
+    private VersionIndex indexWithCode(String version, String baseCommit, String codeCommit) {
+        return new VersionIndex(1, "game", "Game", version, version, baseCommit, codeCommit, "now", List.of());
     }
 }

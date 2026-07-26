@@ -1,20 +1,48 @@
 {
-  "schemaVersion" : 1,
-  "projectId" : "immortal-game-service",
-  "projectName" : "封神服务端",
-  "version" : "5.0.1",
-  "requirementVersion" : "5.0.1",
-  "baseCodeCommit" : "099915074ce7475ca96278eec583751ac0755eb9",
-  "codeCommit" : "6b7a154851c6f7979d58c89485eb28899687a234",
-  "generatedAt" : "2026-07-24T00:00:00+08:00",
-  "pages" : [ {
-    "featureId" : "version-5.0.1-overview",
-    "title" : "5.0.1 版本概览",
-    "category" : "版本",
-    "introducedVersion" : "5.0.1",
-    "status" : "CODE_VERIFIED",
-    "summary" : "5.0.1 已作为独立历史版本登记，与 5.0.0、5.0.2 和 5.1 分开存储、浏览和核验。当前页面只记录可复现的 Git 版本边界。",
-    "aliases" : [ "V5.0.1" ],
-    "evidenceCount" : 1
-  } ]
+  "schemaVersion": 1,
+  "projectId": "immortal-game-service",
+  "projectName": "封神服务端",
+  "version": "5.0.1",
+  "requirementVersion": "5.0.1",
+  "baseCodeCommit": "099915074ce7475ca96278eec583751ac0755eb9",
+  "codeCommit": "6b7a154851c6f7979d58c89485eb28899687a234",
+  "generatedAt": "2026-07-24T00:00:00+08:00",
+  "pages": [
+    {
+      "featureId": "version-5.0.1-code-structure",
+      "title": "5.0.1 代码结构与变更",
+      "category": "代码变化",
+      "introducedVersion": "5.0.1",
+      "status": "CODE_VERIFIED",
+      "summary": "这是由 Git 自动生成的版本代码证据页。比较基线 099915074ce7 与目标 6b7a154851c6；共纳入 18 个受控文件。",
+      "aliases": [
+        "V5.0.1 code"
+      ],
+      "evidenceCount": 19
+    },
+    {
+      "featureId": "version-5.0.1-module-immortal-game-service-impl",
+      "title": "5.0.1 · immortal-game-service-impl 模块",
+      "category": "代码模块",
+      "introducedVersion": "5.0.1",
+      "status": "CODE_VERIFIED",
+      "summary": "Git 版本 5.0.1 中，模块 immortal-game-service-impl 受控识别 18 个文件；内容来自 commit 6b7a154851c6 的路径和结构扫描。",
+      "aliases": [
+        "immortal-game-service-impl"
+      ],
+      "evidenceCount": 19
+    },
+    {
+      "featureId": "version-5.0.1-overview",
+      "title": "5.0.1 版本概览",
+      "category": "版本",
+      "introducedVersion": "5.0.1",
+      "status": "CODE_VERIFIED",
+      "summary": "5.0.1 已作为独立历史版本登记，与 5.0.0、5.0.2 和 5.1 分开存储、浏览和核验。 当前页面只记录可复现的 Git 版本边界。 自动代码证据：Git 代码边界：099915074ce7 → 6b7a154851c6。 本版本受控识别 18 个代码/配置文件，其中 Java/Kotlin 18 个、测试文件 0 个、配置文件 0 个。 提交说明：V5.0.1。 提交时间：2026-06-22T18:34:14+08:00。",
+      "aliases": [
+        "V5.0.1"
+      ],
+      "evidenceCount": 2
+    }
+  ]
 }

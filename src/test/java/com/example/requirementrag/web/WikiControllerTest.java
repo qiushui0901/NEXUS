@@ -62,7 +62,7 @@ class WikiControllerTest {
                         .param("projectId", "immortal-game-service")
                         .param("version", "5.1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.pages.length()").value(4));
+                .andExpect(jsonPath("$.pages.length()").value(8));
         mvc.perform(get("/api/wiki/page")
                         .param("projectId", "immortal-game-service")
                         .param("version", "5.1")
@@ -73,7 +73,7 @@ class WikiControllerTest {
                         .param("projectId", "immortal-game-service")
                         .param("version", "5.1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.pageCount").value(4));
+                .andExpect(jsonPath("$.pageCount").value(8));
     }
 
     @Test

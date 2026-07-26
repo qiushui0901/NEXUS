@@ -1,29 +1,75 @@
 {
-  "schemaVersion" : 1,
-  "projectId" : "immortal-game-service",
-  "projectName" : "封神服务端",
-  "version" : "5.0.2",
-  "requirementVersion" : "5.0.2",
-  "baseCodeCommit" : "6b7a154851c6f7979d58c89485eb28899687a234",
-  "codeCommit" : "836abbd7f80561cfe6e19ac6ebbfdb1a9ebe3af7",
-  "generatedAt" : "2026-07-24T00:00:00+08:00",
-  "pages" : [ {
-    "featureId" : "grow-discount",
-    "title" : "成长特价礼包",
-    "category" : "成长与付费",
-    "introducedVersion" : "5.0.2",
-    "status" : "CODE_VERIFIED",
-    "summary" : "成长特价礼包在 5.0.2 中已存在，由 GrowDiscount 的接口、MOA 实现和服务购买链路组成。它不是 5.1 的成长基金。",
-    "aliases" : [ "成长特价", "成长礼包", "Grow Discount" ],
-    "evidenceCount" : 2
-  }, {
-    "featureId" : "version-5.0.2-overview",
-    "title" : "5.0.2 版本概览",
-    "category" : "版本",
-    "introducedVersion" : "5.0.2",
-    "status" : "CODE_VERIFIED",
-    "summary" : "5.0.2 是 5.1 增量知识的代码基线。该版本与 5.1 分别保存，不能把 5.1 新增的成长基金写入本版本。",
-    "aliases" : [ "V5.0.2", "5.0.2基线" ],
-    "evidenceCount" : 1
-  } ]
+  "schemaVersion": 1,
+  "projectId": "immortal-game-service",
+  "projectName": "封神服务端",
+  "version": "5.0.2",
+  "requirementVersion": "5.0.2",
+  "baseCodeCommit": "6b7a154851c6f7979d58c89485eb28899687a234",
+  "codeCommit": "836abbd7f80561cfe6e19ac6ebbfdb1a9ebe3af7",
+  "generatedAt": "2026-07-24T00:00:00+08:00",
+  "pages": [
+    {
+      "featureId": "version-5.0.2-code-structure",
+      "title": "5.0.2 代码结构与变更",
+      "category": "代码变化",
+      "introducedVersion": "5.0.2",
+      "status": "CODE_VERIFIED",
+      "summary": "这是由 Git 自动生成的版本代码证据页。比较基线 6b7a154851c6 与目标 836abbd7f805；共纳入 24 个受控文件。",
+      "aliases": [
+        "V5.0.2 code"
+      ],
+      "evidenceCount": 25
+    },
+    {
+      "featureId": "version-5.0.2-module-immortal-game-service-api",
+      "title": "5.0.2 · immortal-game-service-api 模块",
+      "category": "代码模块",
+      "introducedVersion": "5.0.2",
+      "status": "CODE_VERIFIED",
+      "summary": "Git 版本 5.0.2 中，模块 immortal-game-service-api 受控识别 1 个文件；内容来自 commit 836abbd7f805 的路径和结构扫描。",
+      "aliases": [
+        "immortal-game-service-api"
+      ],
+      "evidenceCount": 2
+    },
+    {
+      "featureId": "version-5.0.2-module-immortal-game-service-impl",
+      "title": "5.0.2 · immortal-game-service-impl 模块",
+      "category": "代码模块",
+      "introducedVersion": "5.0.2",
+      "status": "CODE_VERIFIED",
+      "summary": "Git 版本 5.0.2 中，模块 immortal-game-service-impl 受控识别 23 个文件；内容来自 commit 836abbd7f805 的路径和结构扫描。",
+      "aliases": [
+        "immortal-game-service-impl"
+      ],
+      "evidenceCount": 24
+    },
+    {
+      "featureId": "grow-discount",
+      "title": "成长特价礼包",
+      "category": "成长与付费",
+      "introducedVersion": "5.0.2",
+      "status": "CODE_VERIFIED",
+      "summary": "成长特价礼包在 5.0.2 中已存在，由 GrowDiscount 的接口、MOA 实现和服务购买链路组成。它不是 5.1 的成长基金。",
+      "aliases": [
+        "成长特价",
+        "成长礼包",
+        "Grow Discount"
+      ],
+      "evidenceCount": 2
+    },
+    {
+      "featureId": "version-5.0.2-overview",
+      "title": "5.0.2 版本概览",
+      "category": "版本",
+      "introducedVersion": "5.0.2",
+      "status": "CODE_VERIFIED",
+      "summary": "5.0.2 是 5.1 增量知识的代码基线。 该版本与 5.1 分别保存，不能把 5.1 新增的成长基金写入本版本。 自动代码证据：Git 代码边界：6b7a154851c6 → 836abbd7f805。 本版本受控识别 24 个代码/配置文件，其中 Java/Kotlin 22 个、测试文件 0 个、配置文件 2 个。 提交说明：5.0.2：在战斗结束后不执行重复释放技能。 提交时间：2026-06-30T15:53:36+08:00。",
+      "aliases": [
+        "V5.0.2",
+        "5.0.2基线"
+      ],
+      "evidenceCount": 2
+    }
+  ]
 }

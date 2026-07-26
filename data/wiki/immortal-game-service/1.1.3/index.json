@@ -1,20 +1,48 @@
 {
-  "schemaVersion" : 1,
-  "projectId" : "immortal-game-service",
-  "projectName" : "封神服务端",
-  "version" : "1.1.3",
-  "requirementVersion" : "1.1.3",
-  "baseCodeCommit" : "",
-  "codeCommit" : "ccb5e8856abb0056d79c59ccd4e430bc34441fc5",
-  "generatedAt" : "2026-07-24T00:00:00+08:00",
-  "pages" : [ {
-    "featureId" : "version-1.1.3-overview",
-    "title" : "1.1.3 版本概览",
-    "category" : "版本",
-    "introducedVersion" : "1.1.3",
-    "status" : "CODE_VERIFIED",
-    "summary" : "1.1.3 已作为独立历史版本登记。当前页面固定该版本的 Git 代码边界；功能、需求和测试结论将在原始材料完成核验后逐项补充。",
-    "aliases" : [ "V1.1.3" ],
-    "evidenceCount" : 1
-  } ]
+  "schemaVersion": 1,
+  "projectId": "immortal-game-service",
+  "projectName": "封神服务端",
+  "version": "1.1.3",
+  "requirementVersion": "1.1.3",
+  "baseCodeCommit": "",
+  "codeCommit": "ccb5e8856abb0056d79c59ccd4e430bc34441fc5",
+  "generatedAt": "2026-07-24T00:00:00+08:00",
+  "pages": [
+    {
+      "featureId": "version-1.1.3-code-structure",
+      "title": "1.1.3 代码结构与变更",
+      "category": "代码变化",
+      "introducedVersion": "1.1.3",
+      "status": "CODE_VERIFIED",
+      "summary": "这是由 Git 自动生成的版本代码证据页。目标快照为 ccb5e8856abb；共纳入 120 个受控文件。",
+      "aliases": [
+        "V1.1.3 code"
+      ],
+      "evidenceCount": 25
+    },
+    {
+      "featureId": "version-1.1.3-module-immortal-game-service-api",
+      "title": "1.1.3 · immortal-game-service-api 模块",
+      "category": "代码模块",
+      "introducedVersion": "1.1.3",
+      "status": "CODE_VERIFIED",
+      "summary": "Git 版本 1.1.3 中，模块 immortal-game-service-api 受控识别 120 个文件；内容来自 commit ccb5e8856abb 的路径和结构扫描。",
+      "aliases": [
+        "immortal-game-service-api"
+      ],
+      "evidenceCount": 25
+    },
+    {
+      "featureId": "version-1.1.3-overview",
+      "title": "1.1.3 版本概览",
+      "category": "版本",
+      "introducedVersion": "1.1.3",
+      "status": "CODE_VERIFIED",
+      "summary": "1.1.3 已作为独立历史版本登记。 当前页面固定该版本的 Git 代码边界；功能、需求和测试结论将在原始材料完成核验后逐项补充。 自动代码证据：Git 代码快照：ccb5e8856abb。 本版本受控识别 120 个代码/配置文件，其中 Java/Kotlin 120 个、测试文件 0 个、配置文件 0 个。 提交说明：updat:强制平局。 提交时间：2025-05-07T22:04:12+08:00。",
+      "aliases": [
+        "V1.1.3"
+      ],
+      "evidenceCount": 2
+    }
+  ]
 }

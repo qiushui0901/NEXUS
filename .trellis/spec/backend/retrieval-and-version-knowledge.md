@@ -67,7 +67,7 @@ GET /versions                  # redirects to /versions.html
 GET /wiki?projectId=...&version=...&featureId=...
 ```
 
-The native browser page consumes `/api/wiki/projects`, `/api/versions/manifests`,
+The native browser page consumes `/api/wiki/projects`, `/api/wiki/versions`,
 and `/api/versions/compare`. It must not introduce a second frontend build chain.
 
 Saving requires `Permission.WRITE`. Listing, reading, and comparing require `Permission.PUBLIC_READ`. Every endpoint must validate the project through `ProjectRegistry` and enforce project access through `ProjectAccessGuard`.
@@ -114,25 +114,32 @@ Saving requires `Permission.WRITE`. Listing, reading, and comparing require `Per
 
 ### Multi-source version comparison
 
-- `VersionComparisonService` requires both manifests and returns independent requirement, code, test, and Wiki sections plus safe warnings.
+- `VersionComparisonService` uses both manifests when they exist and returns independent requirement, code, test, and Wiki sections plus safe warnings. When manifests are absent, the public compare route may use the two published Wiki indexes as the version-selection source; requirement and test sections must remain `NOT_AVAILABLE`.
 - Each source section must report `AVAILABLE` or `NOT_AVAILABLE`; missing data must not be represented as an empty successful diff.
 - Requirement comparison uses the shared parent-chunk comparison and payload-only Qdrant reads.
 - Code comparison uses `GitDiffService` and reports file-level added, modified, deleted, renamed changes and category counts. Do not describe this as AST or symbol-level analysis.
 - `IncrementalCodeIndexService` and version comparison must reuse the same `GitDiffService` execution and parsing logic.
 - Test comparison uses only real `TestSnapshot` values stored in manifests. Compare aggregate counts, run status, case additions/removals, and case status changes. Never infer execution results from suggested test points.
 - Wiki comparison uses `WikiRepository.findIndex(projectId, version)` and compares page additions/removals, review status, summary, and evidence count.
-- A missing non-critical source returns `NOT_AVAILABLE` and a warning while other sources continue. Manifest absence or invalid identifiers remain hard failures.
+- A missing non-critical source returns `NOT_AVAILABLE` and a warning while other sources continue. Invalid identifiers remain hard failures; absent manifests may fall back to published Wiki indexes for the browser comparison.
 - Public warnings must use stable text and must not expose dependency exception messages, repository absolute paths, internal URLs, commands, or credentials.
 
 ### Version comparison browser contract
 
-- The page selects a target manifest first, then uses its `baseVersion` when that manifest exists; otherwise it selects the newest different manifest as the base.
-- The page must disable comparison when fewer than two manifests exist or when the selected versions are equal. It must show a clear empty state rather than calling the compare endpoint.
+- The page selects a target Wiki version first, uses a matching `baseCodeCommit` to identify the base Wiki version when possible, and otherwise selects the newest different Wiki version. A standalone manifest may enrich the comparison but is not required for the timeline.
+- The page must disable comparison when fewer than two Wiki versions exist or when the selected versions are equal. It must show a clear empty state rather than calling the compare endpoint.
 - Requirement, code, test, and Wiki sections render independently. `NOT_AVAILABLE` is a visible degraded state and must not be rendered as a successful zero-change result.
 - Missing test snapshots must display that there is no real execution snapshot. Suggested test points and page text must never be presented as executed test evidence.
 - Wiki changes link to `/wiki?projectId=...&version=...&featureId=...`; the Wiki page consumes those parameters and falls back to its existing default selection when a target is absent.
 - API-derived text must pass through one HTML escaping function before insertion into `innerHTML`; API keys are read from `localStorage.nexusApiKey` and sent as `X-API-Key` when present.
 - Warnings and UI errors use safe public messages only. The page must not show dependency exception text, absolute paths, secrets, or vector data.
+
+### Historical Wiki backfill
+
+- `tools/build-version-wiki.py` may update version source JSON and rendered Wiki artifacts only as an explicit, reviewable historical-backfill operation. It reads real Git commits with bounded, controlled commands and never reads Qdrant or vector data.
+- Automatically generated pages may contain code paths, bounded type/method names, Git boundaries and file-level changes; they must not invent product rules or test execution results.
+- Missing real test results must be displayed as `没有真实执行快照`; static test-file counts are not execution evidence.
+- Repeated runs must replace only the tool-owned `version-<version>-code-structure` and `version-<version>-module-*` pages while preserving human-authored pages.
 
 ### Forbidden persisted fields
 

@@ -1,20 +1,48 @@
 {
-  "schemaVersion" : 1,
-  "projectId" : "immortal-game-service",
-  "projectName" : "封神服务端",
-  "version" : "3.0.2",
-  "requirementVersion" : "3.0.2",
-  "baseCodeCommit" : "",
-  "codeCommit" : "7a9051bc09f8895ce880337aca8e7081e409cf0f",
-  "generatedAt" : "2026-07-24T00:00:00+08:00",
-  "pages" : [ {
-    "featureId" : "version-3.0.2-overview",
-    "title" : "3.0.2 版本概览",
-    "category" : "版本",
-    "introducedVersion" : "3.0.2",
-    "status" : "CODE_VERIFIED",
-    "summary" : "3.0.2 已作为独立历史版本登记。当前页面固定该版本的 Git 代码边界；功能、需求和测试结论将在原始材料完成核验后逐项补充。",
-    "aliases" : [ "V3.0.2" ],
-    "evidenceCount" : 1
-  } ]
+  "schemaVersion": 1,
+  "projectId": "immortal-game-service",
+  "projectName": "封神服务端",
+  "version": "3.0.2",
+  "requirementVersion": "3.0.2",
+  "baseCodeCommit": "",
+  "codeCommit": "7a9051bc09f8895ce880337aca8e7081e409cf0f",
+  "generatedAt": "2026-07-24T00:00:00+08:00",
+  "pages": [
+    {
+      "featureId": "version-3.0.2-code-structure",
+      "title": "3.0.2 代码结构与变更",
+      "category": "代码变化",
+      "introducedVersion": "3.0.2",
+      "status": "CODE_VERIFIED",
+      "summary": "这是由 Git 自动生成的版本代码证据页。目标快照为 7a9051bc09f8；共纳入 120 个受控文件。",
+      "aliases": [
+        "V3.0.2 code"
+      ],
+      "evidenceCount": 25
+    },
+    {
+      "featureId": "version-3.0.2-module-immortal-game-service-api",
+      "title": "3.0.2 · immortal-game-service-api 模块",
+      "category": "代码模块",
+      "introducedVersion": "3.0.2",
+      "status": "CODE_VERIFIED",
+      "summary": "Git 版本 3.0.2 中，模块 immortal-game-service-api 受控识别 120 个文件；内容来自 commit 7a9051bc09f8 的路径和结构扫描。",
+      "aliases": [
+        "immortal-game-service-api"
+      ],
+      "evidenceCount": 25
+    },
+    {
+      "featureId": "version-3.0.2-overview",
+      "title": "3.0.2 版本概览",
+      "category": "版本",
+      "introducedVersion": "3.0.2",
+      "status": "CODE_VERIFIED",
+      "summary": "3.0.2 已作为独立历史版本登记。 当前页面固定该版本的 Git 代码边界；功能、需求和测试结论将在原始材料完成核验后逐项补充。 自动代码证据：Git 代码快照：7a9051bc09f8。 本版本受控识别 120 个代码/配置文件，其中 Java/Kotlin 120 个、测试文件 0 个、配置文件 0 个。 提交说明：update:下行消息增加roomid。 提交时间：2025-12-17T17:19:36+08:00。",
+      "aliases": [
+        "V3.0.2"
+      ],
+      "evidenceCount": 2
+    }
+  ]
 }

@@ -1,0 +1,59 @@
+{
+  "projectId": "immortal-game-service",
+  "projectName": "封神服务端",
+  "version": "5.0.2",
+  "requirementVersion": "5.0.2",
+  "baseCodeCommit": "6b7a154851c6f7979d58c89485eb28899687a234",
+  "codeCommit": "836abbd7f80561cfe6e19ac6ebbfdb1a9ebe3af7",
+  "generatedAt": "2026-07-24T00:00:00+08:00",
+  "featureId": "version-5.0.2-module-immortal-game-service-api",
+  "title": "5.0.2 · immortal-game-service-api 模块",
+  "category": "代码模块",
+  "introducedVersion": "5.0.2",
+  "status": "CODE_VERIFIED",
+  "aliases": [
+    "immortal-game-service-api"
+  ],
+  "summary": "Git 版本 5.0.2 中，模块 immortal-game-service-api 受控识别 1 个文件；内容来自 commit 836abbd7f805 的路径和结构扫描。",
+  "productRules": [
+    "没有关联需求原文，因此不把类名解释为产品规则。"
+  ],
+  "codeSymbols": [
+    "MODIFIED: immortal-game-service-api/pom.xml"
+  ],
+  "testPoints": [
+    "没有真实执行快照。",
+    "该模块静态识别测试文件 0 个。"
+  ],
+  "risks": [
+    "自动扫描只保留文件路径和有限结构符号，不复制源码正文。"
+  ],
+  "relations": [],
+  "evidence": [
+    {
+      "type": "GIT",
+      "title": "5.0.2 代码版本边界",
+      "source": "immortal-game-service",
+      "version": "5.0.2",
+      "location": "6b7a154851c6 到 836abbd7f805",
+      "excerpt": "6b7a154851c6 到 836abbd7f805；提交说明：5.0.2：在战斗结束后不执行重复释放技能；纳入 24 个受控代码/配置文件。",
+      "commit": "836abbd7f80561cfe6e19ac6ebbfdb1a9ebe3af7",
+      "filePath": "",
+      "symbol": "",
+      "verificationStatus": "VERIFIED"
+    },
+    {
+      "type": "CODE",
+      "title": "代码文件：immortal-game-service-api/pom.xml",
+      "source": "immortal-game-service",
+      "version": "5.0.2",
+      "location": "immortal-game-service-api/pom.xml",
+      "excerpt": "Git 836abbd7f805 的版本证据：immortal-game-service-api/pom.xml；仅记录文件路径和类型，未复制源码正文。",
+      "commit": "836abbd7f80561cfe6e19ac6ebbfdb1a9ebe3af7",
+      "filePath": "immortal-game-service-api/pom.xml",
+      "symbol": "",
+      "verificationStatus": "VERIFIED"
+    }
+  ],
+  "markdownPath": "pages/version-5.0.2-module-immortal-game-service-api.md"
+}

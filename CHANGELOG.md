@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.1-SNAPSHOT — 2026-07-24
+
+### Added
+
+- 新增 `tools/build-version-wiki.py`，从真实 Git 历史为已登记版本补齐代码结构、模块边界、版本文件差异和受控证据。
+- 为 `immortal-game-service` 的 0.1 至 5.1 共 64 个历史版本重新生成实质性 Wiki 页面，保留已有人工页面并补充代码证据页。
+- 版本中心改为直接读取 `/api/wiki/versions`，没有独立 VersionManifest 时也可以基于 Wiki 版本索引进行代码和 Wiki 差异比较。
+
+### Changed
+
+- `/api/versions/compare` 在缺少独立版本档案时降级到 Wiki 版本比较；需求和测试来源仍明确标记不可用。
+- 版本中心时间线展示 Wiki 页面数量、基线 commit 和目标 commit，不再把“无版本档案”误报为“无版本”。
+
+### Boundaries
+
+- 自动生成内容只描述 Git 文件路径、结构和有限证据，不复制完整源码，也不生成未经需求原文核验的产品规则。
+- 测试页面没有真实执行记录时统一显示“没有真实执行快照”，不会把建议测试点伪装成执行结果。
+- 不提交向量、embedding、Qdrant storage、WAL、本地索引、IDE 数据或凭据。
+
 本文件记录 **NEXUS 平台版本**。业务需求版本（例如封神 5.1）继续记录在 Wiki source、knowledge manifest 和构建请求中，两者不得混用。
 
 ## 0.4.0-SNAPSHOT — 2026-07-24

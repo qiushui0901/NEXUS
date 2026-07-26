@@ -1,34 +1,68 @@
 {
-  "projectId" : "immortal-game-service",
-  "projectName" : "封神服务端",
-  "version" : "5.0.1",
-  "requirementVersion" : "5.0.1",
-  "baseCodeCommit" : "099915074ce7475ca96278eec583751ac0755eb9",
-  "codeCommit" : "6b7a154851c6f7979d58c89485eb28899687a234",
-  "generatedAt" : "2026-07-24T00:00:00+08:00",
-  "featureId" : "version-5.0.1-overview",
-  "title" : "5.0.1 版本概览",
-  "category" : "版本",
-  "introducedVersion" : "5.0.1",
-  "status" : "CODE_VERIFIED",
-  "aliases" : [ "V5.0.1" ],
-  "summary" : "5.0.1 已作为独立历史版本登记，与 5.0.0、5.0.2 和 5.1 分开存储、浏览和核验。当前页面只记录可复现的 Git 版本边界。",
-  "productRules" : [ "未经该版本需求原文核验的业务规则保持待补充状态。" ],
-  "codeSymbols" : [ "基线 commit：099915074ce7475ca96278eec583751ac0755eb9", "Git 分支：origin/V5.0.1", "版本 commit：6b7a154851c6f7979d58c89485eb28899687a234" ],
-  "testPoints" : [ "版本选择器应把 5.0.1 与相邻版本作为独立知识空间。", "新增功能证据必须记录 5.0.1 的文件、符号和 commit。" ],
-  "risks" : [ "当前只完成版本登记和代码边界核验，需求与测试证据仍待补充。" ],
-  "relations" : [ ],
-  "evidence" : [ {
-    "type" : "GIT",
-    "title" : "V5.0.1 分支头提交",
-    "source" : "immortal-game-service",
-    "version" : "5.0.1",
-    "location" : "origin/V5.0.1",
-    "excerpt" : "分支头提交已作为 5.0.1 的代码版本边界登记。",
-    "commit" : "6b7a154851c6f7979d58c89485eb28899687a234",
-    "filePath" : "",
-    "symbol" : "",
-    "verificationStatus" : "VERIFIED"
-  } ],
-  "markdownPath" : "pages/version-5.0.1-overview.md"
+  "projectId": "immortal-game-service",
+  "projectName": "封神服务端",
+  "version": "5.0.1",
+  "requirementVersion": "5.0.1",
+  "baseCodeCommit": "099915074ce7475ca96278eec583751ac0755eb9",
+  "codeCommit": "6b7a154851c6f7979d58c89485eb28899687a234",
+  "generatedAt": "2026-07-24T00:00:00+08:00",
+  "featureId": "version-5.0.1-overview",
+  "title": "5.0.1 版本概览",
+  "category": "版本",
+  "introducedVersion": "5.0.1",
+  "status": "CODE_VERIFIED",
+  "aliases": [
+    "V5.0.1"
+  ],
+  "summary": "5.0.1 已作为独立历史版本登记，与 5.0.0、5.0.2 和 5.1 分开存储、浏览和核验。 当前页面只记录可复现的 Git 版本边界。 自动代码证据：Git 代码边界：099915074ce7 → 6b7a154851c6。 本版本受控识别 18 个代码/配置文件，其中 Java/Kotlin 18 个、测试文件 0 个、配置文件 0 个。 提交说明：V5.0.1。 提交时间：2026-06-22T18:34:14+08:00。",
+  "productRules": [
+    "未经该版本需求原文核验的业务规则保持待补充状态。"
+  ],
+  "codeSymbols": [
+    "基线 commit：099915074ce7475ca96278eec583751ac0755eb9",
+    "Git 分支：origin/V5.0.1",
+    "版本 commit：6b7a154851c6f7979d58c89485eb28899687a234",
+    "Git 代码边界：099915074ce7 → 6b7a154851c6。",
+    "本版本受控识别 18 个代码/配置文件，其中 Java/Kotlin 18 个、测试文件 0 个、配置文件 0 个。",
+    "提交说明：V5.0.1。 提交时间：2026-06-22T18:34:14+08:00。"
+  ],
+  "testPoints": [
+    "版本选择器应把 5.0.1 与相邻版本作为独立知识空间。",
+    "新增功能证据必须记录 5.0.1 的文件、符号和 commit。",
+    "没有真实执行快照；本页只记录 Git 版本边界和静态测试文件证据。",
+    "静态识别测试文件 0 个；发布前需要关联真实测试报告。"
+  ],
+  "risks": [
+    "当前只完成版本登记和代码边界核验，需求与测试证据仍待补充。",
+    "自动代码证据只证明文件和结构存在，不等同于业务规则或运行时行为。",
+    "测试执行结果尚未关联到本版本 Wiki。"
+  ],
+  "relations": [],
+  "evidence": [
+    {
+      "type": "GIT",
+      "title": "V5.0.1 分支头提交",
+      "source": "immortal-game-service",
+      "version": "5.0.1",
+      "location": "origin/V5.0.1",
+      "excerpt": "分支头提交已作为 5.0.1 的代码版本边界登记。",
+      "commit": "6b7a154851c6f7979d58c89485eb28899687a234",
+      "filePath": "",
+      "symbol": "",
+      "verificationStatus": "VERIFIED"
+    },
+    {
+      "type": "GIT",
+      "title": "5.0.1 代码版本边界",
+      "source": "immortal-game-service",
+      "version": "5.0.1",
+      "location": "099915074ce7 到 6b7a154851c6",
+      "excerpt": "099915074ce7 到 6b7a154851c6；提交说明：V5.0.1；纳入 18 个受控代码/配置文件。",
+      "commit": "6b7a154851c6f7979d58c89485eb28899687a234",
+      "filePath": "",
+      "symbol": "",
+      "verificationStatus": "VERIFIED"
+    }
+  ],
+  "markdownPath": "pages/version-5.0.1-overview.md"
 }

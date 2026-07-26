@@ -1,0 +1,116 @@
+{
+  "projectId": "immortal-game-service",
+  "projectName": "封神服务端",
+  "version": "0.1",
+  "requirementVersion": "0.1",
+  "baseCodeCommit": "",
+  "codeCommit": "d02f197777eec820a3a8a455fdf5d6aaeca676dd",
+  "generatedAt": "2026-07-24T00:00:00+08:00",
+  "featureId": "version-0.1-module-immortal-game-service-impl",
+  "title": "0.1 · immortal-game-service-impl 模块",
+  "category": "代码模块",
+  "introducedVersion": "0.1",
+  "status": "CODE_VERIFIED",
+  "aliases": [
+    "immortal-game-service-impl"
+  ],
+  "summary": "Git 版本 0.1 中，模块 immortal-game-service-impl 受控识别 5 个文件；内容来自 commit d02f197777ee 的路径和结构扫描。",
+  "productRules": [
+    "没有关联需求原文，因此不把类名解释为产品规则。"
+  ],
+  "codeSymbols": [
+    "SNAPSHOT: immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/MomoApplication.java",
+    "SNAPSHOT: immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/annotation/LogException.java",
+    "SNAPSHOT: immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/ContextAspect.java",
+    "SNAPSHOT: immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/ItemLockAspect.java",
+    "SNAPSHOT: immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/MethodTimeAspect.java",
+    "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/MomoApplication.java :: MomoApplication, main",
+    "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/annotation/LogException.java :: LogException",
+    "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/ContextAspect.java :: ContextAspect, doAspect, doAfter, doBefore, doException, parseExpression, createParameterContext, createMethodContext",
+    "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/ItemLockAspect.java :: ItemLockAspect, aroundTryItemLock",
+    "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/MethodTimeAspect.java :: MethodTimeAspect, methodTimeConsuming"
+  ],
+  "testPoints": [
+    "没有真实执行快照。",
+    "该模块静态识别测试文件 0 个。"
+  ],
+  "risks": [
+    "自动扫描只保留文件路径和有限结构符号，不复制源码正文。"
+  ],
+  "relations": [],
+  "evidence": [
+    {
+      "type": "GIT",
+      "title": "0.1 代码版本边界",
+      "source": "immortal-game-service",
+      "version": "0.1",
+      "location": "commit d02f197777ee 的快照",
+      "excerpt": "commit d02f197777ee 的快照；提交说明：update:免控概率；纳入 120 个受控代码/配置文件。",
+      "commit": "d02f197777eec820a3a8a455fdf5d6aaeca676dd",
+      "filePath": "",
+      "symbol": "",
+      "verificationStatus": "VERIFIED"
+    },
+    {
+      "type": "CODE",
+      "title": "代码文件：immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/MomoApplication.java",
+      "source": "immortal-game-service",
+      "version": "0.1",
+      "location": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/MomoApplication.java",
+      "excerpt": "Git d02f197777ee 的版本证据：immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/MomoApplication.java；识别到结构符号：MomoApplication, main。",
+      "commit": "d02f197777eec820a3a8a455fdf5d6aaeca676dd",
+      "filePath": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/MomoApplication.java",
+      "symbol": "MomoApplication, main",
+      "verificationStatus": "VERIFIED"
+    },
+    {
+      "type": "CODE",
+      "title": "代码文件：immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/annotation/LogException.java",
+      "source": "immortal-game-service",
+      "version": "0.1",
+      "location": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/annotation/LogException.java",
+      "excerpt": "Git d02f197777ee 的版本证据：immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/annotation/LogException.java；识别到结构符号：LogException。",
+      "commit": "d02f197777eec820a3a8a455fdf5d6aaeca676dd",
+      "filePath": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/annotation/LogException.java",
+      "symbol": "LogException",
+      "verificationStatus": "VERIFIED"
+    },
+    {
+      "type": "CODE",
+      "title": "代码文件：immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/ContextAspect.java",
+      "source": "immortal-game-service",
+      "version": "0.1",
+      "location": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/ContextAspect.java",
+      "excerpt": "Git d02f197777ee 的版本证据：immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/ContextAspect.java；识别到结构符号：ContextAspect, doAspect, doAfter, doBefore, doException, parseExpression, createParameterContext, createMethodContext。",
+      "commit": "d02f197777eec820a3a8a455fdf5d6aaeca676dd",
+      "filePath": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/ContextAspect.java",
+      "symbol": "ContextAspect, doAspect, doAfter, doBefore, doException, parseExpression, createParameterContext, createMethodContext",
+      "verificationStatus": "VERIFIED"
+    },
+    {
+      "type": "CODE",
+      "title": "代码文件：immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/ItemLockAspect.java",
+      "source": "immortal-game-service",
+      "version": "0.1",
+      "location": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/ItemLockAspect.java",
+      "excerpt": "Git d02f197777ee 的版本证据：immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/ItemLockAspect.java；识别到结构符号：ItemLockAspect, aroundTryItemLock。",
+      "commit": "d02f197777eec820a3a8a455fdf5d6aaeca676dd",
+      "filePath": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/ItemLockAspect.java",
+      "symbol": "ItemLockAspect, aroundTryItemLock",
+      "verificationStatus": "VERIFIED"
+    },
+    {
+      "type": "CODE",
+      "title": "代码文件：immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/MethodTimeAspect.java",
+      "source": "immortal-game-service",
+      "version": "0.1",
+      "location": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/MethodTimeAspect.java",
+      "excerpt": "Git d02f197777ee 的版本证据：immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/MethodTimeAspect.java；识别到结构符号：MethodTimeAspect, methodTimeConsuming。",
+      "commit": "d02f197777eec820a3a8a455fdf5d6aaeca676dd",
+      "filePath": "immortal-game-service-impl/src/main/java/com/immomo/bizgame/immortal/game/aspect/MethodTimeAspect.java",
+      "symbol": "MethodTimeAspect, methodTimeConsuming",
+      "verificationStatus": "VERIFIED"
+    }
+  ],
+  "markdownPath": "pages/version-0.1-module-immortal-game-service-impl.md"
+}

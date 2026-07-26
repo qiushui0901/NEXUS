@@ -1,20 +1,48 @@
 {
-  "schemaVersion" : 1,
-  "projectId" : "immortal-game-service",
-  "projectName" : "封神服务端",
-  "version" : "3.1.1",
-  "requirementVersion" : "3.1.1",
-  "baseCodeCommit" : "",
-  "codeCommit" : "c13454bd2c4dab7e74a2a7dfb2cb3ced02aa0815",
-  "generatedAt" : "2026-07-24T00:00:00+08:00",
-  "pages" : [ {
-    "featureId" : "version-3.1.1-overview",
-    "title" : "3.1.1 版本概览",
-    "category" : "版本",
-    "introducedVersion" : "3.1.1",
-    "status" : "CODE_VERIFIED",
-    "summary" : "3.1.1 已作为独立历史版本登记。当前页面固定该版本的 Git 代码边界；功能、需求和测试结论将在原始材料完成核验后逐项补充。",
-    "aliases" : [ "V3.1.1" ],
-    "evidenceCount" : 1
-  } ]
+  "schemaVersion": 1,
+  "projectId": "immortal-game-service",
+  "projectName": "封神服务端",
+  "version": "3.1.1",
+  "requirementVersion": "3.1.1",
+  "baseCodeCommit": "",
+  "codeCommit": "c13454bd2c4dab7e74a2a7dfb2cb3ced02aa0815",
+  "generatedAt": "2026-07-24T00:00:00+08:00",
+  "pages": [
+    {
+      "featureId": "version-3.1.1-code-structure",
+      "title": "3.1.1 代码结构与变更",
+      "category": "代码变化",
+      "introducedVersion": "3.1.1",
+      "status": "CODE_VERIFIED",
+      "summary": "这是由 Git 自动生成的版本代码证据页。目标快照为 c13454bd2c4d；共纳入 120 个受控文件。",
+      "aliases": [
+        "V3.1.1 code"
+      ],
+      "evidenceCount": 25
+    },
+    {
+      "featureId": "version-3.1.1-module-immortal-game-service-api",
+      "title": "3.1.1 · immortal-game-service-api 模块",
+      "category": "代码模块",
+      "introducedVersion": "3.1.1",
+      "status": "CODE_VERIFIED",
+      "summary": "Git 版本 3.1.1 中，模块 immortal-game-service-api 受控识别 120 个文件；内容来自 commit c13454bd2c4d 的路径和结构扫描。",
+      "aliases": [
+        "immortal-game-service-api"
+      ],
+      "evidenceCount": 25
+    },
+    {
+      "featureId": "version-3.1.1-overview",
+      "title": "3.1.1 版本概览",
+      "category": "版本",
+      "introducedVersion": "3.1.1",
+      "status": "CODE_VERIFIED",
+      "summary": "3.1.1 已作为独立历史版本登记。 当前页面固定该版本的 Git 代码边界；功能、需求和测试结论将在原始材料完成核验后逐项补充。 自动代码证据：Git 代码快照：c13454bd2c4d。 本版本受控识别 120 个代码/配置文件，其中 Java/Kotlin 120 个、测试文件 0 个、配置文件 0 个。 提交说明：Merge remote-tracking branch 'origin/V3.1.1' into V3.1.1。 提交时间：2025-12-24T17:40:32+08:00。",
+      "aliases": [
+        "V3.1.1"
+      ],
+      "evidenceCount": 2
+    }
+  ]
 }

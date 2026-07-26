@@ -236,21 +236,32 @@ GET /api/versions/compare?projectId=...&fromVersion=...&toVersion=...
 http://localhost:8080/versions
 ```
 
-版本中心复用当前账号可访问的项目，读取版本档案并让产品、开发和测试选择两个业务版本进行比较。页面提供：
+版本中心直接读取已生成的 Wiki 版本索引，不再要求历史版本先手工创建独立 manifest；因此只要版本 Wiki 已经生成，就可以选择两个版本进行比较。若存在独立版本档案，比较接口仍会优先使用其中的需求和真实测试快照。页面提供：
 
-- 版本状态、基准版本、需求版本、代码 commit、Wiki 版本和更新时间
+- Git 基线、目标 commit、Wiki 页面数量和版本时间线
 - 需求、代码、测试、Wiki 四类独立差异页签
 - 单一来源不可用时的降级状态和安全 warning
-- 测试真实执行快照状态，缺失时明确显示“没有真实执行快照”
+- 测试缺少真实执行记录时明确显示“没有真实执行快照”
 - Wiki 差异回到具体项目、版本和功能页面的深链接
 
 版本中心主要依赖：
 
 ```text
 GET /api/wiki/projects
-GET /api/versions/manifests?projectId=...
+GET /api/wiki/versions?projectId=...
 GET /api/versions/compare?projectId=...&fromVersion=...&toVersion=...
 ```
+
+### 9. 历史版本 Wiki 实质内容构建
+
+针对已有 Git 历史但 Wiki 只有占位页的项目，可以使用第二阶段构建器，从真实 commit 快照补齐代码结构、模块边界和版本变更证据：
+
+```bash
+python3 tools/build-version-wiki.py \
+  --repo /Users/user/Documents/immortal-game-service
+```
+
+构建器会为每个版本生成版本概览、代码结构页和模块页，记录受控文件、Git 新增/修改/删除、Java 类型/方法名、配置文件和代码证据；有基线的版本还会记录两次 commit 之间的文件级差异。没有需求原文或真实测试执行记录时，页面会明确标注缺失，不把代码推断写成产品规则或测试结果。构建结果只写入 `data/wiki-sources/` 和 `data/wiki/`，不读取或写入向量库、Qdrant 数据、WAL、凭据或完整源码。
 
 Wiki 页面也提供“版本中心”入口；从版本中心进入 Wiki 时，可以使用以下查询参数定位页面：
 
@@ -258,7 +269,7 @@ Wiki 页面也提供“版本中心”入口；从版本中心进入 Wiki 时，
 /wiki?projectId=...&version=...&featureId=...
 ```
 
-### 9. 监控与数据健康
+### 10. 监控与数据健康
 
 访问监控工作台：
 

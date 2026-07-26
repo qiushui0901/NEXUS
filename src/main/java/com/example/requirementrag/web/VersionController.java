@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -64,7 +65,14 @@ public class VersionController {
                                            @RequestParam String toVersion,
                                            HttpServletRequest request) {
         requireAccess(projectId, request);
-        return comparisons.compare(projectId, fromVersion, toVersion);
+        try {
+            return comparisons.compare(projectId, fromVersion, toVersion);
+        } catch (ResponseStatusException exception) {
+            if (exception.getStatusCode().value() == 404) {
+                return comparisons.compareWikiVersions(projectId, fromVersion, toVersion);
+            }
+            throw exception;
+        }
     }
 
     private void requireAccess(String projectId, HttpServletRequest request) {

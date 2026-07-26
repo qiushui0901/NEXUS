@@ -9,13 +9,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class VersionKnowledgePageTest {
     @Test
-    void exposesVersionTimelineAndSafeMultiSourceComparisonWithoutCdn() throws Exception {
+    void exposesWikiDrivenVersionTimelineAndSafeMultiSourceComparisonWithoutCdn() throws Exception {
         String html = new ClassPathResource("static/versions.html")
                 .getContentAsString(StandardCharsets.UTF_8);
 
         assertThat(html)
                 .contains("/api/wiki/projects")
-                .contains("/api/versions/manifests")
+                .contains("/api/wiki/versions")
                 .contains("/api/versions/compare")
                 .contains("需求变化")
                 .contains("代码变化")
