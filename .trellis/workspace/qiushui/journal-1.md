@@ -104,3 +104,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 4: 版本 Wiki 实质内容与直接对比
+
+**Date**: 2026-07-26
+**Task**: 版本 Wiki 实质内容与直接对比
+**Branch**: `main`
+
+### Summary
+
+版本中心改为直接读取 Wiki 版本；基于 immortal-game-service 的 64 个 Git 版本重建 200 个实质页面，补充代码边界、模块、符号和证据，并保持需求与测试缺失时明确降级。新增可重复构建工具、Wiki 无档案对比回退、页面与服务测试，Java 21 全量 101 项测试通过。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2482396` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
