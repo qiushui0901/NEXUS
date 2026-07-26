@@ -6,4 +6,4 @@
 - [x] 增加单元测试和静态契约测试
 - [x] 更新 README、CHANGELOG、后端知识规范
 - [x] Java 21 verify、diff check、敏感文件检查
-- [ ] 提交、归档任务、记录 journal、推送
+- [x] 提交、归档任务、记录 journal、推送
