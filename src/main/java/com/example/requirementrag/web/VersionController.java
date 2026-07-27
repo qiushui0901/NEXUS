@@ -3,6 +3,7 @@ package com.example.requirementrag.web;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.versioning.VersionComparisonService;
+import com.example.requirementrag.versioning.VersionManifestResolver;
 import com.example.requirementrag.versioning.VersionManifestService;
 import com.example.requirementrag.versioning.VersionModels.VersionComparisonReport;
 import com.example.requirementrag.versioning.VersionModels.VersionManifest;
@@ -15,7 +16,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 
@@ -24,13 +24,16 @@ import java.util.List;
 @RequestMapping("/api/versions")
 public class VersionController {
     private final VersionManifestService manifests;
+    private final VersionManifestResolver manifestResolver;
     private final VersionComparisonService comparisons;
     private final ProjectRegistry projectRegistry;
     private final ProjectAccessGuard accessGuard;
 
-    public VersionController(VersionManifestService manifests, VersionComparisonService comparisons,
-                             ProjectRegistry projectRegistry, ProjectAccessGuard accessGuard) {
+    public VersionController(VersionManifestService manifests, VersionManifestResolver manifestResolver,
+                             VersionComparisonService comparisons, ProjectRegistry projectRegistry,
+                             ProjectAccessGuard accessGuard) {
         this.manifests = manifests;
+        this.manifestResolver = manifestResolver;
         this.comparisons = comparisons;
         this.projectRegistry = projectRegistry;
         this.accessGuard = accessGuard;
@@ -47,7 +50,7 @@ public class VersionController {
     @GetMapping("/manifests")
     public List<VersionManifest> list(@RequestParam String projectId, HttpServletRequest request) {
         requireAccess(projectId, request);
-        return manifests.list(projectId);
+        return manifestResolver.list(projectId);
     }
 
     @RequiresPermission(Permission.PUBLIC_READ)
@@ -55,7 +58,7 @@ public class VersionController {
     public VersionManifest get(@PathVariable String version, @RequestParam String projectId,
                                HttpServletRequest request) {
         requireAccess(projectId, request);
-        return manifests.get(projectId, version);
+        return manifestResolver.get(projectId, version);
     }
 
     @RequiresPermission(Permission.PUBLIC_READ)
@@ -65,14 +68,7 @@ public class VersionController {
                                            @RequestParam String toVersion,
                                            HttpServletRequest request) {
         requireAccess(projectId, request);
-        try {
-            return comparisons.compare(projectId, fromVersion, toVersion);
-        } catch (ResponseStatusException exception) {
-            if (exception.getStatusCode().value() == 404) {
-                return comparisons.compareWikiVersions(projectId, fromVersion, toVersion);
-            }
-            throw exception;
-        }
+        return comparisons.compare(projectId, fromVersion, toVersion);
     }
 
     private void requireAccess(String projectId, HttpServletRequest request) {

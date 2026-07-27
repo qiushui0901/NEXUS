@@ -20,6 +20,7 @@ import java.util.Comparator;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -62,6 +63,13 @@ public class VersionManifestService {
                 cleanNotes(input.notes()));
         writeAtomically(file, manifest);
         return manifest;
+    }
+
+    public Optional<VersionManifest> find(String projectId, String version) {
+        Path file = manifestPath(
+                VersionPathPolicy.identifier(projectId, "projectId"),
+                VersionPathPolicy.identifier(version, "version"));
+        return Files.isRegularFile(file) ? Optional.of(read(file)) : Optional.empty();
     }
 
     public VersionManifest get(String projectId, String version) {
@@ -172,7 +180,7 @@ public class VersionManifestService {
         return normalized;
     }
 
-    private Comparator<String> versionComparator() {
+    static Comparator<String> versionComparator() {
         return (left, right) -> {
             String[] a = left.split("\\.");
             String[] b = right.split("\\.");
@@ -184,7 +192,7 @@ public class VersionManifestService {
         };
     }
 
-    private int versionPart(String[] parts, int index) {
+    private static int versionPart(String[] parts, int index) {
         if (index >= parts.length) return 0;
         try { return Integer.parseInt(parts[index]); }
         catch (NumberFormatException exception) { return -1; }

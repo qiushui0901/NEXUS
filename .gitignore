@@ -34,3 +34,6 @@ tools/*.pid
 .opencode/
 .understand-anything/
 .superpowers/
+
+# Locally generated requirement facts; may contain private business text
+data/requirement-snapshots/

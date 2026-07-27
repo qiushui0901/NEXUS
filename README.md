@@ -228,7 +228,27 @@ GET /api/versions/compare?projectId=...&fromVersion=...&toVersion=...
 
 每个来源都明确标记 `AVAILABLE` 或 `NOT_AVAILABLE`。单个非关键来源缺失时，报告以安全 warning 降级返回，不会把缺失数据伪装成“没有变化”。当前代码比较是可靠的**文件级差异**，尚不宣称提供 AST 或符号级影响分析；测试比较只读取真实快照，不把建议测试点当成测试执行结果。
 
-### 8. 版本中心与差异浏览
+### 8. 需求版本链与受控快照
+
+版本档案解析会把业务版本、需求基线、代码 commit 和 Wiki 版本连接起来。没有人工保存独立档案时，系统会使用 Wiki 版本索引和 `data/requirement-snapshots/` 中的受控需求快照合成只读档案；人工档案仍具有最高优先级，缺失的需求引用可以由可信快照补齐。
+
+需求快照保存来源文件、来源位置、生成时间、正文、顺序和 SHA-256，不保存 embedding、向量、Qdrant point、storage、snapshot、WAL 或凭据。版本差异优先读取这些可评审快照，只有快照缺失时才回退到现有 Qdrant payload。没有可靠材料的版本继续标记为不可用，不会伪装成“没有变化”。
+
+历史快照可以重复生成：
+
+```bash
+python3 tools/build-requirement-snapshots.py
+```
+
+默认从仓库内的历史需求表和本地可选产品文档包提取事实，输出到：
+
+```text
+data/requirement-snapshots/<projectId>/<requirementVersion>.json
+```
+
+大型原始文档包继续由 Git 忽略，只提交生成后的轻量需求快照。
+
+### 9. 版本中心与差异浏览
 
 应用启动后访问：
 
@@ -252,7 +272,7 @@ GET /api/wiki/versions?projectId=...
 GET /api/versions/compare?projectId=...&fromVersion=...&toVersion=...
 ```
 
-### 9. 历史版本 Wiki 实质内容构建
+### 10. 历史版本 Wiki 实质内容构建
 
 针对已有 Git 历史但 Wiki 只有占位页的项目，可以使用第二阶段构建器，从真实 commit 快照补齐代码结构、模块边界和版本变更证据：
 
@@ -269,7 +289,7 @@ Wiki 页面也提供“版本中心”入口；从版本中心进入 Wiki 时，
 /wiki?projectId=...&version=...&featureId=...
 ```
 
-### 10. 监控与数据健康
+### 11. 监控与数据健康
 
 访问监控工作台：
 
@@ -383,7 +403,7 @@ Qdrant 数据保存在 Docker 命名卷或本地运行目录中，不提交到 G
 
 ## 当前阶段边界
 
-当前 `0.4.0-SNAPSHOT` 已具备统一证据检索、版本增量知识草稿、版本化 Wiki 生成、版本中心和多来源差异浏览基础能力，但仍需要继续完善：
+当前 `0.4.2-SNAPSHOT` 已具备统一证据检索、版本增量知识草稿、版本化 Wiki 生成、版本中心和多来源差异浏览基础能力，但仍需要继续完善：
 
 1. 将需求评审的 BGE/LLM 重排也迁移到统一 RetrievalPipeline，并使用 Gold Dataset 比较质量。
 2. 接入真实测试执行结果，把“建议测试点”升级为可追溯的测试证据。

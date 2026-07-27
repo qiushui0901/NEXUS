@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.4.2-SNAPSHOT — 2026-07-26
+
+### Added
+
+- 新增 `RequirementSnapshotRepository` 和非向量需求快照模型，按需求版本或业务版本 alias 读取可审阅需求事实。
+- 新增 `VersionManifestResolver`，合并正式版本档案、Wiki 版本索引和需求快照，并根据相邻 commit 补齐业务基线版本。
+- 新增 `tools/build-requirement-snapshots.py`，从现有历史需求表和本地可选产品文档包生成确定性的轻量 JSON 快照。
+- 为有明确材料的 20 个需求基线生成受控快照，覆盖当前 `5.0.2 -> 5.1` 比较链路。
+
+### Changed
+
+- 版本档案列表和读取接口统一使用解析后的有效档案；人工档案优先，缺失需求引用时可由可信快照补齐。
+- 需求差异优先比较仓库中的受控快照，仅在快照缺失时回退到 Qdrant payload。
+- 缺少独立 VersionManifest 时，版本中心仍可展示真实需求新增、修改、删除及前后摘要。
+- NEXUS 平台版本提升到 `0.4.2-SNAPSHOT`，与业务需求版本继续严格分离。
+
+### Security and data boundaries
+
+- 需求快照只包含来源、文本、顺序和哈希，不包含向量、embedding、Qdrant point、storage、snapshot、WAL、凭据或本地索引。
+- 2.8GB 原始产品文档包继续由 Git 忽略，不进入仓库；提交内容仅包括生成后的轻量需求事实。
+- 没有可靠需求材料的业务版本继续返回 `NOT_AVAILABLE` 和安全 warning，不推断为“没有变化”。
+
 ## 0.4.1-SNAPSHOT — 2026-07-24
 
 ### Added

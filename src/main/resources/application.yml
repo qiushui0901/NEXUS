@@ -128,6 +128,7 @@ app:
       draft-path: ${WIKI_DRAFT_PATH:data/wiki-drafts}
     versioning:
       root-path: ${VERSION_MANIFEST_ROOT_PATH:data/version-manifests}
+      requirement-snapshot-root-path: ${REQUIREMENT_SNAPSHOT_ROOT_PATH:data/requirement-snapshots}
     review:
       min-questions: ${REVIEW_MIN_QUESTIONS:12}
       max-questions: ${REVIEW_MAX_QUESTIONS:15}

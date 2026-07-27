@@ -4,6 +4,7 @@ import com.example.requirementrag.code.GitDiffService.GitDiffResult;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.versioning.VersionComparisonService;
+import com.example.requirementrag.versioning.VersionManifestResolver;
 import com.example.requirementrag.versioning.VersionManifestService;
 import com.example.requirementrag.versioning.VersionModels.ManifestStatus;
 import com.example.requirementrag.versioning.VersionModels.RequirementDiff;
@@ -35,15 +36,16 @@ class VersionControllerTest {
     @BeforeEach
     void setUp() {
         VersionManifestService manifests = mock(VersionManifestService.class);
+        VersionManifestResolver manifestResolver = mock(VersionManifestResolver.class);
         VersionComparisonService comparisons = mock(VersionComparisonService.class);
         VersionManifest saved = manifest("5.1");
         when(manifests.save(any())).thenReturn(saved);
-        when(manifests.list("game")).thenReturn(List.of(saved));
-        when(manifests.get("game", "5.1")).thenReturn(saved);
+        when(manifestResolver.list("game")).thenReturn(List.of(saved));
+        when(manifestResolver.get("game", "5.1")).thenReturn(saved);
         when(comparisons.compare("game", "5.0", "5.1")).thenReturn(new VersionComparisonReport(
                 "game", "5.0", "5.1", "2026-07-24T00:00:00Z", RequirementDiff.unavailable(),
                 GitDiffResult.unavailable(), TestDiff.unavailable(), WikiDiff.unavailable(), List.of()));
-        VersionController controller = new VersionController(manifests, comparisons,
+        VersionController controller = new VersionController(manifests, manifestResolver, comparisons,
                 mock(ProjectRegistry.class), mock(ProjectAccessGuard.class));
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiExceptionHandler()).build();

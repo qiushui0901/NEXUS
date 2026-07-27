@@ -3,6 +3,8 @@ package com.example.requirementrag.versioning;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
+import com.example.requirementrag.versioning.RequirementSnapshotModels.Entry;
+import com.example.requirementrag.versioning.RequirementSnapshotModels.Snapshot;
 import com.example.requirementrag.versioning.VersionModels.ChangeType;
 import com.example.requirementrag.versioning.VersionModels.RequirementChange;
 import com.example.requirementrag.versioning.VersionModels.RequirementDiff;
@@ -12,26 +14,41 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
-/** Compares requirement parent chunks using payload-only Qdrant scrolls. */
+/** Compares requirement parent chunks from reviewable snapshots, with Qdrant payloads as a fallback. */
 @Service
 public class RequirementVersionDiffService {
     private static final int EXCERPT_LIMIT = 360;
 
     private final QdrantHybridStore store;
     private final ProjectRegistry projectRegistry;
+    private final RequirementSnapshotRepository snapshots;
 
-    public RequirementVersionDiffService(QdrantHybridStore store, ProjectRegistry projectRegistry) {
+    public RequirementVersionDiffService(QdrantHybridStore store, ProjectRegistry projectRegistry,
+                                         RequirementSnapshotRepository snapshots) {
         this.store = store;
         this.projectRegistry = projectRegistry;
+        this.snapshots = snapshots;
     }
 
     public RequirementDiff compare(String projectId, VersionManifest from, VersionManifest to) {
         if (!hasReference(from) || !hasReference(to)) return RequirementDiff.unavailable();
-        String collection = projectRegistry.resolveRequirementCollection(projectId);
-        List<RequirementChunkDiff.ParentChange> parentChanges = RequirementChunkDiff.compare(
-                store.scrollVersion(collection, from.requirementDocumentId(), from.requirementVersion()),
-                store.scrollVersion(collection, to.requirementDocumentId(), to.requirementVersion()));
+        List<ChunkRecord> before;
+        List<ChunkRecord> after;
+        Optional<Snapshot> beforeSnapshot = snapshots.find(projectId,
+                from.requirementDocumentId(), from.requirementVersion());
+        Optional<Snapshot> afterSnapshot = snapshots.find(projectId,
+                to.requirementDocumentId(), to.requirementVersion());
+        if (beforeSnapshot.isPresent() && afterSnapshot.isPresent()) {
+            before = chunks(beforeSnapshot.get());
+            after = chunks(afterSnapshot.get());
+        } else {
+            String collection = projectRegistry.resolveRequirementCollection(projectId);
+            before = store.scrollVersion(collection, from.requirementDocumentId(), from.requirementVersion());
+            after = store.scrollVersion(collection, to.requirementDocumentId(), to.requirementVersion());
+        }
+        List<RequirementChunkDiff.ParentChange> parentChanges = RequirementChunkDiff.compare(before, after);
         List<RequirementChange> changes = parentChanges.stream()
                 .map(item -> change(ChangeType.valueOf(item.type().name()), item.before(), item.after()))
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
@@ -42,6 +59,16 @@ public class RequirementVersionDiffService {
         return new RequirementDiff(VersionModels.Availability.AVAILABLE,
                 count(changes, ChangeType.ADDED), count(changes, ChangeType.MODIFIED),
                 count(changes, ChangeType.REMOVED), changes);
+    }
+
+    private List<ChunkRecord> chunks(Snapshot snapshot) {
+        return snapshot.entries().stream().map(entry -> chunk(snapshot, entry)).toList();
+    }
+
+    private ChunkRecord chunk(Snapshot snapshot, Entry entry) {
+        return new ChunkRecord(entry.entryId() + "-child", snapshot.documentId(), snapshot.requirementVersion(),
+                entry.filename(), entry.entryId(), entry.text(), entry.text(), entry.contentHash(),
+                entry.parentOrder(), 0);
     }
 
     private RequirementChange change(ChangeType type, ChunkRecord before, ChunkRecord after) {

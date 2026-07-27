@@ -10,6 +10,7 @@ Apply this specification when changing any of the following:
 - `DevelopmentPlanService` or `DevelopmentPlanStreamService` retrieval orchestration
 - `VersionKnowledgeBuildPipeline` or `KnowledgeBuildController`
 - `com.example.requirementrag.versioning.*` or `VersionController`
+- `tools/build-requirement-snapshots.py` or `data/requirement-snapshots/**`
 - `GitDiffService` or Git-based incremental indexing
 - `WikiRepository` version-index access
 - `app.rag.wiki.*` or `app.rag.versioning.*` storage configuration
@@ -101,6 +102,18 @@ Saving requires `Permission.WRITE`. Listing, reading, and comparing require `Per
 - Missing code or tests must be counted and exposed; absence must not be presented as verified evidence.
 - Test suggestions in a draft are proposals, not test execution results.
 
+### Requirement snapshot persistence
+
+- Store one reviewable snapshot per project and requirement baseline below `${REQUIREMENT_SNAPSHOT_ROOT_PATH:data/requirement-snapshots}/<project>/<requirementVersion>.json`.
+- A snapshot contains `projectId`, `documentId`, `requirementVersion`, optional `baseRequirementVersion`, reviewed business-version `aliases`, `generatedAt`, source facts, and ordered requirement entries.
+- Each source fact records only a repository-relative source path, source location, SHA-256, and byte size. Each entry records a stable `entryId`, filename, parent order, text, and content hash.
+- Snapshots are comparison facts, not retrieval indexes. They must never contain vectors, embeddings, Qdrant points, storage/snapshot/WAL data, credentials, or the original large archive.
+- `RequirementSnapshotRepository.findForBusinessVersion` may map a business version to a requirement baseline only through an explicit alias. Do not infer missing mappings from numeric proximity.
+- `VersionManifestResolver` merges published Wiki indexes and formal manifests. Formal manifests override synthesized manifests; if a formal manifest lacks requirement references, an explicit snapshot alias may fill only those missing references.
+- Synthetic manifests infer `baseVersion` only when the target Wiki index `baseCodeCommit` exactly matches another published index's `codeCommit`.
+- `RequirementVersionDiffService` compares snapshots when both referenced snapshots exist. It falls back to payload-only Qdrant reads when either snapshot is missing, preserving backward compatibility without persisting vector data.
+- The generator must preserve `generatedAt` when regenerated content is unchanged, so a no-op run produces byte-identical JSON.
+
 ### Version manifest persistence
 
 - Store one manifest per project and business version below `${VERSION_MANIFEST_ROOT_PATH:data/version-manifests}/<project>/<version>.json`.
@@ -114,9 +127,9 @@ Saving requires `Permission.WRITE`. Listing, reading, and comparing require `Per
 
 ### Multi-source version comparison
 
-- `VersionComparisonService` uses both manifests when they exist and returns independent requirement, code, test, and Wiki sections plus safe warnings. When manifests are absent, the public compare route may use the two published Wiki indexes as the version-selection source; requirement and test sections must remain `NOT_AVAILABLE`.
+- `VersionComparisonService` resolves both versions through `VersionManifestResolver` and returns independent requirement, code, test, and Wiki sections plus safe warnings. When formal manifests are absent, published Wiki indexes remain the version-selection source; an explicit requirement snapshot alias may make requirement comparison available, while tests remain `NOT_AVAILABLE` without real `TestSnapshot` values.
 - Each source section must report `AVAILABLE` or `NOT_AVAILABLE`; missing data must not be represented as an empty successful diff.
-- Requirement comparison uses the shared parent-chunk comparison and payload-only Qdrant reads.
+- Requirement comparison uses the shared parent-chunk comparison, preferring reviewable requirement snapshots and using payload-only Qdrant reads only as a compatibility fallback.
 - Code comparison uses `GitDiffService` and reports file-level added, modified, deleted, renamed changes and category counts. Do not describe this as AST or symbol-level analysis.
 - `IncrementalCodeIndexService` and version comparison must reuse the same `GitDiffService` execution and parsing logic.
 - Test comparison uses only real `TestSnapshot` values stored in manifests. Compare aggregate counts, run status, case additions/removals, and case status changes. Never infer execution results from suggested test points.
@@ -152,6 +165,7 @@ WIKI_ROOT_PATH=data/wiki
 WIKI_SOURCE_PATH=data/wiki-sources
 WIKI_DRAFT_PATH=data/wiki-drafts
 VERSION_MANIFEST_ROOT_PATH=data/version-manifests
+REQUIREMENT_SNAPSHOT_ROOT_PATH=data/requirement-snapshots
 ```
 
 ## 4. Validation & Error Matrix
@@ -166,12 +180,16 @@ VERSION_MANIFEST_ROOT_PATH=data/version-manifests
 | One retrieval source fails but another has evidence | `DEGRADED` with a safe warning |
 | A core retrieval source fails and no evidence remains | Throw `RagUnavailableException` |
 | Qdrant version payload read fails | Return/throw stable public text; log internal cause only |
+| Both referenced requirement snapshots exist | Compare them without reading Qdrant |
+| Either snapshot is missing but Qdrant payloads exist | Use the payload-only compatibility fallback |
+| No explicit snapshot alias or manifest requirement reference exists | Mark requirements `NOT_AVAILABLE`; do not infer a mapping |
+| Snapshot schema, identity, or entry IDs are invalid | Reject the snapshot with stable public text; do not publish a partial comparison |
 | Draft or manifest serialization contains a forbidden field | Abort the write and publish no partial output |
 | No requirement version delta exists | Return `NO_CHANGES`; do not fabricate features |
 | A comparison source lacks references or data | Mark that section `NOT_AVAILABLE` and add a safe warning |
 | Browser receives fewer than two manifests | Disable compare and show an empty state; do not call `/api/versions/compare` |
 | Browser receives an unavailable source | Keep other tabs usable and show the source's safe warning |
-| Either version manifest does not exist | Return the stable manifest-not-found error |
+| Neither a formal manifest nor a published Wiki index exists for a selected version | Return the stable manifest-not-found error |
 | Git commit is not a concrete SHA | Reject before starting Git |
 | Test snapshot contains duplicate `caseId` | Reject the manifest |
 
@@ -181,15 +199,15 @@ Raw dependency exceptions, URLs, request payloads, credentials, absolute paths, 
 
 ### Good
 
-Target version `5.1` changes one requirement parent block, references a concrete Git commit, stores a real test snapshot, and has a Wiki index. The comparison reports each source independently with traceable, bounded evidence and no vectors.
+A target business version has a published Wiki index and an explicit alias to a reviewable requirement snapshot. Its base commit matches a published baseline version. The resolver returns a bound requirement version and business baseline, and comparison reports traceable, bounded requirement evidence without reading vectors.
 
 ### Base
 
-Target and base versions contain identical parent keys and content hashes. Requirement comparison returns an available result with zero changes; it does not fabricate candidate features.
+Target and base snapshots contain identical parent keys and content hashes. Requirement comparison returns an available result with zero changes; a no-op generator run preserves the existing `generatedAt` and produces byte-identical JSON.
 
 ### Bad
 
-A request uses `version: "../../storage"`, a Git value such as `HEAD;rm`, duplicate test case IDs, or generated JSON contains an `embedding` field. The request is rejected and no partial draft or manifest is published.
+A request uses `version: "../../storage"`, a Git value such as `HEAD;rm`, duplicate snapshot entry IDs, an unreviewed version alias, or generated JSON contains an `embedding` field. The request is rejected or the version remains unbound; no partial artifact is published.
 
 ## 6. Tests Required
 
@@ -201,6 +219,10 @@ Changes to these contracts require assertions for:
 - no-evidence core failure with `RagUnavailableException`
 - profile source selection, including requirement-only review
 - requirement comparison using `parentId`, with `filename + parentOrder` fallback and content-hash change detection
+- requirement snapshot parsing, identity validation, alias lookup, duplicate-entry rejection, and forbidden-field absence
+- resolver precedence, missing-reference enrichment, exact commit-chain baseline inference, and unmapped-version behavior
+- actual committed snapshot coverage for the current requirement comparison chain without Qdrant access
+- generator no-op reproducibility and exclusion of the original large archive
 - different functions receiving distinct, stable feature IDs
 - manifest save, update, list ordering, atomic replacement, path traversal rejection, Git SHA rejection, and duplicate test case rejection
 - Git added, modified, deleted, renamed parsing and category counts
@@ -225,6 +247,10 @@ git diff --check
 **Wrong:** catch a Qdrant exception and return an empty list, then label the result `NO_RESULTS` or an available comparison with no changes.
 
 **Correct:** preserve the failed-stage diagnostic; return `DEGRADED` only when another evidence source remains, otherwise use the stable public failure contract.
+
+**Wrong:** infer a requirement baseline from a nearby-looking business version, copy Qdrant points or vectors into a snapshot, or require local Qdrant data to display a committed historical requirement diff.
+
+**Correct:** map business versions only through reviewed snapshot aliases, persist bounded text/hash/source facts, compare snapshots first, and keep unmapped versions explicitly `NOT_AVAILABLE`.
 
 **Wrong:** copy Qdrant points or vectors into `wiki-source.json` or a version manifest, publish drafts directly to `data/wiki`, or treat suggested tests as passed execution results.
 
