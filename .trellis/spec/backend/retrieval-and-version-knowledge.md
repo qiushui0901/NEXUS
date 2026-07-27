@@ -10,6 +10,7 @@ Apply this specification when changing any of the following:
 - `DevelopmentPlanService` or `DevelopmentPlanStreamService` retrieval orchestration
 - `VersionKnowledgeBuildPipeline` or `KnowledgeBuildController`
 - `com.example.requirementrag.versioning.*` or `VersionController`
+- `com.example.requirementrag.conflict.*`, `KnowledgeConflictController`, or conflict reporting in RAG responses
 - `tools/build-requirement-snapshots.py` or `data/requirement-snapshots/**`
 - `GitDiffService` or Git-based incremental indexing
 - `WikiRepository` version-index access
@@ -67,6 +68,15 @@ GET /api/versions/compare?projectId=...&fromVersion=...&toVersion=...
 GET /versions                  # redirects to /versions.html
 GET /wiki?projectId=...&version=...&featureId=...
 ```
+
+### Knowledge conflict analysis API
+
+```http
+POST /api/knowledge/conflicts/analyze
+Content-Type: application/json
+```
+
+The endpoint requires `Permission.OPERATE`, validates the project through `ProjectRegistry`, and enforces project access through `ProjectAccessGuard`. The request contains a target project/version plus structured claims. The service must not infer semantic equivalence between unrelated free-text passages.
 
 The native browser page consumes `/api/wiki/projects`, `/api/wiki/versions`,
 and `/api/versions/compare`. It must not introduce a second frontend build chain.
@@ -151,6 +161,18 @@ Saving requires `Permission.WRITE`. Listing, reading, and comparing require `Per
 - API-derived text must pass through one HTML escaping function before insertion into `innerHTML`; API keys are read from `localStorage.nexusApiKey` and sent as `X-API-Key` when present.
 - Warnings and UI errors use safe public messages only. The page must not show dependency exception text, absolute paths, secrets, or vector data.
 
+### Knowledge conflict contract
+
+- `KnowledgeClaim` is the only comparable fact unit. It contains a stable `factKey`, bounded `value`, project, business version, source type, authority, evidence, and optional supporting evidence IDs.
+- Requirement, code, and test claims are `PRIMARY`. Wiki claims are always normalized to `DERIVED`; a caller cannot promote Wiki authority.
+- Only claims with the same normalized `factKey` are value-compared. Equal normalized values are aligned; different values are classified as requirement-code, requirement-test, code-test, Wiki-primary, or same-source conflicts.
+- A claim whose project or version differs from the requested scope produces a blocking contamination conflict and is excluded from same-fact comparison.
+- A Wiki claim must reference at least one primary evidence ID present in the same report. Missing support or disagreement with a primary claim is blocking.
+- Conflict IDs are deterministic for the same type, fact key, values, and evidence IDs. Duplicate claims are merged before comparison.
+- `KnowledgeConflictReport.status` is `BLOCKED` when a blocking conflict exists, `REVIEW_REQUIRED` when non-blocking conflicts or normalization warnings exist, otherwise `CLEAR`.
+- Conflict analysis never mutates or automatically arbitrates requirement documents, code, test snapshots, or Wiki content. Public messages and excerpts are bounded and must not include dependency exception text, absolute paths, credentials, vectors, or storage internals.
+- `DevelopmentPlanResponse` may append `conflictReport` without removing existing fields. Retrieval integration may report deterministic project/version contamination, but it must not invent semantic requirement-code conflicts unless both sources provide the same stable `factKey`.
+
 ### Evidence-bound Wiki generation
 
 - `tools/build-version-wiki.py` may update version source JSON and rendered Wiki artifacts only as an explicit, reviewable operation. It reads optional ignored requirement snapshots and real Git commits with bounded, controlled commands; it never reads Qdrant or vector data.
@@ -182,6 +204,9 @@ REQUIREMENT_SNAPSHOT_ROOT_PATH=data/requirement-snapshots
 | Condition | Required behavior |
 |---|---|
 | Required build or manifest field is blank | Bean/service validation rejects the request |
+| Conflict request project/version is blank or a nested claim is invalid | Bean validation rejects the request; no analysis is performed |
+| Claim project/version differs from the requested scope | Return a blocking contamination conflict and exclude that claim from fact comparison |
+| Wiki claim lacks primary supporting evidence or disagrees with primary evidence | Return a blocking conflict; never publish it as verified knowledge |
 | Identifier contains path separators or traversal | Reject before any filesystem write |
 | Unknown project | Use the existing project-registry error contract |
 | Retrieval succeeds with evidence | `SUCCESS` |
@@ -240,6 +265,7 @@ Changes to these contracts require assertions for:
 - no writes to formal Wiki/source roots from draft build
 - forbidden-field absence in serialized drafts and manifests
 - Controller validation, project access, and permission requirements
+- conflict normalization/deduplication, all primary source-pair classifications, same-source conflict, project/version contamination, Wiki evidence support, deterministic status, and development-plan response compatibility
 - Browser route, static page contract, navigation, deep-link parameter consumption, and HTML escaping
 - Browser empty, loading, error, unavailable-source, and missing-real-test-snapshot states
 - Spring application-context binding for `WikiProperties` and `VersioningProperties`
@@ -264,6 +290,10 @@ git diff --check
 **Wrong:** copy Qdrant points or vectors into `wiki-source.json` or a version manifest, publish drafts directly to `data/wiki`, or treat suggested tests as passed execution results.
 
 **Correct:** map payloads to bounded textual evidence, reject forbidden fields, keep drafts and manifests in their dedicated roots, and require real test snapshots for test-result comparison.
+
+**Wrong:** concatenate requirement, code, tests, and Wiki into one prompt and let the model silently choose whichever statement sounds most plausible.
+
+**Correct:** preserve source-specific claims and evidence, compare only stable structured fact keys, block version/project contamination and stale or unsupported Wiki claims, and leave arbitration to an explicit review workflow.
 
 **Wrong:** let the browser interpolate API text directly into `innerHTML`, or turn a missing source into a zero-change card.
 

@@ -3,6 +3,7 @@ package com.example.requirementrag.service;
 import com.example.requirementrag.code.CodeKnowledgeService;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.config.RagProperties;
+import com.example.requirementrag.conflict.KnowledgeConflictModels.ReportStatus;
 import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.QueryRouting;
@@ -57,6 +58,7 @@ class DevelopmentPlanServiceTest {
 
         assertEquals(RagOutcomeStatus.NO_RESULTS, response.status());
         assertEquals(List.of(), response.warnings());
+        assertEquals(ReportStatus.CLEAR, response.conflictReport().status());
     }
 
     @Test
@@ -113,6 +115,25 @@ class DevelopmentPlanServiceTest {
         assertEquals(RagOutcomeStatus.DEGRADED, response.status());
         assertEquals("PLAN_GENERATION_FALLBACK", response.warnings().getFirst().code());
         assertEquals("模型生成失败，已使用规则化方案", response.warnings().getFirst().message());
+    }
+
+
+    @Test
+    void reportsRequirementEvidenceFromAnotherVersionAsBlocked() {
+        ChunkRecord stale = new ChunkRecord("doc-old", "requirements", "2.0", "requirements.md", "parent-1",
+                "通用规则内容", "规则", "hash-old", 1, 1);
+        when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
+                .thenReturn(List.of(stale));
+        when(codeKnowledgeService.search("query", "game", 8)).thenReturn(List.of());
+        when(properties.llm()).thenReturn(new RagProperties.Llm("generation-model", "reranker", "router"));
+        ChatClient nullResultChatClient = mock(ChatClient.class, RETURNS_DEEP_STUBS);
+        DevelopmentPlanService checkedService = new DevelopmentPlanService(properties, projectRegistry, queryRouter,
+                documentStore, codeKnowledgeService, nullResultChatClient, observability);
+
+        var response = checkedService.plan("query", null, null, null, 8);
+
+        assertEquals(ReportStatus.BLOCKED, response.conflictReport().status());
+        assertEquals("VERSION_CONTAMINATION", response.conflictReport().conflicts().getFirst().type().name());
     }
 
     private ChunkRecord documentChunk() {

@@ -3,6 +3,12 @@ package com.example.requirementrag.service;
 import com.example.requirementrag.code.CodeKnowledgeService;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.config.RagProperties;
+import com.example.requirementrag.conflict.KnowledgeConflictModels.Authority;
+import com.example.requirementrag.conflict.KnowledgeConflictModels.KnowledgeClaim;
+import com.example.requirementrag.conflict.KnowledgeConflictModels.KnowledgeConflictReport;
+import com.example.requirementrag.conflict.KnowledgeConflictModels.KnowledgeEvidence;
+import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
+import com.example.requirementrag.conflict.KnowledgeConflictService;
 import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.DevelopmentPlanResponse;
@@ -20,13 +26,13 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Set;
-import java.time.Duration;
 
 /**
  * 面向“某个需求怎么入手”的开发方案服务。
@@ -43,14 +49,23 @@ public class DevelopmentPlanService {
     private final RetrievalPipeline retrievalPipeline;
     private final ChatClient chatClient;
     private final RagObservability observability;
+    private final KnowledgeConflictService conflictService;
 
     @Autowired
     public DevelopmentPlanService(RagProperties properties, RetrievalPipeline retrievalPipeline,
-                                  ChatClient chatClient, RagObservability observability) {
+                                  ChatClient chatClient, RagObservability observability,
+                                  KnowledgeConflictService conflictService) {
         this.properties = properties;
         this.retrievalPipeline = retrievalPipeline;
         this.chatClient = chatClient;
         this.observability = observability;
+        this.conflictService = conflictService;
+    }
+
+    /** Backward-compatible constructor kept for focused unit tests and embedded consumers. */
+    public DevelopmentPlanService(RagProperties properties, RetrievalPipeline retrievalPipeline,
+                                  ChatClient chatClient, RagObservability observability) {
+        this(properties, retrievalPipeline, chatClient, observability, new KnowledgeConflictService());
     }
 
     /** Backward-compatible constructor kept for focused unit tests and embedded consumers. */
@@ -59,7 +74,7 @@ public class DevelopmentPlanService {
                                   CodeKnowledgeService codeKnowledgeService, ChatClient chatClient,
                                   RagObservability observability) {
         this(properties, new RetrievalPipeline(properties, projectRegistry, queryRouter, documentStore,
-                codeKnowledgeService, observability), chatClient, observability);
+                codeKnowledgeService, observability), chatClient, observability, new KnowledgeConflictService());
     }
 
     /** 结合需求文档与代码检索结果，生成可落地的开发入手建议。 */
@@ -100,7 +115,35 @@ public class DevelopmentPlanService {
                 code,
                 status,
                 warnings,
-                diagnostics);
+                diagnostics,
+                retrievalConflictReport(bundle));
+    }
+
+    private KnowledgeConflictReport retrievalConflictReport(RetrievalBundle bundle) {
+        List<KnowledgeClaim> claims = new ArrayList<>();
+        for (ChunkRecord chunk : bundle.requirementEvidence()) {
+            String identity = hasText(chunk.parentId()) ? chunk.parentId()
+                    : Objects.toString(chunk.filename(), "") + ":" + chunk.parentOrder();
+            String value = hasText(chunk.contentHash()) ? chunk.contentHash() : chunk.parentText();
+            claims.add(new KnowledgeClaim(null, bundle.resolvedProjectId(),
+                    hasText(chunk.version()) ? chunk.version() : bundle.version(), "retrieval.requirement:" + identity,
+                    Objects.toString(value, ""), SourceType.REQUIREMENT, Authority.PRIMARY,
+                    new KnowledgeEvidence(hasText(chunk.id()) ? chunk.id() : identity, chunk.filename(),
+                            chunk.filename(), "parentOrder=" + chunk.parentOrder(),
+                            excerpt(chunk.parentText(), 260)), List.of()));
+        }
+        for (CodeChunk chunk : bundle.codeEvidence()) {
+            String identity = hasText(chunk.id()) ? chunk.id()
+                    : Objects.toString(chunk.filePath(), "") + ":"
+                    + Objects.toString(chunk.symbolName(), "") + ":" + chunk.startLine();
+            String value = hasText(chunk.contentHash()) ? chunk.contentHash() : chunk.text();
+            claims.add(new KnowledgeClaim(null, hasText(chunk.projectId()) ? chunk.projectId() : bundle.resolvedProjectId(),
+                    bundle.version(), "retrieval.code:" + identity, Objects.toString(value, ""),
+                    SourceType.CODE, Authority.PRIMARY,
+                    new KnowledgeEvidence(identity, chunk.symbolName(), chunk.filePath(),
+                            chunk.filePath() + ":" + chunk.startLine(), excerpt(chunk.text(), 260)), List.of()));
+        }
+        return conflictService.analyze(bundle.resolvedProjectId(), bundle.version(), claims);
     }
 
     private RagOutcome<PlanDraft> draftWithProductContext(String query, List<ChunkRecord> documents,

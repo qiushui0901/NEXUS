@@ -1,5 +1,7 @@
 package com.example.requirementrag.model;
 
+import com.example.requirementrag.conflict.KnowledgeConflictModels.KnowledgeConflictReport;
+
 import java.util.List;
 
 /**
@@ -22,8 +24,38 @@ public record DevelopmentPlanResponse(
         List<CodeChunk> codeReferences,
         RagOutcomeStatus status,
         List<RagWarning> warnings,
-        List<RagStageDiagnostic> stageDiagnostics
+        List<RagStageDiagnostic> stageDiagnostics,
+        KnowledgeConflictReport conflictReport
 ) {
+    public DevelopmentPlanResponse {
+        conflictReport = conflictReport == null ? KnowledgeConflictReport.empty(null, version) : conflictReport;
+    }
+
+    /** Backward-compatible constructor for callers that predate conflict reporting. */
+    public DevelopmentPlanResponse(
+            String query,
+            String documentId,
+            String version,
+            String summary,
+            List<String> productUnderstanding,
+            List<String> developmentConstraints,
+            SimilarModule similarModule,
+            List<String> chainOverview,
+            List<PlanSection> sections,
+            List<String> implementationOrder,
+            List<String> steps,
+            List<String> risks,
+            List<DocumentReference> documentReferences,
+            List<CodeChunk> codeReferences,
+            RagOutcomeStatus status,
+            List<RagWarning> warnings,
+            List<RagStageDiagnostic> stageDiagnostics
+    ) {
+        this(query, documentId, version, summary, productUnderstanding, developmentConstraints, similarModule,
+                chainOverview, sections, implementationOrder, steps, risks, documentReferences, codeReferences,
+                status, warnings, stageDiagnostics, KnowledgeConflictReport.empty(null, version));
+    }
+
     /** 最接近当前需求的现有模块，用于复用链路。 */
     public record SimilarModule(String name, String reason, List<CodeChunk> references) {
     }
