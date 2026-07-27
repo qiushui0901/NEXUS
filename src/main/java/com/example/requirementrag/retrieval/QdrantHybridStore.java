@@ -29,16 +29,18 @@ public class QdrantHybridStore {
 
     private final RestClient client;
     private final EmbeddingModel embeddingModel;
+    private final EmbeddingBatcher embeddingBatcher;
     private final SparseVectorizer sparseVectorizer;
     private final RagProperties properties;
     private final Set<String> initializedCollections = ConcurrentHashMap.newKeySet();
 
     /** 注入 Qdrant 客户端、嵌入模型、稀疏向量化器与配置。 */
     public QdrantHybridStore(RestClient qdrantRestClient,
-                             EmbeddingModel embeddingModel,
+                             EmbeddingModel embeddingModel, EmbeddingBatcher embeddingBatcher,
                              SparseVectorizer sparseVectorizer, RagProperties properties) {
         this.client = qdrantRestClient;
         this.embeddingModel = embeddingModel;
+        this.embeddingBatcher = embeddingBatcher;
         this.sparseVectorizer = sparseVectorizer;
         this.properties = properties;
     }
@@ -51,11 +53,23 @@ public class QdrantHybridStore {
     /** 替换指定文档版本的全部分块：先删后批量写入。 */
     public void replaceVersion(String collection, String documentId, String version, List<ChunkRecord> chunks) {
         ensureCollection(collection);
+        List<List<Map<String, Object>>> pointBatches = buildPointBatches(chunks, 64);
         deleteVersion(collection, documentId, version);
-        for (int start = 0; start < chunks.size(); start += 64) {
-            int end = Math.min(start + 64, chunks.size());
-            List<ChunkRecord> batch = chunks.subList(start, end);
-            List<Map<String, Object>> points = buildPoints(batch);
+        writePointBatches(collection, pointBatches);
+    }
+
+
+    private List<List<Map<String, Object>>> buildPointBatches(List<ChunkRecord> chunks, int batchSize) {
+        List<List<Map<String, Object>>> batches = new ArrayList<>();
+        for (int start = 0; start < chunks.size(); start += batchSize) {
+            int end = Math.min(start + batchSize, chunks.size());
+            batches.add(buildPoints(chunks.subList(start, end)));
+        }
+        return batches;
+    }
+
+    private void writePointBatches(String collection, List<List<Map<String, Object>>> batches) {
+        for (List<Map<String, Object>> points : batches) {
             client.put().uri("/collections/{collection}/points?wait=true", collection)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(Map.of("points", points))
@@ -66,7 +80,7 @@ public class QdrantHybridStore {
     /** 为分块批次构建 Qdrant 点结构（稠密+稀疏向量与 payload）。 */
     private List<Map<String, Object>> buildPoints(List<ChunkRecord> chunks) {
         List<String> childTexts = chunks.stream().map(ChunkRecord::childText).toList();
-        List<float[]> denseVectors = childTexts.parallelStream().map(embeddingModel::embed).toList();
+        List<float[]> denseVectors = embeddingBatcher.embedAll(childTexts);
         List<Map<String, Object>> points = new ArrayList<>(chunks.size());
         for (int index = 0; index < chunks.size(); index++) {
             ChunkRecord chunk = chunks.get(index);

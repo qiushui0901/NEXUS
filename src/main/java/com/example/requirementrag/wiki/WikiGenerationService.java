@@ -1,11 +1,16 @@
 package com.example.requirementrag.wiki;
 
 import com.example.requirementrag.config.WikiProperties;
+import com.example.requirementrag.wiki.WikiModels.CodeEntry;
 import com.example.requirementrag.wiki.WikiModels.Evidence;
+import com.example.requirementrag.wiki.WikiModels.KnowledgeQuality;
 import com.example.requirementrag.wiki.WikiModels.GenerationResult;
 import com.example.requirementrag.wiki.WikiModels.Page;
 import com.example.requirementrag.wiki.WikiModels.PageSource;
 import com.example.requirementrag.wiki.WikiModels.PageSummary;
+import com.example.requirementrag.wiki.WikiModels.RequirementSource;
+import com.example.requirementrag.wiki.WikiModels.TestKnowledge;
+import com.example.requirementrag.wiki.WikiModels.VersionChange;
 import com.example.requirementrag.wiki.WikiModels.VersionIndex;
 import com.example.requirementrag.wiki.WikiModels.VersionSource;
 import org.springframework.http.HttpStatus;
@@ -99,7 +104,7 @@ public class WikiGenerationService {
 
     private void validate(VersionSource source, String projectId, String version) {
         if (source == null) throw new IllegalArgumentException("Wiki 源定义不能为空");
-        if (source.schemaVersion() != 1) throw new IllegalArgumentException("不支持的 Wiki schemaVersion");
+        if (source.schemaVersion() < 1 || source.schemaVersion() > 2) throw new IllegalArgumentException("不支持的 Wiki schemaVersion");
         if (!projectId.equals(WikiPathPolicy.identifier(source.projectId(), "source.projectId"))) {
             throw new IllegalArgumentException("源定义 projectId 与请求不一致");
         }
@@ -121,9 +126,17 @@ public class WikiGenerationService {
             }
             validateTextList(featureId, "aliases", page.aliases());
             validateTextList(featureId, "productRules", page.productRules());
+            validateTextList(featureId, "processSteps", page.processSteps());
             validateTextList(featureId, "codeSymbols", page.codeSymbols());
+            validateTextList(featureId, "dataImpacts", page.dataImpacts());
+            validateTextList(featureId, "boundaryConditions", page.boundaryConditions());
+            validateTextList(featureId, "acceptanceCriteria", page.acceptanceCriteria());
             validateTextList(featureId, "testPoints", page.testPoints());
             validateTextList(featureId, "risks", page.risks());
+            validateObjects(featureId, "requirementSources", page.requirementSources());
+            validateObjects(featureId, "codeEntries", page.codeEntries());
+            if (page.testKnowledge() != null) validateTextList(featureId, "testKnowledge.cases", page.testKnowledge().cases());
+            if (page.quality() != null) validateTextList(featureId, "quality.missing", page.quality().missing());
             for (WikiModels.Relation relation : list(page.relations())) {
                 if (relation == null) throw new IllegalArgumentException(featureId + " 包含空关联");
                 WikiPathPolicy.identifier(relation.targetFeatureId(), "relation.targetFeatureId");
@@ -148,6 +161,12 @@ public class WikiGenerationService {
         }
     }
 
+    private void validateObjects(String featureId, String field, List<?> values) {
+        if (values != null && values.stream().anyMatch(java.util.Objects::isNull)) {
+            throw new IllegalArgumentException(featureId + "." + field + " 不能包含 null");
+        }
+    }
+
     private Page toPage(VersionSource source, PageSource page, String generatedAt) {
         String featureId = WikiPathPolicy.identifier(page.featureId(), "featureId");
         return new Page(
@@ -155,8 +174,13 @@ public class WikiGenerationService {
                 text(source.baseCodeCommit()), text(source.codeCommit()), generatedAt,
                 featureId, text(page.title()), fallback(page.category(), "未分类"),
                 fallback(page.introducedVersion(), source.version()), page.status(),
-                list(page.aliases()), text(page.summary()), list(page.productRules()), list(page.codeSymbols()),
-                list(page.testPoints()), list(page.risks()), list(page.relations()), list(page.evidence()),
+                list(page.aliases()), text(page.summary()), list(page.requirementSources()),
+                list(page.productRules()), list(page.processSteps()), list(page.codeEntries()), list(page.codeSymbols()),
+                list(page.dataImpacts()), list(page.boundaryConditions()), list(page.acceptanceCriteria()),
+                list(page.testPoints()), testKnowledge(page.testKnowledge()),
+                versionChange(page.versionChange(), source.version()),
+                quality(page.quality(), page.requirementSources(), page.codeEntries()),
+                list(page.risks()), list(page.relations()), list(page.evidence()),
                 "pages/" + featureId + ".md");
     }
 
@@ -171,9 +195,14 @@ public class WikiGenerationService {
                 .append("generatedAt: ").append(yaml(page.generatedAt())).append('\n')
                 .append("---\n\n# ").append(page.title()).append("\n\n")
                 .append(page.summary()).append("\n\n");
-        section(out, "产品视角", page.productRules());
-        section(out, "开发视角", page.codeSymbols());
-        section(out, "测试视角", page.testPoints());
+        section(out, "业务规则", page.productRules());
+        section(out, "处理流程", page.processSteps());
+        section(out, "数据与配置影响", page.dataImpacts());
+        section(out, "异常与边界条件", page.boundaryConditions());
+        section(out, "代码入口", page.codeSymbols(), "尚未关联代码实现");
+        section(out, "测试与验收", page.acceptanceCriteria());
+        if (!page.testPoints().isEmpty()) section(out, "测试建议", page.testPoints());
+        out.append("## 测试执行状态\n\n- ").append(page.testKnowledge().summary()).append("\n\n");
         section(out, "风险与存疑", page.risks());
         if (!page.relations().isEmpty()) {
             out.append("## 关联功能\n\n");
@@ -200,9 +229,43 @@ public class WikiGenerationService {
         return out.toString();
     }
 
+
+    private TestKnowledge testKnowledge(TestKnowledge value) {
+        if (value == null) {
+            return new TestKnowledge("NOT_AVAILABLE", "", "没有真实执行快照", List.of());
+        }
+        return new TestKnowledge(fallback(value.executionStatus(), "NOT_AVAILABLE"),
+                text(value.executionReference()), fallback(value.summary(), "没有真实执行快照"), list(value.cases()));
+    }
+
+    private VersionChange versionChange(VersionChange value, String version) {
+        if (value == null) return new VersionChange("UNKNOWN", "", version, "尚未记录结构化版本变化");
+        return new VersionChange(fallback(value.changeType(), "UNKNOWN"), text(value.baseVersion()),
+                fallback(value.version(), version), fallback(value.summary(), "尚未记录结构化版本变化"));
+    }
+
+    private KnowledgeQuality quality(KnowledgeQuality value, List<RequirementSource> requirements,
+                                     List<CodeEntry> codeEntries) {
+        if (value != null) {
+            return new KnowledgeQuality(fallback(value.reviewStatus(), "PENDING_REVIEW"),
+                    value.requirementEvidenceCount(), value.codeEvidenceCount(), value.realTestExecution(),
+                    list(value.missing()));
+        }
+        List<String> missing = new ArrayList<>();
+        if (requirements == null || requirements.isEmpty()) missing.add("需求证据");
+        if (codeEntries == null || codeEntries.isEmpty()) missing.add("代码证据");
+        missing.add("真实测试执行快照");
+        return new KnowledgeQuality("PENDING_REVIEW", requirements == null ? 0 : requirements.size(),
+                codeEntries == null ? 0 : codeEntries.size(), false, List.copyOf(missing));
+    }
+
     private void section(StringBuilder out, String title, List<String> items) {
+        section(out, title, items, "暂无已核验内容");
+    }
+
+    private void section(StringBuilder out, String title, List<String> items, String emptyMessage) {
         out.append("## ").append(title).append("\n\n");
-        if (items.isEmpty()) out.append("- 暂无已核验内容\n\n");
+        if (items.isEmpty()) out.append("- ").append(emptyMessage).append("\n\n");
         else {
             items.forEach(item -> out.append("- ").append(item).append('\n'));
             out.append('\n');

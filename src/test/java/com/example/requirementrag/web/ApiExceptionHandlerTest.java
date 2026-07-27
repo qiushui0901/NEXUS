@@ -1,6 +1,7 @@
 package com.example.requirementrag.web;
 
 import com.example.requirementrag.model.RagWarning;
+import com.example.requirementrag.retrieval.EmbeddingUnavailableException;
 import com.example.requirementrag.service.RagUnavailableException;
 import org.junit.jupiter.api.Test;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -33,6 +34,18 @@ class ApiExceptionHandlerTest {
                 .andExpect(content().string(not(containsString("secret.internal"))));
     }
 
+
+    @Test
+    void mapsEmbeddingFailureToServiceUnavailableProblem() throws Exception {
+        MockMvc mvc = MockMvcBuilders.standaloneSetup(new FailingController())
+                .setControllerAdvice(new ApiExceptionHandler())
+                .build();
+
+        mvc.perform(get("/test/embedding-unavailable"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(content().string(containsString("Ollama")));
+    }
+
     @RestController
     private static class FailingController {
         @GetMapping("/test/rag-unavailable")
@@ -42,6 +55,11 @@ class ApiExceptionHandlerTest {
                     "DOCUMENT_RETRIEVAL_UNAVAILABLE",
                     "需求文档检索暂时不可用",
                     12)));
+        }
+
+        @GetMapping("/test/embedding-unavailable")
+        void embeddingFail() {
+            throw new EmbeddingUnavailableException("Ollama 嵌入模型暂时不可用", new IllegalStateException());
         }
     }
 }

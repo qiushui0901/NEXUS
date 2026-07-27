@@ -24,6 +24,10 @@ import java.util.regex.Pattern;
 @Component
 public class JavaCodeScanner {
 
+    static final int MAX_CHUNK_CHARS = 6_000;
+    static final int TYPE_CONTEXT_CHARS = 2_000;
+    private static final int CHUNK_OVERLAP_CHARS = 400;
+
     private static final Pattern TYPE_PATTERN = Pattern.compile("\\b(class|interface|enum)\\s+([A-Z][A-Za-z0-9_]*)");
     private static final Pattern METHOD_PATTERN = Pattern.compile(
             "\\b(?:public|private|protected|static|final|synchronized|native|abstract|default|\\s)+" +
@@ -110,9 +114,11 @@ public class JavaCodeScanner {
         Matcher typeMatcher = TYPE_PATTERN.matcher(text);
         while (typeMatcher.find()) {
             String typeName = typeMatcher.group(2);
-            int end = findBlockEnd(text, typeMatcher.end());
+            int blockEnd = findBlockEnd(text, typeMatcher.end());
+            int end = Math.min(blockEnd, typeMatcher.start() + TYPE_CONTEXT_CHARS);
             if (end > typeMatcher.start()) {
-                chunks.add(chunk(projectId, commitSha, filePath, "class", typeName, text, typeMatcher.start(), end, lineStarts));
+                chunks.addAll(chunks(projectId, commitSha, filePath, "class", typeName, text,
+                        typeMatcher.start(), end, lineStarts));
             }
         }
 
@@ -124,27 +130,48 @@ public class JavaCodeScanner {
             }
             int end = findBlockEnd(text, methodMatcher.end() - 1);
             if (end > methodMatcher.start()) {
-                chunks.add(chunk(projectId, commitSha, filePath, "method", methodName, text, methodMatcher.start(), end, lineStarts));
+                chunks.addAll(chunks(projectId, commitSha, filePath, "method", methodName, text, methodMatcher.start(), end, lineStarts));
             }
         }
 
         if (chunks.isEmpty()) {
-            chunks.add(chunk(projectId, commitSha, filePath, "file", Path.of(filePath).getFileName().toString(),
-                    text, 0, Math.min(text.length(), 4_000), lineStarts));
+            chunks.addAll(chunks(projectId, commitSha, filePath, "file", Path.of(filePath).getFileName().toString(),
+                    text, 0, Math.min(text.length(), MAX_CHUNK_CHARS), lineStarts));
         }
         return chunks;
     }
 
-    private CodeChunk chunk(String projectId, String commitSha, String filePath, String symbolType, String symbolName,
-                            String fullText, int startOffset, int endOffset, int[] lineStarts) {
+    private List<CodeChunk> chunks(String projectId, String commitSha, String filePath, String symbolType,
+                                   String symbolName, String fullText, int startOffset, int endOffset,
+                                   int[] lineStarts) {
         int safeStart = Math.max(0, Math.min(startOffset, fullText.length()));
         int safeEnd = Math.max(safeStart, Math.min(endOffset, fullText.length()));
-        String source = fullText.substring(safeStart, safeEnd).strip();
-        int startLine = lineOf(lineStarts, safeStart);
-        int endLine = lineOf(lineStarts, safeEnd);
-        String hash = sha256(projectId + '\n' + commitSha + '\n' + filePath + '\n' + symbolType + '\n' + symbolName + '\n' + source);
-        String id = UUID.nameUUIDFromBytes(hash.getBytes(StandardCharsets.UTF_8)).toString();
-        return new CodeChunk(id, projectId, commitSha, filePath, symbolType, symbolName, startLine, endLine, source, hash);
+        List<CodeChunk> chunks = new ArrayList<>();
+        int segmentStart = safeStart;
+        while (segmentStart < safeEnd) {
+            int segmentEnd = Math.min(segmentStart + MAX_CHUNK_CHARS, safeEnd);
+            if (segmentEnd < safeEnd) {
+                int lineBreak = fullText.lastIndexOf('\n', segmentEnd);
+                if (lineBreak > segmentStart + MAX_CHUNK_CHARS / 2) {
+                    segmentEnd = lineBreak + 1;
+                }
+            }
+            String source = fullText.substring(segmentStart, segmentEnd).strip();
+            if (!source.isEmpty()) {
+                int startLine = lineOf(lineStarts, segmentStart);
+                int endLine = lineOf(lineStarts, segmentEnd);
+                String hash = sha256(projectId + '\n' + commitSha + '\n' + filePath + '\n' + symbolType
+                        + '\n' + symbolName + '\n' + source);
+                String id = UUID.nameUUIDFromBytes(hash.getBytes(StandardCharsets.UTF_8)).toString();
+                chunks.add(new CodeChunk(id, projectId, commitSha, filePath, symbolType, symbolName,
+                        startLine, endLine, source, hash));
+            }
+            if (segmentEnd >= safeEnd) {
+                break;
+            }
+            segmentStart = Math.max(segmentStart + 1, segmentEnd - CHUNK_OVERLAP_CHARS);
+        }
+        return chunks;
     }
 
     private int findBlockEnd(String text, int searchFrom) {

@@ -2,6 +2,7 @@ package com.example.requirementrag.code;
 
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.model.CodeChunk;
+import com.example.requirementrag.retrieval.EmbeddingBatcher;
 import com.example.requirementrag.retrieval.SparseVectorizer;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.core.ParameterizedTypeReference;
@@ -28,15 +29,18 @@ public class CodeQdrantStore {
 
     private final RestClient client;
     private final EmbeddingModel embeddingModel;
+    private final EmbeddingBatcher embeddingBatcher;
     private final SparseVectorizer sparseVectorizer;
     private final RagProperties properties;
     private final Set<String> initializedCollections = ConcurrentHashMap.newKeySet();
 
     /** 注入 Qdrant 客户端、嵌入模型、稀疏向量化器与配置。 */
     public CodeQdrantStore(RestClient qdrantRestClient, EmbeddingModel embeddingModel,
-                           SparseVectorizer sparseVectorizer, RagProperties properties) {
+                           EmbeddingBatcher embeddingBatcher, SparseVectorizer sparseVectorizer,
+                           RagProperties properties) {
         this.client = qdrantRestClient;
         this.embeddingModel = embeddingModel;
+        this.embeddingBatcher = embeddingBatcher;
         this.sparseVectorizer = sparseVectorizer;
         this.properties = properties;
     }
@@ -49,8 +53,9 @@ public class CodeQdrantStore {
     /** 替换某个项目的全部代码 chunk。 */
     public void replaceProject(String collection, String projectId, List<CodeChunk> chunks) {
         ensureCollection(collection);
+        List<List<Map<String, Object>>> pointBatches = buildPointBatches(chunks, 32);
         deleteProject(collection, projectId);
-        upsertChunks(collection, chunks);
+        writePointBatches(collection, pointBatches);
     }
 
     /** 增量写入代码 chunk，不删除项目内其他文件。 */
@@ -59,14 +64,7 @@ public class CodeQdrantStore {
             return;
         }
         ensureCollection(collection);
-        for (int start = 0; start < chunks.size(); start += 32) {
-            int end = Math.min(start + 32, chunks.size());
-            List<CodeChunk> batch = chunks.subList(start, end);
-            client.put().uri("/collections/{collection}/points?wait=true", collection)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(Map.of("points", buildPoints(batch)))
-                    .retrieve().toBodilessEntity();
-        }
+        writePointBatches(collection, buildPointBatches(chunks, 32));
     }
 
     /** 删除某个项目下指定文件的全部代码 chunk。 */
@@ -120,9 +118,28 @@ public class CodeQdrantStore {
         return ((Number) result.getOrDefault("count", 0)).longValue();
     }
 
+
+    private List<List<Map<String, Object>>> buildPointBatches(List<CodeChunk> chunks, int batchSize) {
+        List<List<Map<String, Object>>> batches = new ArrayList<>();
+        for (int start = 0; start < chunks.size(); start += batchSize) {
+            int end = Math.min(start + batchSize, chunks.size());
+            batches.add(buildPoints(chunks.subList(start, end)));
+        }
+        return batches;
+    }
+
+    private void writePointBatches(String collection, List<List<Map<String, Object>>> batches) {
+        for (List<Map<String, Object>> points : batches) {
+            client.put().uri("/collections/{collection}/points?wait=true", collection)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("points", points))
+                    .retrieve().toBodilessEntity();
+        }
+    }
+
     private List<Map<String, Object>> buildPoints(List<CodeChunk> chunks) {
         List<String> texts = chunks.stream().map(CodeChunk::text).toList();
-        List<float[]> denseVectors = texts.parallelStream().map(embeddingModel::embed).toList();
+        List<float[]> denseVectors = embeddingBatcher.embedAll(texts);
         List<Map<String, Object>> points = new ArrayList<>(chunks.size());
         for (int index = 0; index < chunks.size(); index++) {
             CodeChunk chunk = chunks.get(index);

@@ -1,9 +1,11 @@
 package com.example.requirementrag.web;
 
+import com.example.requirementrag.code.CodeIndexJobService;
 import com.example.requirementrag.code.CodeKnowledgeService;
 import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.CodeGraphRequest;
 import com.example.requirementrag.model.CodeGraphResponse;
+import com.example.requirementrag.model.CodeIndexJobStatus;
 import com.example.requirementrag.model.CodeIndexResponse;
 import com.example.requirementrag.model.IncrementalCodeIndexResponse;
 import com.example.requirementrag.code.IncrementalCodeIndexService;
@@ -12,6 +14,7 @@ import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.SourceSnippet;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -32,14 +35,17 @@ public class CodeController {
 
     private final CodeKnowledgeService codeKnowledgeService;
     private final IncrementalCodeIndexService incrementalCodeIndexService;
+    private final CodeIndexJobService codeIndexJobService;
     private final ProjectAccessGuard accessGuard;
 
     /** 注入代码知识服务。 */
     public CodeController(CodeKnowledgeService codeKnowledgeService,
                           IncrementalCodeIndexService incrementalCodeIndexService,
+                          CodeIndexJobService codeIndexJobService,
                           ProjectAccessGuard accessGuard) {
         this.codeKnowledgeService = codeKnowledgeService;
         this.incrementalCodeIndexService = incrementalCodeIndexService;
+        this.codeIndexJobService = codeIndexJobService;
         this.accessGuard = accessGuard;
     }
 
@@ -53,6 +59,24 @@ public class CodeController {
             return codeKnowledgeService.index(projectId);
         }
         return codeKnowledgeService.index();
+    }
+
+    /** 启动后台完整索引，立即返回任务状态，避免浏览器长时间等待。 */
+    @RequiresPermission(Permission.WRITE)
+    @PostMapping("/index/start")
+    public ResponseEntity<CodeIndexJobStatus> startIndex(@RequestParam(required = false) String projectId,
+                                                          HttpServletRequest httpRequest) {
+        accessGuard.requireProjectAccess(httpRequest, projectId);
+        return ResponseEntity.accepted().body(codeIndexJobService.start(projectId));
+    }
+
+    /** 查询后台完整索引任务状态。 */
+    @RequiresPermission(Permission.PUBLIC_READ)
+    @GetMapping("/index/status")
+    public CodeIndexJobStatus indexStatus(@RequestParam(required = false) String projectId,
+                                          HttpServletRequest httpRequest) {
+        accessGuard.requireProjectAccess(httpRequest, projectId);
+        return codeIndexJobService.status(projectId);
     }
 
     /** 按 Git commit 范围增量更新当前项目的版本化代码 collection。 */

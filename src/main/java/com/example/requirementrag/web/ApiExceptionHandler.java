@@ -1,5 +1,6 @@
 package com.example.requirementrag.web;
 
+import com.example.requirementrag.retrieval.EmbeddingUnavailableException;
 import com.example.requirementrag.service.DocumentNotFoundException;
 import com.example.requirementrag.service.RagUnavailableException;
 import com.example.requirementrag.model.RagOutcomeStatus;
@@ -44,6 +45,12 @@ public class ApiExceptionHandler {
     @ExceptionHandler(ResponseStatusException.class)
     ProblemDetail handleResponseStatus(ResponseStatusException exception) {
         return ProblemDetail.forStatusAndDetail(exception.getStatusCode(), exception.getReason());
+    }
+
+    /** 本地嵌入模型不可用或拒绝输入时返回可诊断的 503。 */
+    @ExceptionHandler(EmbeddingUnavailableException.class)
+    ProblemDetail handleEmbeddingUnavailable(EmbeddingUnavailableException exception) {
+        return ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, exception.getMessage());
     }
 
     /** 核心 RAG 依赖不可用且没有可用证据时返回 503。 */

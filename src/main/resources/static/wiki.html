@@ -5,75 +5,481 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NEXUS · 版本化知识库</title>
   <style>
-    :root{--ink:#15231e;--muted:#68736e;--paper:#f4f0e7;--card:#fffdf7;--line:#d9d2c4;--green:#215d4b;--mint:#dceae2;--gold:#b67a2a;--red:#a33e3e;--blue:#315c8a;--shadow:0 18px 55px rgba(31,43,36,.09)}
-    *{box-sizing:border-box} body{margin:0;color:var(--ink);background:var(--paper);font-family:"Avenir Next","PingFang SC","Microsoft YaHei",sans-serif}
-    button,input,select{font:inherit}.app{min-height:100vh;display:grid;grid-template-rows:auto 1fr}
-    header{height:64px;padding:0 24px;display:flex;align-items:center;gap:18px;border-bottom:1px solid var(--line);background:rgba(255,253,247,.92);backdrop-filter:blur(16px);position:sticky;top:0;z-index:20}
-    .brand{display:flex;align-items:baseline;gap:10px;min-width:245px}.brand strong{font-family:Georgia,serif;font-size:22px;letter-spacing:.08em}.brand span{color:var(--muted);font-size:12px}
-    .selectors{display:flex;gap:8px}.selectors select,.api-key{border:1px solid var(--line);border-radius:10px;background:white;padding:8px 10px;color:var(--ink)}
-    .header-spacer{flex:1}.header-link{color:var(--green);text-decoration:none;font-size:13px;font-weight:700}.api-key{width:120px;font-size:12px}
-    .layout{display:grid;grid-template-columns:290px minmax(520px,1fr) 320px;min-height:calc(100vh - 64px)}
-    aside,.right{padding:20px;border-right:1px solid var(--line);background:#eee9de}.right{border-right:0;border-left:1px solid var(--line);background:#f8f5ed}
-    main{padding:28px clamp(24px,4vw,62px);min-width:0}
-    .eyebrow{color:var(--green);text-transform:uppercase;letter-spacing:.14em;font-size:10px;font-weight:800}.panel-title{margin:5px 0 14px;font:700 22px Georgia,serif}
-    .search{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:white}.filters{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0 16px}.filters select{min-width:0;border:1px solid var(--line);border-radius:9px;background:white;padding:7px}
-    .page-list{display:grid;gap:7px}.page-item{width:100%;text-align:left;border:1px solid transparent;border-radius:12px;background:transparent;padding:11px;cursor:pointer;color:var(--ink)}.page-item:hover,.page-item.active{background:var(--card);border-color:var(--line);box-shadow:0 6px 18px rgba(30,50,40,.05)}
-    .page-item strong{display:block;font-size:13px;margin-bottom:5px}.page-item small{color:var(--muted)}.row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-    .badge{display:inline-flex;padding:3px 7px;border-radius:999px;font-size:10px;font-weight:800;background:var(--mint);color:var(--green)}.badge.CONFLICT,.badge.REJECTED{background:#f5dada;color:var(--red)}.badge.DRAFT,.badge.STALE{background:#f3e6c8;color:#8a5c1d}.badge.CODE_VERIFIED{background:#dce7f4;color:var(--blue)}
-    .hero{padding-bottom:24px;border-bottom:1px solid var(--line)}h1{font:700 clamp(34px,5vw,62px)/1.03 Georgia,"Songti SC",serif;margin:10px 0 14px;letter-spacing:-.03em}.summary{font-size:16px;line-height:1.8;color:#3d4943;max-width:850px}.meta-line{display:flex;gap:8px;flex-wrap:wrap;margin-top:15px}.meta-pill{font-size:11px;padding:6px 9px;background:#ebe5d8;border-radius:999px;color:#53605a}
-    .tabs{display:flex;gap:4px;margin:20px 0 18px;border-bottom:1px solid var(--line)}.tab{border:0;background:transparent;padding:10px 13px;cursor:pointer;color:var(--muted);border-bottom:2px solid transparent}.tab.active{color:var(--green);border-color:var(--green);font-weight:800}
-    .content{display:grid;gap:14px}.section{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;box-shadow:var(--shadow)}.section h2{font:700 19px Georgia,serif;margin:0 0 12px}.section ul{margin:0;padding-left:20px;line-height:1.75}.section li+li{margin-top:6px}.empty{padding:35px 18px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:14px}.callout{border-left:4px solid var(--gold);background:#fbf2df;padding:12px 14px;border-radius:0 10px 10px 0;line-height:1.65}
-    .right h3{font:700 16px Georgia,serif;margin:22px 0 10px}.right h3:first-child{margin-top:0}.fact{padding:10px 0;border-bottom:1px solid var(--line)}.fact small{display:block;color:var(--muted);margin-bottom:4px}.fact strong{font-size:12px;word-break:break-all}.relation,.evidence{display:block;width:100%;text-align:left;border:1px solid var(--line);background:var(--card);border-radius:12px;padding:11px;margin-bottom:8px;color:var(--ink)}button.relation{cursor:pointer}.relation strong,.evidence strong{display:block;font-size:12px;margin-bottom:4px}.relation small,.evidence small{color:var(--muted);line-height:1.45}.evidence code{font-size:10px;color:var(--blue);word-break:break-all}.statusbar{position:fixed;right:18px;bottom:18px;background:#173c31;color:white;border-radius:12px;padding:10px 14px;font-size:12px;box-shadow:var(--shadow)}
-    .generate{width:100%;border:0;border-radius:11px;background:var(--green);color:white;padding:9px 12px;font-weight:800;cursor:pointer;margin-top:12px}.generate:disabled{opacity:.5}.counts{font-size:11px;color:var(--muted);margin:8px 0 4px}
-    @media(max-width:1100px){.layout{grid-template-columns:260px 1fr}.right{grid-column:1/-1;border-left:0;border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.right>div{min-width:0}}
-    @media(max-width:760px){header{height:auto;min-height:64px;flex-wrap:wrap;padding:12px 16px}.brand{min-width:0}.selectors{order:3;width:100%}.selectors select{flex:1;min-width:0}.api-key{display:none}.layout{display:block}aside{border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px}.right{display:block}.page-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    :root {
+      --ink: #14251f;
+      --muted: #66736d;
+      --paper: #f3efe6;
+      --panel: #eae5da;
+      --card: #fffdf8;
+      --line: #d7d0c2;
+      --green: #1f6551;
+      --green-dark: #16483a;
+      --mint: #dcebe4;
+      --gold: #ad7122;
+      --gold-soft: #fbefd9;
+      --red: #963e3e;
+      --red-soft: #f7dfda;
+      --blue: #315f8b;
+      --blue-soft: #deeaf5;
+      --shadow: 0 18px 52px rgba(30, 43, 36, .08);
+    }
+    * { box-sizing: border-box; }
+    html { background: var(--paper); }
+    body { margin: 0; color: var(--ink); background: var(--paper); font-family: "Avenir Next", "PingFang SC", "Microsoft YaHei", sans-serif; }
+    button, input, select { font: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible { outline: 3px solid rgba(31, 101, 81, .25); outline-offset: 2px; }
+    .app { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; }
+    header {
+      min-height: 66px; padding: 10px 24px; display: flex; align-items: center; gap: 16px;
+      border-bottom: 1px solid var(--line); background: rgba(255, 253, 248, .94);
+      backdrop-filter: blur(16px); position: sticky; top: 0; z-index: 20;
+    }
+    .brand { display: flex; align-items: baseline; gap: 10px; min-width: 270px; }
+    .brand strong { font: 800 22px/1 Georgia, "Songti SC", serif; letter-spacing: .11em; }
+    .brand span { color: var(--muted); font-size: 12px; }
+    .selectors { display: flex; gap: 8px; }
+    .selectors select, .api-key { border: 1px solid var(--line); border-radius: 10px; background: white; padding: 8px 10px; color: var(--ink); }
+    .header-spacer { flex: 1; }
+    .header-link { color: var(--green); text-decoration: none; font-size: 13px; font-weight: 800; white-space: nowrap; }
+    .api-key { width: 120px; font-size: 12px; }
+    .layout { display: grid; grid-template-columns: 300px minmax(520px, 1fr) 318px; min-height: calc(100vh - 66px); }
+    aside, .right { padding: 22px; background: var(--panel); }
+    aside { border-right: 1px solid var(--line); }
+    .right { border-left: 1px solid var(--line); background: #f8f5ee; }
+    main { padding: 34px clamp(26px, 4vw, 66px) 70px; min-width: 0; }
+    .eyebrow { color: var(--green); text-transform: uppercase; letter-spacing: .14em; font-size: 10px; font-weight: 900; }
+    .panel-title { margin: 6px 0 15px; font: 700 23px/1.2 Georgia, "Songti SC", serif; }
+    .search { width: 100%; padding: 11px 12px; border: 1px solid var(--line); border-radius: 12px; background: white; color: var(--ink); }
+    .filters { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0 12px; }
+    .filters select { min-width: 0; border: 1px solid var(--line); border-radius: 9px; background: white; padding: 8px; color: var(--ink); }
+    .counts { color: var(--muted); font-size: 11px; margin-bottom: 10px; }
+    .page-list { display: grid; gap: 7px; max-height: calc(100vh - 315px); overflow: auto; padding-right: 2px; }
+    .page-item { width: 100%; text-align: left; border: 1px solid transparent; border-radius: 13px; background: transparent; padding: 12px; cursor: pointer; color: var(--ink); }
+    .page-item:hover, .page-item.active { background: var(--card); border-color: var(--line); box-shadow: 0 7px 20px rgba(30, 50, 40, .06); }
+    .page-item strong { display: block; font-size: 13px; margin-bottom: 7px; line-height: 1.45; }
+    .page-item small { color: var(--muted); }
+    .generate { margin-top: 16px; width: 100%; border: 1px solid var(--green); border-radius: 11px; background: transparent; color: var(--green); padding: 10px; cursor: pointer; font-weight: 800; }
+    .generate:hover { background: var(--green); color: white; }
+    .generate:disabled { opacity: .55; cursor: wait; }
+    .badge { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; font-size: 10px; font-weight: 900; background: var(--mint); color: var(--green); }
+    .badge.CONFLICT, .badge.REJECTED { background: var(--red-soft); color: var(--red); }
+    .badge.DRAFT, .badge.STALE { background: var(--gold-soft); color: #805214; }
+    .badge.CODE_VERIFIED { background: var(--blue-soft); color: var(--blue); }
+    .hero { padding-bottom: 26px; border-bottom: 1px solid var(--line); }
+    h1 { font: 700 clamp(36px, 5vw, 66px)/1.02 Georgia, "Songti SC", serif; margin: 11px 0 15px; letter-spacing: -.035em; }
+    .summary { font-size: 16px; line-height: 1.82; color: #3d4b45; max-width: 880px; }
+    .meta-line { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+    .meta-pill { font-size: 11px; padding: 6px 9px; background: #e8e2d6; border-radius: 999px; color: #53605a; }
+    .tabs { display: flex; gap: 4px; margin: 22px 0 18px; border-bottom: 1px solid var(--line); overflow-x: auto; }
+    .tab { border: 0; background: transparent; padding: 11px 14px; cursor: pointer; color: var(--muted); border-bottom: 3px solid transparent; white-space: nowrap; }
+    .tab.active { color: var(--green); border-color: var(--green); font-weight: 900; }
+    .content { display: grid; gap: 15px; }
+    .section { background: var(--card); border: 1px solid var(--line); border-radius: 17px; padding: 20px 22px; box-shadow: var(--shadow); }
+    .section h2 { font: 700 20px Georgia, "Songti SC", serif; margin: 0 0 13px; }
+    .section h2 span { margin-left: 8px; color: var(--muted); font: 600 10px "Avenir Next", sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+    .section p { line-height: 1.75; color: #44514b; }
+    .section ul, .section ol { margin: 0; padding-left: 22px; line-height: 1.78; }
+    .section li + li { margin-top: 7px; }
+    .step-list { list-style: none; padding: 0 !important; counter-reset: step; }
+    .step-list li { counter-increment: step; display: grid; grid-template-columns: 30px 1fr; gap: 11px; align-items: start; }
+    .step-list li::before { content: counter(step); display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--green); color: white; font-size: 11px; font-weight: 900; }
+    .empty { padding: 34px 18px; text-align: center; color: var(--muted); border: 1px dashed var(--line); border-radius: 14px; line-height: 1.65; }
+    .callout { border-left: 4px solid var(--gold); background: var(--gold-soft); padding: 13px 15px; border-radius: 0 11px 11px 0; line-height: 1.7; white-space: pre-wrap; }
+    .execution { display: flex; gap: 14px; align-items: flex-start; padding: 16px; border-radius: 14px; background: var(--gold-soft); border: 1px solid #ead4ac; }
+    .execution.available { background: var(--mint); border-color: #bfd8cc; }
+    .execution-mark { width: 34px; height: 34px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center; background: var(--gold); color: white; font-weight: 900; }
+    .execution.available .execution-mark { background: var(--green); }
+    .execution strong { display: block; margin-bottom: 4px; }
+    .execution p { margin: 0; color: var(--muted); font-size: 13px; }
+    .source-grid, .code-grid, .quality-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .source-card, .code-card, .metric { border: 1px solid var(--line); border-radius: 13px; padding: 13px; background: #faf7ef; min-width: 0; }
+    .source-card small, .code-card small, .metric small { display: block; color: var(--muted); margin-bottom: 5px; }
+    .source-card strong, .code-card strong { display: block; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+    .source-card code, .code-card code { display: block; margin-top: 7px; color: var(--blue); font-size: 10px; overflow-wrap: anywhere; }
+    .metric strong { display: block; font: 700 24px Georgia, serif; }
+    .quality-note { margin-top: 10px; color: var(--muted); font-size: 12px; }
+    .right h3 { font: 700 17px Georgia, "Songti SC", serif; margin: 24px 0 11px; }
+    .right h3:first-child { margin-top: 0; }
+    .fact { padding: 10px 0; border-bottom: 1px solid var(--line); }
+    .fact small { display: block; color: var(--muted); margin-bottom: 4px; }
+    .fact strong { font-size: 12px; overflow-wrap: anywhere; }
+    .relation, .evidence-mini { display: block; width: 100%; text-align: left; border: 1px solid var(--line); background: var(--card); border-radius: 12px; padding: 11px; margin-bottom: 8px; color: var(--ink); }
+    button.relation { cursor: pointer; }
+    .relation strong, .evidence-mini strong { display: block; font-size: 12px; margin-bottom: 4px; }
+    .relation small, .evidence-mini small { color: var(--muted); line-height: 1.45; overflow-wrap: anywhere; }
+    .evidence-mini code { display: block; margin-top: 5px; font-size: 10px; color: var(--blue); overflow-wrap: anywhere; }
+    .statusbar { position: fixed; right: 18px; bottom: 18px; background: var(--green-dark); color: white; border-radius: 10px; padding: 11px 14px; box-shadow: var(--shadow); z-index: 30; }
+    @media (max-width: 1180px) {
+      .layout { grid-template-columns: 270px minmax(0, 1fr); }
+      .right { display: none; }
+    }
+    @media (max-width: 780px) {
+      header { position: static; flex-wrap: wrap; }
+      .brand { min-width: 100%; }
+      .selectors { flex: 1; }
+      .selectors select { min-width: 0; width: 50%; }
+      .layout { display: block; }
+      aside { border-right: 0; border-bottom: 1px solid var(--line); }
+      .page-list { max-height: 260px; }
+      main { padding: 26px 18px 60px; }
+      .source-grid, .code-grid, .quality-grid { grid-template-columns: 1fr; }
+      .api-key { width: 100px; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
   </style>
 </head>
 <body>
 <div class="app">
   <header>
     <div class="brand"><strong>NEXUS</strong><span>版本化需求 · 代码 · 测试知识库</span></div>
-    <div class="selectors"><select id="projectSelect" aria-label="项目"></select><select id="versionSelect" aria-label="版本"></select></div>
+    <div class="selectors">
+      <select id="projectSelect" aria-label="项目"></select>
+      <select id="versionSelect" aria-label="版本"></select>
+    </div>
     <div class="header-spacer"></div>
     <input id="apiKey" class="api-key" type="password" placeholder="API Key" title="启用认证时填写">
     <a class="header-link" href="/versions">版本中心</a>
-    <a class="header-link" href="/monitor">返回代码工作台</a>
+    <a class="header-link" href="/monitor">代码工作台</a>
   </header>
   <div class="layout">
     <aside>
-      <div class="eyebrow">Knowledge map</div><div class="panel-title">功能目录</div>
-      <input id="search" class="search" type="search" placeholder="搜索功能、别名或说明">
-      <div class="filters"><select id="categoryFilter"><option value="">全部分类</option></select><select id="statusFilter"><option value="">全部状态</option></select></div>
-      <div id="counts" class="counts"></div><div id="pageList" class="page-list"></div>
+      <div class="eyebrow">Knowledge map</div>
+      <div class="panel-title">版本功能目录</div>
+      <input id="search" class="search" type="search" placeholder="搜索需求、规则或说明">
+      <div class="filters">
+        <select id="categoryFilter" aria-label="分类"><option value="">全部分类</option></select>
+        <select id="statusFilter" aria-label="核验状态"><option value="">全部状态</option></select>
+      </div>
+      <div id="counts" class="counts"></div>
+      <div id="pageList" class="page-list"></div>
       <button id="generate" class="generate">重新生成当前版本</button>
     </aside>
-    <main id="main"><div class="empty">正在加载版本化知识库…</div></main>
-    <section class="right" id="right"><div class="empty">选择一个功能查看版本、关系和证据。</div></section>
+    <main id="main"><div class="empty">正在加载版本知识…</div></main>
+    <section class="right" id="right"><div class="empty">选择一个功能查看版本、完整度和证据。</div></section>
   </div>
 </div>
 <div id="statusbar" class="statusbar" hidden></div>
 <script>
-const requested={projectId:new URLSearchParams(location.search).get('projectId')||'',version:new URLSearchParams(location.search).get('version')||'',featureId:new URLSearchParams(location.search).get('featureId')||''};
-const state={projects:[],index:null,page:null,tab:'overview',query:'',category:'',status:'',pendingFeatureId:requested.featureId};
-const $=id=>document.getElementById(id); const esc=value=>String(value??'').replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
-const labels={DRAFT:'待审核',REQUIREMENT_VERIFIED:'需求已核验',CODE_VERIFIED:'代码已核验',FULLY_VERIFIED:'全部核验',CONFLICT:'存在冲突',STALE:'可能过期',MISSING_IMPLEMENTATION:'缺少实现',UNDOCUMENTED_IMPLEMENTATION:'缺少需求',REJECTED:'已驳回'};
-function headers(){const key=$('apiKey').value.trim();return key?{'X-API-Key':key}:{}}
-async function api(path,options={}){const response=await fetch(path,{...options,headers:{...headers(),...(options.headers||{})}});if(!response.ok){let detail='请求失败';try{detail=(await response.json()).detail||detail}catch{}throw new Error(detail)}return response.json()}
-function notice(text){const bar=$('statusbar');bar.textContent=text;bar.hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>bar.hidden=true,2800)}
-function params(values){return new URLSearchParams(values).toString()}
-async function loadProjects(){state.projects=await api('/api/wiki/projects');$('projectSelect').innerHTML=state.projects.map(p=>`<option value="${esc(p.projectId)}">${esc(p.projectName||p.projectId)}</option>`).join('');if(!state.projects.length){$('main').innerHTML='<div class="empty">还没有已生成的 Wiki。请先准备版本源定义并生成。</div>';return}if(requested.projectId&&state.projects.some(project=>project.projectId===requested.projectId))$('projectSelect').value=requested.projectId;await loadVersions()}
-async function loadVersions(){const projectId=$('projectSelect').value;const versions=await api('/api/wiki/versions?'+params({projectId}));$('versionSelect').innerHTML=versions.map(v=>`<option value="${esc(v.version)}">版本 ${esc(v.version)}</option>`).join('');if(requested.version&&versions.some(version=>version.version===requested.version))$('versionSelect').value=requested.version;if(versions.length)await loadIndex();else $('main').innerHTML='<div class="empty">这个项目还没有可浏览版本。</div>'}
-async function loadIndex(){const projectId=$('projectSelect').value,version=$('versionSelect').value;state.index=await api('/api/wiki/index?'+params({projectId,version}));populateFilters();renderList();const requestedPage=state.pendingFeatureId&&state.index.pages.find(page=>page.featureId===state.pendingFeatureId);const first=requestedPage||filteredPages()[0]||state.index.pages[0];state.pendingFeatureId='';if(first)await selectPage(first.featureId)}
-function populateFilters(){const pages=state.index?.pages||[];const categories=[...new Set(pages.map(p=>p.category))].sort();const statuses=[...new Set(pages.map(p=>p.status))].sort();$('categoryFilter').innerHTML='<option value="">全部分类</option>'+categories.map(x=>`<option>${esc(x)}</option>`).join('');$('statusFilter').innerHTML='<option value="">全部状态</option>'+statuses.map(x=>`<option value="${esc(x)}">${esc(labels[x]||x)}</option>`).join('')}
-function filteredPages(){const q=state.query.trim().toLowerCase();return (state.index?.pages||[]).filter(p=>(!state.category||p.category===state.category)&&(!state.status||p.status===state.status)&&(!q||[p.title,p.featureId,p.summary,...(p.aliases||[])].join(' ').toLowerCase().includes(q)))}
-function renderList(){const pages=filteredPages();$('counts').textContent=`${pages.length} / ${state.index?.pages?.length||0} 个页面`;$('pageList').innerHTML=pages.length?pages.map(p=>`<button class="page-item ${state.page?.featureId===p.featureId?'active':''}" data-id="${esc(p.featureId)}"><strong>${esc(p.title)}</strong><span class="badge ${esc(p.status)}">${esc(labels[p.status]||p.status)}</span> <small>${esc(p.category)}</small></button>`).join(''):'<div class="empty">没有匹配页面</div>';$('pageList').querySelectorAll('[data-id]').forEach(el=>el.onclick=()=>selectPage(el.dataset.id))}
-async function selectPage(featureId){const projectId=$('projectSelect').value,version=$('versionSelect').value;state.page=await api('/api/wiki/page?'+params({projectId,version,featureId}));state.tab='overview';renderList();renderPage();renderRight()}
-function listSection(title,items,empty='暂无已核验内容'){return `<section class="section"><h2>${esc(title)}</h2>${items?.length?`<ul>${items.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:`<div class="empty">${esc(empty)}</div>`}</section>`}
-function renderPage(){const p=state.page;if(!p)return;const tabs=[['overview','概览'],['product','产品'],['development','开发'],['test','测试'],['evidence','证据']];let body='';if(state.tab==='overview')body=listSection('知识摘要',[p.summary])+listSection('风险与存疑',p.risks);if(state.tab==='product')body=listSection('产品规则',p.productRules,'尚无经过需求证据核验的产品规则');if(state.tab==='development')body=listSection('代码入口与实现',p.codeSymbols,'尚未关联代码实现');if(state.tab==='test')body=listSection('建议测试点',p.testPoints,'尚未形成测试知识');if(state.tab==='evidence')body=(p.evidence||[]).map(e=>`<section class="section"><h2>${esc(e.title||e.type)}</h2><div class="callout">${esc(e.excerpt||'没有摘录，按来源定位核验。')}</div><p><strong>来源：</strong>${esc(e.source||e.filePath||'')}</p><p><strong>位置：</strong>${esc(e.location||e.symbol||'')}</p><p><strong>核验：</strong>${esc(e.verificationStatus||'')}</p></section>`).join('')||'<div class="empty">暂无证据</div>';$('main').innerHTML=`<div class="hero"><div class="eyebrow">${esc(p.category)} · ${esc(p.featureId)}</div><h1>${esc(p.title)}</h1><p class="summary">${esc(p.summary)}</p><div class="meta-line"><span class="badge ${esc(p.status)}">${esc(labels[p.status]||p.status)}</span><span class="meta-pill">当前版本 ${esc(p.version)}</span><span class="meta-pill">首次出现 ${esc(p.introducedVersion)}</span></div></div><nav class="tabs">${tabs.map(([id,label])=>`<button class="tab ${state.tab===id?'active':''}" data-tab="${id}">${label}</button>`).join('')}</nav><div class="content">${body}</div>`;$('main').querySelectorAll('[data-tab]').forEach(el=>el.onclick=()=>{state.tab=el.dataset.tab;renderPage()})}
-function renderRight(){const p=state.page;if(!p)return;const evidence=(p.evidence||[]).map(e=>`<div class="evidence"><strong>${esc(e.title||e.type)}</strong><small>${esc(e.source||e.filePath||'')}</small>${e.symbol?`<code>${esc(e.symbol)}</code>`:''}</div>`).join('')||'<div class="empty">暂无证据</div>';const relations=(p.relations||[]).map(r=>`<button class="relation" data-target="${esc(r.targetFeatureId)}"><strong>${esc(r.label||r.targetFeatureId)}</strong><small>${esc(r.description||r.type)}</small></button>`).join('')||'<div class="empty">暂无关联</div>';$('right').innerHTML=`<div><h3>版本事实</h3><div class="fact"><small>需求版本</small><strong>${esc(p.requirementVersion||'-')}</strong></div><div class="fact"><small>代码 Commit</small><strong>${esc(p.codeCommit||'-')}</strong></div><div class="fact"><small>生成时间</small><strong>${esc(p.generatedAt||'-')}</strong></div></div><div><h3>关联功能</h3>${relations}</div><div><h3>原始证据 · ${p.evidence?.length||0}</h3>${evidence}</div>`;$('right').querySelectorAll('[data-target]').forEach(el=>el.onclick=()=>selectPage(el.dataset.target))}
-async function generate(){const projectId=$('projectSelect').value,version=$('versionSelect').value;if(!projectId||!version)return;const button=$('generate');button.disabled=true;try{const result=await api('/api/wiki/generate?'+params({projectId,version}),{method:'POST'});notice(`已生成 ${result.pageCount} 个页面`);await loadIndex()}catch(error){notice(error.message)}finally{button.disabled=false}}
-$('projectSelect').onchange=loadVersions;$('versionSelect').onchange=loadIndex;$('search').oninput=e=>{state.query=e.target.value;renderList()};$('categoryFilter').onchange=e=>{state.category=e.target.value;renderList()};$('statusFilter').onchange=e=>{state.status=e.target.value;renderList()};$('generate').onclick=generate;$('apiKey').value=localStorage.getItem('nexusApiKey')||'';$('apiKey').onchange=e=>localStorage.setItem('nexusApiKey',e.target.value.trim());
-loadProjects().catch(error=>{$('main').innerHTML=`<div class="empty">${esc(error.message)}</div>`;notice(error.message)});
+const requested = {
+  projectId: new URLSearchParams(location.search).get('projectId') || '',
+  version: new URLSearchParams(location.search).get('version') || '',
+  featureId: new URLSearchParams(location.search).get('featureId') || ''
+};
+const state = {
+  projects: [], index: null, page: null, tab: 'overview', query: '', category: '', status: '',
+  pendingFeatureId: requested.featureId
+};
+const $ = id => document.getElementById(id);
+const esc = value => String(value ?? '').replace(/[&<>'"]/g, ch => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
+}[ch]));
+const token = value => String(value || '').replace(/[^A-Za-z0-9_-]/g, '');
+const array = value => Array.isArray(value) ? value.filter(item => item != null) : [];
+const labels = {
+  DRAFT: '待审核', REQUIREMENT_VERIFIED: '需求已核验', CODE_VERIFIED: '已关联代码',
+  FULLY_VERIFIED: '全部核验', CONFLICT: '存在冲突', STALE: '可能过期',
+  MISSING_IMPLEMENTATION: '缺少实现', UNDOCUMENTED_IMPLEMENTATION: '缺少需求', REJECTED: '已驳回'
+};
+function headers() {
+  const key = $('apiKey').value.trim();
+  return key ? {'X-API-Key': key} : {};
+}
+async function api(path, options = {}) {
+  const response = await fetch(path, {...options, headers: {...headers(), ...(options.headers || {})}});
+  if (!response.ok) {
+    let detail = '请求失败';
+    try { detail = (await response.json()).detail || detail; } catch {}
+    throw new Error(detail);
+  }
+  return response.json();
+}
+function notice(text) {
+  const bar = $('statusbar');
+  bar.textContent = text;
+  bar.hidden = false;
+  clearTimeout(notice.timer);
+  notice.timer = setTimeout(() => bar.hidden = true, 2800);
+}
+function params(values) { return new URLSearchParams(values).toString(); }
+function normalizePage(raw) {
+  const codeEntries = array(raw.codeEntries);
+  const legacyCode = array(raw.codeSymbols);
+  const testKnowledge = raw.testKnowledge || {
+    executionStatus: 'NOT_AVAILABLE', executionReference: '', summary: '没有真实执行快照', cases: []
+  };
+  const requirementSources = array(raw.requirementSources);
+  return {
+    ...raw,
+    requirementSources,
+    productRules: array(raw.productRules),
+    processSteps: array(raw.processSteps),
+    codeEntries: codeEntries.length ? codeEntries : legacyCode.map(value => ({role: '代码入口', filePath: '', symbol: value, commit: raw.codeCommit || '', changeType: '', verificationStatus: 'LEGACY'})),
+    dataImpacts: array(raw.dataImpacts),
+    boundaryConditions: array(raw.boundaryConditions),
+    acceptanceCriteria: array(raw.acceptanceCriteria),
+    testPoints: array(raw.testPoints),
+    testKnowledge: {...testKnowledge, cases: array(testKnowledge.cases)},
+    versionChange: raw.versionChange || {changeType: 'UNKNOWN', baseVersion: '', version: raw.version || '', summary: '旧版页面未记录结构化版本变化。'},
+    quality: raw.quality || {
+      reviewStatus: 'LEGACY', requirementEvidenceCount: requirementSources.length,
+      codeEvidenceCount: codeEntries.length || legacyCode.length, realTestExecution: false,
+      missing: ['旧版页面未记录完整度']
+    },
+    risks: array(raw.risks), relations: array(raw.relations), evidence: array(raw.evidence)
+  };
+}
+async function loadProjects() {
+  state.projects = await api('/api/wiki/projects');
+  $('projectSelect').innerHTML = state.projects.map(project =>
+    `<option value="${esc(project.projectId)}">${esc(project.projectName || project.projectId)}</option>`
+  ).join('');
+  if (!state.projects.length) {
+    $('main').innerHTML = '<div class="empty">还没有已生成的 Wiki。先准备版本源定义，再生成正式知识页。</div>';
+    return;
+  }
+  if (requested.projectId && state.projects.some(project => project.projectId === requested.projectId)) {
+    $('projectSelect').value = requested.projectId;
+  }
+  await loadVersions();
+}
+async function loadVersions() {
+  const projectId = $('projectSelect').value;
+  const versions = await api('/api/wiki/versions?' + params({projectId}));
+  $('versionSelect').innerHTML = versions.map(item =>
+    `<option value="${esc(item.version)}">版本 ${esc(item.version)}</option>`
+  ).join('');
+  if (requested.version && versions.some(item => item.version === requested.version)) {
+    $('versionSelect').value = requested.version;
+  }
+  if (versions.length) await loadIndex();
+  else $('main').innerHTML = '<div class="empty">这个项目还没有可浏览版本。</div>';
+}
+async function loadIndex() {
+  const projectId = $('projectSelect').value;
+  const version = $('versionSelect').value;
+  state.index = await api('/api/wiki/index?' + params({projectId, version}));
+  populateFilters();
+  renderList();
+  const requestedPage = state.pendingFeatureId && state.index.pages.find(page => page.featureId === state.pendingFeatureId);
+  const first = requestedPage || filteredPages()[0] || state.index.pages[0];
+  state.pendingFeatureId = '';
+  if (first) await selectPage(first.featureId);
+  else $('main').innerHTML = '<div class="empty">当前版本没有知识页。请重新生成或检查版本源定义。</div>';
+}
+function populateFilters() {
+  const pages = state.index?.pages || [];
+  const categories = [...new Set(pages.map(page => page.category).filter(Boolean))].sort();
+  const statuses = [...new Set(pages.map(page => page.status).filter(Boolean))].sort();
+  $('categoryFilter').innerHTML = '<option value="">全部分类</option>' + categories.map(value =>
+    `<option value="${esc(value)}">${esc(value)}</option>`
+  ).join('');
+  $('statusFilter').innerHTML = '<option value="">全部状态</option>' + statuses.map(value =>
+    `<option value="${esc(value)}">${esc(labels[value] || value)}</option>`
+  ).join('');
+}
+function filteredPages() {
+  const query = state.query.trim().toLowerCase();
+  return (state.index?.pages || []).filter(page => {
+    const haystack = [page.title, page.summary, ...(page.aliases || [])].join(' ').toLowerCase();
+    return (!query || haystack.includes(query)) && (!state.category || page.category === state.category)
+      && (!state.status || page.status === state.status);
+  });
+}
+function renderList() {
+  const pages = filteredPages();
+  $('counts').textContent = `${pages.length} / ${state.index?.pages?.length || 0} 个页面`;
+  $('pageList').innerHTML = pages.length ? pages.map(page =>
+    `<button class="page-item ${state.page?.featureId === page.featureId ? 'active' : ''}" data-id="${esc(page.featureId)}">
+      <strong>${esc(page.title)}</strong>
+      <span class="badge ${token(page.status)}">${esc(labels[page.status] || page.status)}</span>
+      <small>${esc(page.category)}</small>
+    </button>`
+  ).join('') : '<div class="empty">没有匹配页面</div>';
+  $('pageList').querySelectorAll('[data-id]').forEach(element => {
+    element.onclick = () => selectPage(element.dataset.id);
+  });
+}
+async function selectPage(featureId) {
+  const projectId = $('projectSelect').value;
+  const version = $('versionSelect').value;
+  state.page = normalizePage(await api('/api/wiki/page?' + params({projectId, version, featureId})));
+  state.tab = 'overview';
+  history.replaceState(null, '', '/wiki?' + params({projectId, version, featureId}));
+  renderList();
+  renderPage();
+  renderRight();
+}
+function listSection(title, items, empty = '暂无已核验内容', ordered = false) {
+  const values = array(items);
+  const tag = ordered ? 'ol' : 'ul';
+  const className = ordered ? ' class="step-list"' : '';
+  return `<section class="section"><h2>${esc(title)}</h2>${values.length
+    ? `<${tag}${className}>${values.map(value => `<li>${esc(value)}</li>`).join('')}</${tag}>`
+    : `<div class="empty">${esc(empty)}</div>`}</section>`;
+}
+function sourceCards(sources) {
+  const values = array(sources);
+  return `<section class="section"><h2>需求来源 <span>source of truth</span></h2>${values.length
+    ? `<div class="source-grid">${values.map(source => `<article class="source-card">
+        <small>${esc(source.documentId || '需求文档')} · ${esc(source.version || '-')}</small>
+        <strong>${esc(source.filename || source.entryId || '未命名来源')}</strong>
+        <code>${esc(source.location || '')}${source.contentHash ? ` · ${esc(source.contentHash.slice(0, 16))}` : ''}</code>
+      </article>`).join('')}</div>`
+    : '<div class="empty">该页面尚未绑定需求来源。旧版页面仍可浏览，但不能作为完整需求事实。</div>'}</section>`;
+}
+function codeCards(entries) {
+  const values = array(entries);
+  return `<section class="section"><h2>代码入口 <span>static evidence</span></h2>${values.length
+    ? `<div class="code-grid">${values.map(entry => `<article class="code-card">
+        <small>${esc(entry.role || '相关实现')} · ${esc(entry.changeType || '状态未记录')}</small>
+        <strong>${esc(entry.filePath || entry.symbol || '代码位置')}</strong>
+        ${entry.symbol ? `<code>${esc(entry.symbol)}</code>` : ''}
+        ${entry.commit ? `<code>commit ${esc(entry.commit.slice(0, 12))}</code>` : ''}
+      </article>`).join('')}</div><p class="quality-note">静态代码证据只证明文件或符号存在，不代表运行行为已经验证。</p>`
+    : '<div class="empty">尚未关联代码实现。需求事实仍然有效，但开发入口需要补充核验。</div>'}</section>`;
+}
+function evidenceCards(evidence) {
+  const values = array(evidence);
+  if (!values.length) return '<div class="empty">暂无可追溯证据。</div>';
+  return values.map(item => `<section class="section">
+    <h2>${esc(item.title || item.type || '证据')}</h2>
+    <div class="callout">${esc(item.excerpt || '没有摘录，请按来源和位置核验。')}</div>
+    <p><strong>来源：</strong>${esc(item.source || item.filePath || '-')}</p>
+    <p><strong>位置：</strong>${esc(item.location || item.symbol || '-')}</p>
+    <p><strong>核验：</strong>${esc(item.verificationStatus || '-')}</p>
+  </section>`).join('');
+}
+function overviewBody(page) {
+  const quality = page.quality || {};
+  const change = page.versionChange || {};
+  return `<section class="section">
+      <h2>版本变化 <span>${esc(change.changeType || 'UNKNOWN')}</span></h2>
+      <p>${esc(change.summary || '未记录结构化版本变化。')}</p>
+      <div class="meta-line">
+        <span class="meta-pill">基线 ${esc(change.baseVersion || '-')}</span>
+        <span class="meta-pill">当前 ${esc(change.version || page.version || '-')}</span>
+      </div>
+    </section>
+    <section class="section">
+      <h2>知识完整度 <span>${esc(quality.reviewStatus || 'UNKNOWN')}</span></h2>
+      <div class="quality-grid">
+        <div class="metric"><small>需求证据</small><strong>${esc(quality.requirementEvidenceCount ?? 0)}</strong></div>
+        <div class="metric"><small>代码证据</small><strong>${esc(quality.codeEvidenceCount ?? 0)}</strong></div>
+        <div class="metric"><small>真实测试执行</small><strong>${quality.realTestExecution ? '有' : '无'}</strong></div>
+        <div class="metric"><small>待补项目</small><strong>${esc(array(quality.missing).length)}</strong></div>
+      </div>
+      ${array(quality.missing).length ? `<p class="quality-note">待补：${array(quality.missing).map(esc).join('、')}</p>` : ''}
+    </section>
+    ${listSection('风险与存疑', page.risks, '当前没有登记风险；仍需结合证据进行评审。')}`;
+}
+function requirementsBody(page) {
+  return sourceCards(page.requirementSources)
+    + listSection('业务规则', page.productRules, '需求证据中尚未提取出可核验的业务规则。')
+    + listSection('处理流程', page.processSteps, '需求证据中尚未描述明确流程。', true)
+    + listSection('数据与配置影响', page.dataImpacts, '需求证据中尚未描述数据或配置影响。')
+    + listSection('异常与边界条件', page.boundaryConditions, '需求证据中尚未描述边界条件。');
+}
+function testingBody(page) {
+  const test = page.testKnowledge || {};
+  const available = test.executionStatus && test.executionStatus !== 'NOT_AVAILABLE';
+  return `<section class="section">
+      <h2>测试执行状态 <span>${esc(test.executionStatus || 'NOT_AVAILABLE')}</span></h2>
+      <div class="execution ${available ? 'available' : ''}">
+        <div class="execution-mark">${available ? '✓' : '!'}</div>
+        <div><strong>${esc(test.summary || '没有真实执行快照')}</strong>
+        <p>${available ? `执行引用：${esc(test.executionReference || '未记录')}` : '下面展示的是验收建议，不是测试通过结论。'}</p></div>
+      </div>
+    </section>
+    ${listSection('验收标准', page.acceptanceCriteria, '尚未形成可核验的验收标准。')}
+    ${listSection('建议测试点', page.testPoints, '尚未形成测试建议。')}
+    ${listSection('已记录测试用例', test.cases, '没有真实测试用例快照。')}`;
+}
+function renderPage() {
+  const page = state.page;
+  if (!page) return;
+  const tabs = [['overview', '概览'], ['requirements', '需求'], ['development', '开发'], ['testing', '测试'], ['evidence', '证据']];
+  let body = overviewBody(page);
+  if (state.tab === 'requirements') body = requirementsBody(page);
+  if (state.tab === 'development') body = codeCards(page.codeEntries);
+  if (state.tab === 'testing') body = testingBody(page);
+  if (state.tab === 'evidence') body = evidenceCards(page.evidence);
+  $('main').innerHTML = `<div class="hero">
+      <div class="eyebrow">${esc(page.category || '未分类')} · ${esc(page.featureId)}</div>
+      <h1>${esc(page.title)}</h1>
+      <p class="summary">${esc(page.summary || '尚无摘要')}</p>
+      <div class="meta-line">
+        <span class="badge ${token(page.status)}">${esc(labels[page.status] || page.status)}</span>
+        <span class="meta-pill">当前版本 ${esc(page.version || '-')}</span>
+        <span class="meta-pill">首次出现 ${esc(page.introducedVersion || '-')}</span>
+      </div>
+    </div>
+    <nav class="tabs" aria-label="知识视图">${tabs.map(([id, label]) =>
+      `<button class="tab ${state.tab === id ? 'active' : ''}" data-tab="${id}" aria-current="${state.tab === id ? 'page' : 'false'}">${label}</button>`
+    ).join('')}</nav>
+    <div class="content">${body}</div>`;
+  $('main').querySelectorAll('[data-tab]').forEach(element => {
+    element.onclick = () => { state.tab = element.dataset.tab; renderPage(); };
+  });
+}
+function renderRight() {
+  const page = state.page;
+  if (!page) return;
+  const quality = page.quality || {};
+  const evidence = page.evidence.map(item => `<div class="evidence-mini">
+    <strong>${esc(item.title || item.type || '证据')}</strong>
+    <small>${esc(item.source || item.filePath || '-')}</small>
+    ${item.symbol ? `<code>${esc(item.symbol)}</code>` : ''}
+  </div>`).join('') || '<div class="empty">暂无证据</div>';
+  const relations = page.relations.map(relation => `<button class="relation" data-target="${esc(relation.targetFeatureId)}">
+    <strong>${esc(relation.label || relation.targetFeatureId)}</strong>
+    <small>${esc(relation.description || relation.type || '')}</small>
+  </button>`).join('') || '<div class="empty">暂无关联</div>';
+  $('right').innerHTML = `<div>
+      <h3>版本事实</h3>
+      <div class="fact"><small>需求版本</small><strong>${esc(page.requirementVersion || '-')}</strong></div>
+      <div class="fact"><small>代码 Commit</small><strong>${esc(page.codeCommit || '-')}</strong></div>
+      <div class="fact"><small>生成时间</small><strong>${esc(page.generatedAt || '-')}</strong></div>
+    </div>
+    <div>
+      <h3>知识状态</h3>
+      <div class="fact"><small>审核状态</small><strong>${esc(quality.reviewStatus || '-')}</strong></div>
+      <div class="fact"><small>需求 / 代码证据</small><strong>${esc(quality.requirementEvidenceCount ?? 0)} / ${esc(quality.codeEvidenceCount ?? 0)}</strong></div>
+      <div class="fact"><small>测试执行</small><strong>${quality.realTestExecution ? '已有真实快照' : '没有真实执行快照'}</strong></div>
+    </div>
+    <div><h3>关联功能</h3>${relations}</div>
+    <div><h3>证据索引 · ${esc(page.evidence.length)}</h3>${evidence}</div>`;
+  $('right').querySelectorAll('[data-target]').forEach(element => {
+    element.onclick = () => selectPage(element.dataset.target);
+  });
+}
+async function generate() {
+  const projectId = $('projectSelect').value;
+  const version = $('versionSelect').value;
+  if (!projectId || !version) return;
+  const button = $('generate');
+  button.disabled = true;
+  try {
+    const result = await api('/api/wiki/generate?' + params({projectId, version}), {method: 'POST'});
+    notice(`已生成 ${result.pageCount} 个页面`);
+    await loadIndex();
+  } catch (error) {
+    notice(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+$('projectSelect').onchange = loadVersions;
+$('versionSelect').onchange = loadIndex;
+$('search').oninput = event => { state.query = event.target.value; renderList(); };
+$('categoryFilter').onchange = event => { state.category = event.target.value; renderList(); };
+$('statusFilter').onchange = event => { state.status = event.target.value; renderList(); };
+$('generate').onclick = generate;
+$('apiKey').value = localStorage.getItem('nexusApiKey') || '';
+$('apiKey').onchange = event => localStorage.setItem('nexusApiKey', event.target.value.trim());
+loadProjects().catch(error => {
+  $('main').innerHTML = `<div class="empty">${esc(error.message)}</div>`;
+  notice(error.message);
+});
 </script>
 </body>
 </html>

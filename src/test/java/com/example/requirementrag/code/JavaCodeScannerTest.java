@@ -47,4 +47,31 @@ class JavaCodeScannerTest {
             assertThat(chunk.text()).contains("return heroId > 0");
         });
     }
+    @Test
+    void splitsLargeSymbolsIntoEmbeddingSafeChunks() throws Exception {
+        Path root = Files.createTempDirectory("code-scan-large-");
+        Path source = root.resolve("src/main/java/com/acme/hero/LargeHeroService.java");
+        Files.createDirectories(source.getParent());
+        String body = "        int value = 1;\n".repeat(900);
+        Files.writeString(source, "package com.acme.hero;\npublic class LargeHeroService {\n"
+                + "    public void rebuildHero() {\n" + body + "    }\n}\n");
+
+        JavaCodeScanner.ScanResult result = new JavaCodeScanner().scan(new RagProperties.Code(
+                "test-project", root.toString(), "code_chunks", List.of("/hero/"),
+                List.of("/target/"), 1_000_000));
+
+        List<com.example.requirementrag.model.CodeChunk> classChunks = result.chunks().stream()
+                .filter(chunk -> chunk.symbolName().equals("LargeHeroService"))
+                .toList();
+        assertThat(classChunks).hasSize(1);
+        assertThat(classChunks.getFirst().text().length()).isLessThanOrEqualTo(JavaCodeScanner.TYPE_CONTEXT_CHARS);
+
+        List<com.example.requirementrag.model.CodeChunk> methodChunks = result.chunks().stream()
+                .filter(chunk -> chunk.symbolName().equals("rebuildHero"))
+                .toList();
+        assertThat(methodChunks).hasSizeGreaterThan(1);
+        assertThat(methodChunks).allSatisfy(chunk ->
+                assertThat(chunk.text().length()).isLessThanOrEqualTo(JavaCodeScanner.MAX_CHUNK_CHARS));
+    }
+
 }

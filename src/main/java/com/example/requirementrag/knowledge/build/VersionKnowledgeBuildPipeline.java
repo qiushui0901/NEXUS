@@ -18,9 +18,14 @@ import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
 import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
 import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
 import com.example.requirementrag.service.RagUnavailableException;
+import com.example.requirementrag.wiki.WikiModels.CodeEntry;
 import com.example.requirementrag.wiki.WikiModels.Evidence;
+import com.example.requirementrag.wiki.WikiModels.KnowledgeQuality;
 import com.example.requirementrag.wiki.WikiModels.PageSource;
+import com.example.requirementrag.wiki.WikiModels.RequirementSource;
 import com.example.requirementrag.wiki.WikiModels.Status;
+import com.example.requirementrag.wiki.WikiModels.TestKnowledge;
+import com.example.requirementrag.wiki.WikiModels.VersionChange;
 import com.example.requirementrag.wiki.WikiModels.VersionSource;
 import com.example.requirementrag.versioning.RequirementChunkDiff;
 import org.springframework.stereotype.Service;
@@ -168,13 +173,33 @@ public class VersionKnowledgeBuildPipeline {
     private VersionSource toWikiSource(BuildRequest request, RagProperties.ProjectConfig project, String version,
                                        String generatedAt, List<FeatureFactDraft> features) {
         String projectName = hasText(project.name()) ? project.name() : project.id();
-        List<PageSource> pages = features.stream().map(feature -> new PageSource(
-                feature.featureId(), feature.title(), "自动草稿", version, Status.DRAFT,
-                List.of(), "由版本增量自动生成，必须经产品、开发和测试共同审核后才能发布。",
-                feature.productRules(), feature.codeSymbols(), feature.testPoints(),
-                feature.conflicts(), List.of(), concat(feature.requirementEvidence(), feature.codeEvidence())
-        )).toList();
-        return new VersionSource(1, project.id(), projectName, version, version,
+        List<PageSource> pages = features.stream().map(feature -> {
+            List<RequirementSource> requirementSources = feature.requirementEvidence().stream()
+                    .map(item -> new RequirementSource(request.documentId(), feature.featureId(),
+                            item.source(), item.version(), item.location(), "", item.verificationStatus()))
+                    .toList();
+            List<CodeEntry> codeEntries = feature.codeEvidence().stream()
+                    .map(item -> new CodeEntry("待审核代码入口", item.filePath(), item.symbol(), item.commit(),
+                            feature.changeType(), item.verificationStatus()))
+                    .toList();
+            List<String> missing = new ArrayList<>();
+            if (requirementSources.isEmpty()) missing.add("需求证据");
+            if (codeEntries.isEmpty()) missing.add("代码证据");
+            missing.add("真实测试执行快照");
+            return new PageSource(
+                    feature.featureId(), feature.title(), "自动草稿", version, Status.DRAFT,
+                    List.of(), "由版本需求增量生成的待审核知识页；所有结论均需依据右侧证据核验。",
+                    requirementSources, feature.productRules(), List.of(), codeEntries, feature.codeSymbols(),
+                    List.of(), feature.conflicts(), feature.testPoints(), feature.testPoints(),
+                    new TestKnowledge("NOT_AVAILABLE", "", "没有真实执行快照", List.of()),
+                    new VersionChange(feature.changeType(), safe(request.baseVersion()), version,
+                            "基于需求版本增量识别为 " + feature.changeType()),
+                    new KnowledgeQuality("PENDING_REVIEW", requirementSources.size(), codeEntries.size(),
+                            false, List.copyOf(missing)),
+                    feature.conflicts(), List.of(), concat(feature.requirementEvidence(), feature.codeEvidence())
+            );
+        }).toList();
+        return new VersionSource(2, project.id(), projectName, version, version,
                 safe(request.baseCodeCommit()), safe(request.codeCommit()), generatedAt, pages);
     }
 

@@ -42,18 +42,17 @@ projectId + version + featureId
 
 每个功能页面可以包含：
 
-- 功能概览
-- 产品规则
-- 开发实现
-- 测试点与验收条件
-- 风险和存疑
-- 功能关系
-- 需求证据与代码证据
-- 审核状态和更新时间
+- 功能概览与版本变化
+- 可定位到文件、版本和内容哈希的需求来源
+- 产品规则、处理流程、数据/配置影响和异常边界
+- 真实文件、符号和 commit 对应的静态代码入口
+- 验收标准、测试设计和真实测试执行状态
+- 风险、缺失证据和质量审核状态
+- 功能关系、需求证据与代码证据
 
 页面支持草稿、需求已核验、代码已核验、全部核验、冲突、过期、缺少实现、缺少需求和已驳回等状态。
 
-当前已经整理 `immortal-game-service` 从 **0.1 到 5.1 的 64 个历史版本**。版本源定义和生成结果分别保存在：
+可为已配置项目整理多个历史版本。版本源定义和生成结果分别保存在：
 
 ```text
 data/wiki-sources/                     版本化结构化事实源
@@ -70,13 +69,15 @@ pages/<featureId>.json     浏览页面使用的机器可读数据
 pages/<featureId>.md       适合阅读、评审和 Git 管理的 Markdown
 ```
 
-生成过程会校验项目、版本和功能标识，并采用临时目录加原子替换，避免浏览到只生成了一部分的内容。
+生成过程会校验项目、版本和功能标识，并采用临时目录加原子替换，避免浏览到只生成了一部分的内容。新版 schema 2 以有效需求条目为功能页边界：短但明确的新增需求会保留，协调性问句会跳过，名称接近的不同条目不会自动合并。代码入口只有在目标 commit 中找到保守匹配时才会记录；没有真实测试报告时只显示“没有真实执行快照”。
+
+目标业务版本的正式 Wiki 不再生成按仓库目录罗列的模块页。版本概览只展示需求覆盖率、代码关联率和缺失证据，具体内容进入独立需求功能页。旧 schema 1 页面继续兼容读取。
 
 生成指定版本：
 
 ```bash
 curl -X POST \
-  "http://localhost:8080/api/wiki/generate?projectId=immortal-game-service&version=5.1"
+  "http://localhost:8080/api/wiki/generate?projectId=example-service&version=1.1.0"
 ```
 
 ### 3. 知识库浏览页面
@@ -92,8 +93,10 @@ http://localhost:8080/wiki
 - 选择项目和历史版本
 - 搜索功能页面
 - 按状态和分类筛选
-- 分别查看产品、开发、测试和证据视图
-- 查看关联功能、代码 commit、需求来源和审核状态
+- 在概览、需求、开发、测试和证据页签中阅读同一功能
+- 查看需求文件、内容哈希、代码 commit、文件/符号和审核状态
+- 明确区分验收标准、测试建议和真实测试执行结果
+- 通过版本中心深链接定位指定项目、版本和功能
 
 Wiki 浏览不依赖 Qdrant、Ollama 或 BGE 服务，已有知识文件可以独立读取。
 
@@ -130,8 +133,8 @@ POST /api/wiki/generate?projectId=...&version=...
 ```bash
 curl -X POST http://localhost:8080/api/requirements/documents \
   -F 'file=@产品需求.docx' \
-  -F 'version=5.1' \
-  -F 'documentId=fengshen'
+  -F 'version=1.1.0' \
+  -F 'documentId=example-requirements'
 ```
 
 生成需求存疑：
@@ -139,14 +142,15 @@ curl -X POST http://localhost:8080/api/requirements/documents \
 ```bash
 curl -X POST http://localhost:8080/api/requirements/reviews \
   -H 'Content-Type: application/json' \
-  -d '{"documentId":"fengshen","version":"5.1","module":"同盟"}'
+  -d '{"documentId":"example-requirements","version":"1.1.0","module":"example-module"}'
 ```
 
 ### 5. 代码知识
 
 代码知识模块支持：
 
-- 全量代码索引
+- 后台全量代码索引（页面无需等待长连接）
+- 后台索引状态轮询与失败保留旧索引
 - 基于 Git 变更的增量索引
 - 代码语义检索
 - 文件、类、方法和符号定位
@@ -159,6 +163,8 @@ curl -X POST http://localhost:8080/api/requirements/reviews \
 
 ```text
 POST /api/code/index
+POST /api/code/index/start
+GET  /api/code/index/status
 POST /api/code/incremental-index
 POST /api/code/search
 POST /api/code/graph
@@ -184,10 +190,10 @@ POST /api/knowledge/build
 
 ```json
 {
-  "projectId": "immortal-game-service",
-  "version": "5.1",
-  "baseVersion": "5.0.2",
-  "documentId": "fengshen",
+  "projectId": "example-service",
+  "version": "1.1.0",
+  "baseVersion": "1.0.0",
+  "documentId": "example-requirements",
   "baseCodeCommit": "836abbd7...",
   "codeCommit": "f7e0e22b..."
 }
@@ -280,7 +286,7 @@ GET /api/versions/compare?projectId=...&fromVersion=...&toVersion=...
 
 ```bash
 python3 tools/build-version-wiki.py \
-  --repo /Users/user/Documents/immortal-game-service
+  --repo /absolute/path/to/your-repository
 ```
 
 构建器会为每个版本生成版本概览、代码结构页和模块页，记录受控文件、Git 新增/修改/删除、Java 类型/方法名、配置文件和代码证据；有基线的版本还会记录两次 commit 之间的文件级差异。没有需求原文或真实测试执行记录时，页面会明确标注缺失，不把代码推断写成产品规则或测试结果。构建结果只写入 `data/wiki-sources/` 和 `data/wiki/`，不读取或写入向量库、Qdrant 数据、WAL、凭据或完整源码。
@@ -362,27 +368,32 @@ cp .env.example .env
 ollama pull bge-m3
 ```
 
-### 3. 启动 Qdrant
+### 3. 一键启动
 
 ```bash
-./scripts/start-qdrant.sh
+./scripts/nexus.sh start
 ```
 
-Qdrant 数据保存在 Docker 命名卷或本地运行目录中，不提交到 Git。执行 `docker compose down -v` 会删除对应命名卷，请谨慎使用。
+脚本会加载 `.env`、检查 JDK 21、启动本地 Qdrant、构建当前版本并等待 NEXUS 就绪。服务默认只监听 `127.0.0.1`。如果项目自带的 Qdrant 或 NEXUS 进程仍占用端口但接口已经失效，脚本会识别并自动恢复；如果端口属于其他程序，则只给出明确提示，不会误停外部服务。已有 Qdrant 存储不会被删除。
 
-### 4. 启动应用
+常用命令：
 
 ```bash
-./mvnw spring-boot:run
+./scripts/nexus.sh status
+./scripts/nexus.sh logs
+./scripts/nexus.sh stop
 ```
 
 启动后：
 
 ```text
+平台首页：http://localhost:8080/
 监控工作台：http://localhost:8080/monitor
 版本化 Wiki：http://localhost:8080/wiki
 版本中心：http://localhost:8080/versions
 ```
+
+BGE reranker 未运行时检索会降级，但 Wiki 和版本中心仍可独立使用。代码集合首次为空是正常状态，需要在代码工作台执行一次“建立代码索引”。完整索引在后台运行，页面会持续显示运行、完成或失败状态；索引过程中和失败后，已有索引仍可继续检索。Qdrant 数据保存在本地运行目录中，不提交到 Git。
 
 ## 数据与版本管理原则
 

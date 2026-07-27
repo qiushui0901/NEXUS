@@ -9,7 +9,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class WikiKnowledgePageTest {
     @Test
-    void exposesVersionedProductDevelopmentTestAndEvidenceViewsWithoutCdn() throws Exception {
+    void exposesEvidenceBoundRequirementDevelopmentTestingAndLegacyViewsWithoutCdn() throws Exception {
         String html = new ClassPathResource("static/wiki.html")
                 .getContentAsString(StandardCharsets.UTF_8);
 
@@ -17,10 +17,16 @@ class WikiKnowledgePageTest {
                 .contains("版本化需求 · 代码 · 测试知识库")
                 .contains("id=\"projectSelect\"")
                 .contains("id=\"versionSelect\"")
-                .contains("['product','产品']")
-                .contains("['development','开发']")
-                .contains("['test','测试']")
-                .contains("['evidence','证据']")
+                .contains("['requirements', '需求']")
+                .contains("['development', '开发']")
+                .contains("['testing', '测试']")
+                .contains("['evidence', '证据']")
+                .contains("requirementSources")
+                .contains("processSteps")
+                .contains("codeEntries")
+                .contains("acceptanceCriteria")
+                .contains("没有真实执行快照")
+                .contains("static evidence")
                 .contains("/api/wiki/projects")
                 .contains("/api/wiki/generate")
                 .contains("/versions")
@@ -28,7 +34,8 @@ class WikiKnowledgePageTest {
                 .contains("new URLSearchParams(location.search).get('version')")
                 .contains("new URLSearchParams(location.search).get('featureId')")
                 .contains("pendingFeatureId")
-                .contains("const esc=")
+                .contains("const esc =")
+                .contains("legacyCode.map")
                 .doesNotContain("unpkg.com")
                 .doesNotContain("cdn.jsdelivr.net");
     }

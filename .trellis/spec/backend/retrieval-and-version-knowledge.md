@@ -16,7 +16,7 @@ Apply this specification when changing any of the following:
 - `app.rag.wiki.*` or `app.rag.versioning.*` storage configuration
 - Wiki draft evidence, version comparison, review, or publication behavior
 
-The NEXUS platform version (for example `0.3.0-SNAPSHOT`) and a product requirement version (for example `5.1`) are separate identifiers and must never be inferred from one another.
+The NEXUS platform version (for example `0.3.0-SNAPSHOT`) and a product requirement version (for example `2026.07`) are separate identifiers and must never be inferred from one another.
 
 ## 2. Signatures and APIs
 
@@ -42,7 +42,7 @@ Content-Type: application/json
 ```json
 {
   "projectId": "example-project",
-  "version": "5.1",
+  "version": "2026.07",
   "baseVersion": "5.0",
   "documentId": "requirements",
   "baseCodeCommit": "optional commit",
@@ -151,12 +151,17 @@ Saving requires `Permission.WRITE`. Listing, reading, and comparing require `Per
 - API-derived text must pass through one HTML escaping function before insertion into `innerHTML`; API keys are read from `localStorage.nexusApiKey` and sent as `X-API-Key` when present.
 - Warnings and UI errors use safe public messages only. The page must not show dependency exception text, absolute paths, secrets, or vector data.
 
-### Historical Wiki backfill
+### Evidence-bound Wiki generation
 
-- `tools/build-version-wiki.py` may update version source JSON and rendered Wiki artifacts only as an explicit, reviewable historical-backfill operation. It reads real Git commits with bounded, controlled commands and never reads Qdrant or vector data.
-- Automatically generated pages may contain code paths, bounded type/method names, Git boundaries and file-level changes; they must not invent product rules or test execution results.
-- Missing real test results must be displayed as `没有真实执行快照`; static test-file counts are not execution evidence.
-- Repeated runs must replace only the tool-owned `version-<version>-code-structure` and `version-<version>-module-*` pages while preserving human-authored pages.
+- `tools/build-version-wiki.py` may update version source JSON and rendered Wiki artifacts only as an explicit, reviewable operation. It reads optional ignored requirement snapshots and real Git commits with bounded, controlled commands; it never reads Qdrant or vector data.
+- Schema 2 uses one stable `requirement-<hash>` page per actionable requirement entry plus one `version-<version>-overview` page. The stable identity includes requirement version, filename, and content hash. Similar names must not cause automatic merging.
+- A short declarative requirement remains actionable. Coordination questions and non-requirement notes may be skipped, but absence from a new incremental document must never imply deletion.
+- Product rules, process steps, data/config impacts, boundaries, and acceptance criteria may only be extracted from explicit headings, numbered items, tables, or clear source sentences. Uncertain text remains bounded evidence and is marked pending review.
+- `requirementSources` contains bounded document/version/location/hash metadata. The original requirement file, absolute local path, vector payload, and credentials must never be persisted.
+- `codeEntries` and code evidence require a real file or symbol at the selected target commit. An unmatched page displays `尚未关联代码实现`; repository file counts or module names are not feature implementation evidence.
+- Missing real test results must be displayed as `没有真实执行快照`. Acceptance criteria and test suggestions are not execution evidence, and requirement statements must not be duplicated merely to fill a test section.
+- Schema 2 artifacts must match the Java generator exactly. Schema 1 artifacts remain readable through additive normalization and are not forced into a historical bulk rewrite.
+- Repeated schema 2 generation atomically replaces the selected version's tool-owned pages. Generic `version-<version>-module-*` and code-structure inventory pages are not part of the business Wiki.
 
 ### Forbidden persisted fields
 

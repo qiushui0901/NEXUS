@@ -38,6 +38,50 @@ public final class WikiModels {
             String description
     ) {}
 
+    /** A bounded, reviewable pointer to one requirement entry; never stores the source document itself. */
+    public record RequirementSource(
+            String documentId,
+            String entryId,
+            String filename,
+            String version,
+            String location,
+            String contentHash,
+            String verificationStatus
+    ) {}
+
+    /** A code location proven to exist at the selected commit. */
+    public record CodeEntry(
+            String role,
+            String filePath,
+            String symbol,
+            String commit,
+            String changeType,
+            String verificationStatus
+    ) {}
+
+    /** Test knowledge keeps suggestions separate from real execution evidence. */
+    public record TestKnowledge(
+            String executionStatus,
+            String executionReference,
+            String summary,
+            List<String> cases
+    ) {}
+
+    public record VersionChange(
+            String changeType,
+            String baseVersion,
+            String version,
+            String summary
+    ) {}
+
+    public record KnowledgeQuality(
+            String reviewStatus,
+            int requirementEvidenceCount,
+            int codeEvidenceCount,
+            boolean realTestExecution,
+            List<String> missing
+    ) {}
+
     public record PageSource(
             String featureId,
             String title,
@@ -46,9 +90,18 @@ public final class WikiModels {
             Status status,
             List<String> aliases,
             String summary,
+            List<RequirementSource> requirementSources,
             List<String> productRules,
+            List<String> processSteps,
+            List<CodeEntry> codeEntries,
             List<String> codeSymbols,
+            List<String> dataImpacts,
+            List<String> boundaryConditions,
+            List<String> acceptanceCriteria,
             List<String> testPoints,
+            TestKnowledge testKnowledge,
+            VersionChange versionChange,
+            KnowledgeQuality quality,
             List<String> risks,
             List<Relation> relations,
             List<Evidence> evidence
@@ -81,9 +134,18 @@ public final class WikiModels {
             Status status,
             List<String> aliases,
             String summary,
+            List<RequirementSource> requirementSources,
             List<String> productRules,
+            List<String> processSteps,
+            List<CodeEntry> codeEntries,
             List<String> codeSymbols,
+            List<String> dataImpacts,
+            List<String> boundaryConditions,
+            List<String> acceptanceCriteria,
             List<String> testPoints,
+            TestKnowledge testKnowledge,
+            VersionChange versionChange,
+            KnowledgeQuality quality,
             List<String> risks,
             List<Relation> relations,
             List<Evidence> evidence,

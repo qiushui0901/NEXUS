@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>NEXUS 代码理解工作台</title>
-  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script src="/webjars/vue/3.5.13/dist/vue.global.prod.js"></script>
   <style>
     :root {
       color-scheme: dark;
@@ -669,6 +669,11 @@
     .review-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)) auto; gap:10px; align-items:end; }
     .progress { height:12px; border:1px solid var(--line); border-radius:999px; background:#050b16; overflow:hidden; }
     .bar { height:100%; background:linear-gradient(90deg,var(--accent2),var(--accent)); }
+    .bar.indeterminate { width:36%; animation:index-running 1.35s ease-in-out infinite; }
+    .index-job { padding:12px; border:1px solid var(--line); border-radius:14px; background:#091121; }
+    .index-job-head { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:7px; }
+    .index-job p { margin:5px 0 0; }
+    @keyframes index-running { from { transform:translateX(-110%); } to { transform:translateX(290%); } }
     .toast {
       position:fixed;
       right:18px;
@@ -1181,9 +1186,21 @@
           <div class="progress"><div class="bar" :style="{width: bootstrapPercent + '%'}"></div></div>
           <p class="muted">阶段：{{ bootstrap.phase || '等待启动' }} · 进度：{{ bootstrap.filesProcessed || 0 }}/{{ bootstrap.filesTotal || 0 }}</p>
           <p class="muted">当前知识库：{{ knowledge.documentId || '-' }} / {{ knowledge.version || '-' }} · 分块数：{{ knowledge.chunkCount || 0 }}</p>
+          <div class="index-job">
+            <div class="index-job-head">
+              <strong>Java 代码索引</strong>
+              <span :class="['pill', codeIndexTone]">{{ stateLabel(codeIndex.state) }}</span>
+            </div>
+            <p class="muted">{{ codeIndex.message || '尚未启动代码索引' }}</p>
+            <p v-if="codeIndex.state === 'COMPLETED'" class="faint">{{ codeIndex.files || 0 }} 个文件 · {{ codeIndex.chunks || 0 }} 个分块 · commit {{ codeIndex.commitSha || '-' }}</p>
+            <p v-if="codeIndex.state === 'IDLE' && codeIndex.chunks" class="faint">当前已有 {{ codeIndex.chunks }} 个代码分块。</p>
+            <p v-if="codeIndex.state === 'RUNNING' && codeIndex.chunks" class="faint">重建期间继续提供现有 {{ codeIndex.chunks }} 个分块的检索服务。</p>
+            <p v-if="codeIndex.state === 'FAILED'" class="faint">原有可用索引不会因本次失败被删除，可以修复依赖后重试。</p>
+            <div v-if="codeIndex.state === 'RUNNING'" class="progress" style="margin-top:10px;"><div class="bar indeterminate"></div></div>
+          </div>
           <div class="actions" style="max-width:520px;">
             <button class="primary" @click="bootstrapKnowledge" :disabled="busy">重新导入文档</button>
-            <button class="soft" @click="indexCode" :disabled="busy">索引 Java 代码</button>
+            <button class="soft" @click="indexCode" :disabled="busy || codeIndex.state === 'RUNNING'">{{ codeIndex.state === 'RUNNING' ? '正在建立索引…' : '索引 Java 代码' }}</button>
           </div>
         </div>
       </section>
@@ -1204,7 +1221,7 @@ createApp({
       toastTimer:null,
       projects:[],
       currentProjectId:'',
-      apiKey:localStorage.getItem('nexus_api_key') || '',
+      apiKey:localStorage.getItem('nexusApiKey') || localStorage.getItem('nexus_api_key') || '',
       activeTab:'graph',
       intentTab:'graph',
       toolsCollapsed:true,
@@ -1221,9 +1238,10 @@ createApp({
       status:{},
       knowledge:{},
       bootstrap:{},
+      codeIndex:{ state:'IDLE', message:'尚未启动代码索引' },
       metrics:{},
       rag:{},
-      review:{ documentId:'fengshen', version:'5.1', module:'' },
+      review:{ documentId:'example-requirements', version:'1.0.0', module:'' },
       graph:{ query:'', view:'', intent:'', summary:'', layers:[], tour:[], nodes:[], edges:[], hits:[] },
       plan:{},
       planGraph:{ nodes:[], edges:[], loading:false, error:'' },
@@ -1286,6 +1304,9 @@ createApp({
     },
     bootstrapTone() {
       return { COMPLETED:'ok', FAILED:'bad', RUNNING:'warn' }[this.bootstrap.state] || '';
+    },
+    codeIndexTone() {
+      return { COMPLETED:'ok', FAILED:'bad', RUNNING:'warn' }[this.codeIndex.state] || '';
     },
     graphModeLabel() {
       const labels = { auto:'自动识别', flow:'链路图', structure:'结构图', class:'类图', method:'方法图' };
@@ -1500,9 +1521,9 @@ createApp({
       return `最近链路记录了 ${events.length} 个阶段，当前最耗时的是「${this.explainStage(slow.stage)}」约 ${slow.durationMs || 0}ms。`;
     }
   },
-  mounted() {
-    this.loadProjects();
-    this.refreshAll();
+  async mounted() {
+    await this.loadProjects();
+    await this.refreshAll();
     this.refreshTimer = setInterval(this.refreshAll, 2500);
     document.addEventListener('keydown', this.handleKeyDown);
   },
@@ -1535,8 +1556,9 @@ createApp({
       localStorage.setItem('nexus_project_id', this.currentProjectId);
       if (this.currentProject) {
         this.review.documentId = this.currentProject.group || this.currentProject.id;
-        this.review.version = this.currentProject.version || '5.1';
+        this.review.version = this.currentProject.version || '';
       }
+      this.refreshAll();
     },
     setGraphMode(mode) {
       this.graphMode = mode;
@@ -1551,8 +1573,13 @@ createApp({
       }
     },
     saveApiKey() {
-      if (this.apiKey) localStorage.setItem('nexus_api_key', this.apiKey);
-      else localStorage.removeItem('nexus_api_key');
+      if (this.apiKey) {
+        localStorage.setItem('nexusApiKey', this.apiKey);
+        localStorage.removeItem('nexus_api_key');
+      } else {
+        localStorage.removeItem('nexusApiKey');
+        localStorage.removeItem('nexus_api_key');
+      }
     },
     authHeaders(extra = {}) {
       const headers = { ...extra };
@@ -1569,15 +1596,24 @@ createApp({
     },
     async refreshAll() {
       try {
-        const [status, rag] = await Promise.all([
-          this.api('/api/monitor/status' + (this.currentProjectId ? '?projectId=' + encodeURIComponent(this.currentProjectId) : '')),
-          this.api('/api/monitor/rag-chain')
+        const projectQuery = this.currentProjectId ? '?projectId=' + encodeURIComponent(this.currentProjectId) : '';
+        const [status, rag, codeIndex] = await Promise.all([
+          this.api('/api/monitor/status' + projectQuery),
+          this.api('/api/monitor/rag-chain'),
+          this.api('/api/code/index/status' + projectQuery)
         ]);
+        const previousIndexState = this.codeIndex.state;
         this.status = status;
         this.knowledge = status.knowledge || {};
         this.bootstrap = status.bootstrap || {};
+        this.codeIndex = codeIndex || { state:'IDLE', message:'尚未启动代码索引' };
         this.metrics = status.metrics || {};
         this.rag = rag;
+        if (previousIndexState === 'RUNNING' && this.codeIndex.state === 'COMPLETED') {
+          this.showToast(`代码索引完成：${this.codeIndex.chunks || 0} 个分块`);
+        } else if (previousIndexState === 'RUNNING' && this.codeIndex.state === 'FAILED') {
+          this.showToast(this.codeIndex.message || '代码索引失败');
+        }
       } catch (error) {
         this.showToast('状态刷新失败：' + error.message);
       }
@@ -1760,11 +1796,10 @@ createApp({
       await this.run('已触发文档导入', () => this.api(bsUrl, { method:'POST' }));
     },
     async indexCode() {
-      await this.run('代码索引完成', async () => {
-        const idxUrl = this.currentProjectId ? `/api/code/index?projectId=${encodeURIComponent(this.currentProjectId)}` : '/api/code/index';
-        const data = await this.api(idxUrl, { method:'POST' });
-        this.showToast(`代码索引完成：${data.chunks} 个分块`);
-        await this.loadGraph();
+      await this.run('代码索引已在后台启动，可以继续使用现有功能', async () => {
+        const idxUrl = this.currentProjectId ? `/api/code/index/start?projectId=${encodeURIComponent(this.currentProjectId)}` : '/api/code/index/start';
+        this.codeIndex = await this.api(idxUrl, { method:'POST' });
+        this.activeTab = 'status';
       });
     },
     async runReview() {
@@ -2112,7 +2147,7 @@ createApp({
       const map = {
         '入口/API':`它更像 ${query} 的入口或外部调用点，适合先确认请求从哪里进入系统。`,
         '业务编排':`它负责把主流程串起来，适合确认新增能力应该挂在哪个业务步骤。`,
-        '规则判断':`它可能包含条件、开关或资格判断，适合检查成长基金的准入规则。`,
+        '规则判断':`它可能包含条件、开关或资格判断，适合检查功能的准入规则。`,
         '配置参数':`它可能承载配置、档位或参数，适合确认是否需要新增配置项。`,
         '奖励/成长数值':`它靠近奖励、成长值或权益计算，适合确认发放和数值逻辑。`,
         '状态变更/持久化':`它靠近状态落库或缓存更新，适合确认数据是否需要持久化。`,

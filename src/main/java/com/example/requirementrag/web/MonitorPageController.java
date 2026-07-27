@@ -9,8 +9,13 @@ import org.springframework.web.bind.annotation.GetMapping;
 @Controller
 public class MonitorPageController {
 
-    /** 根路径与 /monitor 均跳转至监控页。 */
-    @GetMapping({"/", "/monitor"})
+    /** 平台根路径进入首页，监控工作台保留独立入口。 */
+    @GetMapping("/")
+    public String homePage() {
+        return "redirect:/home.html";
+    }
+
+    @GetMapping("/monitor")
     public String monitorPage() {
         return "redirect:/monitor.html";
     }

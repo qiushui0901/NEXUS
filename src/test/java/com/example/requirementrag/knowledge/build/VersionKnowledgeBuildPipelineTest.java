@@ -82,6 +82,14 @@ class VersionKnowledgeBuildPipelineTest {
         assertThat(json).doesNotContain("embedding", "denseVector", "qdrantPoint", "apiKey");
         JsonNode root = mapper.readTree(json);
         assertThat(root.get("features").get(0).get("changeType").asText()).isEqualTo("MODIFIED");
+        JsonNode wikiSource = mapper.readTree(Files.readString(draft.resolve("wiki-source.json")));
+        assertThat(wikiSource.get("schemaVersion").asInt()).isEqualTo(2);
+        JsonNode page = wikiSource.get("pages").get(0);
+        assertThat(page.get("requirementSources")).hasSize(2);
+        assertThat(page.get("testKnowledge").get("executionStatus").asText()).isEqualTo("NOT_AVAILABLE");
+        assertThat(page.get("testKnowledge").get("summary").asText()).isEqualTo("没有真实执行快照");
+        assertThat(page.get("quality").get("realTestExecution").asBoolean()).isFalse();
+        assertThat(page.get("versionChange").get("changeType").asText()).isEqualTo("MODIFIED");
     }
 
     @Test

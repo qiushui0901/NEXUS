@@ -10,6 +10,30 @@ import org.springframework.core.io.ClassPathResource;
 class MonitorWorkbenchPageTest {
 
     @Test
+    void loadsVueFromThePackagedApplicationInsteadOfAnExternalCdn() throws IOException {
+        assertThat(new ClassPathResource(
+                "META-INF/resources/webjars/vue/3.5.13/dist/vue.global.prod.js").exists()).isTrue();
+        String html = new ClassPathResource("static/monitor.html")
+                .getContentAsString(StandardCharsets.UTF_8);
+        assertThat(html).contains("nexusApiKey");
+    }
+
+    @Test
+    void startsCodeIndexInBackgroundAndPollsItsStatus() throws IOException {
+        String html = new ClassPathResource("static/monitor.html")
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(html)
+                .contains("/api/code/index/start")
+                .contains("/api/code/index/status")
+                .contains("codeIndex:{ state:'IDLE'")
+                .contains("codeIndex.state === 'RUNNING'")
+                .contains("正在建立索引…")
+                .contains("原有可用索引不会因本次失败被删除")
+                .doesNotContain("`/api/code/index?projectId=");
+    }
+
+    @Test
     void separatesIntentGraphModeSearchAndContextSidebar() throws IOException {
         String html = new ClassPathResource("static/monitor.html")
                 .getContentAsString(StandardCharsets.UTF_8);
@@ -45,6 +69,8 @@ class MonitorWorkbenchPageTest {
                 .contains("this.planStatus = 'success'")
                 .contains("this.planStatus = 'error'")
                 .contains(".plan-stage i.error")
+                .contains("/webjars/vue/3.5.13/dist/vue.global.prod.js")
+                .doesNotContain("https://unpkg.com")
                 .doesNotContain("<textarea");
     }
 
