@@ -137,3 +137,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: 补齐需求版本链
+
+**Date**: 2026-07-27
+**Task**: 补齐需求版本链
+**Branch**: `main`
+
+### Summary
+
+新增受控需求快照、版本档案解析与需求差异回退链路，整理 20 个可靠需求基线并完善测试、文档和版本记录。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e361950` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
