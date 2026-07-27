@@ -9,8 +9,11 @@ import com.example.requirementrag.versioning.RequirementSnapshotModels.Snapshot;
 import com.example.requirementrag.versioning.VersionModels.ManifestStatus;
 import com.example.requirementrag.versioning.VersionModels.VersionManifest;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import tools.jackson.databind.ObjectMapper;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 
@@ -20,24 +23,30 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 class RequirementVersionDiffServiceTest {
+    @TempDir
+    Path temp;
+
     @Test
-    void comparesTheCommittedCurrentRequirementChainWithoutQdrantOrFalseRemovals() {
+    void comparesLocalIncrementalFixtureWithoutQdrantOrFalseRemovals() throws Exception {
+        writeSnapshot("5.0", null, """
+                {"entryId":"keep","filename":"base.md","parentOrder":0,"text":"still effective","contentHash":"keep"},
+                {"entryId":"change","filename":"base.md","parentOrder":1,"text":"old text","contentHash":"old"}
+                """);
+        writeSnapshot("5.1", "5.0", """
+                {"entryId":"change","filename":"delta.md","parentOrder":0,"text":"new text","contentHash":"new"},
+                {"entryId":"add","filename":"delta.md","parentOrder":1,"text":"added","contentHash":"add"}
+                """);
         QdrantHybridStore store = mock(QdrantHybridStore.class);
         ProjectRegistry registry = mock(ProjectRegistry.class);
         RequirementSnapshotRepository snapshots = new RequirementSnapshotRepository(new ObjectMapper(),
-                new VersioningProperties("unused", "data/requirement-snapshots"));
-        VersionManifest from = new VersionManifest(1, "immortal-game-service", "5.0.2", null,
-                "fengshen", "5.0", null, null, null, "5.0.2", null,
-                ManifestStatus.RELEASED, null, null, List.of());
-        VersionManifest to = new VersionManifest(1, "immortal-game-service", "5.1", "5.0.2",
-                "fengshen", "5.1", null, null, null, "5.1", null,
-                ManifestStatus.RELEASED, null, null, List.of());
+                new VersioningProperties("unused", temp.toString()));
 
         var diff = new RequirementVersionDiffService(store, registry, snapshots)
-                .compare("immortal-game-service", from, to);
+                .compare("game", manifest("5.0"), manifest("5.1"));
 
         assertThat(diff.availability()).isEqualTo(VersionModels.Availability.AVAILABLE);
-        assertThat(diff.added() + diff.modified()).isPositive();
+        assertThat(diff.added()).isEqualTo(1);
+        assertThat(diff.modified()).isEqualTo(1);
         assertThat(diff.removed()).isZero();
         assertThat(diff.changes()).allSatisfy(change -> {
             assertThat(change.filename()).isNotBlank();
@@ -92,6 +101,24 @@ class RequirementVersionDiffServiceTest {
         assertThat(diff.removed()).isZero();
         assertThat(diff.changes()).extracting(change -> change.type().name())
                 .containsExactlyInAnyOrder("ADDED", "MODIFIED");
+    }
+
+    private void writeSnapshot(String version, String baseVersion, String entries) throws Exception {
+        Path project = temp.resolve("game");
+        Files.createDirectories(project);
+        String base = baseVersion == null ? "null" : "\"" + baseVersion + "\"";
+        Files.writeString(project.resolve(version + ".json"), """
+                {
+                  "schemaVersion": 1,
+                  "projectId": "game",
+                  "documentId": "requirements",
+                  "requirementVersion": "%s",
+                  "baseRequirementVersion": %s,
+                  "aliases": ["%s"],
+                  "sources": [],
+                  "entries": [%s]
+                }
+                """.formatted(version, base, version, entries));
     }
 
     private Snapshot snapshot(String version, Entry... entries) {

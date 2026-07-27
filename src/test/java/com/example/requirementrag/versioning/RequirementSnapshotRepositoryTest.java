@@ -17,27 +17,13 @@ class RequirementSnapshotRepositoryTest {
     Path temp;
 
     @Test
-    void committedSnapshotsCoverAndMaterializeTheCurrentComparisonChainWithoutVectorData() throws Exception {
+    void missingLocalSnapshotDirectoryIsAValidEmptyState() {
         RequirementSnapshotRepository repository = new RequirementSnapshotRepository(new ObjectMapper(),
-                new VersioningProperties("unused", "data/requirement-snapshots"));
+                new VersioningProperties("unused", temp.resolve("not-generated").toString()));
 
-        var baseline = repository.findForBusinessVersion("immortal-game-service", "5.0.2");
-        var target = repository.findForBusinessVersion("immortal-game-service", "5.1");
-        var completeBaseline = repository.materialize("immortal-game-service", "fengshen", "5.0");
-        var completeTarget = repository.materialize("immortal-game-service", "fengshen", "5.1");
-
-        assertThat(repository.list("immortal-game-service")).hasSize(20);
-        assertThat(baseline).isPresent().get().extracting(snapshot -> snapshot.requirementVersion())
-                .isEqualTo("5.0");
-        assertThat(target).isPresent().get().extracting(snapshot -> snapshot.requirementVersion())
-                .isEqualTo("5.1");
-        assertThat(completeBaseline).isPresent();
-        assertThat(completeTarget).isPresent();
-        assertThat(completeTarget.orElseThrow().entries())
-                .containsAll(completeBaseline.orElseThrow().entries())
-                .hasSizeGreaterThan(completeBaseline.orElseThrow().entries().size());
-        String json = Files.readString(Path.of("data/requirement-snapshots/immortal-game-service/5.1.json"));
-        assertThat(json).doesNotContain("\"vector\"", "\"embedding\"", "\"apiKey\"", "\"password\"");
+        assertThat(repository.list("game")).isEmpty();
+        assertThat(repository.findForBusinessVersion("game", "5.1")).isEmpty();
+        assertThat(repository.materialize("game", "requirements", "5.1")).isEmpty();
     }
 
     @Test

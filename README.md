@@ -248,7 +248,7 @@ python3 tools/build-requirement-snapshots.py
 data/requirement-snapshots/<projectId>/<requirementVersion>.json
 ```
 
-大型原始文档包继续由 Git 忽略，只提交生成后的轻量需求快照。
+大型原始文档包和生成后的需求快照都只保留在本机，并由 Git 忽略；仓库只提交生成器、数据模型、配置和不含业务正文的测试夹具。需要浏览真实需求差异时，在本地运行生成器重建快照。
 
 ### 9. 版本中心与差异浏览
 

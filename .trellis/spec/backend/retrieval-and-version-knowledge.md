@@ -111,6 +111,7 @@ Saving requires `Permission.WRITE`. Listing, reading, and comparing require `Per
 - Materialize a complete requirement state by recursively replaying `baseRequirementVersion`: inherit active baseline entries, overwrite matching stable IDs with `UPSERT`, and remove matching historical IDs with `REMOVE`.
 - Reject missing baselines, cross-document baseline references, inheritance cycles, duplicate entry IDs, and explicit removals that do not resolve to an active historical entry.
 - Snapshots are comparison facts, not retrieval indexes. They must never contain vectors, embeddings, Qdrant points, storage/snapshot/WAL data, credentials, or the original large archive.
+- Generated requirement snapshots may contain private business text and therefore remain local runtime artifacts under Git ignore. Commit only the generator, schema, configuration, and synthetic test fixtures without real business content.
 - `RequirementSnapshotRepository.findForBusinessVersion` may map a business version to a requirement baseline only through an explicit alias. Do not infer missing mappings from numeric proximity.
 - `VersionManifestResolver` merges published Wiki indexes and formal manifests. Formal manifests override synthesized manifests; if a formal manifest lacks requirement references, an explicit snapshot alias may fill only those missing references.
 - Synthetic manifests infer `baseVersion` only when the target Wiki index `baseCodeCommit` exactly matches another published index's `codeCommit`.
@@ -224,7 +225,7 @@ Changes to these contracts require assertions for:
 - requirement comparison using `parentId`, with `filename + parentOrder` fallback and content-hash change detection
 - requirement snapshot parsing, identity validation, alias lookup, incremental inheritance, explicit removal, missing-baseline/cycle rejection, duplicate-entry rejection, and forbidden-field absence
 - resolver precedence, missing-reference enrichment, exact commit-chain baseline inference, and unmapped-version behavior
-- actual committed snapshot coverage for the current requirement comparison chain without Qdrant access
+- synthetic temporary snapshot-chain coverage without Qdrant access; tests must pass when no local generated snapshots exist
 - generator no-op reproducibility and exclusion of the original large archive
 - different functions receiving distinct, stable feature IDs
 - manifest save, update, list ordering, atomic replacement, path traversal rejection, Git SHA rejection, and duplicate test case rejection
