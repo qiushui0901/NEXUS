@@ -170,3 +170,36 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: 修正需求增量继承语义
+
+**Date**: 2026-07-27
+**Task**: 修正需求增量继承语义
+**Branch**: `main`
+
+### Summary
+
+需求快照按基线链累计合成，未重复出现的历史需求继续有效，仅结构化 REMOVE 产生删除差异，并补充完整回归测试。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `497519a` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 5
+- **Total Sessions**: 6
 - **Last Active**: 2026-07-27
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~172 | Active |
+| `journal-1.md` | ~205 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 6 | 2026-07-27 | 修正需求增量继承语义 | `497519a` | `main` |
 | 5 | 2026-07-27 | 补齐需求版本链 | `e361950` | `main` |
 | 4 | 2026-07-26 | 版本 Wiki 实质内容与直接对比 | `2482396` | `main` |
 | 3 | 2026-07-24 | 完成版本中心与差异浏览页面 | `899a33f` | `main` |
