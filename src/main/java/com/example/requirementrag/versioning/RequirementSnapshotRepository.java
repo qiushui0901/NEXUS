@@ -13,13 +13,16 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 
-/** Reads small, reviewable requirement snapshots that never contain vectors. */
+/** Reads and materializes small, reviewable requirement snapshots that never contain vectors. */
 @Repository
 public class RequirementSnapshotRepository {
     private final ObjectMapper objectMapper;
@@ -50,6 +53,18 @@ public class RequirementSnapshotRepository {
         return Optional.of(snapshot);
     }
 
+    /** Builds the complete requirement state by replaying incremental snapshots from the baseline forward. */
+    public Optional<Snapshot> materialize(String projectId, String documentId, String requirementVersion) {
+        String project = VersionPathPolicy.identifier(projectId, "projectId");
+        String document = VersionPathPolicy.identifier(documentId, "documentId");
+        String version = VersionPathPolicy.identifier(requirementVersion, "requirementVersion");
+        Map<String, Snapshot> snapshotsByVersion = new HashMap<>();
+        for (Snapshot snapshot : list(project)) snapshotsByVersion.put(snapshot.requirementVersion(), snapshot);
+        Snapshot target = snapshotsByVersion.get(version);
+        if (target == null || !document.equals(target.documentId())) return Optional.empty();
+        return Optional.of(materialize(target, snapshotsByVersion, new HashSet<>(), new HashMap<>()));
+    }
+
     public List<Snapshot> list(String projectId) {
         String project = VersionPathPolicy.identifier(projectId, "projectId");
         Path projectRoot = VersionPathPolicy.resolveBelow(root, project);
@@ -73,6 +88,51 @@ public class RequirementSnapshotRepository {
         return root;
     }
 
+    private Snapshot materialize(Snapshot snapshot, Map<String, Snapshot> snapshotsByVersion,
+                                 Set<String> visiting, Map<String, Snapshot> cache) {
+        String key = snapshot.documentId() + "@" + snapshot.requirementVersion();
+        Snapshot cached = cache.get(key);
+        if (cached != null) return cached;
+        if (!visiting.add(key)) {
+            throw unavailable("需求快照继承链存在循环", new IllegalArgumentException(key));
+        }
+        try {
+            LinkedHashMap<String, Entry> active = new LinkedHashMap<>();
+            if (hasText(snapshot.baseRequirementVersion())) {
+                Snapshot baseline = snapshotsByVersion.get(snapshot.baseRequirementVersion());
+                if (baseline == null) {
+                    throw unavailable("需求快照基线不存在: " + snapshot.requirementVersion(),
+                            new IllegalArgumentException(snapshot.baseRequirementVersion()));
+                }
+                if (!snapshot.documentId().equals(baseline.documentId())) {
+                    throw unavailable("需求快照基线文档不一致: " + snapshot.requirementVersion(),
+                            new IllegalArgumentException(snapshot.baseRequirementVersion()));
+                }
+                for (Entry entry : materialize(baseline, snapshotsByVersion, visiting, cache).entries()) {
+                    active.put(entry.entryId(), entry);
+                }
+            }
+            for (Entry entry : snapshot.entries()) {
+                switch (entry.effectiveOperation()) {
+                    case UPSERT -> active.put(entry.entryId(), entry);
+                    case REMOVE -> {
+                        if (active.remove(entry.entryId()) == null) {
+                            throw unavailable("显式删除引用了不存在的历史需求: " + snapshot.requirementVersion(),
+                                    new IllegalArgumentException(entry.entryId()));
+                        }
+                    }
+                }
+            }
+            Snapshot result = new Snapshot(snapshot.schemaVersion(), snapshot.projectId(), snapshot.documentId(),
+                    snapshot.requirementVersion(), snapshot.baseRequirementVersion(), snapshot.aliases(),
+                    snapshot.generatedAt(), snapshot.sources(), List.copyOf(active.values()));
+            cache.put(key, result);
+            return result;
+        } finally {
+            visiting.remove(key);
+        }
+    }
+
     private Snapshot read(Path file) {
         try {
             return validate(objectMapper.readValue(Files.readAllBytes(file), Snapshot.class), file);
@@ -88,6 +148,10 @@ public class RequirementSnapshotRepository {
         VersionPathPolicy.identifier(snapshot.projectId(), "projectId");
         VersionPathPolicy.identifier(snapshot.documentId(), "documentId");
         VersionPathPolicy.identifier(snapshot.requirementVersion(), "requirementVersion");
+        if (hasText(snapshot.baseRequirementVersion())) {
+            VersionPathPolicy.identifier(snapshot.baseRequirementVersion(), "baseRequirementVersion");
+        }
+        for (String alias : snapshot.aliases()) VersionPathPolicy.identifier(alias, "alias");
         Set<String> entryIds = new HashSet<>();
         for (Entry entry : snapshot.entries()) {
             if (entry == null || !hasText(entry.entryId()) || !hasText(entry.filename())

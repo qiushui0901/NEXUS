@@ -21,7 +21,7 @@ import static org.mockito.Mockito.when;
 
 class RequirementVersionDiffServiceTest {
     @Test
-    void comparesTheCommittedCurrentRequirementChainWithoutQdrant() {
+    void comparesTheCommittedCurrentRequirementChainWithoutQdrantOrFalseRemovals() {
         QdrantHybridStore store = mock(QdrantHybridStore.class);
         ProjectRegistry registry = mock(ProjectRegistry.class);
         RequirementSnapshotRepository snapshots = new RequirementSnapshotRepository(new ObjectMapper(),
@@ -37,7 +37,8 @@ class RequirementVersionDiffServiceTest {
                 .compare("immortal-game-service", from, to);
 
         assertThat(diff.availability()).isEqualTo(VersionModels.Availability.AVAILABLE);
-        assertThat(diff.added() + diff.modified() + diff.removed()).isPositive();
+        assertThat(diff.added() + diff.modified()).isPositive();
+        assertThat(diff.removed()).isZero();
         assertThat(diff.changes()).allSatisfy(change -> {
             assertThat(change.filename()).isNotBlank();
             assertThat(change.beforeExcerpt() != null || change.afterExcerpt() != null).isTrue();
@@ -46,7 +47,7 @@ class RequirementVersionDiffServiceTest {
     }
 
     @Test
-    void prefersReviewableSnapshotsWithoutReadingTheVectorStore() {
+    void comparesMaterializedSnapshotsIncludingExplicitRemoval() {
         QdrantHybridStore store = mock(QdrantHybridStore.class);
         ProjectRegistry registry = mock(ProjectRegistry.class);
         RequirementSnapshotRepository snapshots = mock(RequirementSnapshotRepository.class);
@@ -56,8 +57,8 @@ class RequirementVersionDiffServiceTest {
         Snapshot after = snapshot("5.1",
                 entry("same", "a.html", 0, "new text", "hash-new"),
                 entry("add", "c.html", 2, "added", "hash-add"));
-        when(snapshots.find("game", "requirements", "5.0")).thenReturn(Optional.of(before));
-        when(snapshots.find("game", "requirements", "5.1")).thenReturn(Optional.of(after));
+        when(snapshots.materialize("game", "requirements", "5.0")).thenReturn(Optional.of(before));
+        when(snapshots.materialize("game", "requirements", "5.1")).thenReturn(Optional.of(after));
 
         var diff = new RequirementVersionDiffService(store, registry, snapshots)
                 .compare("game", manifest("5.0"), manifest("5.1"));
@@ -69,16 +70,16 @@ class RequirementVersionDiffServiceTest {
     }
 
     @Test
-    void fallsBackToPayloadRecordsWhenSnapshotsAreMissing() {
+    void qdrantFallbackNeverInfersRemovalFromAnAbsentIncrementalEntry() {
         QdrantHybridStore store = mock(QdrantHybridStore.class);
         ProjectRegistry registry = mock(ProjectRegistry.class);
         RequirementSnapshotRepository snapshots = mock(RequirementSnapshotRepository.class);
-        when(snapshots.find("game", "requirements", "5.0")).thenReturn(Optional.empty());
-        when(snapshots.find("game", "requirements", "5.1")).thenReturn(Optional.empty());
+        when(snapshots.materialize("game", "requirements", "5.0")).thenReturn(Optional.empty());
+        when(snapshots.materialize("game", "requirements", "5.1")).thenReturn(Optional.empty());
         when(registry.resolveRequirementCollection("game")).thenReturn("requirements_game");
         when(store.scrollVersion("requirements_game", "requirements", "5.0")).thenReturn(List.of(
                 chunk("old", "a.html", 0, "old text", "hash-old"),
-                chunk("remove", "b.html", 1, "removed", "hash-remove")));
+                chunk("absent", "b.html", 1, "still effective", "hash-keep")));
         when(store.scrollVersion("requirements_game", "requirements", "5.1")).thenReturn(List.of(
                 chunk("old", "a.html", 0, "new text", "hash-new"),
                 chunk("add", "c.html", 2, "added", "hash-add")));
@@ -88,9 +89,9 @@ class RequirementVersionDiffServiceTest {
 
         assertThat(diff.added()).isEqualTo(1);
         assertThat(diff.modified()).isEqualTo(1);
-        assertThat(diff.removed()).isEqualTo(1);
+        assertThat(diff.removed()).isZero();
         assertThat(diff.changes()).extracting(change -> change.type().name())
-                .containsExactlyInAnyOrder("ADDED", "MODIFIED", "REMOVED");
+                .containsExactlyInAnyOrder("ADDED", "MODIFIED");
     }
 
     private Snapshot snapshot(String version, Entry... entries) {

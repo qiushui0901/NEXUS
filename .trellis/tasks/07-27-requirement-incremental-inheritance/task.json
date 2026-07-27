@@ -1,0 +1,31 @@
+{
+  "id": "requirement-incremental-inheritance",
+  "name": "requirement-incremental-inheritance",
+  "title": "需求增量继承与显式删除",
+  "description": "修正需求版本链语义：未在新版本出现的历史需求继续有效，仅显式删除标记产生删除差异。",
+  "status": "in_progress",
+  "dev_type": "backend",
+  "scope": "requirement version snapshots, materialization and diff semantics",
+  "package": null,
+  "priority": "P1",
+  "creator": "qiushui",
+  "assignee": "qiushui",
+  "createdAt": "2026-07-27",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/main/java/com/example/requirementrag/versioning/RequirementSnapshotModels.java",
+    "src/main/java/com/example/requirementrag/versioning/RequirementSnapshotRepository.java",
+    "src/main/java/com/example/requirementrag/versioning/RequirementVersionDiffService.java",
+    "tools/build-requirement-snapshots.py"
+  ],
+  "notes": "",
+  "meta": {}
+}

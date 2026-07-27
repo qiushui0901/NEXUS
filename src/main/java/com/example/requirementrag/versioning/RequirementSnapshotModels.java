@@ -6,6 +6,11 @@ import java.util.List;
 public final class RequirementSnapshotModels {
     private RequirementSnapshotModels() {}
 
+    public enum Operation {
+        UPSERT,
+        REMOVE
+    }
+
     public record Source(
             String path,
             String location,
@@ -18,8 +23,18 @@ public final class RequirementSnapshotModels {
             String filename,
             int parentOrder,
             String text,
-            String contentHash
-    ) {}
+            String contentHash,
+            Operation operation
+    ) {
+        /** Keeps source and test code compatible with schema-v1 entries that predate explicit operations. */
+        public Entry(String entryId, String filename, int parentOrder, String text, String contentHash) {
+            this(entryId, filename, parentOrder, text, contentHash, null);
+        }
+
+        public Operation effectiveOperation() {
+            return operation == null ? Operation.UPSERT : operation;
+        }
+    }
 
     public record Snapshot(
             int schemaVersion,

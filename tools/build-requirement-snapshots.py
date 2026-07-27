@@ -53,6 +53,8 @@ REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 PKG_REL_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 SPACE = re.compile(r"\s+")
 CELL_REF = re.compile(r"([A-Z]+)")
+OPERATION_HEADERS = {"变更类型", "变更操作", "操作", "需求状态", "状态"}
+REMOVE_OPERATIONS = {"REMOVE", "删除", "已删除", "废弃", "已废弃", "下线", "已下线", "移除", "已移除"}
 
 
 def digest_bytes(value: bytes) -> str:
@@ -163,6 +165,9 @@ def spreadsheet_entries(sheets: dict[str, list[dict[str, str]]], names: list[str
         if not rows:
             continue
         sources.append({"path": str(XLSX_PATH), "location": f"sheet={sheet_name}"})
+        header = rows[0]
+        operation_column = next((column for column, value in header.items()
+                                 if normalize(value) in OPERATION_HEADERS), None)
         current_module = "未分类"
         for row in rows[1:]:
             module = normalize(row.get("A", ""))
@@ -181,13 +186,17 @@ def spreadsheet_entries(sheets: dict[str, list[dict[str, str]]], names: list[str
             stable = normalize(current_module).lower() + "|" + normalize(question or answer).lower()
             occurrences[stable] += 1
             entry_id = "xlsx-" + digest_text(stable + f"|{occurrences[stable]}")[:24]
-            entries.append({
+            entry = {
                 "entryId": entry_id,
                 "filename": f"{XLSX_PATH.name}#{sheet_name}",
                 "parentOrder": order,
                 "text": text,
                 "contentHash": digest_text(text),
-            })
+            }
+            operation = normalize(row.get(operation_column, "")) if operation_column else ""
+            if operation.upper() in REMOVE_OPERATIONS or operation in REMOVE_OPERATIONS:
+                entry["operation"] = "REMOVE"
+            entries.append(entry)
             order += 1
     return entries, sources
 

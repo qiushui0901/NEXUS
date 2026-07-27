@@ -36,19 +36,23 @@ public class RequirementVersionDiffService {
         if (!hasReference(from) || !hasReference(to)) return RequirementDiff.unavailable();
         List<ChunkRecord> before;
         List<ChunkRecord> after;
-        Optional<Snapshot> beforeSnapshot = snapshots.find(projectId,
+        Optional<Snapshot> beforeSnapshot = snapshots.materialize(projectId,
                 from.requirementDocumentId(), from.requirementVersion());
-        Optional<Snapshot> afterSnapshot = snapshots.find(projectId,
+        Optional<Snapshot> afterSnapshot = snapshots.materialize(projectId,
                 to.requirementDocumentId(), to.requirementVersion());
+        List<RequirementChunkDiff.ParentChange> parentChanges;
         if (beforeSnapshot.isPresent() && afterSnapshot.isPresent()) {
             before = chunks(beforeSnapshot.get());
             after = chunks(afterSnapshot.get());
+            parentChanges = RequirementChunkDiff.compare(before, after);
         } else {
             String collection = projectRegistry.resolveRequirementCollection(projectId);
             before = store.scrollVersion(collection, from.requirementDocumentId(), from.requirementVersion());
             after = store.scrollVersion(collection, to.requirementDocumentId(), to.requirementVersion());
+            parentChanges = RequirementChunkDiff.compare(before, after).stream()
+                    .filter(change -> change.type() != RequirementChunkDiff.Type.REMOVED)
+                    .toList();
         }
-        List<RequirementChunkDiff.ParentChange> parentChanges = RequirementChunkDiff.compare(before, after);
         List<RequirementChange> changes = parentChanges.stream()
                 .map(item -> change(ChangeType.valueOf(item.type().name()), item.before(), item.after()))
                 .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
