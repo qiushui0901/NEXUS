@@ -1,6 +1,6 @@
 # NEXUS MCP Quickstart
 
-NEXUS 0.6 exposes six evidence-bound tools at the Streamable HTTP endpoint:
+NEXUS 0.7 exposes nine evidence-bound tools at the Streamable HTTP endpoint:
 
 ```text
 http://localhost:8080/mcp
@@ -95,9 +95,18 @@ Codex and Cursor should use direct Streamable HTTP. The bridge is only for clien
 | `nexus_development_plan` | `OPERATE` | Generate an evidence-cited development plan |
 | `nexus_wiki_page` | `PUBLIC_READ` | Read a published Wiki page |
 | `nexus_version_diff` | `PUBLIC_READ` | Compare requirement, code, test, and Wiki knowledge |
+| `nexus_code_graph` | `PUBLIC_READ` | Traverse inbound or outbound static symbol calls |
+| `nexus_impact_analysis` | `PUBLIC_READ` | Analyze symbol or commit-range impact with confidence tiers |
+| `nexus_review_doubts` | `OPERATE` | Generate a version-scoped requirement doubt list |
+
+Published Wiki pages are also available as the authenticated resource template
+`nexus://wiki/{projectId}/{version}/{featureId}`.
 
 Every successful result includes `resolved`, `data`, `evidence`, `quality`, `warnings`, and `truncated`.
 Always use the project/version returned in `resolved`; do not assume the requested defaults were selected.
+Graph tools return `NOT_AVAILABLE` until that project has completed a 0.7 code index. `EXACT` and
+`SAME_FILE` relations count as certain impact, `HEURISTIC` is reported separately, and dynamic or ambiguous
+calls remain visible as `UNRESOLVED`.
 
 ## Docker Compose
 

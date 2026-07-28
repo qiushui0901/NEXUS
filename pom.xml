@@ -13,7 +13,7 @@
 
     <groupId>com.example</groupId>
     <artifactId>NEXUS</artifactId>
-    <version>0.6.0-SNAPSHOT</version>
+    <version>0.7.0-SNAPSHOT</version>
     <name>NEXUS</name>
     <description>Unified requirement and code knowledge service with Spring AI</description>
 
@@ -23,6 +23,8 @@
         <vue.version>3.5.13</vue.version>
         <maven.minimum.version>3.9.0</maven.minimum.version>
         <argLine></argLine>
+        <tree-sitter.version>0.26.3</tree-sitter.version>
+        <sqlite-jdbc.version>3.53.2.0</sqlite-jdbc.version>
     </properties>
 
     <dependencyManagement>
@@ -79,6 +81,41 @@
             <groupId>org.webjars.npm</groupId>
             <artifactId>vue</artifactId>
             <version>${vue.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.bonede</groupId>
+            <artifactId>tree-sitter</artifactId>
+            <version>${tree-sitter.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.bonede</groupId>
+            <artifactId>tree-sitter-java</artifactId>
+            <version>0.23.5</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.bonede</groupId>
+            <artifactId>tree-sitter-go</artifactId>
+            <version>0.25.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.bonede</groupId>
+            <artifactId>tree-sitter-python</artifactId>
+            <version>0.25.0</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.bonede</groupId>
+            <artifactId>tree-sitter-typescript</artifactId>
+            <version>0.23.2</version>
+        </dependency>
+        <dependency>
+            <groupId>io.github.bonede</groupId>
+            <artifactId>tree-sitter-kotlin</artifactId>
+            <version>0.3.8.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+            <version>${sqlite-jdbc.version}</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

@@ -258,6 +258,9 @@ nexus_get_source
 nexus_development_plan
 nexus_wiki_page
 nexus_version_diff
+nexus_code_graph
+nexus_impact_analysis
+nexus_review_doubts
 ```
 
 Tools delegate to existing domain services. They must not create a parallel retrieval, evidence, Wiki, or version-comparison implementation.
@@ -269,7 +272,9 @@ Tools delegate to existing domain services. They must not create a parallel retr
 - Evidence is request-scoped, bounded, and projected without internal chunk IDs, local absolute paths, credentials, vectors, or storage internals.
 - Lists are capped at 20 results, source reads at 200 lines, excerpts at 2,000 characters, evidence at 40 entries, and the serialized response at 120,000 characters by default.
 - The `X-API-Key` header authenticates both REST and MCP through `ApiKeyAuthenticationService`; tool execution authorizes permissions and project scope through `ProjectAuthorizationService`.
-- `nexus_development_plan` requires `OPERATE`; the other five tools require `PUBLIC_READ`.
+- `nexus_development_plan` and `nexus_review_doubts` require `OPERATE`; the other seven tools require `PUBLIC_READ`.
+- Published Wiki pages are exposed through the authenticated
+  `nexus://wiki/{projectId}/{version}/{featureId}` resource template.
 - Codex reads the key through `env_http_headers`; Cursor uses `${env:NEXUS_API_KEY}`. Never commit a real key.
 - Environment keys: `MCP_ENABLED`, `MCP_MAX_RESULTS`, `MCP_MAX_SOURCE_LINES`, `MCP_MAX_EXCERPT_CHARACTERS`, `MCP_MAX_EVIDENCE`, `MCP_MAX_RESPONSE_CHARACTERS`, and `NEXUS_API_KEY` on clients.
 
@@ -295,7 +300,8 @@ Tools delegate to existing domain services. They must not create a parallel retr
 ### 6. Tests Required
 
 - Unit tests assert shared authentication, permission and project authorization, caps, redaction, path validation, and total-response truncation.
-- HTTP integration tests assert 401, initialize, six-tool discovery, JSON schemas, and a representative `tools/call`.
+- HTTP integration tests assert 401, initialize, nine-tool discovery, Wiki resource-template discovery,
+  JSON schemas, and a representative `tools/call`.
 - Source tests assert both normal repository reads and symlink escape rejection.
 - Release smoke tests use MCP Inspector plus current Codex and Cursor clients to call at least one evidence-bearing tool.
 - Full `JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B verify` remains green.
@@ -309,6 +315,102 @@ Return domain objects directly, trust a normalized lexical path, duplicate authe
 #### Correct
 
 Project domain data into the bounded MCP envelope, validate the target's real path stays below the real repository root, reuse shared authentication/authorization services, and reference only `NEXUS_API_KEY` from checked-in client configuration.
+
+## Scenario: Multi-language static code intelligence
+
+### 1. Scope / Trigger
+
+- Trigger: changing code scanning, `CodeChunk`, static graph persistence, symbol traversal,
+  commit impact, `/api/code/graph/symbols`, `/api/code/impact`,
+  `nexus_code_graph`, or `nexus_impact_analysis`.
+
+### 2. Signatures
+
+```java
+CodeScanner.ScanResult scan(RagProperties.Code config)
+CodeScanner.ScanResult scanFiles(RagProperties.Code config, String commitSha, List<String> paths)
+CodeIntelligenceResponse graph(String projectId, String symbol, String direction, Integer depth, Integer limit)
+CodeIntelligenceResponse impactSymbol(String projectId, String symbol, Integer depth, Integer limit)
+CodeIntelligenceResponse impactCommits(String projectId, String fromCommit, String toCommit,
+                                       Integer depth, Integer limit)
+```
+
+```http
+POST /api/code/graph/symbols
+POST /api/code/impact
+```
+
+SQLite tables are `code_graph_snapshot`, `code_symbol`, and `code_relation`; every
+row is scoped by `project_id + commit_sha`.
+
+### 3. Contracts
+
+- Java, Go, Python, and TypeScript use locked Tree-sitter grammars on JDK 21.
+  Kotlin is capability-gated: a native/ABI failure disables it with a diagnostic
+  and must not prevent other languages from indexing.
+- `CodeChunk.language` is additive. The legacy ten-argument constructor and
+  Qdrant payloads missing `language` derive it from `filePath`.
+- Full and incremental indexing select files through `CodeScanner.supports`;
+  active indexing code must not filter only `.java`.
+- Qdrant stores searchable chunks. `${CODE_GRAPH_ROOT_PATH:data/code-graph}/code-graph.db`
+  stores symbols and relations only—never source bodies, vectors, credentials,
+  absolute repository paths, or Qdrant internals.
+- Resolution tiers are `EXACT`, `SAME_FILE`, `HEURISTIC`, and `UNRESOLVED`.
+  Only `EXACT` and `SAME_FILE` count as certain impact. `HEURISTIC` is inferred;
+  ambiguous or dynamic calls remain visible as `UNRESOLVED`.
+- Traversal caps depth to 5 and relations to 200. Graph writes replace one
+  project/commit snapshot in a JDBC transaction.
+- Commit impact uses validated SHAs through `GitDiffService`. When the target
+  commit snapshot is absent, return `NOT_AVAILABLE` with changed files; never
+  present a file-only fallback as symbol-complete.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Unsupported extension | Skip through the language registry; do not parse as another language |
+| Binary or oversized source | Skip and emit `FILE_SKIPPED` |
+| Parser/native failure for one file/language | Emit `PARSE_FAILED` or `LANGUAGE_DISABLED`; continue supported files |
+| Missing graph snapshot | Return `NOT_AVAILABLE` and instruct the caller to index |
+| Symbol absent in latest snapshot | Return `NOT_AVAILABLE`; do not guess a similarly named symbol |
+| Both/neither impact selectors provided | Reject; require exactly symbol or both commits |
+| Target commit graph absent | Return file-level changes plus `NOT_AVAILABLE` warning |
+| Ambiguous call target | Persist and return `UNRESOLVED`; never count as certain |
+| Depth/limit exceeds caps | Clamp to 5/200 and report truncation when the relation cap is reached |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a Java caller invokes a unique same-file method; traversal returns the
+  caller/callee edge as `SAME_FILE` and includes it in certain impact.
+- Base: a project has completed semantic indexing but no 0.7 graph snapshot;
+  search still works and graph tools return explicit `NOT_AVAILABLE`.
+- Bad: two project/commit-scoped symbols share a simple name. The resolver must
+  not choose one arbitrarily or cross into another project/commit.
+
+### 6. Tests Required
+
+- Native parser fixture tests assert symbol, call, chunk and `language` output
+  for Java, Go, Python, and TypeScript on JDK 21.
+- Graph-store tests assert transaction replacement, project/commit isolation,
+  `SAME_FILE`, inferred and unresolved resolution, delete/rename handling, and rollback.
+- REST/MCP tests assert shared auth/project permission, nine-tool discovery,
+  selector validation, caps, safe paths, `NOT_AVAILABLE`, and truncation.
+- Run full `JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B verify` and
+  `git diff --check`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+Filter changed files with `.endsWith(".java")`, persist source text in SQLite,
+resolve an ambiguous simple name as certain, or return an empty available graph
+when the target snapshot does not exist.
+
+#### Correct
+
+Route extensions through the capability registry, keep graph rows structural and
+project/commit-scoped, separate certainty tiers, preserve unresolved calls, and
+degrade missing target snapshots to explicit file-level `NOT_AVAILABLE`.
 
 ## 4. Validation & Error Matrix
 

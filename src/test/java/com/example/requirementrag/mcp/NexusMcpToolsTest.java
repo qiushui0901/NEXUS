@@ -1,8 +1,10 @@
 package com.example.requirementrag.mcp;
 
+import com.example.requirementrag.code.CodeIntelligenceService;
 import com.example.requirementrag.code.CodeKnowledgeService;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.model.ChunkRecord;
+import com.example.requirementrag.model.CodeIntelligenceResponse;
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.RagOutcome;
 import com.example.requirementrag.model.RagOutcomeStatus;
@@ -13,6 +15,7 @@ import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
 import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
 import com.example.requirementrag.security.ProjectAuthorizationService;
 import com.example.requirementrag.service.DevelopmentPlanService;
+import com.example.requirementrag.service.ReviewFacadeService;
 import com.example.requirementrag.versioning.VersionComparisonService;
 import com.example.requirementrag.web.AccessDeniedException;
 import com.example.requirementrag.wiki.WikiRepository;
@@ -37,12 +40,14 @@ class NexusMcpToolsTest {
 
     private RetrievalPipeline retrievalPipeline;
     private DevelopmentPlanService developmentPlanService;
+    private CodeIntelligenceService codeIntelligenceService;
     private NexusMcpTools tools;
 
     @BeforeEach
     void setUp() {
         retrievalPipeline = mock(RetrievalPipeline.class);
         developmentPlanService = mock(DevelopmentPlanService.class);
+        codeIntelligenceService = mock(CodeIntelligenceService.class);
         ProjectAuthorizationService authorization = new ProjectAuthorizationService(mock(ProjectRegistry.class));
         McpResponsePolicy policy = new McpResponsePolicy(
                 new McpProperties(true, 20, 200, 2_000, 40, 120_000),
@@ -51,7 +56,7 @@ class NexusMcpToolsTest {
                 authorization, new SimpleMeterRegistry(), policy);
         tools = new NexusMcpTools(retrievalPipeline, mock(CodeKnowledgeService.class),
                 developmentPlanService, mock(WikiRepository.class), mock(VersionComparisonService.class),
-                policy, invocations);
+                policy, invocations, codeIntelligenceService, mock(ReviewFacadeService.class));
     }
 
     @Test
@@ -81,6 +86,31 @@ class NexusMcpToolsTest {
 
         assertThrows(AccessDeniedException.class, () -> tools.developmentPlan(
                 viewer, "query", "project-a", null, null, 10));
+    }
+
+    @Test
+    void codeGraphPreservesNotAvailableWarningInTheMcpEnvelope() {
+        when(codeIntelligenceService.graph("project-a", "missing", null, 2, 50))
+                .thenReturn(new CodeIntelligenceResponse("NOT_AVAILABLE", "project-a", null,
+                        List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                        List.of("No code graph snapshot; run code index first"), false));
+
+        McpToolResponse<CodeIntelligenceResponse> response = tools.codeGraph(
+                context(UserRole.READONLY), "missing", "project-a", null, 2, 50);
+
+        assertTrue(response.quality().toString().contains("NOT_AVAILABLE"));
+        assertEquals(1, response.warnings().size());
+        assertEquals("CODE_GRAPH_DEGRADED", response.warnings().getFirst().code());
+    }
+
+    @Test
+    void impactAnalysisRequiresExactlyOneSelectorMode() {
+        McpSyncRequestContext context = context(UserRole.READONLY);
+
+        assertThrows(IllegalArgumentException.class, () -> tools.impactAnalysis(
+                context, "project-a", null, null, null, 2, 50));
+        assertThrows(IllegalArgumentException.class, () -> tools.impactAnalysis(
+                context, "project-a", "save", "aaaaaaa", "bbbbbbb", 2, 50));
     }
 
     private McpSyncRequestContext context(UserRole role) {

@@ -30,7 +30,7 @@ class McpHttpIntegrationTest {
     private final HttpClient client = HttpClient.newHttpClient();
 
     @Test
-    void requiresApiKeyAndDiscoversSixTools() throws Exception {
+    void requiresApiKeyAndDiscoversNineToolsAndWikiResourceTemplate() throws Exception {
         HttpResponse<String> unauthorized = post(initialize(), null, null);
         assertEquals(401, unauthorized.statusCode());
 
@@ -54,6 +54,15 @@ class McpHttpIntegrationTest {
         assertTrue(tools.body().contains("nexus_development_plan"));
         assertTrue(tools.body().contains("nexus_wiki_page"));
         assertTrue(tools.body().contains("nexus_version_diff"));
+        assertTrue(tools.body().contains("nexus_code_graph"));
+        assertTrue(tools.body().contains("nexus_impact_analysis"));
+        assertTrue(tools.body().contains("nexus_review_doubts"));
+
+        HttpResponse<String> resources = post("""
+                {"jsonrpc":"2.0","id":4,"method":"resources/templates/list","params":{}}
+                """, "mcp-test-key", sessionId);
+        assertEquals(200, resources.statusCode());
+        assertTrue(resources.body().contains("nexus://wiki/{projectId}/{version}/{featureId}"));
 
         HttpResponse<String> source = post("""
                 {

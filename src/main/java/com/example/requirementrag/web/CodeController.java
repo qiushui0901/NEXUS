@@ -9,6 +9,10 @@ import com.example.requirementrag.model.CodeIndexJobStatus;
 import com.example.requirementrag.model.CodeIndexResponse;
 import com.example.requirementrag.model.IncrementalCodeIndexResponse;
 import com.example.requirementrag.code.IncrementalCodeIndexService;
+import com.example.requirementrag.code.CodeIntelligenceService;
+import com.example.requirementrag.model.CodeIntelligenceResponse;
+import com.example.requirementrag.model.SymbolGraphRequest;
+import com.example.requirementrag.model.ImpactAnalysisRequest;
 import com.example.requirementrag.model.CodeSearchRequest;
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.SourceSnippet;
@@ -37,19 +41,22 @@ public class CodeController {
     private final IncrementalCodeIndexService incrementalCodeIndexService;
     private final CodeIndexJobService codeIndexJobService;
     private final ProjectAccessGuard accessGuard;
+    private final CodeIntelligenceService codeIntelligenceService;
 
     /** 注入代码知识服务。 */
     public CodeController(CodeKnowledgeService codeKnowledgeService,
                           IncrementalCodeIndexService incrementalCodeIndexService,
                           CodeIndexJobService codeIndexJobService,
-                          ProjectAccessGuard accessGuard) {
+                          ProjectAccessGuard accessGuard,
+                          CodeIntelligenceService codeIntelligenceService) {
         this.codeKnowledgeService = codeKnowledgeService;
         this.incrementalCodeIndexService = incrementalCodeIndexService;
         this.codeIndexJobService = codeIndexJobService;
         this.accessGuard = accessGuard;
+        this.codeIntelligenceService = codeIntelligenceService;
     }
 
-    /** 扫描配置的 Java 仓库，并将代码 chunk 写入 Qdrant。 */
+    /** 扫描配置仓库中的受支持语言，并写入代码向量和静态符号图。 */
     @RequiresPermission(Permission.WRITE)
     @PostMapping("/index")
     public CodeIndexResponse index(@RequestParam(required = false) String projectId,
@@ -106,6 +113,35 @@ public class CodeController {
         accessGuard.requireProjectAccess(httpRequest, request.projectId());
         return codeKnowledgeService.graph(request.query(), request.projectId(), request.view(), request.limit(),
                 request.crossSide());
+    }
+
+    /** Traverse the persisted static symbol call graph. */
+    @RequiresPermission(Permission.PUBLIC_READ)
+    @PostMapping("/graph/symbols")
+    public CodeIntelligenceResponse symbolGraph(@Valid @RequestBody SymbolGraphRequest request,
+                                                HttpServletRequest httpRequest) {
+        accessGuard.requireProjectAccess(httpRequest, request.projectId());
+        return codeIntelligenceService.graph(request.projectId(), request.symbol(), request.direction(),
+                request.depth(), request.limit());
+    }
+
+    /** Analyze symbol or commit-range impact with explicit confidence tiers. */
+    @RequiresPermission(Permission.PUBLIC_READ)
+    @PostMapping("/impact")
+    public CodeIntelligenceResponse impact(@RequestBody ImpactAnalysisRequest request,
+                                           HttpServletRequest httpRequest) {
+        accessGuard.requireProjectAccess(httpRequest, request.projectId());
+        boolean symbol = request.symbol() != null && !request.symbol().isBlank();
+        boolean commits = request.fromCommit() != null && !request.fromCommit().isBlank()
+                && request.toCommit() != null && !request.toCommit().isBlank();
+        if (symbol == commits) {
+            throw new IllegalArgumentException("Select exactly one impact mode: symbol or fromCommit+toCommit");
+        }
+        return symbol
+                ? codeIntelligenceService.impactSymbol(request.projectId(), request.symbol(),
+                request.depth(), request.limit())
+                : codeIntelligenceService.impactCommits(request.projectId(), request.fromCommit(),
+                request.toCommit(), request.depth(), request.limit());
     }
 
     /** 返回代码索引统计。 */

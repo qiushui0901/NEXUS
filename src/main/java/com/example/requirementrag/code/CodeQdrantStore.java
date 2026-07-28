@@ -154,6 +154,7 @@ public class CodeQdrantStore {
                             "filePath", chunk.filePath(),
                             "symbolType", chunk.symbolType(),
                             "symbolName", chunk.symbolName(),
+                            "language", chunk.language(),
                             "startLine", chunk.startLine(),
                             "endLine", chunk.endLine(),
                             "text", chunk.text(),
@@ -224,7 +225,8 @@ public class CodeQdrantStore {
         Map<String, Object> p = map(point.get("payload"));
         return new CodeChunk(String.valueOf(point.get("id")), string(p, "projectId"), string(p, "commitSha"),
                 string(p, "filePath"), string(p, "symbolType"), string(p, "symbolName"),
-                integer(p, "startLine"), integer(p, "endLine"), string(p, "text"), string(p, "contentHash"));
+                integer(p, "startLine"), integer(p, "endLine"), string(p, "text"), string(p, "contentHash"),
+                language(p));
     }
 
     private void sleepMillis(long millis) {
@@ -247,6 +249,11 @@ public class CodeQdrantStore {
 
     private int integer(Map<String, Object> map, String key) {
         return ((Number) map.getOrDefault(key, 0)).intValue();
+    }
+
+    private String language(Map<String, Object> payload) {
+        String stored = string(payload, "language");
+        return stored.isBlank() ? CodeLanguage.fromPath(string(payload, "filePath")).id() : stored;
     }
 
     @SuppressWarnings("unchecked")

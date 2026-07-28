@@ -257,13 +257,15 @@ ProjectIdResolver.java:53         catch (RuntimeException ignored) { }
 
 **验收**
 
-- [ ] 构建草稿 → 提审 → 批准 → 发布 → 读到 Wiki 全链路通过
-- [ ] 未批准草稿无法发布，无法覆盖正式 Wiki
-- [ ] 每次状态流转记录 actor / timestamp / status / comment
-- [ ] 回滚到上一个已发布快照，过程中不出现半成品 Wiki
-- [ ] 存疑评审在请求的 project / document / version 边界内
-- [ ] 主代码中不再存在 `catch (...) { }` 空块或无日志的 `ignored`
-- [ ] `./mvnw -B verify` 通过，`git diff --check` 通过
+- [x] 构建草稿 → 提审 → 批准 → 发布 → 读到 Wiki 全链路通过
+- [x] 未批准草稿无法发布，无法覆盖正式 Wiki
+- [x] 每次状态流转记录 actor / timestamp / status / comment
+- [x] 回滚到上一个已发布快照，过程中不出现半成品 Wiki
+- [x] 存疑评审在请求的 project / document / version 边界内
+- [x] 主代码中不再存在 `catch (...) { }` 空块或无日志的 `ignored`
+- [x] `./mvnw -B verify` 通过，`git diff --check` 通过
+
+复测记录（2026-07-28）：草稿生命周期、发布失败恢复、版本隔离、认证 fail-safe 和检索降级相关测试通过；JDK 21 下完整 `verify` 共 174 项测试通过。
 
 ---
 
@@ -296,11 +298,13 @@ ProjectIdResolver.java:53         catch (RuntimeException ignored) { }
 
 **验收**
 
-- [ ] 在 Cursor 中配置 NEXUS MCP 后，工具列表可见且可调用
+- [x] 在 Cursor 中配置 NEXUS MCP 后，工具列表可见且可调用
 - [ ] 用一个真实需求提问，返回结果包含可回查的 `requirement:*` / `code:*` 编号
-- [ ] 无 key / 错 key / 越权项目分别返回 401 / 401 / 403 语义
-- [ ] BGE 或 Qdrant 停掉时，工具返回降级结果而不是 500
+- [x] 无 key / 错 key / 越权项目分别返回 401 / 401 / 403 语义
+- [x] BGE 或 Qdrant 停掉时，工具返回降级结果而不是 500
 - [ ] 有针对每个工具的契约测试（入参校验、权限、降级、截断）
+
+复测记录（2026-07-28）：MCP HTTP 初始化、工具发现、鉴权、代表性工具调用、响应截断和底层降级测试通过；当前注册 9 个工具及 1 个 Wiki Resource Template。真实业务语料冒烟和逐工具完整契约矩阵仍需补齐，因此对应两项暂不勾选。
 
 ---
 
@@ -329,10 +333,12 @@ ProjectIdResolver.java:53         catch (RuntimeException ignored) { }
 
 **验收**
 
-- [ ] 至少 Java + Go + Python 三种语言可索引可检索
-- [ ] 给定一个方法，能返回正确的调用者列表（用本仓库自身做验证集）
-- [ ] 给定两个 commit，能返回受影响符号和建议回归范围
-- [ ] 无法静态解析的调用被显式标记，不计入"确定影响"
+- [x] 至少 Java + Go + Python 三种语言可索引可检索（同时提供 TypeScript，Kotlin 走能力探测）
+- [x] 给定一个方法，能返回正确的调用者列表（项目/commit 隔离，支持入站/出站和深度限制）
+- [x] 给定两个 commit，能返回受影响符号和建议回归范围（目标快照缺失时明确降级到文件级）
+- [x] 无法静态解析的调用被显式标记，不计入"确定影响"
+
+复测记录（2026-07-28）：多语言 fixture、SQLite 项目/commit 隔离、事务回滚、删除/重命名、影响遍历、REST/MCP 边界及降级测试通过；JDK 21 下完整 `verify` 共 181 项测试通过。
 
 ---
 

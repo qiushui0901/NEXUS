@@ -9,6 +9,7 @@ import com.example.requirementrag.model.SourceSnippet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -33,30 +34,42 @@ public class CodeKnowledgeService {
 
     private final RagProperties properties;
     private final ProjectRegistry projectRegistry;
-    private final JavaCodeScanner scanner;
+    private final CodeScanner scanner;
     private final CodeQdrantStore store;
+    private final SQLiteSymbolGraphStore graphStore;
 
+    @Autowired
     public CodeKnowledgeService(RagProperties properties, ProjectRegistry projectRegistry,
-                                JavaCodeScanner scanner, CodeQdrantStore store) {
+                                CodeScanner scanner, CodeQdrantStore store,
+                                SQLiteSymbolGraphStore graphStore) {
         this.properties = properties;
         this.projectRegistry = projectRegistry;
         this.scanner = scanner;
         this.store = store;
+        this.graphStore = graphStore;
+    }
+
+    /** Compatibility constructor for pre-0.7 unit callers. */
+    CodeKnowledgeService(RagProperties properties, ProjectRegistry projectRegistry,
+                         JavaCodeScanner scanner, CodeQdrantStore store) {
+        this(properties, projectRegistry, legacy(scanner), store, null);
     }
 
     /** 扫描默认配置仓库并替换写入 Qdrant。 */
     public CodeIndexResponse index() throws IOException {
-        JavaCodeScanner.ScanResult result = scanner.scan(properties.code());
+        CodeScanner.ScanResult result = scanner.scan(properties.code());
         store.replaceProject(result.projectId(), result.chunks());
+        if (graphStore != null) graphStore.replaceSnapshot(result);
         return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(), result.chunks().size());
     }
 
     /** 扫描指定项目仓库并替换写入 Qdrant。 */
     public CodeIndexResponse index(String projectId) throws IOException {
         RagProperties.ProjectConfig project = projectRegistry.require(projectId);
-        JavaCodeScanner.ScanResult result = scanner.scan(project.toCodeConfig());
+        CodeScanner.ScanResult result = scanner.scan(project.toCodeConfig());
         String collection = projectRegistry.resolveCodeCollection(projectId);
         store.replaceProject(collection, result.projectId(), result.chunks());
+        if (graphStore != null) graphStore.replaceSnapshot(result);
         return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(), result.chunks().size());
     }
 
@@ -181,6 +194,30 @@ public class CodeKnowledgeService {
                     projectId, exception);
             return properties.code().collection();
         }
+    }
+
+    static CodeScanner legacy(JavaCodeScanner scanner) {
+        return new CodeScanner() {
+            @Override
+            public ScanResult scan(RagProperties.Code config) throws IOException {
+                JavaCodeScanner.ScanResult result = scanner.scan(config);
+                return new ScanResult(result.projectId(), result.commitSha(), result.files(), result.chunks(),
+                        List.of(), List.of(), List.of());
+            }
+
+            @Override
+            public ScanResult scanFiles(RagProperties.Code config, String commitSha, List<String> paths)
+                    throws IOException {
+                List<CodeChunk> chunks = scanner.scanFiles(config, commitSha, paths);
+                return new ScanResult(config.projectId(), commitSha, paths.size(), chunks,
+                        List.of(), List.of(), List.of());
+            }
+
+            @Override
+            public boolean supports(String path) {
+                return path != null && path.endsWith(".java");
+            }
+        };
     }
 
     private String resolveRepositoryPath(String projectId) {

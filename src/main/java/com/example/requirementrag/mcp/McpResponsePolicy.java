@@ -5,6 +5,7 @@ import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.SourceSnippet;
 import com.example.requirementrag.model.RagWarning;
+import com.example.requirementrag.model.RequirementDoubt;
 import com.example.requirementrag.wiki.WikiModels;
 import org.springframework.stereotype.Component;
 import tools.jackson.databind.json.JsonMapper;
@@ -49,7 +50,7 @@ public class McpResponsePolicy {
     public CodeHit code(CodeChunk chunk, String evidenceId) {
         return new CodeHit(evidenceId, relativePath(chunk.filePath()), safe(chunk.symbolType()),
                 safe(chunk.symbolName()), chunk.startLine(), chunk.endLine(), bounded(chunk.text()),
-                safe(chunk.commitSha()));
+                safe(chunk.commitSha()), safe(chunk.language()));
     }
 
     public SourceSnippet source(SourceSnippet snippet) {
@@ -77,6 +78,11 @@ public class McpResponsePolicy {
     public WikiCodeEntry wikiCodeEntry(WikiModels.CodeEntry entry) {
         return new WikiCodeEntry(bounded(entry.role()), relativeSource(entry.filePath()), safe(entry.symbol()),
                 safe(entry.commit()), safe(entry.changeType()), safe(entry.verificationStatus()));
+    }
+
+    public DoubtHit doubt(RequirementDoubt doubt) {
+        return new DoubtHit(bounded(doubt.module()), bounded(doubt.feature()), bounded(doubt.question()),
+                String.valueOf(doubt.type()), String.valueOf(doubt.status()), safeLocation(doubt.sourceLocation()));
     }
 
     public boolean truncated(int requestedLimit, int resultSize, List<?> evidence) {
@@ -144,7 +150,7 @@ public class McpResponsePolicy {
         if (value == null || value.isBlank()) {
             return "";
         }
-        if (value.startsWith("/") || URI_SCHEME.matcher(value).matches()
+        if (value.startsWith("/") || value.startsWith("..") || URI_SCHEME.matcher(value).matches()
                 || WINDOWS_ABSOLUTE_PATH.matcher(value).matches()) {
             return "";
         }
@@ -164,7 +170,7 @@ public class McpResponsePolicy {
     }
 
     public record CodeHit(String evidenceId, String filePath, String symbolType, String symbolName,
-                          int startLine, int endLine, String excerpt, String commitSha) {
+                          int startLine, int endLine, String excerpt, String commitSha, String language) {
     }
 
     public record WikiEvidence(String type, String title, String source, String version, String location,
@@ -173,5 +179,9 @@ public class McpResponsePolicy {
 
     public record WikiCodeEntry(String role, String filePath, String symbol, String commit, String changeType,
                                 String verificationStatus) {
+    }
+
+    public record DoubtHit(String module, String feature, String question, String type, String status,
+                           String sourceLocation) {
     }
 }

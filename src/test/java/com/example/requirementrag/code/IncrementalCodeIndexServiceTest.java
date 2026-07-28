@@ -26,25 +26,19 @@ class IncrementalCodeIndexServiceTest {
     Path repository;
 
     @Test
-    void renameDeletesOldPathAndIndexesNewPath() throws Exception {
+    void renameDeletesOldPathAndRefreshesMultiLanguageGraphSnapshot() throws Exception {
         git("init");
         git("config", "user.email", "test@example.com");
         git("config", "user.name", "Test User");
 
-        Path oldFile = repository.resolve("src/main/java/example/OldService.java");
+        Path oldFile = repository.resolve("src/service_old.py");
         Files.createDirectories(oldFile.getParent());
-        Files.writeString(oldFile, """
-                package example;
-
-                public class OldService {
-                    public void run() {}
-                }
-                """, StandardCharsets.UTF_8);
+        Files.writeString(oldFile, "def run():\n    return 1\n", StandardCharsets.UTF_8);
         git("add", ".");
         git("commit", "-m", "initial");
         String baseSha = git("rev-parse", "HEAD");
 
-        Path newFile = repository.resolve("src/main/java/example/NewService.java");
+        Path newFile = repository.resolve("src/service_new.py");
         git("mv", oldFile.toString(), newFile.toString());
         git("commit", "-m", "rename service");
         String newSha = git("rev-parse", "HEAD");
@@ -57,15 +51,22 @@ class IncrementalCodeIndexServiceTest {
                 repository.toString(), null, null, List.of(), List.of(), 1_000_000);
         whenProject(registry, project);
 
+        SQLiteSymbolGraphStore graphStore = new SQLiteSymbolGraphStore(
+                Files.createTempDirectory("nexus-incremental-graph-").toString());
         IncrementalCodeIndexResponse response = new IncrementalCodeIndexService(
-                registry, new JavaCodeScanner(), store, new GitDiffService(properties, registry))
+                registry, new MultiLanguageCodeScanner(new CodeLanguageRegistry()), store,
+                new GitDiffService(properties, registry), graphStore)
                 .indexWithResult("project", baseSha, newSha);
 
         assertEquals(2, response.javaFiles());
         assertTrue(response.indexedChunks() > 0);
-        verify(store).deleteFileChunks("code-v51", "project", "src/main/java/example/OldService.java");
-        verify(store).deleteFileChunks("code-v51", "project", "src/main/java/example/NewService.java");
+        verify(store).deleteFileChunks("code-v51", "project", "src/service_old.py");
+        verify(store).deleteFileChunks("code-v51", "project", "src/service_new.py");
         verify(store).upsertChunks(eq("code-v51"), anyList());
+        assertEquals(newSha, graphStore.latestCommit("project"));
+        assertTrue(graphStore.symbolsByFiles("project", newSha, List.of("src/service_old.py"), 10).isEmpty());
+        assertTrue(graphStore.symbolsByFiles("project", newSha, List.of("src/service_new.py"), 10)
+                .stream().anyMatch(symbol -> symbol.language().equals("python")));
     }
 
     @Test

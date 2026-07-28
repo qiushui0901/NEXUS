@@ -30,6 +30,7 @@ tools/*.pid
 
 # Local code analysis database
 .codegraph/
+data/code-graph/
 
 # Local Git worktrees
 .worktrees/

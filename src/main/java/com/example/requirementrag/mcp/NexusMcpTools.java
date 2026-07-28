@@ -1,6 +1,7 @@
 package com.example.requirementrag.mcp;
 
 import com.example.requirementrag.code.CodeKnowledgeService;
+import com.example.requirementrag.code.CodeIntelligenceService;
 import com.example.requirementrag.evidence.EvidenceRef;
 import com.example.requirementrag.evidence.EvidenceRegistry;
 import com.example.requirementrag.model.ChunkRecord;
@@ -8,12 +9,17 @@ import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.DevelopmentPlanResponse;
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.RagOutcome;
+import com.example.requirementrag.model.RagWarning;
 import com.example.requirementrag.model.SourceSnippet;
+import com.example.requirementrag.model.CodeIntelligenceResponse;
 import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
 import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
 import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
 import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
 import com.example.requirementrag.service.DevelopmentPlanService;
+import com.example.requirementrag.service.ReviewFacadeService;
+import com.example.requirementrag.model.ReviewRequest;
+import com.example.requirementrag.model.DoubtBatch;
 import com.example.requirementrag.versioning.VersionComparisonService;
 import com.example.requirementrag.versioning.VersionModels.VersionComparisonReport;
 import com.example.requirementrag.wiki.WikiModels;
@@ -23,6 +29,7 @@ import org.springframework.ai.mcp.annotation.McpToolParam;
 import org.springframework.ai.mcp.annotation.context.McpSyncRequestContext;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.io.IOException;
 import java.util.LinkedHashMap;
@@ -41,11 +48,16 @@ public class NexusMcpTools {
     private final VersionComparisonService versionComparisonService;
     private final McpResponsePolicy policy;
     private final McpToolInvocationService invocations;
+    private final CodeIntelligenceService codeIntelligenceService;
+    private final ReviewFacadeService reviewFacadeService;
 
+    @Autowired
     public NexusMcpTools(RetrievalPipeline retrievalPipeline, CodeKnowledgeService codeKnowledgeService,
                          DevelopmentPlanService developmentPlanService, WikiRepository wikiRepository,
                          VersionComparisonService versionComparisonService, McpResponsePolicy policy,
-                         McpToolInvocationService invocations) {
+                         McpToolInvocationService invocations,
+                         CodeIntelligenceService codeIntelligenceService,
+                         ReviewFacadeService reviewFacadeService) {
         this.retrievalPipeline = retrievalPipeline;
         this.codeKnowledgeService = codeKnowledgeService;
         this.developmentPlanService = developmentPlanService;
@@ -53,6 +65,17 @@ public class NexusMcpTools {
         this.versionComparisonService = versionComparisonService;
         this.policy = policy;
         this.invocations = invocations;
+        this.codeIntelligenceService = codeIntelligenceService;
+        this.reviewFacadeService = reviewFacadeService;
+    }
+
+    /** Compatibility constructor for pre-0.7 unit callers. */
+    NexusMcpTools(RetrievalPipeline retrievalPipeline, CodeKnowledgeService codeKnowledgeService,
+                  DevelopmentPlanService developmentPlanService, WikiRepository wikiRepository,
+                  VersionComparisonService versionComparisonService, McpResponsePolicy policy,
+                  McpToolInvocationService invocations) {
+        this(retrievalPipeline, codeKnowledgeService, developmentPlanService, wikiRepository,
+                versionComparisonService, policy, invocations, null, null);
     }
 
     @McpTool(
@@ -220,6 +243,91 @@ public class NexusMcpTools {
                             versionDiffData(report),
                             List.of(), Map.of("fromVersion", report.fromVersion(), "toVersion", report.toVersion()),
                             report.warnings(), versionDiffTruncated(report));
+                });
+    }
+
+    @McpTool(
+            name = "nexus_code_graph",
+            description = "Traverse the latest project/commit-scoped static symbol call graph.",
+            annotations = @McpTool.McpAnnotations(
+                    readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false))
+    public McpToolResponse<CodeIntelligenceResponse> codeGraph(
+            McpSyncRequestContext context,
+            @McpToolParam(description = "Qualified or simple symbol name") String symbol,
+            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+            String projectId,
+            @McpToolParam(description = "inbound or outbound", required = false) String direction,
+            @McpToolParam(description = "Traversal depth, 1-5", required = false) Integer depth,
+            @McpToolParam(description = "Maximum graph relations, 1-200", required = false) Integer limit) {
+        return invocations.invoke("nexus_code_graph", context, projectId, null, Permission.PUBLIC_READ,
+                effectiveProject -> {
+                    CodeIntelligenceResponse data = codeIntelligenceService.graph(
+                            effectiveProject, symbol, direction, depth, limit);
+                    return new McpToolResponse<>(scope(effectiveProject, null, null), data, List.of(),
+                            Map.of("availability", data.availability()), graphWarnings(data), data.truncated());
+                });
+    }
+
+    @McpTool(
+            name = "nexus_impact_analysis",
+            description = "Analyze inbound impact for one symbol or a Git commit range.",
+            annotations = @McpTool.McpAnnotations(
+                    readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false))
+    public McpToolResponse<CodeIntelligenceResponse> impactAnalysis(
+            McpSyncRequestContext context,
+            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+            String projectId,
+            @McpToolParam(description = "Symbol selector; exclusive with commits", required = false) String symbol,
+            @McpToolParam(description = "Base Git commit", required = false) String fromCommit,
+            @McpToolParam(description = "Target Git commit", required = false) String toCommit,
+            @McpToolParam(description = "Traversal depth, 1-5", required = false) Integer depth,
+            @McpToolParam(description = "Maximum graph relations, 1-200", required = false) Integer limit) {
+        return invocations.invoke("nexus_impact_analysis", context, projectId, toCommit, Permission.PUBLIC_READ,
+                effectiveProject -> {
+                    boolean bySymbol = symbol != null && !symbol.isBlank();
+                    boolean byCommits = fromCommit != null && !fromCommit.isBlank()
+                            && toCommit != null && !toCommit.isBlank();
+                    if (bySymbol == byCommits) {
+                        throw new IllegalArgumentException(
+                                "Select exactly one impact mode: symbol or fromCommit+toCommit");
+                    }
+                    CodeIntelligenceResponse data = bySymbol
+                            ? codeIntelligenceService.impactSymbol(effectiveProject, symbol, depth, limit)
+                            : codeIntelligenceService.impactCommits(
+                            effectiveProject, fromCommit, toCommit, depth, limit);
+                    return new McpToolResponse<>(scope(effectiveProject, toCommit, null), data, List.of(),
+                            Map.of("availability", data.availability()), graphWarnings(data), data.truncated());
+                });
+    }
+
+    private List<RagWarning> graphWarnings(CodeIntelligenceResponse data) {
+        return data.warnings().stream()
+                .limit(20)
+                .map(message -> new RagWarning("code-graph", "CODE_GRAPH_DEGRADED",
+                        policy.bounded(message), 0))
+                .toList();
+    }
+
+    @McpTool(
+            name = "nexus_review_doubts",
+            description = "Generate a bounded requirement doubt list from version-scoped evidence.",
+            annotations = @McpTool.McpAnnotations(
+                    readOnlyHint = true, destructiveHint = false, idempotentHint = false, openWorldHint = false))
+    public McpToolResponse<List<McpResponsePolicy.DoubtHit>> reviewDoubts(
+            McpSyncRequestContext context,
+            @McpToolParam(description = "Requirement document ID") String documentId,
+            @McpToolParam(description = "Requirement version") String version,
+            @McpToolParam(description = "Optional module filter", required = false) String module,
+            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+            String projectId) {
+        return invocations.invoke("nexus_review_doubts", context, projectId, version, Permission.OPERATE,
+                effectiveProject -> {
+                    DoubtBatch raw = reviewFacadeService.review(
+                            new ReviewRequest(documentId, version, module, effectiveProject));
+                    List<McpResponsePolicy.DoubtHit> bounded = raw.doubts().stream().limit(50)
+                            .map(policy::doubt).toList();
+                    return new McpToolResponse<>(scope(effectiveProject, version, documentId), bounded, List.of(),
+                            Map.of("count", bounded.size()), List.of(), raw.doubts().size() > bounded.size());
                 });
     }
 

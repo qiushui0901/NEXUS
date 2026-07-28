@@ -12,7 +12,7 @@ spring:
       server:
         enabled: ${MCP_ENABLED:true}
         name: nexus
-        version: 0.6.0
+        version: 0.7.0
         protocol: STREAMABLE
         instructions: Evidence-bound requirement, code, Wiki, and version knowledge for development agents.
     chat:
@@ -94,6 +94,7 @@ app:
     max-evidence: ${MCP_MAX_EVIDENCE:40}
     max-response-characters: ${MCP_MAX_RESPONSE_CHARACTERS:120000}
   rag:
+    code-graph-root-path: ${CODE_GRAPH_ROOT_PATH:data/code-graph}
     qdrant:
       base-url: ${QDRANT_URL:http://localhost:6333}
       collection: ${QDRANT_COLLECTION:requirement_chunks}

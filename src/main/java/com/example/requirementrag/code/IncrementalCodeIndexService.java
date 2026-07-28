@@ -8,6 +8,7 @@ import com.example.requirementrag.model.IncrementalCodeIndexResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.io.IOException;
 import java.util.List;
@@ -22,16 +23,26 @@ public class IncrementalCodeIndexService {
     private static final String ZERO_SHA = "0000000000000000000000000000000000000000";
 
     private final ProjectRegistry projectRegistry;
-    private final JavaCodeScanner scanner;
+    private final CodeScanner scanner;
     private final CodeQdrantStore store;
     private final GitDiffService gitDiffService;
+    private final SQLiteSymbolGraphStore graphStore;
 
-    public IncrementalCodeIndexService(ProjectRegistry projectRegistry, JavaCodeScanner scanner,
-                                       CodeQdrantStore store, GitDiffService gitDiffService) {
+    @Autowired
+    public IncrementalCodeIndexService(ProjectRegistry projectRegistry, CodeScanner scanner,
+                                       CodeQdrantStore store, GitDiffService gitDiffService,
+                                       SQLiteSymbolGraphStore graphStore) {
         this.projectRegistry = projectRegistry;
         this.scanner = scanner;
         this.store = store;
         this.gitDiffService = gitDiffService;
+        this.graphStore = graphStore;
+    }
+
+    /** Compatibility constructor for pre-0.7 unit callers. */
+    IncrementalCodeIndexService(ProjectRegistry projectRegistry, JavaCodeScanner scanner,
+                                CodeQdrantStore store, GitDiffService gitDiffService) {
+        this(projectRegistry, CodeKnowledgeService.legacy(scanner), store, gitDiffService, null);
     }
 
     /**
@@ -60,26 +71,37 @@ public class IncrementalCodeIndexService {
         RagProperties.Code codeConfig = project.toCodeConfig();
         GitDiffResult diff = gitDiffService.diff(projectId, oldSha, newSha);
         List<String> changedFiles = diff.changedPaths();
-        List<String> javaFiles = changedFiles.stream()
+        List<String> sourceFiles = changedFiles.stream()
                 .map(this::normalizePath)
-                .filter(path -> path.endsWith(".java"))
+                .filter(scanner::supports)
                 .distinct()
                 .toList();
-        if (javaFiles.isEmpty()) {
-            log.info("增量索引 {}: 无变更 Java 文件", projectId);
+        if (sourceFiles.isEmpty()) {
+            log.info("增量索引 {}: 无受支持的源码文件变更", projectId);
             return new IncrementalCodeIndexResponse(projectId, oldSha, newSha, changedFiles.size(), 0, 0);
         }
 
         String collection = projectRegistry.resolveCodeCollection(projectId);
-        for (String filePath : javaFiles) {
+        for (String filePath : sourceFiles) {
             store.deleteFileChunks(collection, projectId, filePath);
         }
 
-        List<CodeChunk> chunks = scanner.scanFiles(codeConfig, newSha, javaFiles);
+        CodeScanner.ScanResult changed = scanner.scanFiles(codeConfig, newSha, sourceFiles);
+        List<CodeChunk> chunks = changed.chunks();
         store.upsertChunks(collection, chunks);
-        log.info("增量索引完成 {}: {} 个 Java 文件, {} 个 chunk", projectId, javaFiles.size(), chunks.size());
+        if (graphStore != null) {
+            CodeScanner.ScanResult snapshot = scanner.scan(codeConfig);
+            if (newSha.equals(snapshot.commitSha())) {
+                graphStore.replaceSnapshot(snapshot);
+            }
+            else {
+                log.warn("跳过静态图谱快照 {}: 工作区 HEAD {} 与目标 commit {} 不一致",
+                        projectId, snapshot.commitSha(), newSha);
+            }
+        }
+        log.info("增量索引完成 {}: {} 个源码文件, {} 个 chunk", projectId, sourceFiles.size(), chunks.size());
         return new IncrementalCodeIndexResponse(projectId, oldSha, newSha,
-                changedFiles.size(), javaFiles.size(), chunks.size());
+                changedFiles.size(), sourceFiles.size(), chunks.size());
     }
 
     private String normalizePath(String path) {

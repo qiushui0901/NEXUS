@@ -1,3 +1,24 @@
+## 0.7.0-SNAPSHOT — 2026-07-28
+
+### Added
+
+- 新增基于 Tree-sitter 的 Java、Go、Python、TypeScript 多语言 AST 代码索引，Kotlin 通过启动能力探测安全启用。
+- 新增独立 SQLite 符号图，按项目和 Git commit 事务化保存符号、调用关系、解析置信度和未解析调用。
+- 新增符号图与影响分析 REST API，以及 `nexus_code_graph`、`nexus_impact_analysis` 两个 MCP 工具。
+- 新增 `nexus_review_doubts` MCP 工具及 `nexus://wiki/{projectId}/{version}/{featureId}` Resource Template。
+- 新增符号影响、commit 范围影响、入口与测试回归建议；目标图谱缺失时显式降级到文件差异。
+
+### Changed
+
+- `CodeChunk` 与 `nexus_search_code` 增加向后兼容的 `language` 字段。
+- 全量和增量代码索引不再硬编码 `.java`，由语言注册表统一识别支持的源码。
+- NEXUS 平台版本提升到 `0.7.0-SNAPSHOT`；业务需求版本继续独立管理。
+
+### Safety
+
+- 只有 `EXACT` 和 `SAME_FILE` 调用边计入确定影响；启发式匹配单独返回，歧义和动态调用保持 `UNRESOLVED`。
+- 图谱只保存仓库相对路径与结构化元数据，不保存源码正文、向量、凭据或 Qdrant 内部数据。
+
 ## 0.6.0-SNAPSHOT — 2026-07-28
 
 ### Added

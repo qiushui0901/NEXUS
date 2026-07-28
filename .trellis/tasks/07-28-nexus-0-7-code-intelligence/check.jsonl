@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/retrieval-and-version-knowledge.md", "reason": "Verify multi-language scanner, project/commit graph isolation, MCP authorization, confidence tiers, safe degradation, and JDK 21 quality gate."}
+{"file": ".trellis/tasks/07-28-nexus-0-7-code-intelligence/design.md", "reason": "Verify implementation against the locked Tree-sitter, SQLite graph, REST, MCP, and rollback design."}
