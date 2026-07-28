@@ -3,6 +3,9 @@ package com.example.requirementrag.service;
 import com.example.requirementrag.code.CodeKnowledgeService;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.config.RagProperties;
+import com.example.requirementrag.evidence.CitedText;
+import com.example.requirementrag.evidence.EvidenceCitationService;
+import com.example.requirementrag.evidence.EvidenceRegistry;
 import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.DevelopmentPlanRequest;
@@ -19,14 +22,18 @@ import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
 import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
@@ -41,6 +48,9 @@ public class DevelopmentPlanStreamService {
     private static final long STREAM_TIMEOUT_MS = 240_000L;
     private static final int MAX_DOCUMENT_CONTEXT_CHARS = 12_000;
     private static final int MAX_CODE_CONTEXT_CHARS = 8_000;
+    private static final Set<String> ALLOWED_PLAN_EVENT_TYPES = Set.of(
+            "summary", "product-understanding", "constraint", "chain", "section",
+            "implementation-step", "risk");
 
     private final RagProperties properties;
     private final RetrievalPipeline retrievalPipeline;
@@ -48,18 +58,30 @@ public class DevelopmentPlanStreamService {
     private final ObjectMapper objectMapper;
     private final PlanSectionEvidenceMatcher evidenceMatcher;
     private final RagObservability observability;
+    private final EvidenceCitationService citationService;
 
     @Autowired
     public DevelopmentPlanStreamService(RagProperties properties, RetrievalPipeline retrievalPipeline,
                                         ChatClient chatClient, ObjectMapper objectMapper,
                                         PlanSectionEvidenceMatcher evidenceMatcher,
-                                        RagObservability observability) {
+                                        RagObservability observability,
+                                        EvidenceCitationService citationService) {
         this.properties = properties;
         this.retrievalPipeline = retrievalPipeline;
         this.chatClient = chatClient;
         this.objectMapper = objectMapper;
         this.evidenceMatcher = evidenceMatcher;
         this.observability = observability;
+        this.citationService = citationService;
+    }
+
+    /** Backward-compatible constructor kept for focused unit tests and embedded consumers. */
+    public DevelopmentPlanStreamService(RagProperties properties, RetrievalPipeline retrievalPipeline,
+                                        ChatClient chatClient, ObjectMapper objectMapper,
+                                        PlanSectionEvidenceMatcher evidenceMatcher,
+                                        RagObservability observability) {
+        this(properties, retrievalPipeline, chatClient, objectMapper, evidenceMatcher, observability,
+                new EvidenceCitationService());
     }
 
     /** Backward-compatible constructor kept for focused unit tests and embedded consumers. */
@@ -69,7 +91,8 @@ public class DevelopmentPlanStreamService {
                                         ObjectMapper objectMapper, PlanSectionEvidenceMatcher evidenceMatcher,
                                         RagObservability observability) {
         this(properties, new RetrievalPipeline(properties, projectRegistry, queryRouter, documentStore,
-                codeKnowledgeService, observability), chatClient, objectMapper, evidenceMatcher, observability);
+                codeKnowledgeService, observability), chatClient, objectMapper, evidenceMatcher, observability,
+                new EvidenceCitationService());
     }
 
     public SseEmitter stream(DevelopmentPlanRequest request) {
@@ -104,8 +127,12 @@ public class DevelopmentPlanStreamService {
             List<RagStageDiagnostic> diagnostics = new ArrayList<>(retrieval.stageDiagnostics());
             List<ChunkRecord> documents = bundle.requirementEvidence();
             List<CodeChunk> code = bundle.codeEvidence();
+            EvidenceRegistry registry = EvidenceRegistry.from(bundle);
+            EvidenceCitationService.Session citationSession = citationService.open(registry);
+            Set<String> emittedWarnings = new LinkedHashSet<>();
             for (RagWarning warning : warnings) {
                 send(emitter, closed, warningEvent(++sequence, warning));
+                emittedWarnings.add(warningKey(warning));
             }
             RagOutcomeStatus status = overallStatus(documents, code, warnings);
             send(emitter, closed, event("retrieval", ++sequence,
@@ -118,39 +145,53 @@ public class DevelopmentPlanStreamService {
             try {
                 Flux<String> content = chatClient.prompt()
                         .system(streamSystemPrompt())
-                        .user(streamUserPrompt(request.query(), documents, code))
+                        .user(streamUserPrompt(request.query(), documents, code, registry))
                         .options(GenerationChatOptions.forModel(properties.llm().generationModel()))
                         .stream()
                         .content();
-                generationOutcome = consumeModelStreamOutcome(content, parsed -> sendUnchecked(emitter, closed,
-                        resequence(enrichSectionEvent(parsed, code), offset)), generationStarted);
+                generationOutcome = consumeValidatedModelStreamOutcome(content, parsed -> {
+                    DevelopmentPlanStreamEvent validated = validateCitationEvent(parsed, citationSession, warnings);
+                    if (validated == null) {
+                        return false;
+                    }
+                    sendUnchecked(emitter, closed, resequence(enrichSectionEvent(validated, code), offset));
+                    return true;
+                }, generationStarted);
                 recordOutcome(generationOutcome, documentId, version);
                 diagnostics.addAll(generationOutcome.stageDiagnostics());
             }
             catch (RuntimeException exception) {
+                appendWarnings(warnings, citationSession.warnings());
+                for (RagWarning warning : warnings) {
+                    if (emittedWarnings.add(warningKey(warning))) {
+                        sendUnchecked(emitter, closed, warningEvent(offset + 9_000 + emittedWarnings.size(), warning));
+                    }
+                }
                 long durationMs = elapsedMillis(generationStarted);
                 observability.outcome("llm.generate.stream", documentId, version, RagOutcomeStatus.FAILED,
                         durationMs, "STREAM_GENERATION_FAILED", exception);
                 throw exception;
             }
-            if (!generationOutcome.warnings().isEmpty()) {
-                warnings.addAll(generationOutcome.warnings());
-                status = RagOutcomeStatus.DEGRADED;
-                for (RagWarning warning : generationOutcome.warnings()) {
-                    send(emitter, closed, warningEvent(offset + 9_000, warning));
+            appendWarnings(warnings, generationOutcome.warnings());
+            appendWarnings(warnings, citationSession.warnings());
+            status = overallStatus(documents, code, warnings);
+            for (RagWarning warning : warnings) {
+                if (emittedWarnings.add(warningKey(warning))) {
+                    send(emitter, closed, warningEvent(offset + 9_000 + emittedWarnings.size(), warning));
                 }
             }
 
             long terminalSequence = offset + 10_000;
-            send(emitter, closed, event("references", terminalSequence,
-                    Map.of(
-                            "documents", documents.stream().map(item -> Map.of(
-                                    "filename", item.filename(),
-                                    "excerpt", clip(item.parentText(), 260))).toList(),
-                            "code", code),
-                    "相关文件已整理"));
+            Map<String, Object> referencePayload = new java.util.LinkedHashMap<>();
+            referencePayload.put("documents", documents.stream().map(item -> Map.of(
+                    "filename", item.filename() == null ? "" : item.filename(),
+                    "excerpt", clip(item.parentText(), 260))).toList());
+            referencePayload.put("code", code);
+            referencePayload.put("evidence", registry.references());
+            send(emitter, closed, event("references", terminalSequence, referencePayload, "相关文件已整理"));
             send(emitter, closed, event("completed", terminalSequence + 1,
-                    Map.of("status", status, "warnings", warnings, "stageDiagnostics", diagnostics),
+                    Map.of("status", status, "warnings", warnings, "stageDiagnostics", diagnostics,
+                            "citationQuality", citationSession.quality()),
                     "开发方案生成完成"));
             close(emitter, closed);
         }
@@ -173,21 +214,38 @@ public class DevelopmentPlanStreamService {
     RagOutcome<Long> consumeModelStreamOutcome(Flux<String> content,
                                                 Consumer<DevelopmentPlanStreamEvent> consumer,
                                                 long started) {
+        return consumeAcceptedModelStreamOutcome(content, event -> {
+            consumer.accept(event);
+            return true;
+        }, started);
+    }
+
+    RagOutcome<Long> consumeValidatedModelStreamOutcome(Flux<String> content,
+                                                         Predicate<DevelopmentPlanStreamEvent> consumer,
+                                                         long started) {
+        return consumeAcceptedModelStreamOutcome(content, consumer, started);
+    }
+
+    private RagOutcome<Long> consumeAcceptedModelStreamOutcome(Flux<String> content,
+                                                                Predicate<DevelopmentPlanStreamEvent> consumer,
+                                                                long started) {
         DevelopmentPlanStreamParser parser = new DevelopmentPlanStreamParser(objectMapper);
         AtomicLong emitted = new AtomicLong();
         RuntimeException streamFailure = null;
         try {
             content.doOnNext(chunk -> parser.accept(chunk).forEach(event -> {
-                consumer.accept(event);
-                emitted.incrementAndGet();
+                if (consumer.test(event)) {
+                    emitted.incrementAndGet();
+                }
             })).blockLast();
         }
         catch (RuntimeException exception) {
             streamFailure = exception;
         }
         for (DevelopmentPlanStreamEvent event : parser.finish()) {
-            consumer.accept(event);
-            emitted.incrementAndGet();
+            if (consumer.test(event)) {
+                emitted.incrementAndGet();
+            }
         }
         if (emitted.get() == 0) {
             if (streamFailure != null) {
@@ -202,6 +260,30 @@ public class DevelopmentPlanStreamService {
         }
         return RagOutcome.of(RagOutcomeStatus.SUCCESS, emitted.get(), "llm.generate.stream",
                 durationMs, emitted.get());
+    }
+
+    DevelopmentPlanStreamEvent validateCitationEvent(DevelopmentPlanStreamEvent event,
+                                                       EvidenceCitationService.Session citationSession,
+                                                       List<RagWarning> warnings) {
+        if (event == null || !ALLOWED_PLAN_EVENT_TYPES.contains(event.type())) {
+            appendWarning(warnings, new RagWarning("llm.generate.stream", "UNKNOWN_PLAN_EVENT_TYPE",
+                    "模型返回了未支持的方案事件，已忽略", 0));
+            return null;
+        }
+        ObjectNode payload = event.payload() != null && event.payload().isObject()
+                ? ((ObjectNode) event.payload()).deepCopy()
+                : objectMapper.createObjectNode();
+        List<String> requested = payload.path("evidenceIds").isArray()
+                ? payload.path("evidenceIds").valueStream().map(JsonNode::asText).toList()
+                : List.of();
+        String text = "section".equals(event.type())
+                ? payload.path("title").asText("")
+                : payload.path("text").asText("");
+        CitedText citation = citationSession.cite(text, requested);
+        var evidenceIds = payload.putArray("evidenceIds");
+        citation.evidenceIds().forEach(evidenceIds::add);
+        payload.put("supportStatus", citation.supportStatus().name());
+        return new DevelopmentPlanStreamEvent(event.type(), event.sequence(), payload, event.message());
     }
 
     DevelopmentPlanStreamEvent enrichSectionEvent(DevelopmentPlanStreamEvent event, List<CodeChunk> code) {
@@ -233,6 +315,21 @@ public class DevelopmentPlanStreamService {
         return documents.isEmpty() && code.isEmpty() ? RagOutcomeStatus.NO_RESULTS : RagOutcomeStatus.SUCCESS;
     }
 
+    private void appendWarnings(List<RagWarning> target, List<RagWarning> additions) {
+        for (RagWarning warning : additions) appendWarning(target, warning);
+    }
+
+    private void appendWarning(List<RagWarning> target, RagWarning warning) {
+        String key = warningKey(warning);
+        if (target.stream().noneMatch(existing -> warningKey(existing).equals(key))) {
+            target.add(warning);
+        }
+    }
+
+    private String warningKey(RagWarning warning) {
+        return warning.code() + "|" + warning.message();
+    }
+
     private DevelopmentPlanStreamEvent warningEvent(long sequence, RagWarning warning) {
         return event("warning", sequence, warning, warning.message());
     }
@@ -243,15 +340,17 @@ public class DevelopmentPlanStreamService {
                 只能输出 NDJSON：每行必须是一个完整 JSON 对象，不能输出 Markdown、代码围栏或额外说明。
                 JSON 格式：{"type":"事件类型","message":"当前阶段","payload":{...}}
                 事件类型只允许 summary、product-understanding、constraint、chain、section、implementation-step、risk。
-                summary 的 payload 为 {"text":"..."}。
-                product-understanding、constraint、chain、implementation-step、risk 的 payload 为 {"text":"..."}，每条单独一行。
-                section 的 payload 为 {"title":"...","purpose":"...","relatedRules":["该环节服务的具体产品规则"],"keyQuestions":[...],"changeSuggestions":[...],"plannedNodes":[{"id":"稳定的英文短标识","label":"建议新增的模块或接口","type":"api|service|config|state|test","description":"规划职责"}]}，每个环节单独一行。
+                summary 的 payload 为 {"text":"...","evidenceIds":["上下文中的证据 ID"]}。
+                product-understanding、constraint、chain、implementation-step、risk 使用相同的 text + evidenceIds 格式，每条单独一行。
+                section 的 payload 为 {"title":"...","purpose":"...","relatedRules":[...],"keyQuestions":[...],"changeSuggestions":[...],"evidenceIds":["上下文中的证据 ID"],"plannedNodes":[{"id":"稳定的英文短标识","label":"建议新增的模块或接口","type":"api|service|config|state|test","description":"规划职责"}]}。
+                evidenceIds 只能从上下文的 [evidenceId=...] 中选择；没有直接证据时返回空数组，禁止编造或用无关证据凑数。
                 plannedNodes 只描述建议新增内容；禁止把代码命中里的文件路径、真实代码 ID 或现有类冒充规划节点，真实代码关联由系统补充。
                 先理解产品规则，再映射到代码链路；不要说参考了文档；不要生成产品存疑；中文短句；逐行立即输出。
                 """;
     }
 
-    private String streamUserPrompt(String query, List<ChunkRecord> documents, List<CodeChunk> code) {
+    private String streamUserPrompt(String query, List<ChunkRecord> documents, List<CodeChunk> code,
+                                    EvidenceRegistry registry) {
         return """
                 用户问题：
                 %s
@@ -262,29 +361,10 @@ public class DevelopmentPlanStreamService {
                 代码命中片段：
                 %s
 
-                按顺序输出：1 条 summary，5-8 条 product-understanding，5-8 条 constraint，完整 chain，约 7 个 section，实施顺序和风险。现在开始逐行输出。
-                """.formatted(query, documentContext(documents), codeContext(code));
-    }
-
-    private String documentContext(List<ChunkRecord> documents) {
-        StringBuilder text = new StringBuilder();
-        for (ChunkRecord document : documents) {
-            text.append("文件：").append(document.filename()).append('\n')
-                    .append(document.parentText()).append("\n\n");
-            if (text.length() >= MAX_DOCUMENT_CONTEXT_CHARS) break;
-        }
-        return clip(text.toString(), MAX_DOCUMENT_CONTEXT_CHARS);
-    }
-
-    private String codeContext(List<CodeChunk> code) {
-        StringBuilder text = new StringBuilder();
-        for (CodeChunk chunk : code) {
-            text.append(chunk.symbolType()).append(' ').append(chunk.symbolName())
-                    .append(" @ ").append(chunk.filePath()).append(':').append(chunk.startLine()).append('\n')
-                    .append(chunk.text()).append("\n\n");
-            if (text.length() >= MAX_CODE_CONTEXT_CHARS) break;
-        }
-        return clip(text.toString(), MAX_CODE_CONTEXT_CHARS);
+                按顺序输出：1 条 summary，5-8 条 product-understanding，5-8 条 constraint，完整 chain，约 7 个 section，实施顺序和风险。每条都返回 evidenceIds。现在开始逐行输出。
+                """.formatted(query,
+                registry.promptRequirementContext(documents, MAX_DOCUMENT_CONTEXT_CHARS),
+                registry.promptCodeContext(code, MAX_CODE_CONTEXT_CHARS));
     }
 
     private DevelopmentPlanStreamEvent event(String type, long sequence, Object payload, String message) {

@@ -7,6 +7,8 @@ import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.UserContext;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,6 +21,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/projects")
 public class ProjectController {
+    private static final Logger log = LoggerFactory.getLogger(ProjectController.class);
 
     private final ProjectRegistry projectRegistry;
     private final QdrantHybridStore documentStore;
@@ -72,7 +75,9 @@ public class ProjectController {
             String version = project.knowledge().version();
             if (collection == null || docId == null || version == null) return 0L;
             return documentStore.countVersion(collection, docId, version);
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException exception) {
+            log.warn("Unable to count requirement chunks for project {}; reporting zero",
+                    project.id(), exception);
             return 0L;
         }
     }
@@ -82,7 +87,9 @@ public class ProjectController {
             String collection = project.codeCollection();
             if (collection == null) return 0L;
             return codeStore.countProject(collection, project.id());
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException exception) {
+            log.warn("Unable to count code chunks for project {}; reporting zero",
+                    project.id(), exception);
             return 0L;
         }
     }

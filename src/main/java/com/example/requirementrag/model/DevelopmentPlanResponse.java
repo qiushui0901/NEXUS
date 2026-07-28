@@ -1,6 +1,7 @@
 package com.example.requirementrag.model;
 
 import com.example.requirementrag.conflict.KnowledgeConflictModels.KnowledgeConflictReport;
+import com.example.requirementrag.evidence.PlanCitationBundle;
 
 import java.util.List;
 
@@ -25,10 +26,38 @@ public record DevelopmentPlanResponse(
         RagOutcomeStatus status,
         List<RagWarning> warnings,
         List<RagStageDiagnostic> stageDiagnostics,
-        KnowledgeConflictReport conflictReport
+        KnowledgeConflictReport conflictReport,
+        PlanCitationBundle citations
 ) {
     public DevelopmentPlanResponse {
         conflictReport = conflictReport == null ? KnowledgeConflictReport.empty(null, version) : conflictReport;
+        citations = citations == null ? PlanCitationBundle.empty() : citations;
+    }
+
+    /** Backward-compatible constructor for callers that predate evidence citations. */
+    public DevelopmentPlanResponse(
+            String query,
+            String documentId,
+            String version,
+            String summary,
+            List<String> productUnderstanding,
+            List<String> developmentConstraints,
+            SimilarModule similarModule,
+            List<String> chainOverview,
+            List<PlanSection> sections,
+            List<String> implementationOrder,
+            List<String> steps,
+            List<String> risks,
+            List<DocumentReference> documentReferences,
+            List<CodeChunk> codeReferences,
+            RagOutcomeStatus status,
+            List<RagWarning> warnings,
+            List<RagStageDiagnostic> stageDiagnostics,
+            KnowledgeConflictReport conflictReport
+    ) {
+        this(query, documentId, version, summary, productUnderstanding, developmentConstraints, similarModule,
+                chainOverview, sections, implementationOrder, steps, risks, documentReferences, codeReferences,
+                status, warnings, stageDiagnostics, conflictReport, PlanCitationBundle.empty());
     }
 
     /** Backward-compatible constructor for callers that predate conflict reporting. */
@@ -53,7 +82,8 @@ public record DevelopmentPlanResponse(
     ) {
         this(query, documentId, version, summary, productUnderstanding, developmentConstraints, similarModule,
                 chainOverview, sections, implementationOrder, steps, risks, documentReferences, codeReferences,
-                status, warnings, stageDiagnostics, KnowledgeConflictReport.empty(null, version));
+                status, warnings, stageDiagnostics, KnowledgeConflictReport.empty(null, version),
+                PlanCitationBundle.empty());
     }
 
     /** 最接近当前需求的现有模块，用于复用链路。 */

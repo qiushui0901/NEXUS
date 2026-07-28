@@ -5,18 +5,23 @@ import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.model.CrossProjectSearchResult;
 import com.example.requirementrag.model.ScoredChunk;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 跨项目需求分块并行检索：在多个项目的 requirement collection 中 fan-out 搜索并合并排序。
  */
 @Service
 public class CrossProjectSearchService {
+    private static final Logger log = LoggerFactory.getLogger(CrossProjectSearchService.class);
 
     private final ProjectRegistry projectRegistry;
     private final QdrantHybridStore store;
@@ -46,7 +51,18 @@ public class CrossProjectSearchService {
         CompletableFuture<Void> allDone = CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new));
         try {
             allDone.get(SEARCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (Exception ignored) {}
+        }
+        catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            log.warn("Cross-project search was interrupted; returning only completed project results", exception);
+        }
+        catch (TimeoutException exception) {
+            log.warn("Cross-project search exceeded {} seconds; returning only completed project results",
+                    SEARCH_TIMEOUT_SECONDS, exception);
+        }
+        catch (ExecutionException exception) {
+            log.warn("At least one cross-project search failed; returning successful project results", exception);
+        }
         return futures.stream()
                 .filter(f -> f.isDone() && !f.isCompletedExceptionally())
                 .flatMap(f -> f.join().stream())
@@ -77,7 +93,9 @@ public class CrossProjectSearchService {
                     .map(sc -> new CrossProjectSearchResult(projectId, projectName, sc.record(), sc.score()))
                     .toList();
         }
-        catch (RuntimeException ignored) {
+        catch (RuntimeException exception) {
+            log.warn("Requirement search failed for project {}; omitting that project from merged results",
+                    projectId, exception);
             return List.of();
         }
     }

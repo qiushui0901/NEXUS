@@ -4,6 +4,8 @@ import com.example.requirementrag.code.CodeKnowledgeService;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.conflict.KnowledgeConflictModels.ReportStatus;
+import com.example.requirementrag.evidence.CitationQualityStatus;
+import com.example.requirementrag.evidence.EvidenceSupportStatus;
 import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.QueryRouting;
@@ -101,6 +103,11 @@ class DevelopmentPlanServiceTest {
         assertEquals(RagOutcomeStatus.DEGRADED, response.status());
         assertEquals("PLAN_GENERATION_FALLBACK", response.warnings().getFirst().code());
         assertEquals("模型未返回有效方案，已使用规则化方案", response.warnings().getFirst().message());
+        assertEquals(1, response.citations().references().size());
+        assertEquals("requirement:doc-1", response.citations().references().getFirst().evidenceId());
+        assertEquals(EvidenceSupportStatus.UNSUPPORTED, response.citations().summary().supportStatus());
+        assertEquals(CitationQualityStatus.INSUFFICIENT_EVIDENCE, response.citations().quality().status());
+        assertEquals(0.0, response.citations().quality().coverageRate());
     }
 
     @Test
@@ -137,12 +144,12 @@ class DevelopmentPlanServiceTest {
     }
 
     private ChunkRecord documentChunk() {
-        return new ChunkRecord("doc-1", "requirements", "5.1", "growth-fund.html", "parent-1",
-                "成长基金按等级解锁奖励", "成长基金奖励", "hash", 1, 1);
+        return new ChunkRecord("doc-1", "requirements", "5.1", "feature-rules.html", "parent-1",
+                "功能按配置条件生效", "功能规则", "hash", 1, 1);
     }
 
     private CodeChunk codeChunk() {
-        return new CodeChunk("code-1", "game", "sha", "service/GrowthFundService.java", "class",
-                "GrowthFundService", 1, 20, "class GrowthFundService", "hash");
+        return new CodeChunk("code-1", "game", "sha", "service/FeatureRuleService.java", "class",
+                "FeatureRuleService", 1, 20, "class FeatureRuleService", "hash");
     }
 }

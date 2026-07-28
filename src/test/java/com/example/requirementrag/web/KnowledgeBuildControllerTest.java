@@ -3,6 +3,7 @@ package com.example.requirementrag.web;
 import com.example.requirementrag.knowledge.build.KnowledgeBuildModels.BuildResult;
 import com.example.requirementrag.knowledge.build.KnowledgeBuildModels.BuildStatus;
 import com.example.requirementrag.knowledge.build.VersionKnowledgeBuildPipeline;
+import com.example.requirementrag.model.UserContext;
 import com.example.requirementrag.model.Permission;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
@@ -15,6 +16,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -27,9 +29,11 @@ class KnowledgeBuildControllerTest {
     @BeforeEach
     void setUp() {
         VersionKnowledgeBuildPipeline pipeline = mock(VersionKnowledgeBuildPipeline.class);
-        when(pipeline.build(any())).thenReturn(new BuildResult("build-1", BuildStatus.DRAFT,
+        when(pipeline.build(any(), eq("system"))).thenReturn(new BuildResult("build-1", BuildStatus.DRAFT,
                 2, 0, 1, 2, "data/wiki-drafts/game/5.1/build-1", "2026-07-24T00:00:00Z", List.of()));
-        KnowledgeBuildController controller = new KnowledgeBuildController(pipeline, mock(ProjectAccessGuard.class));
+        ProjectAccessGuard accessGuard = mock(ProjectAccessGuard.class);
+        when(accessGuard.currentUser(any())).thenReturn(UserContext.defaultAdmin());
+        KnowledgeBuildController controller = new KnowledgeBuildController(pipeline, accessGuard);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiExceptionHandler())
                 .build();

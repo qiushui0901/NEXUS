@@ -19,6 +19,8 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -112,6 +114,42 @@ class RetrievalPipelineTest {
 
         assertThat(outcome.status()).isEqualTo(RagOutcomeStatus.SUCCESS);
         verify(codeKnowledgeService, never()).search("query", "game", 8);
+    }
+
+    @Test
+    void requirementReviewCanLoadVersionCorpusWithoutSearchingCode() {
+        ChunkRecord corpus = chunk("corpus", "完整正文", "corpus-hash");
+        when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
+                .thenReturn(List.of(chunk("hit", "检索命中", "hit-hash")));
+        when(documentStore.scrollVersion("requirements_game", "requirements", "5.1"))
+                .thenReturn(List.of(corpus));
+
+        RagOutcome<RetrievalBundle> outcome = pipeline.execute(new RetrievalRequest(
+                "query", RetrievalProfile.REQUIREMENT_REVIEW, null, "requirements", "5.1", 8, true));
+
+        assertThat(outcome.status()).isEqualTo(RagOutcomeStatus.SUCCESS);
+        assertThat(outcome.data().resolvedProjectId()).isEqualTo("game");
+        assertThat(outcome.data().requirementCorpus()).containsExactly(corpus);
+        assertThat(outcome.stageDiagnostics()).extracting("stage").contains("qdrant.scroll");
+        verify(documentStore).scrollVersion("requirements_game", "requirements", "5.1");
+        verify(codeKnowledgeService, never()).search(any(), any(), anyInt());
+    }
+
+    @Test
+    void requirementReviewDegradesWhenHybridSearchFailsButCorpusExists() {
+        ChunkRecord corpus = chunk("corpus", "完整正文", "corpus-hash");
+        when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
+                .thenThrow(new RuntimeException("private endpoint"));
+        when(documentStore.scrollVersion("requirements_game", "requirements", "5.1"))
+                .thenReturn(List.of(corpus));
+
+        RagOutcome<RetrievalBundle> outcome = pipeline.execute(new RetrievalRequest(
+                "query", RetrievalProfile.REQUIREMENT_REVIEW, null, "requirements", "5.1", 8, true));
+
+        assertThat(outcome.status()).isEqualTo(RagOutcomeStatus.DEGRADED);
+        assertThat(outcome.data().requirementCorpus()).containsExactly(corpus);
+        assertThat(outcome.warnings()).extracting("code").contains("DOCUMENT_RETRIEVAL_UNAVAILABLE");
+        assertThat(outcome.warnings().getFirst().message()).doesNotContain("endpoint");
     }
 
     private ChunkRecord chunk(String parentId, String text, String hash) {

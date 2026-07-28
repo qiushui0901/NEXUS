@@ -28,6 +28,9 @@ import com.example.requirementrag.wiki.WikiModels.TestKnowledge;
 import com.example.requirementrag.wiki.WikiModels.VersionChange;
 import com.example.requirementrag.wiki.WikiModels.VersionSource;
 import com.example.requirementrag.versioning.RequirementChunkDiff;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.ObjectMapper;
 
@@ -56,6 +59,7 @@ import java.util.stream.Stream;
 /** Builds versioned knowledge drafts from requirement-version deltas without publishing them. */
 @Service
 public class VersionKnowledgeBuildPipeline {
+    private static final Logger log = LoggerFactory.getLogger(VersionKnowledgeBuildPipeline.class);
     private static final int MAX_FEATURES = 100;
     private static final int MAX_REQUIREMENT_EVIDENCE = 5;
     private static final int MAX_CODE_EVIDENCE = 8;
@@ -70,18 +74,33 @@ public class VersionKnowledgeBuildPipeline {
     private final QdrantHybridStore documentStore;
     private final RetrievalPipeline retrievalPipeline;
     private final Path draftRoot;
+    private final KnowledgeDraftLifecycleService draftLifecycleService;
 
+    @Autowired
     public VersionKnowledgeBuildPipeline(ObjectMapper objectMapper, WikiProperties wikiProperties,
                                          ProjectRegistry projectRegistry, QdrantHybridStore documentStore,
-                                         RetrievalPipeline retrievalPipeline) {
+                                         RetrievalPipeline retrievalPipeline,
+                                         KnowledgeDraftLifecycleService draftLifecycleService) {
         this.objectMapper = objectMapper;
         this.projectRegistry = projectRegistry;
         this.documentStore = documentStore;
         this.retrievalPipeline = retrievalPipeline;
         this.draftRoot = Path.of(wikiProperties.draftPath()).toAbsolutePath().normalize();
+        this.draftLifecycleService = draftLifecycleService;
+    }
+
+    /** Keeps direct test/embedded construction source-compatible. */
+    public VersionKnowledgeBuildPipeline(ObjectMapper objectMapper, WikiProperties wikiProperties,
+                                         ProjectRegistry projectRegistry, QdrantHybridStore documentStore,
+                                         RetrievalPipeline retrievalPipeline) {
+        this(objectMapper, wikiProperties, projectRegistry, documentStore, retrievalPipeline, null);
     }
 
     public BuildResult build(BuildRequest request) {
+        return build(request, "system");
+    }
+
+    public BuildResult build(BuildRequest request, String actor) {
         String projectId = identifier(request.projectId(), "projectId");
         String version = identifier(request.version(), "version");
         String documentId = identifier(request.documentId(), "documentId");
@@ -116,6 +135,14 @@ public class VersionKnowledgeBuildPipeline {
                 List.copyOf(features), uniqueWarnings(warnings));
         VersionSource wikiSource = toWikiSource(request, project, version, generatedAt, features);
         Path target = writeDraft(projectId, version, buildId, artifact, wikiSource);
+        if (draftLifecycleService != null) {
+            try {
+                draftLifecycleService.initializeDraft(projectId, version, buildId, actor, generatedAt);
+            } catch (RuntimeException exception) {
+                deleteQuietly(target);
+                throw exception;
+            }
+        }
 
         int conflicts = (int) features.stream().filter(feature -> !feature.conflicts().isEmpty()).count();
         int missingCode = (int) features.stream().filter(feature -> feature.codeEvidence().isEmpty()).count();
@@ -239,7 +266,8 @@ public class VersionKnowledgeBuildPipeline {
         }
         try {
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
-        } catch (AtomicMoveNotSupportedException ignored) {
+        } catch (AtomicMoveNotSupportedException exception) {
+            log.debug("Atomic move is unsupported for the draft filesystem; using a regular move", exception);
             Files.move(source, target);
         }
     }
@@ -262,9 +290,9 @@ public class VersionKnowledgeBuildPipeline {
     private List<Candidate> groupCandidates(List<VersionedChunk> changed, List<VersionedChunk> removed,
                                             String fixedChangeType) {
         Map<String, CandidateParts> grouped = new LinkedHashMap<>();
-        changed.forEach(chunk -> grouped.computeIfAbsent(filename(chunk.chunk()), ignored -> new CandidateParts())
+        changed.forEach(chunk -> grouped.computeIfAbsent(filename(chunk.chunk()), key -> new CandidateParts())
                 .changed.add(chunk));
-        removed.forEach(chunk -> grouped.computeIfAbsent(filename(chunk.chunk()), ignored -> new CandidateParts())
+        removed.forEach(chunk -> grouped.computeIfAbsent(filename(chunk.chunk()), key -> new CandidateParts())
                 .removed.add(chunk));
         return grouped.entrySet().stream().map(entry -> {
             CandidateParts parts = entry.getValue();
@@ -282,7 +310,9 @@ public class VersionKnowledgeBuildPipeline {
         try {
             return deduplicateParents(documentStore.scrollVersion(collection, documentId, version));
         } catch (RuntimeException exception) {
-            throw new IllegalStateException("需求版本数据读取失败");
+            log.error("Requirement version data read failed for document {} version {}", documentId, version,
+                    exception);
+            throw new IllegalStateException("需求版本数据读取失败", exception);
         }
     }
 
@@ -388,8 +418,8 @@ public class VersionKnowledgeBuildPipeline {
     private void deleteQuietly(Path root) {
         try {
             deleteRecursively(root);
-        } catch (IOException ignored) {
-            // Best-effort cleanup; public failures never include internal paths or exception details.
+        } catch (IOException exception) {
+            log.warn("Best-effort draft cleanup failed; path is omitted from logs", exception);
         }
     }
 

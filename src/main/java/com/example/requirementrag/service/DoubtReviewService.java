@@ -7,9 +7,13 @@ import com.example.requirementrag.model.ReviewRequest;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import com.example.requirementrag.config.ProjectRegistry;
+import com.example.requirementrag.model.RagOutcome;
+import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
+import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
+import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
+import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.rerank.BgeReranker;
-import com.example.requirementrag.retrieval.QdrantHybridStore;
 import com.example.requirementrag.observability.RagObservability;
 import com.example.requirementrag.knowledge.HistoricalDoubtService;
 import org.springframework.stereotype.Service;
@@ -40,12 +44,12 @@ public class DoubtReviewService {
             """;
 
     private static final String CURRENT_SYSTEM_PROMPT = """
-            你是一名资深游戏需求评审人员。请仅针对 5.1 产品文档，输出恰好 %d 条待产品确认的存疑。
+            你是一名资深需求评审人员。请仅针对版本 %s 的产品文档，输出恰好 %d 条待产品确认的存疑。
 
             规则：
-            - 问题必须来自 5.1 产品文档正文（5.1/ 目录）。
+            - 问题必须来自版本 %s 的产品文档正文。
             - 对照历史存疑去重：已在旧版本问过且已有产品解答的，不再重复追问。
-            - 5.1 文档可能不完整，很多规则此前已口述确认；若历史记录已覆盖同类问题，跳过即可。
+            - 当前版本文档可能不完整，很多规则此前已确认；若历史记录已覆盖同类问题，跳过即可.
             - 每条只包含一个需要产品决策的问题。
             %s
             """;
@@ -60,25 +64,25 @@ public class DoubtReviewService {
             %s
             ---
 
-            5.1 产品文档正文：
+            当前版本产品文档正文：
             ---
             %s
             ---
 
-            5.1 检索补充片段：
+            当前版本检索补充片段：
             ---
             %s
             ---
 
-            请输出恰好 %d 条 5.1 新问题。
+            请输出恰好 %d 条当前版本新问题。
             """;
 
     private static final String PRIOR_SYSTEM_PROMPT = """
-            你是一名资深游戏需求评审人员。请从历史版本存疑中，输出恰好 %d 条「以前版本存疑」。
+            你是一名资深需求评审人员。请从历史版本存疑中，输出恰好 %d 条「以前版本存疑」。
 
             规则：
             - 优先选择历史记录中尚无产品解答、或解答仍不充分的问题。
-            - 可与 5.1 仍相关，但问题本身属于旧版本遗留，不是 5.1 新文档中新发现的问题。
+            - 可与当前版本仍相关，但问题本身属于旧版本遗留，不是当前版本文档中新发现的问题。
             - 不得重复已有明确产品解答的历史问题。
             - 模块名前缀使用 [历史版本]。
             %s
@@ -97,31 +101,27 @@ public class DoubtReviewService {
             """;
 
     private final ChatClient chatClient;
-    private final QdrantHybridStore store;
+    private final RetrievalPipeline retrievalPipeline;
     private final BgeReranker bgeReranker;
     private final RagProperties properties;
     private final ProjectRegistry projectRegistry;
-    private final QueryRouter queryRouter;
     private final RagObservability observability;
     private final HistoricalDoubtService historicalDoubtService;
 
-    public DoubtReviewService(ChatClient chatClient, QdrantHybridStore store, BgeReranker bgeReranker,
+    public DoubtReviewService(ChatClient chatClient, RetrievalPipeline retrievalPipeline, BgeReranker bgeReranker,
                               RagProperties properties, ProjectRegistry projectRegistry,
-                              QueryRouter queryRouter,
-                              RagObservability observability,
-                              HistoricalDoubtService historicalDoubtService) {
+                              RagObservability observability, HistoricalDoubtService historicalDoubtService) {
         this.chatClient = chatClient;
-        this.store = store;
+        this.retrievalPipeline = retrievalPipeline;
         this.bgeReranker = bgeReranker;
         this.properties = properties;
         this.projectRegistry = projectRegistry;
-        this.queryRouter = queryRouter;
         this.observability = observability;
         this.historicalDoubtService = historicalDoubtService;
     }
 
     /**
-     * 检索 5.1 文档上下文并生成当前版本新存疑。
+     * 通过共享检索管线加载当前版本文档上下文并生成新存疑。
      */
     public DoubtBatch reviewCurrentVersion(ReviewRequest request) {
         RetrievalContext context = loadRetrievalContext(request);
@@ -130,7 +130,7 @@ public class DoubtReviewService {
 
         DoubtBatch generated = observability.observe("llm.generate.current", request.documentId(), request.version(),
                 () -> chatClient.prompt()
-                        .system(CURRENT_SYSTEM_PROMPT.formatted(count, QUESTION_STYLE))
+                        .system(CURRENT_SYSTEM_PROMPT.formatted(request.version(), count, request.version(), QUESTION_STYLE))
                         .user(CURRENT_USER_PROMPT.formatted(
                                 request.documentId(),
                                 request.version(),
@@ -176,42 +176,31 @@ public class DoubtReviewService {
      * 加载向量检索上下文：混合搜索 → BGE 重排 → LLM 重排，并组装正文与检索片段。
      */
     private RetrievalContext loadRetrievalContext(ReviewRequest request) {
-        String queryHint = "评审 " + request.version() + " " + java.util.Objects.toString(request.module(), "");
-        String collection = resolveCollection(request.projectId(), queryHint);
-        List<ChunkRecord> allChunks = observability.observe("qdrant.scroll", request.documentId(), request.version(),
-                () -> store.scrollVersion(collection, request.documentId(), request.version()));
-        if (allChunks.isEmpty()) {
-            throw new DocumentNotFoundException(request.documentId(), request.version());
+        String query = "评审版本 " + request.version() + " 产品文档中未明确、歧义、冲突的规则。模块："
+                + Objects.toString(request.module(), "全部模块");
+        RagOutcome<RetrievalBundle> outcome = retrievalPipeline.execute(new RetrievalRequest(
+                query, RetrievalProfile.REQUIREMENT_REVIEW, request.projectId(), request.documentId(),
+                request.version(), properties.retrieval().bgeTopK(), true));
+        RetrievalBundle bundle = outcome.data();
+        List<ChunkRecord> allChunks = bundle.requirementCorpus();
+        List<ChunkRecord> hybrid = bundle.requirementEvidence();
+        if (allChunks.isEmpty() && hybrid.isEmpty()) {
+            throw new DocumentNotFoundException(bundle.documentId(), bundle.version());
         }
 
-        String query = "评审 " + request.version() + " 产品文档中未明确、歧义、冲突的规则。模块：" + Objects.toString(request.module(), "全部模块");
-        List<ChunkRecord> hybrid = observability.observe("qdrant.hybrid_search", request.documentId(), request.version(),
-                () -> store.hybridSearch(collection, query, request.documentId(), request.version()));
-        List<ChunkRecord> bgeRanked = observability.observe("bge.rerank", request.documentId(), request.version(),
+        List<ChunkRecord> bgeRanked = observability.observe("bge.rerank", bundle.documentId(), bundle.version(),
                 () -> bgeReranker.rerank(query, hybrid, properties.retrieval().bgeTopK()));
-        List<ChunkRecord> llmRanked = observability.observe("llm.rerank", request.documentId(), request.version(),
+        List<ChunkRecord> llmRanked = observability.observe("llm.rerank", bundle.documentId(), bundle.version(),
                 () -> llmRerank(query, expandParents(bgeRanked)));
 
-        List<ChunkRecord> versionChunks = filterByVersionPath(allChunks, request.version());
+        List<ChunkRecord> versionChunks = filterByVersionPath(allChunks, bundle.version());
         if (versionChunks.isEmpty()) {
-            versionChunks = allChunks;
+            versionChunks = allChunks.isEmpty() ? hybrid : allChunks;
         }
         String latestContext = joinParents(filterByModule(versionChunks, request.module()));
-        String retrievedFromVersion = joinParents(filterByVersionPath(llmRanked, request.version()));
+        String retrievedFromVersion = joinParents(filterByVersionPath(llmRanked, bundle.version()));
         String retrievedContext = retrievedFromVersion.isBlank() ? joinParents(llmRanked) : retrievedFromVersion;
         return new RetrievalContext(latestContext, retrievedContext);
-    }
-
-    private String resolveCollection(String projectId, String queryHint) {
-        String resolved = projectId;
-        if (resolved == null || resolved.isBlank()) {
-            resolved = queryRouter.route(queryHint, null).projectId();
-        }
-        try {
-            return projectRegistry.resolveRequirementCollection(resolved);
-        } catch (IllegalArgumentException ignored) {
-            return properties.qdrant().collection();
-        }
     }
 
     /** 加载历史存疑文本供 LLM 去重；读取失败时返回占位说明。支持项目级 xlsx 路径。 */

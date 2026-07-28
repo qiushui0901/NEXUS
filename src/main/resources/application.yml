@@ -84,15 +84,10 @@ app:
       base-url: ${QDRANT_URL:http://localhost:6333}
       collection: ${QDRANT_COLLECTION:requirement_chunks}
     code:
-      project-id: ${CODE_PROJECT_ID:immortal-game-service}
-      repository-path: ${CODE_REPOSITORY_PATH:/Users/user/Documents/immortal-game-service}
-      collection: ${CODE_QDRANT_COLLECTION:code_chunks_immortal_game_service_v5_1}
-      include-path-substrings:
-        - ${CODE_INCLUDE_1:/hero/}
-        - ${CODE_INCLUDE_2:/union/}
-        - ${CODE_INCLUDE_3:/compact/}
-        - ${CODE_INCLUDE_4:/worldwar/}
-        - ${CODE_INCLUDE_5:/mine/}
+      project-id: ${CODE_PROJECT_ID:default-project}
+      repository-path: ${CODE_REPOSITORY_PATH:.}
+      collection: ${CODE_QDRANT_COLLECTION:code_chunks}
+      include-path-substrings: ${CODE_INCLUDE_PATH_SUBSTRINGS:}
       exclude-path-substrings:
         - /target/
         - /.git/
@@ -114,13 +109,13 @@ app:
       bge-top-k: 20
       llm-top-k: 10
     knowledge:
-      bootstrap-enabled: ${KNOWLEDGE_BOOTSTRAP_ENABLED:true}
-      zip-path: ${KNOWLEDGE_ZIP_PATH:产品文档.zip}
-      xlsx-path: ${KNOWLEDGE_XLSX_PATH:封神版本问题整理.xlsx}
-      document-id: ${KNOWLEDGE_DOCUMENT_ID:fengshen}
-      version: ${KNOWLEDGE_VERSION:5.1}
-      zip-folder-prefix: ${KNOWLEDGE_ZIP_FOLDER_PREFIX:5.1}
-      xlsx-sheet-prefix: ${KNOWLEDGE_XLSX_SHEET_PREFIX:封神}
+      bootstrap-enabled: ${KNOWLEDGE_BOOTSTRAP_ENABLED:false}
+      zip-path: ${KNOWLEDGE_ZIP_PATH:}
+      xlsx-path: ${KNOWLEDGE_XLSX_PATH:}
+      document-id: ${KNOWLEDGE_DOCUMENT_ID:requirements}
+      version: ${KNOWLEDGE_VERSION:}
+      zip-folder-prefix: ${KNOWLEDGE_ZIP_FOLDER_PREFIX:}
+      xlsx-sheet-prefix: ${KNOWLEDGE_XLSX_SHEET_PREFIX:}
       min-html-bytes: ${KNOWLEDGE_MIN_HTML_BYTES:800}
     wiki:
       root-path: ${WIKI_ROOT_PATH:data/wiki}
@@ -135,7 +130,7 @@ app:
       current-version-questions: ${REVIEW_CURRENT_VERSION_QUESTIONS:12}
       prior-version-questions: ${REVIEW_PRIOR_VERSION_QUESTIONS:3}
     auth:
-      enabled: ${AUTH_ENABLED:false}
+      enabled: ${AUTH_ENABLED:true}
       users:
         - username: ${AUTH_USER_1_NAME:admin}
           api-key: ${AUTH_USER_1_KEY:}
@@ -146,7 +141,7 @@ app:
         #   api-key: ${AUTH_USER_2_KEY:}
         #   role: ${AUTH_USER_2_ROLE:DEVELOPER}
         #   projects:
-        #     - ${AUTH_USER_2_PROJECT:fengshen-server}
+        #     - ${AUTH_USER_2_PROJECT:default-project}
 
     # 多项目注册表。为空时自动基于上方 knowledge/code 构造默认项目。
     # 每个项目独立 collection，互不干扰。

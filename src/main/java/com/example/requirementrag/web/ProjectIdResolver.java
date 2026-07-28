@@ -4,11 +4,14 @@ import com.example.requirementrag.config.ProjectRegistry;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /** 从 query 参数或 JSON body 解析 projectId。 */
 @Component
 public class ProjectIdResolver {
+    private static final Logger log = LoggerFactory.getLogger(ProjectIdResolver.class);
 
     private final ObjectMapper objectMapper;
     private final ProjectRegistry projectRegistry;
@@ -50,7 +53,9 @@ public class ProjectIdResolver {
                 return hasText(projectId) ? projectId.trim() : null;
             }
         }
-        catch (RuntimeException ignored) {
+        catch (RuntimeException exception) {
+            log.warn("Unable to parse projectId from the cached JSON request body; request content is omitted",
+                    exception);
             return null;
         }
         return null;

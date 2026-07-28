@@ -18,6 +18,8 @@ import org.springframework.web.client.RestClient;
 @Configuration
 @EnableConfigurationProperties(RagProperties.class)
 public class AiConfiguration {
+    private static final int CONNECT_TIMEOUT_MS = 2_000;
+    private static final int READ_TIMEOUT_MS = 5_000;
 
     /** 构建 Spring AI ChatClient。 */
     @Bean
@@ -28,18 +30,26 @@ public class AiConfiguration {
     /** 配置 Qdrant REST 客户端，设置连接与读取超时。 */
     @Bean
     RestClient qdrantRestClient(RestClient.Builder builder, RagProperties properties) {
-        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(2_000);
-        requestFactory.setReadTimeout(5_000);
         return builder
                 .baseUrl(properties.qdrant().baseUrl())
-                .requestFactory(requestFactory)
+                .requestFactory(externalRequestFactory())
                 .build();
     }
 
-    /** 注册带降级能力的 BGE 重排器 Bean。 */
+    /** 注册带降级与有界连接/读取超时的 BGE 重排器 Bean。 */
     @Bean
     BgeReranker bgeReranker(RestClient.Builder builder, RagProperties properties) {
-        return new ResilientBgeReranker(new HttpBgeReranker(builder.baseUrl(properties.bge().baseUrl()).build(), properties.bge()));
+        RestClient client = builder
+                .baseUrl(properties.bge().baseUrl())
+                .requestFactory(externalRequestFactory())
+                .build();
+        return new ResilientBgeReranker(new HttpBgeReranker(client, properties.bge()));
+    }
+
+    private SimpleClientHttpRequestFactory externalRequestFactory() {
+        SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
+        requestFactory.setConnectTimeout(CONNECT_TIMEOUT_MS);
+        requestFactory.setReadTimeout(READ_TIMEOUT_MS);
+        return requestFactory;
     }
 }

@@ -7,8 +7,14 @@ public record RetrievalRequest(
         String projectId,
         String documentId,
         String version,
-        Integer limit
+        Integer limit,
+        boolean includeVersionCorpus
 ) {
+    public RetrievalRequest(String query, RetrievalProfile profile, String projectId, String documentId,
+                            String version, Integer limit) {
+        this(query, profile, projectId, documentId, version, limit, false);
+    }
+
     public RetrievalRequest {
         if (query == null || query.isBlank()) {
             throw new IllegalArgumentException("query required");

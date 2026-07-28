@@ -1,0 +1,4 @@
+app:
+  rag:
+    auth:
+      enabled: false

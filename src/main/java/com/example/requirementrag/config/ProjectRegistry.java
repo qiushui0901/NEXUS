@@ -52,7 +52,7 @@ public class ProjectRegistry {
         return List.copyOf(projectMap.values());
     }
 
-    /** 按 group 查找同组项目（如封神的服务端+客户端）。 */
+    /** 按 group 查找同一业务组的多个关联项目。 */
     public List<RagProperties.ProjectConfig> findByGroup(String group) {
         if (group == null || group.isBlank()) {
             return List.of();

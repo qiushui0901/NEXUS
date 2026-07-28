@@ -44,7 +44,7 @@ class AssistantControllerStreamTest {
 
         MvcResult started = mvc.perform(post("/api/assistant/development-plan/stream")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"query\":\"成长基金怎么开发\",\"limit\":8}"))
+                        .content("{\"query\":\"通用功能怎么开发\",\"limit\":8}"))
                 .andExpect(status().isOk())
                 .andExpect(request().asyncStarted())
                 .andReturn();

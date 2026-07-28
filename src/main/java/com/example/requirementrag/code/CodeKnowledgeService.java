@@ -6,6 +6,8 @@ import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.CodeGraphResponse;
 import com.example.requirementrag.model.CodeIndexResponse;
 import com.example.requirementrag.model.SourceSnippet;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -27,6 +29,7 @@ import java.util.Comparator;
  */
 @Service
 public class CodeKnowledgeService {
+    private static final Logger log = LoggerFactory.getLogger(CodeKnowledgeService.class);
 
     private final RagProperties properties;
     private final ProjectRegistry projectRegistry;
@@ -82,8 +85,9 @@ public class CodeKnowledgeService {
                         .forEach(projectIds::add);
             }
         }
-        catch (IllegalArgumentException ignored) {
-            // 未知项目时仅搜索默认解析结果
+        catch (IllegalArgumentException exception) {
+            log.warn("Cross-side search is using only the resolved project because project metadata is unavailable: {}",
+                    resolvedProject, exception);
         }
         return projectIds.stream()
                 .flatMap(pid -> safeSearch(query, pid, limit))
@@ -95,7 +99,9 @@ public class CodeKnowledgeService {
         try {
             return search(query, projectId, limit).stream();
         }
-        catch (RuntimeException ignored) {
+        catch (RuntimeException exception) {
+            log.warn("Code search failed for project {}; omitting that project from cross-side results",
+                    projectId, exception);
             return Stream.empty();
         }
     }
@@ -170,7 +176,9 @@ public class CodeKnowledgeService {
     private String resolveCodeCollection(String projectId) {
         try {
             return projectRegistry.resolveCodeCollection(projectId);
-        } catch (IllegalArgumentException ignored) {
+        } catch (IllegalArgumentException exception) {
+            log.warn("Code collection is not configured for project {}; using the default collection",
+                    projectId, exception);
             return properties.code().collection();
         }
     }
@@ -183,7 +191,9 @@ public class CodeKnowledgeService {
             RagProperties.ProjectConfig project = projectRegistry.require(projectId);
             String path = project.repositoryPath();
             return (path != null && !path.isBlank()) ? path : properties.code().repositoryPath();
-        } catch (IllegalArgumentException ignored) {
+        } catch (IllegalArgumentException exception) {
+            log.warn("Repository path is not configured for project {}; using the default repository",
+                    projectId, exception);
             return properties.code().repositoryPath();
         }
     }

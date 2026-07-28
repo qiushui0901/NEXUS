@@ -131,4 +131,24 @@ class MonitorWorkbenchPageTest {
                 .contains("font-size:var(--plan-heading-size)")
                 .contains("font-size:var(--plan-meta-size)");
     }
+    @Test
+    void rendersValidatedEvidenceCitationsAndTrustStatus() throws IOException {
+        String html = new ClassPathResource("static/monitor.html")
+                .getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(html)
+                .contains("evidenceReferences")
+                .contains("citationQuality")
+                .contains("supportStatus")
+                .contains("plan.warnings")
+                .contains("addPlanWarnings")
+                .contains("event.type === 'warning'")
+                .contains("证据覆盖")
+                .contains("查看证据")
+                .contains("openEvidence(id)")
+                .contains("需求证据查看器")
+                .contains("代码证据")
+                .doesNotContain("v-html");
+    }
+
 }

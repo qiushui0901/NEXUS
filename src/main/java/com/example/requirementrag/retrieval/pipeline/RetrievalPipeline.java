@@ -28,6 +28,7 @@ import java.util.function.Supplier;
 @Service
 public class RetrievalPipeline {
     private static final String DOCUMENT_STAGE = "qdrant.hybrid_search";
+    private static final String DOCUMENT_CORPUS_STAGE = "qdrant.scroll";
     private static final String CODE_STAGE = "code.hybrid_search";
 
     private final RagProperties properties;
@@ -57,12 +58,18 @@ public class RetrievalPipeline {
         recordOutcome(routing, documentId, version);
         String projectId = routing.data().projectId();
 
+        String requirementCollection = request.profile().usesRequirementEvidence()
+                ? projectRegistry.resolveRequirementCollection(projectId) : null;
         RagOutcome<List<ChunkRecord>> requirementOutcome = request.profile().usesRequirementEvidence()
                 ? retrieve(DOCUMENT_STAGE, documentId, version,
                         "DOCUMENT_RETRIEVAL_UNAVAILABLE", "需求文档检索暂时不可用",
-                        () -> documentStore.hybridSearch(projectRegistry.resolveRequirementCollection(projectId),
-                                request.query(), documentId, version))
+                        () -> documentStore.hybridSearch(requirementCollection, request.query(), documentId, version))
                 : RagOutcome.of(RagOutcomeStatus.NO_RESULTS, List.of(), DOCUMENT_STAGE, 0, 0);
+        RagOutcome<List<ChunkRecord>> corpusOutcome = request.includeVersionCorpus()
+                ? retrieve(DOCUMENT_CORPUS_STAGE, documentId, version,
+                        "DOCUMENT_CORPUS_UNAVAILABLE", "需求文档正文暂时不可用",
+                        () -> documentStore.scrollVersion(requirementCollection, documentId, version))
+                : RagOutcome.of(RagOutcomeStatus.NO_RESULTS, List.of(), DOCUMENT_CORPUS_STAGE, 0, 0);
         RagOutcome<List<CodeChunk>> codeOutcome = request.profile().usesCodeEvidence()
                 ? retrieve(CODE_STAGE, documentId, version,
                         "CODE_RETRIEVAL_UNAVAILABLE", "代码检索暂时不可用",
@@ -71,24 +78,30 @@ public class RetrievalPipeline {
 
         List<ChunkRecord> requirements = deduplicate(requirementOutcome.data(), this::requirementKey).stream()
                 .limit(limit).toList();
+        List<ChunkRecord> corpus = deduplicate(corpusOutcome.data(), this::requirementKey);
         List<CodeChunk> code = deduplicate(codeOutcome.data(), this::codeKey).stream().limit(limit).toList();
         List<RagWarning> warnings = new ArrayList<>();
         List<RagStageDiagnostic> diagnostics = new ArrayList<>();
         collect(routing, warnings, diagnostics);
         collect(requirementOutcome, warnings, diagnostics);
+        if (request.includeVersionCorpus()) {
+            collect(corpusOutcome, warnings, diagnostics);
+        }
         collect(codeOutcome, warnings, diagnostics);
 
         boolean failedCoreStage = requirementOutcome.status() == RagOutcomeStatus.FAILED
+                || request.includeVersionCorpus() && corpusOutcome.status() == RagOutcomeStatus.FAILED
                 || codeOutcome.status() == RagOutcomeStatus.FAILED;
-        if (requirements.isEmpty() && code.isEmpty() && failedCoreStage) {
+        if (requirements.isEmpty() && corpus.isEmpty() && code.isEmpty() && failedCoreStage) {
             throw new RagUnavailableException(warnings);
         }
 
         RagOutcomeStatus status = !warnings.isEmpty()
                 ? RagOutcomeStatus.DEGRADED
-                : requirements.isEmpty() && code.isEmpty() ? RagOutcomeStatus.NO_RESULTS : RagOutcomeStatus.SUCCESS;
+                : requirements.isEmpty() && corpus.isEmpty() && code.isEmpty()
+                        ? RagOutcomeStatus.NO_RESULTS : RagOutcomeStatus.SUCCESS;
         RetrievalBundle bundle = new RetrievalBundle(request.query(), request.profile(), projectId, documentId,
-                version, requirements, code);
+                version, requirements, corpus, code);
         return new RagOutcome<>(status, bundle, warnings, diagnostics);
     }
 

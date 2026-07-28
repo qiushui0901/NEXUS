@@ -6,7 +6,8 @@ import org.springframework.boot.test.context.SpringBootTest;
 @SpringBootTest(properties = {
         "logging.structured.format.console=",
         "management.tracing.sampling.probability=0",
-        "app.rag.knowledge.bootstrap-enabled=false"
+        "app.rag.knowledge.bootstrap-enabled=false",
+        "app.rag.auth.enabled=false"
 })
 class RequirementRagApplicationTest {
 

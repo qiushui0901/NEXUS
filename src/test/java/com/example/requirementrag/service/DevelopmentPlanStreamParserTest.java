@@ -16,13 +16,15 @@ class DevelopmentPlanStreamParserTest {
         assertThat(parser.accept("{\"type\":\"summary\",\"payload\":{\"text\":\"先看"))
                 .isEmpty();
 
-        List<DevelopmentPlanStreamEvent> events = parser.accept("入口\"},\"message\":\"生成概要\"}\n"
+        List<DevelopmentPlanStreamEvent> events = parser.accept("入口\",\"evidenceIds\":[\"requirement:req-1\"]},\"message\":\"生成概要\"}\n"
                 + "{\"type\":\"constraint\",\"payload\":{\"text\":\"保证幂等\"}}\n");
 
         assertThat(events).hasSize(2);
         assertThat(events.get(0).type()).isEqualTo("summary");
         assertThat(events.get(0).sequence()).isEqualTo(1);
         assertThat(events.get(0).payload().get("text").asText()).isEqualTo("先看入口");
+        assertThat(events.get(0).payload().path("evidenceIds").get(0).asText())
+                .isEqualTo("requirement:req-1");
         assertThat(events.get(1).type()).isEqualTo("constraint");
         assertThat(events.get(1).sequence()).isEqualTo(2);
     }

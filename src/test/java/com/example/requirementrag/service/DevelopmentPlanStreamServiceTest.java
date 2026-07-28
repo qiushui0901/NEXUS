@@ -1,6 +1,12 @@
 package com.example.requirementrag.service;
 
+import com.example.requirementrag.evidence.EvidenceCitationService;
+import com.example.requirementrag.evidence.EvidenceRegistry;
+import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.model.DevelopmentPlanStreamEvent;
+import com.example.requirementrag.model.RagWarning;
+import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
+import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
 import com.example.requirementrag.model.CodeChunk;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
@@ -12,6 +18,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.assertj.core.api.Assertions.assertThat;
 
 class DevelopmentPlanStreamServiceTest {
 
@@ -64,19 +71,36 @@ class DevelopmentPlanStreamServiceTest {
     }
 
     @Test
+    void rejectsStreamsThatOnlyContainUnsupportedEventTypes() {
+        EvidenceRegistry registry = EvidenceRegistry.from(new RetrievalBundle("query", RetrievalProfile.DEVELOPMENT_PLAN,
+                "project-a", null, null, List.of(), List.of()));
+        List<RagWarning> warnings = new ArrayList<>();
+        var session = new EvidenceCitationService().open(registry);
+        Flux<String> chunks = Flux.just(
+                "{\"type\":\"internal-debug\",\"payload\":{\"text\":\"debug\"}}\n");
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> service.consumeValidatedModelStreamOutcome(chunks, event ->
+                        service.validateCitationEvent(event, session, warnings) != null, System.nanoTime()));
+
+        assertEquals("Model stream produced no valid events", failure.getMessage());
+        assertThat(warnings).extracting(RagWarning::code).containsExactly("UNKNOWN_PLAN_EVENT_TYPE");
+    }
+
+    @Test
     void enrichesSectionEventsWithRealCodeTargetsOnly() {
         ObjectNode payload = objectMapper.createObjectNode()
-                .put("title", "配置表设计")
-                .put("purpose", "按等级读取奖励档位配置");
+                .put("title", "配置规则设计")
+                .put("purpose", "按条件读取功能配置");
         DevelopmentPlanStreamEvent event = new DevelopmentPlanStreamEvent("section", 3, payload, "生成配置方案");
         List<CodeChunk> code = List.of(new CodeChunk(
-                "config-id", "game", "sha", "config/ConfigHeroGrowUp.java", "class",
-                "ConfigHeroGrowUp", 10, 50, "load config getByLevel reward", "hash"));
+                "config-id", "game", "sha", "config/FeatureRuleConfig.java", "class",
+                "FeatureRuleConfig", 10, 50, "load config getByCondition", "hash"));
 
         DevelopmentPlanStreamEvent enriched = service.enrichSectionEvent(event, code);
 
         assertEquals("config-id", enriched.payload().path("inspectTargets").get(0).path("id").asText());
-        assertEquals("配置表设计", enriched.payload().path("title").asText());
+        assertEquals("配置规则设计", enriched.payload().path("title").asText());
     }
 
     @Test
@@ -88,4 +112,38 @@ class DevelopmentPlanStreamServiceTest {
 
         assertEquals(event, unchanged);
     }
+    @Test
+    void validatesStreamCitationsAgainstTheCurrentRetrievalWhitelist() {
+        ChunkRecord chunk = new ChunkRecord("req-1", "doc-a", "1.0", "docs/spec.md", "section-a",
+                "业务规则", "业务规则", "hash-a", 1, 1);
+        EvidenceRegistry registry = EvidenceRegistry.from(new RetrievalBundle("query", RetrievalProfile.DEVELOPMENT_PLAN,
+                "project-a", "doc-a", "1.0", List.of(chunk), List.of()));
+        var session = new EvidenceCitationService().open(registry);
+        List<RagWarning> warnings = new ArrayList<>();
+        ObjectNode payload = objectMapper.createObjectNode().put("text", "结论");
+        payload.putArray("evidenceIds").add("requirement:req-1").add("requirement:unknown");
+
+        DevelopmentPlanStreamEvent validated = service.validateCitationEvent(
+                new DevelopmentPlanStreamEvent("summary", 1, payload, "生成摘要"), session, warnings);
+
+        assertThat(validated.payload().path("evidenceIds").valueStream().map(node -> node.asText()).toList())
+                .containsExactly("requirement:req-1");
+        assertEquals("PARTIAL", validated.payload().path("supportStatus").asText());
+        assertThat(session.warnings()).extracting(RagWarning::code).containsExactly("INVALID_EVIDENCE_REFERENCE");
+    }
+
+    @Test
+    void ignoresUnknownStreamEventTypesAndAddsAStableWarning() {
+        EvidenceRegistry registry = EvidenceRegistry.from(new RetrievalBundle("query", RetrievalProfile.DEVELOPMENT_PLAN,
+                "project-a", null, null, List.of(), List.of()));
+        List<RagWarning> warnings = new ArrayList<>();
+
+        DevelopmentPlanStreamEvent validated = service.validateCitationEvent(
+                new DevelopmentPlanStreamEvent("internal-debug", 1, objectMapper.createObjectNode(), "debug"),
+                new EvidenceCitationService().open(registry), warnings);
+
+        assertThat(validated).isNull();
+        assertThat(warnings).extracting(RagWarning::code).containsExactly("UNKNOWN_PLAN_EVENT_TYPE");
+    }
+
 }

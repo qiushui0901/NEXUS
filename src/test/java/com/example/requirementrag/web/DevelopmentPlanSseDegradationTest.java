@@ -77,6 +77,9 @@ class DevelopmentPlanSseDegradationTest {
                 .andExpect(content().string(containsString("event:retrieval")))
                 .andExpect(content().string(containsString("event:references")))
                 .andExpect(content().string(containsString("event:completed")))
+                .andExpect(content().string(containsString("\"evidence\":[]")))
+                .andExpect(content().string(containsString("\"supportStatus\":\"UNSUPPORTED\"")))
+                .andExpect(content().string(containsString("\"citationQuality\"")))
                 .andExpect(content().string(containsString("ROUTING_LLM_UNAVAILABLE")));
     }
 }

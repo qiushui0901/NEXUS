@@ -26,6 +26,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class VersionKnowledgeBuildPipelineTest {
@@ -36,6 +37,7 @@ class VersionKnowledgeBuildPipelineTest {
     private final ProjectRegistry projectRegistry = mock(ProjectRegistry.class);
     private final QdrantHybridStore documentStore = mock(QdrantHybridStore.class);
     private final RetrievalPipeline retrievalPipeline = mock(RetrievalPipeline.class);
+    private final KnowledgeDraftLifecycleService draftLifecycleService = mock(KnowledgeDraftLifecycleService.class);
     private VersionKnowledgeBuildPipeline pipeline;
 
     @BeforeEach
@@ -55,7 +57,7 @@ class VersionKnowledgeBuildPipelineTest {
         WikiProperties properties = new WikiProperties(temp.resolve("wiki").toString(),
                 temp.resolve("sources").toString(), temp.resolve("drafts").toString());
         pipeline = new VersionKnowledgeBuildPipeline(mapper, properties, projectRegistry,
-                documentStore, retrievalPipeline);
+                documentStore, retrievalPipeline, draftLifecycleService);
     }
 
     @Test
@@ -90,6 +92,8 @@ class VersionKnowledgeBuildPipelineTest {
         assertThat(page.get("testKnowledge").get("summary").asText()).isEqualTo("没有真实执行快照");
         assertThat(page.get("quality").get("realTestExecution").asBoolean()).isFalse();
         assertThat(page.get("versionChange").get("changeType").asText()).isEqualTo("MODIFIED");
+        verify(draftLifecycleService).initializeDraft("game", "5.1", result.buildId(),
+                "system", result.generatedAt());
     }
 
     @Test

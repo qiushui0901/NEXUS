@@ -16,6 +16,11 @@ tools/*.tar.gz
 *.zip
 !.env.example
 
+# Local business spreadsheets and generated exports
+/*.xlsx
+/data/*.xlsx
+/output/*.xlsx
+
 # Local Qdrant state and generated snapshots
 .qdrant-initialized
 qdrant-storage/

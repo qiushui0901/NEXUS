@@ -53,6 +53,20 @@ Content-Type: application/json
 
 The endpoint requires `Permission.WRITE` and project access.
 
+### Knowledge draft lifecycle APIs
+
+```http
+GET  /api/knowledge/drafts?projectId=...&version=...
+GET  /api/knowledge/drafts/{buildId}?projectId=...&version=...
+POST /api/knowledge/drafts/{buildId}/transition?projectId=...&version=...
+POST /api/knowledge/drafts/{buildId}/publish?projectId=...&version=...
+POST /api/knowledge/drafts/{buildId}/rollback?projectId=...&version=...
+```
+
+All endpoints validate the project and enforce project access. Read operations require
+`PUBLIC_READ`; transitions, publication, and rollback require `WRITE`. The actor is
+always taken from the authenticated `UserContext`, never from request data.
+
 ### Version manifest and comparison APIs
 
 ```http
@@ -94,6 +108,17 @@ Saving requires `Permission.WRITE`. Listing, reading, and comparing require `Per
 - Apply the configured/default limit after deduplication.
 - `DevelopmentPlanService` and `DevelopmentPlanStreamService` must delegate retrieval orchestration to `RetrievalPipeline`; they only own generation and output formatting.
 
+### Generated-answer evidence citations
+
+- Build one request-scoped `EvidenceRegistry` from the returned `RetrievalBundle`; only registry IDs are valid citations for that generation request.
+- Requirement and code IDs use separate namespaces. IDs must be deterministic for stable chunk identities, collision-safe, bounded, and must never expose credentials or local absolute paths.
+- Prompt evidence blocks must carry their registry ID. Model-provided IDs are untrusted input and must be trimmed, deduplicated, bounded, and checked against the registry before they reach an API response.
+- A claim with only valid IDs is `SUPPORTED`; a claim with both accepted and rejected IDs is `PARTIAL`; a claim with no accepted ID is `UNSUPPORTED`.
+- Missing or invalid citations produce stable `RagWarning` codes when retrieval evidence existed. A normal zero-hit response remains `NO_RESULTS` and must not fabricate a missing-citation failure.
+- Aggregate quality reports total, supported, partial, and unsupported claims plus a bounded coverage rate. Partial support contributes half weight; quality status is `VERIFIED`, `REVIEW_REQUIRED`, or `INSUFFICIENT_EVIDENCE`.
+- The legacy synchronous development-plan fields remain compatible and citation metadata is additive. SSE plan events carry validated `evidenceIds` and `supportStatus`; terminal payloads carry the evidence registry and citation quality.
+- Browser rendering must use text binding rather than raw HTML. Requirement citations show only bounded excerpts; code citations may call the existing protected source endpoint.
+
 ### Requirement parent-chunk comparison
 
 - `RequirementChunkDiff` is the shared comparison algorithm for formal version comparison and version-knowledge draft construction. Do not duplicate the matching algorithm.
@@ -111,6 +136,22 @@ Saving requires `Permission.WRITE`. Listing, reading, and comparing require `Per
 - Generated pages are `DRAFT`; feature review status is `PENDING_REVIEW`.
 - Missing code or tests must be counted and exposed; absence must not be presented as verified evidence.
 - Test suggestions in a draft are proposals, not test execution results.
+
+### Draft lifecycle, publication, and rollback
+
+- A completed build initializes persisted metadata in `DRAFT` with actor, timestamp, revision, and history.
+- Legal states are `DRAFT`, `IN_REVIEW`, `APPROVED`, `REJECTED`, `PUBLISHED`, `SPLIT`, and `MERGED`; one centralized transition table owns all legal transitions.
+- Every transition persists actor, timestamp, from/to status, and optional bounded comment through temp-file plus atomic replacement.
+- Only `APPROVED` drafts may publish. Publication first snapshots the prior formal source, atomically installs the reviewed source, invokes the existing atomic Wiki generator, and marks metadata `PUBLISHED` only after generation succeeds.
+- Rollback restores a retained publication snapshot and regenerates the Wiki before recording the rollback event. A failure must leave the previously published source and Wiki readable.
+- File-backed lifecycle locking is process-local and suitable only for the single-instance 0.5 deployment. Multi-instance deployment requires a transactional shared store in a later release.
+
+### Authentication and external dependency safety
+
+- Shared/default configuration enables API-key authentication. Only the explicit local profile disables it.
+- Startup fails when authentication is enabled but no usable user/API-key entry exists. Explicitly disabled authentication logs a prominent security warning.
+- Qdrant and BGE `RestClient` instances each use a request factory with a 2-second connect timeout and 5-second read timeout.
+- A caught dependency, parsing, fallback, or cleanup exception must be logged without request bodies, credentials, absolute paths, or other sensitive data. User-visible degradation continues through stable `RagWarning` or existing public error contracts; never silently convert a failure to an empty successful result.
 
 ### Requirement snapshot persistence
 
@@ -226,6 +267,15 @@ REQUIREMENT_SNAPSHOT_ROOT_PATH=data/requirement-snapshots
 | Neither a formal manifest nor a published Wiki index exists for a selected version | Return the stable manifest-not-found error |
 | Git commit is not a concrete SHA | Reject before starting Git |
 | Test snapshot contains duplicate `caseId` | Reject the manifest |
+| Authentication is enabled with no usable credentials | Fail application startup |
+| Authentication is explicitly disabled | Start only for the selected configuration and emit a prominent security warning |
+| BGE cannot connect or exceeds its read timeout | Let `ResilientBgeReranker` return its stable degraded result; do not wait indefinitely |
+| Best-effort cleanup fails | Log the internal exception with a path-free message; preserve the original operation outcome |
+| Model cites only IDs in the request-scoped evidence registry | Return accepted IDs and mark the claim `SUPPORTED` |
+| Model mixes valid and unknown evidence IDs | Remove unknown IDs, mark the claim `PARTIAL`, and add `INVALID_EVIDENCE_REFERENCE` |
+| Retrieval returned evidence but a generated claim cites none | Mark the claim `UNSUPPORTED` and add `MISSING_EVIDENCE_REFERENCE` |
+| Retrieval returned no evidence | Preserve `NO_RESULTS`; do not fabricate a citation warning |
+| SSE emits an unknown event type | Ignore the event, add `UNKNOWN_PLAN_EVENT_TYPE`, and do not count it as a valid model event |
 
 Raw dependency exceptions, URLs, request payloads, credentials, absolute paths, and stack traces must never appear in public warnings or generated files.
 
@@ -242,6 +292,8 @@ Target and base snapshots contain identical parent keys and content hashes. Requ
 ### Bad
 
 A request uses `version: "../../storage"`, a Git value such as `HEAD;rm`, duplicate snapshot entry IDs, an unreviewed version alias, or generated JSON contains an `embedding` field. The request is rejected or the version remains unbound; no partial artifact is published.
+
+A generated claim cites an ID from another request, project, document, or version. The server removes the ID, degrades support and aggregate quality, emits a stable warning, and never exposes the foreign evidence to the client.
 
 ## 6. Tests Required
 
@@ -266,9 +318,14 @@ Changes to these contracts require assertions for:
 - forbidden-field absence in serialized drafts and manifests
 - Controller validation, project access, and permission requirements
 - conflict normalization/deduplication, all primary source-pair classifications, same-source conflict, project/version contamination, Wiki evidence support, deterministic status, and development-plan response compatibility
+- evidence ID stability/collision handling, path and excerpt sanitization, whitelist acceptance/filtering, missing-reference behavior, coverage calculation, synchronous response compatibility, SSE event validation, and citation browser contracts
 - Browser route, static page contract, navigation, deep-link parameter consumption, and HTML escaping
 - Browser empty, loading, error, unavailable-source, and missing-real-test-snapshot states
 - Spring application-context binding for `WikiProperties` and `VersioningProperties`
+- draft transition legality, audit history, approved-only publication, atomic rollback, and failed-publication preservation
+- authentication startup validation for enabled-empty, enabled-valid, and explicitly disabled configurations
+- BGE/Qdrant clients retain bounded connect/read timeout configuration
+- production code contains no empty catch blocks or ignored exceptions without logging or propagation
 
 Run the full Java 21 verification before delivery:
 
@@ -282,6 +339,10 @@ git diff --check
 **Wrong:** catch a Qdrant exception and return an empty list, then label the result `NO_RESULTS` or an available comparison with no changes.
 
 **Correct:** preserve the failed-stage diagnostic; return `DEGRADED` only when another evidence source remains, otherwise use the stable public failure contract.
+
+**Wrong:** rely on `ResilientBgeReranker` while its HTTP client has unbounded transport waits, or silently discard cleanup/parsing exceptions.
+
+**Correct:** bound BGE connection and read time, then log internal failures safely and expose only the stable degradation contract.
 
 **Wrong:** infer a requirement baseline from a nearby-looking business version, treat each incremental document as a complete list, infer removal from absence or正文关键词, copy Qdrant points or vectors into a snapshot, or require local Qdrant data to display a committed historical requirement diff.
 
@@ -298,3 +359,7 @@ git diff --check
 **Wrong:** let the browser interpolate API text directly into `innerHTML`, or turn a missing source into a zero-change card.
 
 **Correct:** escape every API-derived value, render `NOT_AVAILABLE` with a safe warning, and keep the other comparison tabs available.
+
+**Wrong:** trust model-provided evidence IDs, pass them directly to JSON/SSE, or count an unknown SSE event as proof that generation succeeded.
+
+**Correct:** validate every ID against the request-scoped registry before serialization, cap and deduplicate citations, ignore unknown event types with a stable warning, and require at least one accepted model event for stream completion.

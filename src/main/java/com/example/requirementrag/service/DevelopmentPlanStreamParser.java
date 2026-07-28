@@ -1,6 +1,8 @@
 package com.example.requirementrag.service;
 
 import com.example.requirementrag.model.DevelopmentPlanStreamEvent;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 import java.util.ArrayList;
@@ -8,6 +10,7 @@ import java.util.List;
 
 /** 将模型增量文本按 NDJSON 行解析成开发方案事件。 */
 public final class DevelopmentPlanStreamParser {
+    private static final Logger log = LoggerFactory.getLogger(DevelopmentPlanStreamParser.class);
 
     private final ObjectMapper objectMapper;
     private final StringBuilder buffer = new StringBuilder();
@@ -56,7 +59,8 @@ public final class DevelopmentPlanStreamParser {
             return java.util.Optional.of(new DevelopmentPlanStreamEvent(
                     root.get("type").asText(), ++sequence, payload, message));
         }
-        catch (Exception ignored) {
+        catch (Exception exception) {
+            log.debug("Ignoring a malformed development-plan stream line; content is omitted from logs", exception);
             return java.util.Optional.empty();
         }
     }

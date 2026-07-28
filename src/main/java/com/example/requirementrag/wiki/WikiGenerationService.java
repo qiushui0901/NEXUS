@@ -13,6 +13,8 @@ import com.example.requirementrag.wiki.WikiModels.TestKnowledge;
 import com.example.requirementrag.wiki.WikiModels.VersionChange;
 import com.example.requirementrag.wiki.WikiModels.VersionIndex;
 import com.example.requirementrag.wiki.WikiModels.VersionSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -36,6 +38,7 @@ import java.util.stream.Stream;
 /** Validates versioned facts and publishes human-readable Markdown plus JSON artifacts. */
 @Service
 public class WikiGenerationService {
+    private static final Logger log = LoggerFactory.getLogger(WikiGenerationService.class);
     private static final Pattern FORBIDDEN_SOURCE_FIELD = Pattern.compile(
             "(?i)\\\"(?:vector|vectors|denseVector|sparseVector|embedding|embeddings|qdrantPoint|qdrantPoints|"
                     + "snapshot|snapshots|storage|apiKey|password|secret|token|authorization|credential|credentials)"
@@ -308,12 +311,18 @@ public class WikiGenerationService {
         try {
             Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
         } catch (AtomicMoveNotSupportedException exception) {
+            log.debug("Atomic move is unsupported for the Wiki filesystem; using a regular move", exception);
             Files.move(source, target);
         }
     }
 
     private void deleteQuietly(Path path) {
-        try { deleteTree(path); } catch (IOException ignored) { }
+        try {
+            deleteTree(path);
+        }
+        catch (IOException exception) {
+            log.warn("Best-effort Wiki cleanup failed; path is omitted from logs", exception);
+        }
     }
 
     private void deleteTree(Path path) throws IOException {

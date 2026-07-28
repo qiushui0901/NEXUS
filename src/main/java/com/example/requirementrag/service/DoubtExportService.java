@@ -21,7 +21,7 @@ public class DoubtExportService {
      */
     public byte[] toXlsx(DoubtBatch batch, String version) throws IOException {
         try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-            Sheet sheet = workbook.createSheet("封神" + version);
+            Sheet sheet = workbook.createSheet(sheetName(version));
             Row header = sheet.createRow(0);
             header.createCell(0).setCellValue("功能分类");
             header.createCell(1).setCellValue("功能点");
@@ -69,4 +69,11 @@ public class DoubtExportService {
             default         -> "已明确";
         };
     }
+
+    private String sheetName(String version) {
+        String suffix = version == null || version.isBlank() ? "" : "-" + version.trim();
+        String name = "需求存疑" + suffix;
+        return name.length() <= 31 ? name : name.substring(0, 31);
+    }
+
 }

@@ -13,6 +13,8 @@ import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.Measurement;
 import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.MeterRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -35,6 +37,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/monitor")
 public class MonitorController {
+    private static final Logger log = LoggerFactory.getLogger(MonitorController.class);
 
     private final RagProperties properties;
     private final BootstrapState bootstrapState;
@@ -95,7 +98,11 @@ public class MonitorController {
             if (project.knowledge() != null) {
                 return project.knowledge().toKnowledge();
             }
-        } catch (IllegalArgumentException ignored) {}
+        }
+        catch (IllegalArgumentException exception) {
+            log.warn("Monitor status cannot resolve knowledge settings for project {}; using defaults",
+                    projectId, exception);
+        }
         return properties.knowledge();
     }
 
@@ -105,7 +112,9 @@ public class MonitorController {
         }
         try {
             return projectRegistry.resolveRequirementCollection(projectId);
-        } catch (IllegalArgumentException ignored) {
+        } catch (IllegalArgumentException exception) {
+            log.warn("Monitor status cannot resolve the requirement collection for project {}; using the default",
+                    projectId, exception);
             return properties.qdrant().collection();
         }
     }
@@ -144,6 +153,8 @@ public class MonitorController {
             return store.countVersion(collection, documentId, version);
         }
         catch (RuntimeException exception) {
+            log.warn("Monitor could not count requirement chunks for document {} version {}",
+                    documentId, version, exception);
             return 0L;
         }
     }
@@ -156,6 +167,7 @@ public class MonitorController {
             return status == null ? "UNKNOWN" : String.valueOf(status);
         }
         catch (RuntimeException exception) {
+            log.debug("Application health probe failed", exception);
             return "DOWN";
         }
     }
@@ -167,6 +179,7 @@ public class MonitorController {
             return "UP";
         }
         catch (RuntimeException exception) {
+            log.debug("Qdrant health probe failed", exception);
             return "DOWN";
         }
     }
@@ -178,6 +191,7 @@ public class MonitorController {
             return "UP";
         }
         catch (RuntimeException exception) {
+            log.debug("Ollama health probe failed", exception);
             return "DOWN";
         }
     }

@@ -571,6 +571,51 @@
     .plan-stage i.running { background:var(--accent); box-shadow:0 0 0 0 rgba(109,231,242,.4); animation:streamPulse 1.3s infinite; }
     .plan-stage i.success { background:var(--green); box-shadow:0 0 0 2px rgba(56,217,150,.12); }
     .plan-stage i.error { background:var(--red); box-shadow:0 0 0 3px rgba(255,107,122,.14); }
+    .citation-summary {
+      display:flex;
+      align-items:center;
+      gap:9px;
+      flex-wrap:wrap;
+      margin:0 11px 10px;
+      padding:9px 11px;
+      border:1px solid var(--line);
+      border-radius:12px;
+      background:rgba(7,17,28,.72);
+      color:var(--muted);
+    }
+    .citation-summary strong { color:var(--text); font-size:12px; }
+    .citation-summary small { color:var(--faint); }
+    .plan-warning-list { display:grid; gap:7px; margin:0 11px 10px; }
+    .plan-warning { padding:9px 11px; border:1px solid rgba(255,209,102,.34); border-radius:10px; color:#ffd166; background:rgba(255,209,102,.08); font-size:11px; line-height:1.5; }
+    .plan-warning strong { margin-right:6px; color:#ffe3a3; }
+    .support-pill {
+      display:inline-flex;
+      align-items:center;
+      min-height:22px;
+      padding:3px 8px;
+      border:1px solid var(--line2);
+      border-radius:999px;
+      font-size:10px;
+      white-space:nowrap;
+    }
+    .support-pill.supported,.support-pill.verified { color:var(--green); border-color:rgba(56,217,150,.38); background:rgba(56,217,150,.08); }
+    .support-pill.partial,.support-pill.review-required { color:var(--yellow); border-color:rgba(255,209,102,.38); background:rgba(255,209,102,.08); }
+    .support-pill.unsupported,.support-pill.insufficient-evidence { color:var(--red); border-color:rgba(255,107,122,.38); background:rgba(255,107,122,.08); }
+    .claim-content { display:grid; gap:5px; min-width:0; }
+    .citation-links { display:flex; align-items:center; gap:5px; flex-wrap:wrap; }
+    .evidence-chip {
+      width:auto;
+      padding:3px 7px;
+      border-radius:999px;
+      border-color:rgba(109,231,242,.24);
+      background:rgba(109,231,242,.06);
+      color:var(--accent);
+      font-size:10px;
+    }
+    .evidence-chip:hover { background:rgba(109,231,242,.13); }
+    .evidence-drawer-body { flex:1; min-height:0; overflow:auto; padding:18px; display:grid; align-content:start; gap:14px; }
+    .evidence-meta { display:flex; gap:7px; flex-wrap:wrap; color:var(--muted); font-size:11px; }
+    .evidence-excerpt { margin:0; padding:16px; border:1px solid var(--line); border-radius:12px; background:#030a11; color:#d8e9f4; line-height:1.75; white-space:pre-wrap; overflow-wrap:anywhere; }
     @keyframes streamPulse { 70% { box-shadow:0 0 0 7px rgba(109,231,242,0); } 100% { box-shadow:0 0 0 0 rgba(109,231,242,0); } }
     .two { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
     .section-card { display:grid; gap:8px; border:1px solid var(--line); border-radius:14px; background:#091121; padding:10px; }
@@ -1006,9 +1051,25 @@
           <div class="topbar-title">
             <h2>开发方案</h2>
             <p>{{ plan.summary || '这里是“怎么开发”的答案，不再混入产品存疑；缺失信息会表达成实现假设或开发约束。' }}</p>
+            <div class="citation-links" v-if="plan.summaryCitation">
+              <span :class="['support-pill', citationTone(plan.summaryCitation.supportStatus)]">{{ citationStatusLabel(plan.summaryCitation.supportStatus) }}</span>
+              <button class="evidence-chip" v-for="id in claimEvidenceIds(plan.summaryCitation)" :key="id" @click="openEvidence(id)">{{ evidenceChipLabel(id) }}</button>
+            </div>
             <div class="plan-stage" v-if="planStreaming || planStage"><i :class="planStatus"></i>{{ planStage }}</div>
           </div>
           <button class="primary" @click="loadPlan" :disabled="busy">重新生成</button>
+        </div>
+
+        <div class="citation-summary" v-if="plan.citationQuality">
+          <span :class="['support-pill', citationQualityTone(plan.citationQuality.status)]">{{ citationQualityLabel(plan.citationQuality.status) }}</span>
+          <strong>证据覆盖 {{ citationCoveragePercent(plan.citationQuality) }}%</strong>
+          <small>已支持 {{ plan.citationQuality.supportedClaims || 0 }} 条 · 部分支持 {{ plan.citationQuality.partialClaims || 0 }} 条 · 待核实 {{ plan.citationQuality.unsupportedClaims || 0 }} 条</small>
+        </div>
+
+        <div class="plan-warning-list" v-if="(plan.warnings || []).length">
+          <div class="plan-warning" v-for="warning in plan.warnings" :key="warning.code + ':' + warning.message">
+            <strong>{{ warning.code || '生成提示' }}</strong>{{ warning.message || '部分内容需要人工复核。' }}
+          </div>
         </div>
 
         <div class="plan-layout">
@@ -1017,14 +1078,18 @@
               <div class="card">
                 <h3>产品规则理解</h3>
                 <ul class="plain-list">
-                  <li v-for="item in plan.productUnderstanding || []" :key="item">{{ item }}</li>
+                  <li v-for="(item,index) in plan.productUnderstanding || []" :key="claimKey(item,index)">
+                    <div class="claim-content"><span>{{ claimText(item) }}</span><div class="citation-links"><span :class="['support-pill', citationTone(claimSupportStatus(item))]">{{ citationStatusLabel(claimSupportStatus(item)) }}</span><button class="evidence-chip" v-for="id in claimEvidenceIds(item)" :key="id" @click="openEvidence(id)">{{ evidenceChipLabel(id) }}</button></div></div>
+                  </li>
                 </ul>
                 <p v-if="!(plan.productUnderstanding || []).length" class="muted">暂无产品规则理解。请先导入需求文档向量库。</p>
               </div>
               <div class="card">
                 <h3>开发约束与影响</h3>
                 <ul class="plain-list">
-                  <li v-for="item in plan.developmentConstraints || []" :key="item">{{ item }}</li>
+                  <li v-for="(item,index) in plan.developmentConstraints || []" :key="claimKey(item,index)">
+                    <div class="claim-content"><span>{{ claimText(item) }}</span><div class="citation-links"><span :class="['support-pill', citationTone(claimSupportStatus(item))]">{{ citationStatusLabel(claimSupportStatus(item)) }}</span><button class="evidence-chip" v-for="id in claimEvidenceIds(item)" :key="id" @click="openEvidence(id)">{{ evidenceChipLabel(id) }}</button></div></div>
+                  </li>
                 </ul>
                 <p v-if="!(plan.developmentConstraints || []).length" class="muted">暂无开发约束。</p>
               </div>
@@ -1071,7 +1136,7 @@
                 </div>
               </div>
               <div class="step-list">
-                <div class="step" v-for="item in plan.chainOverview || []" :key="item">{{ item }}</div>
+                <div class="step" v-for="(item,index) in plan.chainOverview || []" :key="claimKey(item,index)"><div class="claim-content"><span>{{ claimText(item) }}</span><div class="citation-links"><span :class="['support-pill', citationTone(claimSupportStatus(item))]">{{ citationStatusLabel(claimSupportStatus(item)) }}</span><button class="evidence-chip" v-for="id in claimEvidenceIds(item)" :key="id" @click="openEvidence(id)">{{ evidenceChipLabel(id) }}</button></div></div></div>
               </div>
               <p v-if="!(plan.chainOverview || []).length" class="muted">暂无链路。</p>
             </div>
@@ -1079,6 +1144,7 @@
             <div :id="'plan-section-' + sectionIndex" :class="['section-card', focusedPlanSection === sectionIndex ? 'focused':'']" v-for="(section,sectionIndex) in plan.sections || []" :key="section.title">
               <h3>{{ section.title }}</h3>
               <p class="muted">{{ section.purpose }}</p>
+              <div class="citation-links"><span :class="['support-pill', citationTone(section.supportStatus)]">{{ citationStatusLabel(section.supportStatus) }}</span><button class="evidence-chip" v-for="id in section.evidenceIds || []" :key="id" @click="openEvidence(id)">{{ evidenceChipLabel(id) }}</button></div>
               <div v-if="(section.relatedRules || []).length">
                 <strong>关联产品规则</strong>
                 <div class="section-rules">
@@ -1117,17 +1183,30 @@
             <div class="card">
               <h3>推荐实施顺序</h3>
               <div class="step-list">
-                <div class="step" v-for="step in plan.implementationOrder || plan.steps || []" :key="step">{{ step }}</div>
+                <div class="step" v-for="(step,index) in plan.implementationOrder || plan.steps || []" :key="claimKey(step,index)"><div class="claim-content"><span>{{ claimText(step) }}</span><div class="citation-links"><span :class="['support-pill', citationTone(claimSupportStatus(step))]">{{ citationStatusLabel(claimSupportStatus(step)) }}</span><button class="evidence-chip" v-for="id in claimEvidenceIds(step)" :key="id" @click="openEvidence(id)">{{ evidenceChipLabel(id) }}</button></div></div></div>
               </div>
             </div>
             <div class="card">
               <h3>风险提醒</h3>
               <div class="list compact-list">
-                <div class="item" v-for="risk in plan.risks || []" :key="risk">{{ risk }}</div>
+                <div class="item" v-for="(risk,index) in plan.risks || []" :key="claimKey(risk,index)"><div class="claim-content"><span>{{ claimText(risk) }}</span><div class="citation-links"><span :class="['support-pill', citationTone(claimSupportStatus(risk))]">{{ citationStatusLabel(claimSupportStatus(risk)) }}</span><button class="evidence-chip" v-for="id in claimEvidenceIds(risk)" :key="id" @click="openEvidence(id)">{{ evidenceChipLabel(id) }}</button></div></div></div>
               </div>
             </div>
           </aside>
         </div>
+
+        <teleport to="body">
+          <div v-if="sourceDrawerOpen" class="source-drawer-backdrop" @click="closeSourceDrawer"></div>
+          <section v-if="sourceDrawerOpen && sourceNode" :class="['source-drawer', sourceFullscreen ? 'fullscreen':'flat']" aria-label="源码查看器">
+            <header class="source-drawer-head"><div class="source-drawer-title"><div><span class="source-kind">代码证据</span><span v-if="sourceNode.startLine">第 {{ sourceNode.startLine }}–{{ sourceNode.endLine }} 行</span></div><strong>{{ sourceNode.label || sourceNode.symbolName }}</strong><small>{{ sourceNode.filePath }}</small></div><div class="source-drawer-actions"><button @click="toggleSourceFullscreen">{{ sourceFullscreen ? '还原' : '全屏' }}</button><button @click="closeSourceDrawer">关闭</button></div></header>
+            <pre class="source-code">{{ sourceText }}</pre>
+          </section>
+          <div v-if="evidenceDrawerOpen" class="source-drawer-backdrop" @click="closeEvidenceDrawer"></div>
+          <section v-if="evidenceDrawerOpen && evidenceReference" class="source-drawer flat" aria-label="需求证据查看器">
+            <header class="source-drawer-head"><div class="source-drawer-title"><div><span class="source-kind">需求证据</span><span>{{ evidenceReference.version || '当前版本' }}</span></div><strong>{{ evidenceReference.title || '需求片段' }}</strong><small>{{ evidenceReference.source }}<span v-if="evidenceReference.location"> · {{ evidenceReference.location }}</span></small></div><div class="source-drawer-actions"><button @click="closeEvidenceDrawer">关闭</button></div></header>
+            <div class="evidence-drawer-body"><div class="evidence-meta"><span>证据编号 {{ evidenceReference.evidenceId }}</span><span v-if="evidenceReference.projectId">项目 {{ evidenceReference.projectId }}</span></div><p class="evidence-excerpt">{{ evidenceReference.excerpt || '该证据没有可展示的文本片段。' }}</p></div>
+          </section>
+        </teleport>
       </section>
 
       <section v-if="activeTab === 'rag'" class="panel">
@@ -1263,6 +1342,8 @@ createApp({
       sourceNode:null,
       sourceDrawerOpen:false,
       sourceFullscreen:false,
+      evidenceDrawerOpen:false,
+      evidenceReference:null,
       refreshTimer:null,
       svg:{ width:1500, height:900 },
       graphZoom:0.62,
@@ -1665,6 +1746,7 @@ createApp({
     emptyPlan() {
       return {
         summary:'',
+        summaryCitation:null,
         productUnderstanding:[],
         developmentConstraints:[],
         chainOverview:[],
@@ -1673,7 +1755,10 @@ createApp({
         steps:[],
         risks:[],
         documentReferences:[],
-        codeReferences:[]
+        codeReferences:[],
+        evidenceReferences:[],
+        citationQuality:null,
+        warnings:[]
       };
     },
     cancelPlanStream() {
@@ -1757,14 +1842,18 @@ createApp({
       if (event.message) this.planStage = event.message;
       if (event.type !== 'completed' && event.type !== 'error') this.planStatus = 'running';
       const append = (key,value) => {
-        if (value) this.plan[key].push(value);
+        if (value && (typeof value !== 'object' || value.text)) this.plan[key].push(value);
       };
-      if (event.type === 'summary') this.plan.summary = payload.text || '';
-      if (event.type === 'product-understanding') append('productUnderstanding', payload.text);
-      if (event.type === 'constraint') append('developmentConstraints', payload.text);
-      if (event.type === 'chain') append('chainOverview', payload.text);
-      if (event.type === 'implementation-step') append('implementationOrder', payload.text);
-      if (event.type === 'risk') append('risks', payload.text);
+      const claim = () => this.claimFromPayload(payload);
+      if (event.type === 'summary') {
+        this.plan.summary = payload.text || '';
+        this.plan.summaryCitation = claim();
+      }
+      if (event.type === 'product-understanding') append('productUnderstanding', claim());
+      if (event.type === 'constraint') append('developmentConstraints', claim());
+      if (event.type === 'chain') append('chainOverview', claim());
+      if (event.type === 'implementation-step') append('implementationOrder', claim());
+      if (event.type === 'risk') append('risks', claim());
       if (event.type === 'section') append('sections', {
         title:payload.title || '开发环节',
         purpose:payload.purpose || '',
@@ -1772,17 +1861,23 @@ createApp({
         inspectTargets:payload.inspectTargets || [],
         keyQuestions:payload.keyQuestions || [],
         changeSuggestions:payload.changeSuggestions || [],
-        plannedNodes:payload.plannedNodes || []
+        plannedNodes:payload.plannedNodes || [],
+        evidenceIds:payload.evidenceIds || [],
+        supportStatus:payload.supportStatus || 'UNSUPPORTED'
       });
       if (event.type === 'references') {
         this.plan.documentReferences = payload.documents || [];
         this.plan.codeReferences = payload.code || [];
+        this.plan.evidenceReferences = payload.evidence || [];
         this.loadPlanGraph();
       }
       if (event.type === 'retrieval') this.plan.retrieval = payload;
+      if (event.type === 'warning') this.addPlanWarnings([payload]);
       if (event.type === 'completed') {
         this.planStreaming = false;
         this.planStatus = 'success';
+        this.plan.citationQuality = payload.citationQuality || null;
+        this.addPlanWarnings(payload.warnings || []);
         this.planStage = event.message || '开发方案生成完成';
       }
       if (event.type === 'error') {
@@ -1790,6 +1885,86 @@ createApp({
         this.planStatus = 'error';
         this.planStage = event.message || payload.message || '生成中断，可重新生成';
       }
+    },
+    addPlanWarnings(values) {
+      const current = Array.isArray(this.plan.warnings) ? this.plan.warnings : [];
+      const merged = new Map(current.map(warning => [`${warning.code || ''}:${warning.message || ''}`, warning]));
+      for (const warning of Array.isArray(values) ? values : []) {
+        if (!warning || typeof warning !== 'object') continue;
+        const safe = { code:String(warning.code || ''), message:String(warning.message || '') };
+        merged.set(`${safe.code}:${safe.message}`, safe);
+      }
+      this.plan.warnings = [...merged.values()];
+    },
+    claimFromPayload(payload) {
+      return {
+        text:payload?.text || '',
+        evidenceIds:Array.isArray(payload?.evidenceIds) ? payload.evidenceIds : [],
+        supportStatus:payload?.supportStatus || 'UNSUPPORTED'
+      };
+    },
+    claimText(item) {
+      return typeof item === 'string' ? item : (item?.text || '');
+    },
+    claimEvidenceIds(item) {
+      return Array.isArray(item?.evidenceIds) ? item.evidenceIds : [];
+    },
+    claimSupportStatus(item) {
+      return typeof item === 'object' && item ? (item.supportStatus || 'UNSUPPORTED') : 'UNSUPPORTED';
+    },
+    claimKey(item,index) {
+      return `${index}:${this.claimText(item)}`;
+    },
+    citationTone(status) {
+      return String(status || 'UNSUPPORTED').toLowerCase().replaceAll('_','-');
+    },
+    citationStatusLabel(status) {
+      return { SUPPORTED:'证据支持', PARTIAL:'部分支持', UNSUPPORTED:'待核实' }[status] || '待核实';
+    },
+    citationQualityTone(status) {
+      return String(status || 'INSUFFICIENT_EVIDENCE').toLowerCase().replaceAll('_','-');
+    },
+    citationQualityLabel(status) {
+      return { VERIFIED:'引用已校验', REVIEW_REQUIRED:'建议复核', INSUFFICIENT_EVIDENCE:'证据不足' }[status] || '证据不足';
+    },
+    citationCoveragePercent(quality) {
+      return Math.round(Math.max(0, Math.min(1, Number(quality?.coverageRate || 0))) * 100);
+    },
+    evidenceById(id) {
+      return (this.plan.evidenceReferences || []).find(reference => reference.evidenceId === id);
+    },
+    evidenceChipLabel(id) {
+      const reference = this.evidenceById(id);
+      if (!reference) return '查看证据';
+      return `${reference.type === 'CODE' ? '代码' : '需求'} · ${reference.title || reference.source || '证据'}`;
+    },
+    openEvidence(id) {
+      const reference = this.evidenceById(id);
+      if (!reference) {
+        this.showToast('证据详情尚未加载完成');
+        return;
+      }
+      if (reference.type === 'CODE') {
+        this.closeEvidenceDrawer();
+        this.loadSource({
+          projectId:reference.projectId,
+          commitSha:reference.commitSha,
+          filePath:reference.source,
+          symbolType:'code',
+          symbolName:reference.title,
+          label:reference.title,
+          startLine:reference.startLine,
+          endLine:reference.endLine
+        });
+        return;
+      }
+      this.closeSourceDrawer();
+      this.evidenceReference = reference;
+      this.evidenceDrawerOpen = true;
+    },
+    closeEvidenceDrawer() {
+      this.evidenceDrawerOpen = false;
+      this.evidenceReference = null;
     },
     async bootstrapKnowledge() {
       const bsUrl = this.currentProjectId ? `/api/monitor/bootstrap?projectId=${encodeURIComponent(this.currentProjectId)}` : '/api/monitor/bootstrap';
@@ -1818,7 +1993,8 @@ createApp({
       if (!filePath) return;
       const start = nodeOrHit.startLine || 1;
       const end = nodeOrHit.endLine || start + 90;
-      const pidParam = this.currentProjectId ? `&projectId=${encodeURIComponent(this.currentProjectId)}` : '';
+      const sourceProjectId = nodeOrHit.projectId || this.currentProjectId;
+      const pidParam = sourceProjectId ? `&projectId=${encodeURIComponent(sourceProjectId)}` : '';
       try {
         const data = await this.api(`/api/code/source?filePath=${encodeURIComponent(filePath)}&startLine=${start}&endLine=${end}${pidParam}`);
         this.sourceText = data.text;
@@ -1919,7 +2095,9 @@ createApp({
       this.sourceFullscreen = !this.sourceFullscreen;
     },
     handleKeyDown(event) {
-      if (event.key === 'Escape' && this.planGraphFullscreen) {
+      if (event.key === 'Escape' && this.evidenceDrawerOpen) {
+        this.closeEvidenceDrawer();
+      } else if (event.key === 'Escape' && this.planGraphFullscreen) {
         this.planGraphFullscreen = false;
       } else if (event.key === 'Escape' && this.sourceFullscreen) {
         this.sourceFullscreen = false;
