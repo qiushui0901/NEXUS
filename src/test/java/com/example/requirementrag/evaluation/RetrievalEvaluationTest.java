@@ -5,6 +5,7 @@ import com.example.requirementrag.model.CodeChunk;
 import org.junit.jupiter.api.Test;
 
 import java.io.StringReader;
+import java.io.InputStream;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -16,15 +17,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RetrievalEvaluationTest {
 
     @Test
-    void loadsTenConfirmedGoldCases() {
+    void loadsFiftyCasesAcrossRequiredQualityCategories() {
         List<RetrievalEvaluationCase> cases = RetrievalEvaluationDataset.loadDefault();
 
-        assertEquals(10, cases.size());
+        assertEquals(50, cases.size());
         assertEquals("growth-fund-red-dot", cases.getFirst().id());
-        assertEquals("mount-attribute-scope", cases.getLast().id());
-        assertEquals(1, cases.stream()
+        assertEquals("cross-project-retreat-admin", cases.getLast().id());
+        assertTrue(cases.stream()
                 .filter(value -> value.expectedOutcome() == RetrievalEvaluationCase.ExpectedOutcome.NO_RESULTS)
-                .count());
+                .count() >= 20);
+        for (String category : List.of("normal-recall", "version-leakage",
+                "similar-function-false-recall", "no-results",
+                "dependency-degradation", "cross-project-pollution")) {
+            assertTrue(cases.stream().anyMatch(value -> value.tags().contains(category)), category);
+        }
     }
 
     @Test
@@ -183,6 +189,19 @@ class RetrievalEvaluationTest {
         assertEquals(3, report.summary().p50LatencyMs());
         assertEquals(7, report.summary().p95LatencyMs());
         assertTrue(report.markdown().contains("growth-fund-red-dot"));
+    }
+
+    @Test
+    void committedBaselineDefinesNonZeroCiRegressionThresholds() throws Exception {
+        try (InputStream input = getClass().getClassLoader()
+                .getResourceAsStream("evaluation/retrieval-baseline-v0.7.json")) {
+            assertTrue(input != null);
+            String baseline = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+            assertTrue(baseline.contains("\"documentRecallAt10\": 0.80"));
+            assertTrue(baseline.contains("\"codeRecallAt10\": 0.75"));
+            assertTrue(baseline.contains("\"mrrAt10\": 0.65"));
+            assertTrue(baseline.contains("\"p95LatencyMs\": 5000"));
+        }
     }
 
     private static void assertInvalid(String input, String... messages) {

@@ -1,5 +1,6 @@
 package com.example.requirementrag.wiki;
 
+import com.example.requirementrag.cache.BoundedTtlCache;
 import com.example.requirementrag.config.WikiProperties;
 import com.example.requirementrag.wiki.WikiModels.Page;
 import com.example.requirementrag.wiki.WikiModels.ProjectSummary;
@@ -12,6 +13,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -23,10 +25,15 @@ import java.util.stream.Stream;
 public class WikiRepository {
     private final ObjectMapper objectMapper;
     private final Path root;
+    private final BoundedTtlCache<IndexKey, VersionIndex> indexCache;
+    private final BoundedTtlCache<PageKey, Page> pageCache;
 
     public WikiRepository(ObjectMapper objectMapper, WikiProperties properties) {
         this.objectMapper = objectMapper;
         this.root = Path.of(properties.rootPath()).toAbsolutePath().normalize();
+        Duration ttl = Duration.ofSeconds(properties.cacheTtlSeconds());
+        this.indexCache = new BoundedTtlCache<>(ttl, properties.cacheMaxEntries());
+        this.pageCache = new BoundedTtlCache<>(ttl, properties.cacheMaxEntries());
     }
 
     public List<ProjectSummary> listProjects() {
@@ -51,30 +58,57 @@ public class WikiRepository {
     public List<VersionIndex> listVersions(String projectId) {
         Path projectPath = WikiPathPolicy.resolveBelow(root, projectId);
         if (!Files.isDirectory(projectPath)) return List.of();
-        return readIndexes(projectPath).stream()
-                .sorted(Comparator.comparing(VersionIndex::version, versionComparator()).reversed())
-                .toList();
+        try (Stream<Path> paths = Files.list(projectPath)) {
+            return paths.filter(Files::isDirectory)
+                    .map(path -> path.getFileName().toString())
+                    .filter(version -> Files.isRegularFile(pathForIndex(projectId, version)))
+                    .map(version -> getIndex(projectId, version))
+                    .sorted(Comparator.comparing(VersionIndex::version, versionComparator()).reversed())
+                    .toList();
+        } catch (IOException exception) {
+            throw unavailable("读取 Wiki 版本失败", exception);
+        }
     }
 
     public VersionIndex getIndex(String projectId, String version) {
+        IndexKey key = new IndexKey(projectId, version);
+        Optional<VersionIndex> cached = indexCache.get(key);
+        if (cached.isPresent()) return cached.get();
         Path file = WikiPathPolicy.resolveBelow(root, projectId, version).resolve("index.json");
-        return read(file, VersionIndex.class, "Wiki 版本不存在: " + projectId + " " + version);
+        VersionIndex value = read(file, VersionIndex.class, "Wiki 版本不存在: " + projectId + " " + version);
+        indexCache.put(key, value);
+        return value;
     }
 
     /** Returns an index when published, without using exceptions for optional comparison sources. */
     public Optional<VersionIndex> findIndex(String projectId, String version) {
         Path file = WikiPathPolicy.resolveBelow(root, projectId, version).resolve("index.json");
-        return Files.isRegularFile(file) ? Optional.of(read(file, VersionIndex.class, "Wiki 版本不存在")) : Optional.empty();
+        return Files.isRegularFile(file) ? Optional.of(getIndex(projectId, version)) : Optional.empty();
     }
 
     public Page getPage(String projectId, String version, String featureId) {
+        PageKey key = new PageKey(projectId, version, featureId);
+        Optional<Page> cached = pageCache.get(key);
+        if (cached.isPresent()) return cached.get();
         Path file = WikiPathPolicy.resolveBelow(root, projectId, version, "pages")
                 .resolve(WikiPathPolicy.identifier(featureId, "featureId") + ".json");
-        return read(file, Page.class, "Wiki 页面不存在: " + featureId);
+        Page value = read(file, Page.class, "Wiki 页面不存在: " + featureId);
+        pageCache.put(key, value);
+        return value;
+    }
+
+    /** Invalidates only the atomically replaced project/version after publication. */
+    public void invalidate(String projectId, String version) {
+        indexCache.invalidate(new IndexKey(projectId, version));
+        pageCache.invalidateWhere(key -> key.projectId().equals(projectId) && key.version().equals(version));
     }
 
     Path root() {
         return root;
+    }
+
+    private Path pathForIndex(String projectId, String version) {
+        return WikiPathPolicy.resolveBelow(root, projectId, version).resolve("index.json");
     }
 
     private Comparator<String> versionComparator() {
@@ -129,5 +163,11 @@ public class WikiRepository {
 
     private ResponseStatusException unavailable(String message, Exception cause) {
         return new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, message, cause);
+    }
+
+    private record IndexKey(String projectId, String version) {
+    }
+
+    private record PageKey(String projectId, String version, String featureId) {
     }
 }

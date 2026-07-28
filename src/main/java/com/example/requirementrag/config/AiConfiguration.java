@@ -2,7 +2,6 @@ package com.example.requirementrag.config;
 
 import com.example.requirementrag.rerank.BgeReranker;
 import com.example.requirementrag.rerank.HttpBgeReranker;
-import com.example.requirementrag.rerank.ResilientBgeReranker;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -36,14 +35,14 @@ public class AiConfiguration {
                 .build();
     }
 
-    /** 注册带降级与有界连接/读取超时的 BGE 重排器 Bean。 */
+    /** 注册有界连接/读取超时的 BGE 重排器；统一管线负责结构化降级。 */
     @Bean
     BgeReranker bgeReranker(RestClient.Builder builder, RagProperties properties) {
         RestClient client = builder
                 .baseUrl(properties.bge().baseUrl())
                 .requestFactory(externalRequestFactory())
                 .build();
-        return new ResilientBgeReranker(new HttpBgeReranker(client, properties.bge()));
+        return new HttpBgeReranker(client, properties.bge());
     }
 
     private SimpleClientHttpRequestFactory externalRequestFactory() {

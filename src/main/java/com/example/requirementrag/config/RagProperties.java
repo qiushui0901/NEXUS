@@ -78,8 +78,70 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
         }
     }
 
-    /** 检索各阶段 topK 参数配置。 */
-    public record Retrieval(int denseTopK, int sparseTopK, int hybridTopK, int bgeTopK, int llmTopK) {
+    /** 检索各阶段 topK、并行、重排与缓存参数配置。 */
+    public record Retrieval(
+            int denseTopK,
+            int sparseTopK,
+            int hybridTopK,
+            int bgeTopK,
+            int llmTopK,
+            boolean llmRerankEnabled,
+            long branchTimeoutMs,
+            int parallelism,
+            int circuitBreakerFailureThreshold,
+            long circuitBreakerOpenMs,
+            long resultCacheTtlSeconds,
+            int resultCacheMaxEntries,
+            long embeddingCacheTtlSeconds,
+            int embeddingCacheMaxEntries
+    ) {
+        public int resolvedBgeTopK() {
+            return bgeTopK <= 0 ? 20 : bgeTopK;
+        }
+
+        public int resolvedLlmTopK() {
+            return llmTopK <= 0 ? 10 : llmTopK;
+        }
+
+        public long resolvedBranchTimeoutMs() {
+            return branchTimeoutMs <= 0 ? 5_000 : branchTimeoutMs;
+        }
+
+        public int resolvedParallelism() {
+            return parallelism <= 0 ? 6 : Math.min(parallelism, 32);
+        }
+
+        public int resolvedCircuitBreakerFailureThreshold() {
+            return circuitBreakerFailureThreshold < 0 ? 0
+                    : circuitBreakerFailureThreshold == 0 ? 3 : circuitBreakerFailureThreshold;
+        }
+
+        public long resolvedCircuitBreakerOpenMs() {
+            return circuitBreakerOpenMs < 0 ? 0 : circuitBreakerOpenMs == 0 ? 30_000 : circuitBreakerOpenMs;
+        }
+
+        public long resolvedResultCacheTtlSeconds() {
+            return resultCacheTtlSeconds < 0 ? 0 : resultCacheTtlSeconds == 0 ? 120 : resultCacheTtlSeconds;
+        }
+
+        public int resolvedResultCacheMaxEntries() {
+            return resultCacheMaxEntries < 0 ? 0 : resultCacheMaxEntries == 0 ? 1_000 : resultCacheMaxEntries;
+        }
+
+        public long resolvedEmbeddingCacheTtlSeconds() {
+            return embeddingCacheTtlSeconds < 0 ? 0
+                    : embeddingCacheTtlSeconds == 0 ? 900 : embeddingCacheTtlSeconds;
+        }
+
+        public int resolvedEmbeddingCacheMaxEntries() {
+            return embeddingCacheMaxEntries < 0 ? 0
+                    : embeddingCacheMaxEntries == 0 ? 10_000 : embeddingCacheMaxEntries;
+        }
+
+        public String fingerprint() {
+            return denseTopK + ":" + sparseTopK + ":" + hybridTopK + ":" + resolvedBgeTopK()
+                    + ":" + resolvedLlmTopK() + ":" + llmRerankEnabled;
+        }
     }
 
     /** 多项目注册表中的单项目配置。 */

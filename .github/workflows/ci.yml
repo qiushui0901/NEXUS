@@ -24,3 +24,22 @@ jobs:
 
       - name: Verify
         run: ./mvnw -B verify
+
+  dependency-vulnerability-scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: OWASP dependency vulnerability gate
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: ./mvnw -B -Psecurity-scan -DskipTests dependency-check:check

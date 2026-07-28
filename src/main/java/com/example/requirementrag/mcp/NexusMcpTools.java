@@ -2,6 +2,9 @@ package com.example.requirementrag.mcp;
 
 import com.example.requirementrag.code.CodeKnowledgeService;
 import com.example.requirementrag.code.CodeIntelligenceService;
+import com.example.requirementrag.conflict.KnowledgeConflictModels.KnowledgeClaim;
+import com.example.requirementrag.conflict.KnowledgeConflictModels.KnowledgeConflictReport;
+import com.example.requirementrag.conflict.KnowledgeConflictService;
 import com.example.requirementrag.evidence.EvidenceRef;
 import com.example.requirementrag.evidence.EvidenceRegistry;
 import com.example.requirementrag.model.ChunkRecord;
@@ -50,6 +53,7 @@ public class NexusMcpTools {
     private final McpToolInvocationService invocations;
     private final CodeIntelligenceService codeIntelligenceService;
     private final ReviewFacadeService reviewFacadeService;
+    private final KnowledgeConflictService knowledgeConflictService;
 
     @Autowired
     public NexusMcpTools(RetrievalPipeline retrievalPipeline, CodeKnowledgeService codeKnowledgeService,
@@ -57,7 +61,8 @@ public class NexusMcpTools {
                          VersionComparisonService versionComparisonService, McpResponsePolicy policy,
                          McpToolInvocationService invocations,
                          CodeIntelligenceService codeIntelligenceService,
-                         ReviewFacadeService reviewFacadeService) {
+                         ReviewFacadeService reviewFacadeService,
+                         KnowledgeConflictService knowledgeConflictService) {
         this.retrievalPipeline = retrievalPipeline;
         this.codeKnowledgeService = codeKnowledgeService;
         this.developmentPlanService = developmentPlanService;
@@ -67,6 +72,7 @@ public class NexusMcpTools {
         this.invocations = invocations;
         this.codeIntelligenceService = codeIntelligenceService;
         this.reviewFacadeService = reviewFacadeService;
+        this.knowledgeConflictService = knowledgeConflictService;
     }
 
     /** Compatibility constructor for pre-0.7 unit callers. */
@@ -75,7 +81,17 @@ public class NexusMcpTools {
                   VersionComparisonService versionComparisonService, McpResponsePolicy policy,
                   McpToolInvocationService invocations) {
         this(retrievalPipeline, codeKnowledgeService, developmentPlanService, wikiRepository,
-                versionComparisonService, policy, invocations, null, null);
+                versionComparisonService, policy, invocations, null, null, null);
+    }
+
+    /** Compatibility constructor for 0.7 callers that provide code graph and review services. */
+    NexusMcpTools(RetrievalPipeline retrievalPipeline, CodeKnowledgeService codeKnowledgeService,
+                  DevelopmentPlanService developmentPlanService, WikiRepository wikiRepository,
+                  VersionComparisonService versionComparisonService, McpResponsePolicy policy,
+                  McpToolInvocationService invocations, CodeIntelligenceService codeIntelligenceService,
+                  ReviewFacadeService reviewFacadeService) {
+        this(retrievalPipeline, codeKnowledgeService, developmentPlanService, wikiRepository,
+                versionComparisonService, policy, invocations, codeIntelligenceService, reviewFacadeService, null);
     }
 
     @McpTool(
@@ -328,6 +344,31 @@ public class NexusMcpTools {
                             .map(policy::doubt).toList();
                     return new McpToolResponse<>(scope(effectiveProject, version, documentId), bounded, List.of(),
                             Map.of("count", bounded.size()), List.of(), raw.doubts().size() > bounded.size());
+                });
+    }
+
+    @McpTool(
+            name = "nexus_conflict_check",
+            description = "Deterministically check structured requirement, code, test, and Wiki claims for conflicts.",
+            annotations = @McpTool.McpAnnotations(
+                    readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false))
+    public McpToolResponse<KnowledgeConflictReport> conflictCheck(
+            McpSyncRequestContext context,
+            @McpToolParam(description = "Business version that all claims must belong to") String version,
+            @McpToolParam(description = "Structured evidence-backed claims to compare") List<KnowledgeClaim> claims,
+            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+            String projectId) {
+        return invocations.invoke("nexus_conflict_check", context, projectId, version, Permission.OPERATE,
+                effectiveProject -> {
+                    KnowledgeConflictReport report = knowledgeConflictService.analyze(
+                            effectiveProject, version, claims);
+                    List<RagWarning> warnings = report.warnings().stream().limit(20)
+                            .map(message -> new RagWarning("knowledge.conflict", "CONFLICT_INPUT_NORMALIZED",
+                                    policy.bounded(message), 0))
+                            .toList();
+                    return new McpToolResponse<>(scope(effectiveProject, version, null), report, List.of(),
+                            Map.of("status", report.status(), "conflictCount", report.conflictCount()),
+                            warnings, report.conflicts().size() > 50);
                 });
     }
 

@@ -12,7 +12,7 @@ spring:
       server:
         enabled: ${MCP_ENABLED:true}
         name: nexus
-        version: 0.7.0
+        version: 0.8.0
         protocol: STREAMABLE
         instructions: Evidence-bound requirement, code, Wiki, and version knowledge for development agents.
     chat:
@@ -123,6 +123,15 @@ app:
       hybrid-top-k: 40
       bge-top-k: 20
       llm-top-k: 10
+      llm-rerank-enabled: ${LLM_RERANK_ENABLED:true}
+      branch-timeout-ms: ${RETRIEVAL_BRANCH_TIMEOUT_MS:5000}
+      parallelism: ${RETRIEVAL_PARALLELISM:6}
+      circuit-breaker-failure-threshold: ${RETRIEVAL_CIRCUIT_FAILURE_THRESHOLD:3}
+      circuit-breaker-open-ms: ${RETRIEVAL_CIRCUIT_OPEN_MS:30000}
+      result-cache-ttl-seconds: ${RETRIEVAL_CACHE_TTL_SECONDS:120}
+      result-cache-max-entries: ${RETRIEVAL_CACHE_MAX_ENTRIES:1000}
+      embedding-cache-ttl-seconds: ${EMBEDDING_CACHE_TTL_SECONDS:900}
+      embedding-cache-max-entries: ${EMBEDDING_CACHE_MAX_ENTRIES:10000}
     knowledge:
       bootstrap-enabled: ${KNOWLEDGE_BOOTSTRAP_ENABLED:false}
       zip-path: ${KNOWLEDGE_ZIP_PATH:}
@@ -136,6 +145,8 @@ app:
       root-path: ${WIKI_ROOT_PATH:data/wiki}
       source-path: ${WIKI_SOURCE_PATH:data/wiki-sources}
       draft-path: ${WIKI_DRAFT_PATH:data/wiki-drafts}
+      cache-ttl-seconds: ${WIKI_CACHE_TTL_SECONDS:300}
+      cache-max-entries: ${WIKI_CACHE_MAX_ENTRIES:2000}
     versioning:
       root-path: ${VERSION_MANIFEST_ROOT_PATH:data/version-manifests}
       requirement-snapshot-root-path: ${REQUIREMENT_SNAPSHOT_ROOT_PATH:data/requirement-snapshots}

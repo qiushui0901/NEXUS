@@ -13,7 +13,6 @@ import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
 import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
 import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
 import com.example.requirementrag.config.RagProperties;
-import com.example.requirementrag.rerank.BgeReranker;
 import com.example.requirementrag.observability.RagObservability;
 import com.example.requirementrag.knowledge.HistoricalDoubtService;
 import org.springframework.stereotype.Service;
@@ -29,7 +28,7 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 基于 Qdrant 混合检索与 BGE/LLM 重排的存疑评审服务。
+ * 基于统一检索管线证据的存疑评审服务。
  */
 @Service
 public class DoubtReviewService {
@@ -102,18 +101,16 @@ public class DoubtReviewService {
 
     private final ChatClient chatClient;
     private final RetrievalPipeline retrievalPipeline;
-    private final BgeReranker bgeReranker;
     private final RagProperties properties;
     private final ProjectRegistry projectRegistry;
     private final RagObservability observability;
     private final HistoricalDoubtService historicalDoubtService;
 
-    public DoubtReviewService(ChatClient chatClient, RetrievalPipeline retrievalPipeline, BgeReranker bgeReranker,
+    public DoubtReviewService(ChatClient chatClient, RetrievalPipeline retrievalPipeline,
                               RagProperties properties, ProjectRegistry projectRegistry,
                               RagObservability observability, HistoricalDoubtService historicalDoubtService) {
         this.chatClient = chatClient;
         this.retrievalPipeline = retrievalPipeline;
-        this.bgeReranker = bgeReranker;
         this.properties = properties;
         this.projectRegistry = projectRegistry;
         this.observability = observability;
@@ -173,7 +170,7 @@ public class DoubtReviewService {
     }
 
     /**
-     * 加载向量检索上下文：混合搜索 → BGE 重排 → LLM 重排，并组装正文与检索片段。
+     * 加载统一管线已经完成召回与重排的版本正文和检索片段。
      */
     private RetrievalContext loadRetrievalContext(ReviewRequest request) {
         String query = "评审版本 " + request.version() + " 产品文档中未明确、歧义、冲突的规则。模块："
@@ -183,23 +180,18 @@ public class DoubtReviewService {
                 request.version(), properties.retrieval().bgeTopK(), true));
         RetrievalBundle bundle = outcome.data();
         List<ChunkRecord> allChunks = bundle.requirementCorpus();
-        List<ChunkRecord> hybrid = bundle.requirementEvidence();
-        if (allChunks.isEmpty() && hybrid.isEmpty()) {
+        List<ChunkRecord> ranked = bundle.requirementEvidence();
+        if (allChunks.isEmpty() && ranked.isEmpty()) {
             throw new DocumentNotFoundException(bundle.documentId(), bundle.version());
         }
 
-        List<ChunkRecord> bgeRanked = observability.observe("bge.rerank", bundle.documentId(), bundle.version(),
-                () -> bgeReranker.rerank(query, hybrid, properties.retrieval().bgeTopK()));
-        List<ChunkRecord> llmRanked = observability.observe("llm.rerank", bundle.documentId(), bundle.version(),
-                () -> llmRerank(query, expandParents(bgeRanked)));
-
         List<ChunkRecord> versionChunks = filterByVersionPath(allChunks, bundle.version());
         if (versionChunks.isEmpty()) {
-            versionChunks = allChunks.isEmpty() ? hybrid : allChunks;
+            versionChunks = allChunks.isEmpty() ? ranked : allChunks;
         }
         String latestContext = joinParents(filterByModule(versionChunks, request.module()));
-        String retrievedFromVersion = joinParents(filterByVersionPath(llmRanked, bundle.version()));
-        String retrievedContext = retrievedFromVersion.isBlank() ? joinParents(llmRanked) : retrievedFromVersion;
+        String retrievedFromVersion = joinParents(filterByVersionPath(ranked, bundle.version()));
+        String retrievedContext = retrievedFromVersion.isBlank() ? joinParents(ranked) : retrievedFromVersion;
         return new RetrievalContext(latestContext, retrievedContext);
     }
 
@@ -312,31 +304,6 @@ public class DoubtReviewService {
         return question.replaceAll("[\\s，。；：、？！?]", "").toLowerCase(Locale.ROOT);
     }
 
-    /** 按 parentId 去重，每个父块只保留一条代表记录。 */
-    private List<ChunkRecord> expandParents(List<ChunkRecord> chunks) {
-        return chunks.stream().collect(Collectors.toMap(ChunkRecord::parentId, Function.identity(), (a, b) -> a,
-                LinkedHashMap::new)).values().stream().toList();
-    }
-
-    /** 使用 LLM 对候选段落按评审相关性重排并截取 topK。 */
-    private List<ChunkRecord> llmRerank(String query, List<ChunkRecord> candidates) {
-        if (candidates.isEmpty()) return List.of();
-        String passages = candidates.stream().map(chunk -> chunk.parentId() + "\n" + chunk.parentText())
-                .collect(Collectors.joining("\n---\n"));
-        RankedIds ranked = chatClient.prompt().system("""
-                你是需求评审检索重排器。按对发现需求缺失、歧义、冲突的帮助程度排列候选段落。
-                只能返回提供的 parentId，不得改写或创建ID。删除无关、重复和纯目录内容。
-                """).user("检索目标：" + query + "\n候选段落：\n" + passages)
-                .options(OpenAiChatOptions.builder()
-                        .model(properties.llm().rerankerModel())
-                        .temperature(0.0))
-                .call().entity(RankedIds.class);
-        Map<String, ChunkRecord> byId = candidates.stream().collect(Collectors.toMap(ChunkRecord::parentId, Function.identity()));
-        if (ranked == null || ranked.parentIds() == null) return candidates.stream().limit(properties.retrieval().llmTopK()).toList();
-        return ranked.parentIds().stream().map(byId::get).filter(Objects::nonNull).distinct()
-                .limit(properties.retrieval().llmTopK()).toList();
-    }
-
     /** 拼接父块文本为 LLM 上下文，按 parentOrder 排序并截断至最大字符数。 */
     private String joinParents(List<ChunkRecord> documents) {
         String context = documents.stream()
@@ -353,7 +320,4 @@ public class DoubtReviewService {
     private record RetrievalContext(String latestContext, String retrievedContext) {
     }
 
-    /** LLM 重排返回的 parentId 有序列表。 */
-    private record RankedIds(List<String> parentIds) {
-    }
 }

@@ -97,6 +97,7 @@ public class WikiGenerationService {
                     generatedAt, List.copyOf(summaries));
             writeJson(staging.resolve("index.json"), index);
             publish(staging, target);
+            repository.invalidate(safeProject, safeVersion);
             return new GenerationResult(safeProject, safeVersion, summaries.size(),
                     target.toString(), generatedAt);
         } catch (IOException exception) {

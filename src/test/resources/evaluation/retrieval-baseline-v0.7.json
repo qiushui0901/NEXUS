@@ -1,0 +1,6 @@
+{
+  "documentRecallAt10": 0.80,
+  "codeRecallAt10": 0.75,
+  "mrrAt10": 0.65,
+  "p95LatencyMs": 5000
+}

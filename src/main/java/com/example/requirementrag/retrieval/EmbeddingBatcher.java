@@ -1,8 +1,12 @@
 package com.example.requirementrag.retrieval;
 
+import com.example.requirementrag.cache.BoundedTtlCache;
+import com.example.requirementrag.config.RagProperties;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -15,9 +19,24 @@ public class EmbeddingBatcher {
     static final int DEFAULT_BATCH_SIZE = 32;
 
     private final EmbeddingModel embeddingModel;
+    private final BoundedTtlCache<String, float[]> cache;
+    private final String modelFingerprint;
 
     public EmbeddingBatcher(EmbeddingModel embeddingModel) {
+        this(embeddingModel, new BoundedTtlCache<>(Duration.ZERO, 0));
+    }
+
+    @Autowired
+    public EmbeddingBatcher(EmbeddingModel embeddingModel, RagProperties properties) {
+        this(embeddingModel, new BoundedTtlCache<>(
+                Duration.ofSeconds(properties.retrieval().resolvedEmbeddingCacheTtlSeconds()),
+                properties.retrieval().resolvedEmbeddingCacheMaxEntries()));
+    }
+
+    EmbeddingBatcher(EmbeddingModel embeddingModel, BoundedTtlCache<String, float[]> cache) {
         this.embeddingModel = embeddingModel;
+        this.cache = cache;
+        this.modelFingerprint = embeddingModel.getClass().getName();
     }
 
     /** 为全部文本生成与输入顺序一致的向量。 */
@@ -28,9 +47,39 @@ public class EmbeddingBatcher {
         List<float[]> vectors = new ArrayList<>(texts.size());
         for (int start = 0; start < texts.size(); start += DEFAULT_BATCH_SIZE) {
             int end = Math.min(start + DEFAULT_BATCH_SIZE, texts.size());
-            vectors.addAll(embedBatch(texts.subList(start, end), start));
+            vectors.addAll(embedCachedBatch(texts.subList(start, end), start));
         }
         return List.copyOf(vectors);
+    }
+
+    private List<float[]> embedCachedBatch(List<String> texts, int absoluteStart) {
+        List<float[]> result = new ArrayList<>(java.util.Collections.nCopies(texts.size(), null));
+        List<String> misses = new ArrayList<>();
+        List<Integer> missIndexes = new ArrayList<>();
+        for (int index = 0; index < texts.size(); index++) {
+            String key = key(texts.get(index));
+            var cached = cache.get(key);
+            if (cached.isPresent()) {
+                result.set(index, cached.get().clone());
+            } else {
+                misses.add(texts.get(index));
+                missIndexes.add(index);
+            }
+        }
+        if (!misses.isEmpty()) {
+            List<float[]> embedded = embedBatch(misses, absoluteStart);
+            for (int index = 0; index < embedded.size(); index++) {
+                float[] vector = embedded.get(index);
+                int resultIndex = missIndexes.get(index);
+                cache.put(key(texts.get(resultIndex)), vector.clone());
+                result.set(resultIndex, vector);
+            }
+        }
+        return List.copyOf(result);
+    }
+
+    private String key(String text) {
+        return modelFingerprint + '\u0000' + (text == null ? "" : text);
     }
 
     private List<float[]> embedBatch(List<String> texts, int absoluteStart) {

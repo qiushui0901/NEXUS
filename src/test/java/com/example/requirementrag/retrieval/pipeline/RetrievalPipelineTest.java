@@ -15,7 +15,11 @@ import com.example.requirementrag.service.RagUnavailableException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -25,6 +29,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.times;
 
 class RetrievalPipelineTest {
     private final RagProperties properties = mock(RagProperties.class);
@@ -38,6 +43,9 @@ class RetrievalPipelineTest {
     void setUp() {
         when(properties.knowledge()).thenReturn(new RagProperties.Knowledge(
                 false, null, null, "requirements", "5.1", null, null, 0));
+        when(properties.retrieval()).thenReturn(new RagProperties.Retrieval(
+                50, 50, 40, 20, 10, false, 1_000, 3, 3, 30_000,
+                -1, -1, -1, -1));
         when(queryRouter.routeWithOutcome("query", null)).thenReturn(RagOutcome.of(
                 RagOutcomeStatus.SUCCESS, new QueryRouting("game", "server", 1.0, "explicit"),
                 "query.route", 1, 1));
@@ -150,6 +158,127 @@ class RetrievalPipelineTest {
         assertThat(outcome.data().requirementCorpus()).containsExactly(corpus);
         assertThat(outcome.warnings()).extracting("code").contains("DOCUMENT_RETRIEVAL_UNAVAILABLE");
         assertThat(outcome.warnings().getFirst().message()).doesNotContain("endpoint");
+    }
+
+    @Test
+    void parallelRecallP95BeatsSequentialBaselineByThirtyPercent() throws Exception {
+        when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
+                .thenAnswer(invocation -> delayed(List.of(chunk("hit", "命中", "h1"))));
+        when(documentStore.scrollVersion("requirements_game", "requirements", "5.1"))
+                .thenAnswer(invocation -> delayed(List.of(chunk("corpus", "正文", "h2"))));
+        when(codeKnowledgeService.search("query", "game", 8))
+                .thenAnswer(invocation -> delayed(List.of(code("code-1"))));
+        ExecutorService executor = Executors.newFixedThreadPool(3);
+        try {
+            RetrievalPipeline concurrent = new RetrievalPipeline(properties, projectRegistry, queryRouter,
+                    documentStore, codeKnowledgeService, mock(RagObservability.class),
+                    RequirementReranker.passthrough(),
+                    new RetrievalResultCache(Duration.ZERO, 0, "disabled"), executor,
+                    new RetrievalCircuitBreaker(0, Duration.ZERO));
+            List<Long> samples = new ArrayList<>();
+            for (int iteration = 0; iteration < 10; iteration++) {
+                long begin = System.nanoTime();
+                RagOutcome<RetrievalBundle> outcome = concurrent.execute(new RetrievalRequest(
+                        "query", RetrievalProfile.DEVELOPMENT_PLAN, null, null, null, 8, true));
+                samples.add(Duration.ofNanos(System.nanoTime() - begin).toMillis());
+                assertThat(outcome.status()).isEqualTo(RagOutcomeStatus.SUCCESS);
+            }
+            samples.sort(Long::compareTo);
+            long p95 = samples.get((int) Math.ceil(samples.size() * 0.95) - 1);
+
+            assertThat(p95).isLessThan(210);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void appliesUnifiedRerankerToEveryProfile() {
+        RequirementReranker reranker = mock(RequirementReranker.class);
+        ChunkRecord hit = chunk("hit", "需求", "h1");
+        when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
+                .thenReturn(List.of(hit));
+        when(codeKnowledgeService.search("query", "game", 8)).thenReturn(List.of());
+        when(reranker.rerank(any(), any(), any(), any(), anyInt()))
+                .thenReturn(RagOutcome.of(RagOutcomeStatus.SUCCESS, List.of(hit), "retrieval.rerank", 1, 1));
+        RetrievalPipeline unified = new RetrievalPipeline(properties, projectRegistry, queryRouter,
+                documentStore, codeKnowledgeService, mock(RagObservability.class), reranker,
+                new RetrievalResultCache(Duration.ZERO, 0, "disabled"), Runnable::run,
+                new RetrievalCircuitBreaker(0, Duration.ZERO));
+
+        for (RetrievalProfile profile : RetrievalProfile.values()) {
+            unified.execute(new RetrievalRequest("query", profile, null, null, null, 8));
+        }
+
+        verify(reranker, times(3)).rerank(any(), any(), any(), any(), anyInt());
+    }
+
+    @Test
+    void timesOutOnlyTheSlowBranchAndKeepsAvailableEvidence() throws Exception {
+        when(properties.retrieval()).thenReturn(new RagProperties.Retrieval(
+                50, 50, 40, 20, 10, false, 50, 2, 3, 30_000,
+                -1, -1, -1, -1));
+        when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
+                .thenReturn(List.of(chunk("hit", "需求", "h1")));
+        when(codeKnowledgeService.search("query", "game", 8)).thenAnswer(invocation -> {
+            Thread.sleep(250);
+            return List.of(code("late"));
+        });
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        RetrievalCircuitBreaker breaker = new RetrievalCircuitBreaker(1, Duration.ofSeconds(10));
+        try {
+            RetrievalPipeline timeoutPipeline = new RetrievalPipeline(properties, projectRegistry, queryRouter,
+                    documentStore, codeKnowledgeService, mock(RagObservability.class),
+                    RequirementReranker.passthrough(),
+                    new RetrievalResultCache(Duration.ZERO, 0, "disabled"), executor,
+                    breaker);
+
+            RagOutcome<RetrievalBundle> outcome = timeoutPipeline.execute(new RetrievalRequest(
+                    "query", RetrievalProfile.DEVELOPMENT_PLAN, null, null, null, 8));
+
+            assertThat(outcome.status()).isEqualTo(RagOutcomeStatus.DEGRADED);
+            assertThat(outcome.data().requirementEvidence()).hasSize(1);
+            assertThat(outcome.data().codeEvidence()).isEmpty();
+            assertThat(outcome.warnings()).extracting("code").contains("CODE_RETRIEVAL_TIMEOUT");
+            Thread.sleep(300);
+            assertThat(breaker.allow("code.hybrid_search")).isFalse();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void resultCacheIncludesVersionScopeAndAvoidsDuplicateRetrieval() {
+        ChunkRecord v51 = chunk("hit", "5.1 需求", "h1");
+        ChunkRecord v52 = new ChunkRecord("v52-child", "requirements", "5.2", "5.2/feature.html",
+                "v52", "5.2 需求", "5.2 需求", "h2", 1, 1);
+        when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
+                .thenReturn(List.of(v51));
+        when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.2"))
+                .thenReturn(List.of(v52));
+        RetrievalPipeline cached = new RetrievalPipeline(properties, projectRegistry, queryRouter,
+                documentStore, codeKnowledgeService, mock(RagObservability.class),
+                RequirementReranker.passthrough(),
+                new RetrievalResultCache(Duration.ofMinutes(1), 10, "test"), Runnable::run,
+                new RetrievalCircuitBreaker(0, Duration.ZERO));
+
+        cached.execute(new RetrievalRequest("query", RetrievalProfile.REQUIREMENT_REVIEW,
+                null, "requirements", "5.1", 8));
+        cached.execute(new RetrievalRequest("query", RetrievalProfile.REQUIREMENT_REVIEW,
+                null, "requirements", "5.1", 8));
+        RagOutcome<RetrievalBundle> otherVersion = cached.execute(new RetrievalRequest(
+                "query", RetrievalProfile.REQUIREMENT_REVIEW, null, "requirements", "5.2", 8));
+
+        verify(documentStore, times(1))
+                .hybridSearch("requirements_game", "query", "requirements", "5.1");
+        verify(documentStore, times(1))
+                .hybridSearch("requirements_game", "query", "requirements", "5.2");
+        assertThat(otherVersion.data().requirementEvidence()).containsExactly(v52);
+    }
+
+    private <T> T delayed(T value) throws InterruptedException {
+        Thread.sleep(100);
+        return value;
     }
 
     private ChunkRecord chunk(String parentId, String text, String hash) {

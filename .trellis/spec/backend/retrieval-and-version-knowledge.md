@@ -241,6 +241,91 @@ VERSION_MANIFEST_ROOT_PATH=data/version-manifests
 REQUIREMENT_SNAPSHOT_ROOT_PATH=data/requirement-snapshots
 ```
 
+## Scenario: 0.8 bounded parallel retrieval and caches
+
+### 1. Scope / Trigger
+
+- Trigger: changing retrieval branch orchestration, reranking, dependency timeouts/circuit breaking,
+  embedding/result/Wiki caches, or retrieval evaluation gates.
+
+### 2. Signatures
+
+```java
+RagOutcome<RetrievalBundle> RetrievalPipeline.execute(RetrievalRequest request)
+RagOutcome<List<ChunkRecord>> RequirementReranker.rerank(
+        String query, String documentId, String version, List<ChunkRecord> candidates, int limit)
+boolean RetrievalCircuitBreaker.allow(String stage)
+void RetrievalCircuitBreaker.success(String stage)
+void RetrievalCircuitBreaker.failure(String stage)
+```
+
+### 3. Contracts
+
+- Requirement recall, version-corpus reads, and code recall start concurrently on the bounded
+  `retrievalExecutor`; each active branch has its own `app.rag.retrieval.branch-timeout-ms` deadline.
+- `DEVELOPMENT_PLAN`, `REQUIREMENT_REVIEW`, and `WIKI_BUILD` use the same requirement rerank boundary.
+  The default order is BGE followed by optional LLM reranking; a stage failure preserves the best
+  available prior ordering and adds a stable warning.
+- Circuit-breaker state is isolated by retrieval stage. Failures accumulate across allowed calls until
+  the configured threshold, success clears the state, and an expired open interval permits a fresh call.
+- Result-cache identity includes request profile, project, document, version, query, limit, corpus flag,
+  and retrieval configuration fingerprint. Cache only `SUCCESS` and `NO_RESULTS`; never cache degraded
+  or failed dependency outcomes.
+- Embedding-cache identity includes model implementation plus input text. Cached arrays are cloned on
+  read/write. Wiki index/page cache entries are bounded and TTL-based; successful atomic publication
+  invalidates the affected project/version.
+- Config keys are `APP_RAG_RETRIEVAL_BRANCH_TIMEOUT_MS`, `APP_RAG_RETRIEVAL_PARALLELISM`,
+  `APP_RAG_RETRIEVAL_CIRCUIT_BREAKER_FAILURE_THRESHOLD`,
+  `APP_RAG_RETRIEVAL_CIRCUIT_BREAKER_OPEN_MS`, `APP_RAG_RETRIEVAL_RESULT_CACHE_TTL_SECONDS`,
+  `APP_RAG_RETRIEVAL_RESULT_CACHE_MAX_ENTRIES`, `APP_RAG_RETRIEVAL_EMBEDDING_CACHE_TTL_SECONDS`,
+  `APP_RAG_RETRIEVAL_EMBEDDING_CACHE_MAX_ENTRIES`, `WIKI_CACHE_TTL_SECONDS`, and
+  `WIKI_CACHE_MAX_ENTRIES`. CI dependency scanning reads `NVD_API_KEY` from the environment; never
+  place the key directly in `pom.xml` or workflow arguments.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| One branch times out | Return its stable timeout warning; preserve successful sibling branches |
+| Failure count is below threshold | Permit the next call without resetting accumulated failures |
+| Failure count reaches threshold | Reject only that stage until the open interval expires |
+| Reranker dependency fails | Preserve candidate order or prior rerank output and return `DEGRADED` |
+| Cached outcome is degraded/failed | Do not store it |
+| Project/document/version/config differs | Treat as a cache miss |
+| Wiki version is republished | Invalidate that project/version before subsequent reads |
+
+### 5. Good / Base / Bad Cases
+
+- Good: three 100 ms branches finish near the slowest branch and all successful requirement profiles
+  pass through the unified reranker.
+- Base: LLM reranking is disabled; BGE order is returned and the same cache/isolation rules apply.
+- Bad: one shared timeout wraps a sequential chain, an open code circuit blocks requirement recall, or
+  a degraded response is reused after the dependency recovers.
+
+### 6. Tests Required
+
+- Assert all eligible branches start concurrently and controlled elapsed time improves by at least 30%
+  versus their sequential fixture duration.
+- Assert all three profiles invoke the shared reranker and a single timeout degrades independently.
+- Assert failure accumulation across `allow` checks, success reset, stage isolation, and open behavior.
+- Assert cache TTL/capacity, version/config isolation, cloned embedding arrays, Wiki invalidation, and
+  exclusion of degraded outcomes.
+- Keep at least 50 evaluation cases spanning normal recall, version leakage, similar-function false
+  recall, zero results, dependency degradation, and cross-project pollution. CI enforces Recall@10,
+  MRR, P95, and JaCoCo gates.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+Run branches sequentially, rerank only one caller, clear sub-threshold circuit failures during `allow`,
+or key cached retrieval by query text alone.
+
+#### Correct
+
+Launch independently bounded branches, centralize reranking in `RetrievalPipeline`, retain per-stage
+circuit history until success/expiry, and include every isolation dimension in cache identity.
+
 ## Scenario: Agent-facing MCP knowledge facade
 
 ### 1. Scope / Trigger
@@ -261,6 +346,7 @@ nexus_version_diff
 nexus_code_graph
 nexus_impact_analysis
 nexus_review_doubts
+nexus_conflict_check
 ```
 
 Tools delegate to existing domain services. They must not create a parallel retrieval, evidence, Wiki, or version-comparison implementation.
@@ -272,7 +358,9 @@ Tools delegate to existing domain services. They must not create a parallel retr
 - Evidence is request-scoped, bounded, and projected without internal chunk IDs, local absolute paths, credentials, vectors, or storage internals.
 - Lists are capped at 20 results, source reads at 200 lines, excerpts at 2,000 characters, evidence at 40 entries, and the serialized response at 120,000 characters by default.
 - The `X-API-Key` header authenticates both REST and MCP through `ApiKeyAuthenticationService`; tool execution authorizes permissions and project scope through `ProjectAuthorizationService`.
-- `nexus_development_plan` and `nexus_review_doubts` require `OPERATE`; the other seven tools require `PUBLIC_READ`.
+- `nexus_development_plan`, `nexus_review_doubts`, and `nexus_conflict_check` require `OPERATE`;
+  the other seven tools require `PUBLIC_READ`.
+- The server exposes three MCP prompts for implementation, review, and change-impact workflows.
 - Published Wiki pages are exposed through the authenticated
   `nexus://wiki/{projectId}/{version}/{featureId}` resource template.
 - Codex reads the key through `env_http_headers`; Cursor uses `${env:NEXUS_API_KEY}`. Never commit a real key.
@@ -300,8 +388,8 @@ Tools delegate to existing domain services. They must not create a parallel retr
 ### 6. Tests Required
 
 - Unit tests assert shared authentication, permission and project authorization, caps, redaction, path validation, and total-response truncation.
-- HTTP integration tests assert 401, initialize, nine-tool discovery, Wiki resource-template discovery,
-  JSON schemas, and a representative `tools/call`.
+- HTTP integration tests assert 401, initialize, ten-tool and three-prompt discovery,
+  Wiki resource-template discovery, JSON schemas, and a representative `tools/call`.
 - Source tests assert both normal repository reads and symlink escape rejection.
 - Release smoke tests use MCP Inspector plus current Codex and Cursor clients to call at least one evidence-bearing tool.
 - Full `JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B verify` remains green.
@@ -393,7 +481,7 @@ row is scoped by `project_id + commit_sha`.
   for Java, Go, Python, and TypeScript on JDK 21.
 - Graph-store tests assert transaction replacement, project/commit isolation,
   `SAME_FILE`, inferred and unresolved resolution, delete/rename handling, and rollback.
-- REST/MCP tests assert shared auth/project permission, nine-tool discovery,
+- REST/MCP tests assert shared auth/project permission, ten-tool discovery,
   selector validation, caps, safe paths, `NOT_AVAILABLE`, and truncation.
 - Run full `JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B verify` and
   `git diff --check`.

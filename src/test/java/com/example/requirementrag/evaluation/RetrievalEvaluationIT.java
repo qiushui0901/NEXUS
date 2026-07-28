@@ -14,6 +14,7 @@ import org.springframework.web.client.RestClient;
 import tools.jackson.databind.ObjectMapper;
 
 import java.nio.file.Path;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -73,6 +74,7 @@ class RetrievalEvaluationIT {
             throw new AssertionError("Retrieval evaluation had " + report.summary().infrastructureFailureCases()
                     + " infrastructure failure case(s); inspect target/retrieval-evaluation/report.md");
         }
+        assertBaseline(report.summary());
     }
 
     private TimedResult<ChunkRecord> retrieveDocuments(RetrievalEvaluationCase evaluationCase) {
@@ -172,6 +174,25 @@ class RetrievalEvaluationIT {
         return (System.nanoTime() - startedNanos) / 1_000_000;
     }
 
+    private void assertBaseline(RetrievalEvaluationReport.Summary summary) throws Exception {
+        try (InputStream input = getClass().getClassLoader()
+                .getResourceAsStream("evaluation/retrieval-baseline-v0.7.json")) {
+            if (input == null) throw new AssertionError("0.7 retrieval baseline resource is missing");
+            Baseline baseline = objectMapper.readValue(input, Baseline.class);
+            if (summary.documentRecallAt10() < baseline.documentRecallAt10()
+                    || summary.codeRecallAt10() < baseline.codeRecallAt10()
+                    || summary.mrrAt10() < baseline.mrrAt10()
+                    || summary.p95LatencyMs() > baseline.p95LatencyMs()) {
+                throw new AssertionError("Retrieval quality regressed below 0.7 baseline; inspect "
+                        + REPORT_DIRECTORY.resolve("report.md"));
+            }
+        }
+    }
+
     private record TimedResult<T>(List<T> values, long latencyMs, String error) {
+    }
+
+    private record Baseline(double documentRecallAt10, double codeRecallAt10,
+                            double mrrAt10, long p95LatencyMs) {
     }
 }
