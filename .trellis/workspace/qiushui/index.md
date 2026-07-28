@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
+- **Total Sessions**: 9
 - **Last Active**: 2026-07-28
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~271 | Active |
+| `journal-1.md` | ~304 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-07-28 | NEXUS 0.6 MCP Server | `0c00e95` | `main` |
 | 8 | 2026-07-28 | Release NEXUS 0.5 | `8b9d8cb` | `main` |
 | 7 | 2026-07-27 | Unified knowledge conflict detection | `75924ad` | `main` |
 | 6 | 2026-07-27 | 修正需求增量继承语义 | `6f4fc23` | `main` |

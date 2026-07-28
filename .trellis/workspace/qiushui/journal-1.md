@@ -269,3 +269,36 @@ Completed the NEXUS 0.5 release: unified requirement review retrieval, request-s
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: NEXUS 0.6 MCP Server
+
+**Date**: 2026-07-28
+**Task**: NEXUS 0.6 MCP Server
+**Branch**: `main`
+
+### Summary
+
+Implemented and verified the Spring AI Streamable HTTP MCP facade with six evidence-bound tools, shared REST/MCP authorization, bounded responses, Codex and Cursor project configs, stdio bridge, container delivery files, Inspector/client smoke tests, and source symlink escape protection.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `0c00e95` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
