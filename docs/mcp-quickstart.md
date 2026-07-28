@@ -1,5 +1,7 @@
 # NEXUS MCP Quickstart
 
+For install, indexing, Wiki, and REST usage see the [User guide](./user-guide.md). For product overview see the [root README](../README.md).
+
 NEXUS 0.7 exposes nine evidence-bound tools at the Streamable HTTP endpoint:
 
 ```text
@@ -126,6 +128,13 @@ specific Compose override and prefer read-only mounts.
 Terminate TLS at the company reverse proxy and forward `/mcp` without buffering. Preserve `Accept`,
 `Content-Type`, `Mcp-Session-Id`, and `X-API-Key` headers, and allow long-lived HTTP responses. Do not expose an
 unencrypted MCP endpoint outside a trusted local network.
+
+## multipow workspaces
+
+For agent workflow scaffolding that auto-wires this MCP endpoint into a new workspace, see
+[multipow × NEXUS integration](./multipow-nexus-integration.md). That guide covers `multipow init` templates,
+skill evidence gates, and the pilot runbook. Do not merge the multipow and NEXUS repositories; connect them only
+through MCP configuration and skills.
 
 ## Troubleshooting
 

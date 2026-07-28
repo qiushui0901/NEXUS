@@ -11,8 +11,7 @@
 ## Validation
 
 ```bash
-JAVA_HOME=/Users/user/Library/Java/JavaVirtualMachines/ms-21.0.11/Contents/Home \
-PATH=/Users/user/Library/Java/JavaVirtualMachines/ms-21.0.11/Contents/Home/bin:$PATH \
+JAVA_HOME=$(/usr/libexec/java_home -v 21) \
 ./mvnw -B verify
 
 git diff --check
