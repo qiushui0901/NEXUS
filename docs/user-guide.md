@@ -1,36 +1,36 @@
-# NEXUS User Guide
+# NEXUS 用户指南
 
-Operational guide for running and using NEXUS. For product positioning and architecture overview, see the [root README](../README.md).
-
----
-
-## Table of contents
-
-1. [Requirements](#1-requirements)
-2. [Configuration](#2-configuration)
-3. [Start the service](#3-start-the-service)
-4. [Browser surfaces](#4-browser-surfaces)
-5. [Requirements ingestion and review](#5-requirements-ingestion-and-review)
-6. [Code index and intelligence](#6-code-index-and-intelligence)
-7. [Development plans and citations](#7-development-plans-and-citations)
-8. [Wiki and version knowledge](#8-wiki-and-version-knowledge)
-9. [Version compare](#9-version-compare)
-10. [Conflicts and monitoring](#10-conflicts-and-monitoring)
-11. [MCP clients](#11-mcp-clients)
-12. [Data and Git boundaries](#12-data-and-git-boundaries)
-13. [Current limitations](#13-current-limitations)
+运行与使用说明。产品定位与架构概览见 [根目录 README](../README.md)。
 
 ---
 
-## 1. Requirements
+## 目录
+
+1. [环境要求](#1-环境要求)
+2. [配置](#2-配置)
+3. [启动服务](#3-启动服务)
+4. [浏览器入口](#4-浏览器入口)
+5. [需求摄入与存疑](#5-需求摄入与存疑)
+6. [代码索引与智能分析](#6-代码索引与智能分析)
+7. [开发方案与引用](#7-开发方案与引用)
+8. [Wiki 与版本知识](#8-wiki-与版本知识)
+9. [版本对比](#9-版本对比)
+10. [冲突检测与监控](#10-冲突检测与监控)
+11. [MCP 客户端](#11-mcp-客户端)
+12. [数据与 Git 边界](#12-数据与-git-边界)
+13. [当前限制](#13-当前限制)
+
+---
+
+## 1. 环境要求
 
 - JDK 21
-- Maven 3.9+ (or use `./mvnw`)
-- Docker (Qdrant; optional full Compose stack)
-- Ollama with an embedding model (default `bge-m3`)
-- Optional: BGE reranker exposing `/rerank` (retrieval degrades safely without it)
+- Maven 3.9+（或使用 `./mvnw`）
+- Docker（Qdrant；可选完整 Compose 栈）
+- Ollama 及 Embedding 模型（默认 `bge-m3`）
+- 可选：提供 `/rerank` 的 BGE 重排服务（缺失时检索会安全降级）
 
-Pin JDK 21 for a single command if needed:
+若本机有多套 JDK，可只为当前命令指定 21：
 
 ```bash
 JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw test
@@ -39,27 +39,27 @@ JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw package -DskipTests
 
 ---
 
-## 2. Configuration
+## 2. 配置
 
 ```bash
 cp .env.example .env
 ```
 
-Fill service URLs and tokens in `.env`. Never commit `.env`.
+在 `.env` 中填写服务地址与 Token。**不要**把 `.env` 提交到 Git。
 
-First-time embedding model:
+首次拉取 Embedding 模型：
 
 ```bash
 ollama pull bge-m3
 ```
 
-Multi-project registration uses `app.rag.projects` / `PROJECT_N_*` env vars (see `application.yml`). Each project should have its own requirement and code collections and a resolvable `repository-path` on the machine that runs NEXUS.
+多项目通过 `app.rag.projects` / `PROJECT_N_*` 环境变量注册（见 `application.yml`）。每个项目应有独立的需求 / 代码 Collection，以及 NEXUS 运行机能解析到的 `repository-path`。
 
 ---
 
-## 3. Start the service
+## 3. 启动服务
 
-### Local script
+### 本地脚本
 
 ```bash
 ./scripts/nexus.sh start
@@ -68,31 +68,31 @@ Multi-project registration uses `app.rag.projects` / `PROJECT_N_*` env vars (see
 ./scripts/nexus.sh stop
 ```
 
-The script loads `.env`, checks JDK 21, starts local Qdrant, builds the app, and waits until NEXUS is ready. It will not stop unrelated processes that happen to occupy the same ports.
+脚本会加载 `.env`、检查 JDK 21、启动本地 Qdrant、构建应用并等待就绪。不会误停占用同端口的无关进程。
 
 ### Docker Compose
 
 ```bash
-# set AUTH_USER_1_KEY and other secrets in the environment
+# 在环境中设置 AUTH_USER_1_KEY 等密钥
 docker compose up --build
 ```
 
-Compose brings up NEXUS, Qdrant, Prometheus, and Grafana. Mount or sync repositories into the configured `CODE_REPOSITORY_PATH` (default volume `/workspace/repository`). Embedding / rerank URLs often point at `host.docker.internal` in the sample file — adjust for your network.
+Compose 会拉起 NEXUS、Qdrant、Prometheus、Grafana。请将仓库挂载或同步到配置的 `CODE_REPOSITORY_PATH`（示例默认卷为 `/workspace/repository`）。样例里 Embedding / 重排常指向 `host.docker.internal`，请按实际网络调整。
 
 ---
 
-## 4. Browser surfaces
+## 4. 浏览器入口
 
-| Page | URL |
-|------|-----|
-| Home / runtime status | http://localhost:8080/ |
+| 页面 | 地址 |
+|------|------|
+| 首页 / 运行时状态 | http://localhost:8080/ |
 | Wiki | http://localhost:8080/wiki |
-| Version center | http://localhost:8080/versions |
-| Monitor | http://localhost:8080/monitor |
+| 版本中心 | http://localhost:8080/versions |
+| 监控 | http://localhost:8080/monitor |
 
-Wiki browsing can work from generated files without Qdrant / Ollama / BGE. Code search and LLM plans need those dependencies (or explicit degradation).
+已有生成文件时，Wiki 浏览可不依赖 Qdrant / Ollama / BGE。代码检索与 LLM 方案需要相应依赖（或进入显式降级）。
 
-Deep link example:
+深链接示例：
 
 ```text
 /wiki?projectId=...&version=...&featureId=...
@@ -100,17 +100,17 @@ Deep link example:
 
 ---
 
-## 5. Requirements ingestion and review
+## 5. 需求摄入与存疑
 
-Pipeline:
+流水线：
 
 ```text
-parse (Tika) → denoise → parent/child chunk → SHA-256 dedupe
-  → dense + sparse hybrid search → optional BGE / LLM rerank
-  → doubt generation with version isolation
+解析（Tika）→ 降噪 → Parent/Child 分块 → SHA-256 去重
+  → Dense + Sparse 混合检索 → 可选 BGE / LLM 重排
+  → 带版本隔离的存疑生成
 ```
 
-Upload:
+上传：
 
 ```bash
 curl -X POST http://localhost:8080/api/requirements/documents \
@@ -120,7 +120,7 @@ curl -X POST http://localhost:8080/api/requirements/documents \
   -F 'documentId=example-requirements'
 ```
 
-Review:
+存疑评审：
 
 ```bash
 curl -X POST http://localhost:8080/api/requirements/reviews \
@@ -129,26 +129,26 @@ curl -X POST http://localhost:8080/api/requirements/reviews \
   -d '{"documentId":"example-requirements","version":"1.1.0","module":"example-module"}'
 ```
 
-Requirement evidence is scoped by `documentId + version`. Reviews must not pull arbitrary other versions unless explicitly allowed.
+需求证据按 `documentId + version` 隔离。评审不得擅自拉取未授权的其他版本。
 
 ---
 
-## 6. Code index and intelligence
+## 6. 代码索引与智能分析
 
-### Mental model
+### 心智模型
 
-NEXUS indexes a **server-side repository path**. Developers still edit code in their own clones (for example multipow workspaces). MCP / REST code tools are **read-only**. See [multipow × NEXUS — §3 Code](multipow-nexus-integration.md#3-代码怎么处理核心).
+NEXUS 索引的是**服务端仓库路径**。开发仍在本机克隆中改代码（例如 multipow 工作区）。MCP / REST 代码相关接口为**只读**。详见 [multipow × NEXUS — 第 3 节](multipow-nexus-integration.md#3-代码怎么处理核心)。
 
-Supported languages (0.7): Java, Go, Python, TypeScript. Kotlin is enabled only when Tree-sitter capability probes succeed.
+0.7 支持语言：Java、Go、Python、TypeScript。Kotlin 仅在 Tree-sitter 能力探测通过时启用。
 
-### Index
+### 索引
 
 ```bash
-# foreground full index
+# 前台全量索引
 curl -X POST "http://localhost:8080/api/code/index?projectId=example-service" \
   -H "X-API-Key: $NEXUS_API_KEY"
 
-# background job
+# 后台任务
 curl -X POST "http://localhost:8080/api/code/index/start?projectId=example-service" \
   -H "X-API-Key: $NEXUS_API_KEY"
 
@@ -156,69 +156,69 @@ curl "http://localhost:8080/api/code/index/status?projectId=example-service" \
   -H "X-API-Key: $NEXUS_API_KEY"
 ```
 
-Incremental (Git range or webhook-driven):
+增量（Git 区间或 Webhook）：
 
 ```text
 POST /api/code/incremental-index?projectId=...&oldSha=...&newSha=...
 POST /api/webhooks/gitlab
 ```
 
-Full index writes:
+全量索引会写入：
 
-- Qdrant chunks for semantic search
-- SQLite symbol / call graph for impact analysis (project + commit scoped)
+- Qdrant chunk（语义检索）
+- SQLite 符号 / 调用图（影响分析，按项目 + commit 隔离）
 
-### Query APIs
+### 查询 API
 
 ```text
 POST /api/code/search
-POST /api/code/graph              # legacy semantic presentation graph
-POST /api/code/graph/symbols      # persisted static symbol graph
-POST /api/code/impact             # symbol XOR fromCommit+toCommit
+POST /api/code/graph              # 旧版语义展示图
+POST /api/code/graph/symbols      # 持久化静态符号图
+POST /api/code/impact             # symbol 与 fromCommit+toCommit 二选一
 GET  /api/code/source
 GET  /api/code/status
 POST /api/search/cross-project
 ```
 
-Impact confidence:
+影响分析置信度：
 
-- **Certain:** `EXACT` / `SAME_FILE` edges only
-- **Inferred:** `HEURISTIC`
-- **Unresolved:** dynamic / ambiguous calls — not counted as certain
-- Missing graph for target commit → `NOT_AVAILABLE` + file-level fallback
+- **确定：** 仅 `EXACT` / `SAME_FILE`  
+- **推测：** `HEURISTIC`  
+- **未解析：** 动态 / 歧义调用 —— 不计入确定影响  
+- 目标 commit 无图 → `NOT_AVAILABLE` + 文件级降级  
 
-Empty code collections after first boot are normal until you run an index once. Failed full index keeps the previous collection.
+首次启动代码 Collection 为空是正常现象，需先跑一次索引。全量索引失败时保留旧索引。
 
 ---
 
-## 7. Development plans and citations
+## 7. 开发方案与引用
 
 ```text
 POST /api/assistant/development-plan
 POST /api/assistant/development-plan/stream
 ```
 
-Both paths use `RetrievalPipeline`. Each request builds an evidence whitelist (`requirement:*`, `code:*`). Unknown citations are filtered; unsupported claims are marked for verification. Responses include citation quality and optional `conflictReport`.
+两条路径均走 `RetrievalPipeline`。每次请求建立证据白名单（`requirement:*`、`code:*`）。未知引用会被过滤；缺少支持的结论标为待核实。响应含引用质量，以及可选的 `conflictReport`。
 
 ---
 
-## 8. Wiki and version knowledge
+## 8. Wiki 与版本知识
 
-Stable page key:
+页面稳定主键：
 
 ```text
 projectId + version + featureId
 ```
 
-Paths:
+路径：
 
 ```text
-data/wiki-sources/                 structured sources
-data/wiki/<projectId>/<version>/   generated index + pages
-data/wiki-drafts/...               reviewable builds (never auto-publish)
+data/wiki-sources/                 结构化源
+data/wiki/<projectId>/<version>/   生成后的索引与页面
+data/wiki-drafts/...               可审核构建（绝不自动发布）
 ```
 
-Generate:
+生成：
 
 ```bash
 curl -X POST \
@@ -234,15 +234,15 @@ GET  /api/wiki/page?projectId=...&version=...&featureId=...
 POST /api/knowledge/build
 ```
 
-Knowledge build compares requirement versions (via content hashes), attaches candidate code evidence, and writes drafts under `data/wiki-drafts/`. Only approved drafts may publish into formal Wiki sources (lifecycle APIs under `/api/knowledge/drafts/...`).
+知识构建会对比需求版本（contentHash）、关联候选代码证据，并把草稿写入 `data/wiki-drafts/`。只有已批准草稿可通过 `/api/knowledge/drafts/...` 生命周期接口发布到正式 Wiki 源。
 
-Historical code-oriented Wiki backfill (optional tooling):
+历史代码向 Wiki 回填（可选工具）：
 
 ```bash
 python3 tools/build-version-wiki.py --repo /absolute/path/to/your-repository
 ```
 
-Requirement snapshots (local, gitignored business text):
+需求快照（本机、业务正文默认被 Git 忽略）：
 
 ```bash
 python3 tools/build-requirement-snapshots.py
@@ -250,7 +250,7 @@ python3 tools/build-requirement-snapshots.py
 
 ---
 
-## 9. Version compare
+## 9. 版本对比
 
 ```text
 PUT  /api/versions/manifests
@@ -259,17 +259,17 @@ GET  /api/versions/manifests/{version}?projectId=...
 GET  /api/versions/compare?projectId=...&fromVersion=...&toVersion=...
 ```
 
-The version center UI uses Wiki indexes and optional manifests to show requirement / code / test / Wiki diffs. Each source is `AVAILABLE` or `NOT_AVAILABLE`. Missing data must not be rendered as “unchanged”.
+版本中心结合 Wiki 索引与可选档案，展示需求 / 代码 / 测试 / Wiki 差异。每个来源标记为 `AVAILABLE` 或 `NOT_AVAILABLE`。缺失数据不得渲染成「无变化」。
 
 ---
 
-## 10. Conflicts and monitoring
+## 10. 冲突检测与监控
 
 ```text
 POST /api/knowledge/conflicts/analyze
 ```
 
-Monitoring:
+监控：
 
 ```text
 http://localhost:8080/monitor
@@ -283,51 +283,51 @@ GET /api/runtime/status
 
 ---
 
-## 11. MCP clients
+## 11. MCP 客户端
 
-Endpoint: `http://localhost:8080/mcp` (or your reverse-proxied URL).
+端点：`http://localhost:8080/mcp`（或经反代后的地址）。
 
-Require `X-API-Key` when auth is enabled:
+启用认证时需携带 `X-API-Key`：
 
 ```bash
 export NEXUS_API_KEY='...'
 export NEXUS_MCP_URL='http://127.0.0.1:8080/mcp'
 ```
 
-Full Cursor / Codex / stdio bridge instructions: [mcp-quickstart.md](mcp-quickstart.md).
+Cursor / Codex / stdio 桥接完整说明见 [mcp-quickstart.md](mcp-quickstart.md)。
 
-Representative tools: `nexus_search_requirements`, `nexus_search_code`, `nexus_get_source`, `nexus_development_plan`, `nexus_wiki_page`, `nexus_version_diff`, `nexus_code_graph`, `nexus_impact_analysis`, `nexus_review_doubts`.
-
----
-
-## 12. Data and Git boundaries
-
-**Commit**
-
-- Application and test code
-- Small structured fixtures
-- Generated Wiki JSON/Markdown you intend to review in Git
-- Config templates and docs
-
-**Do not commit**
-
-- `.env` and real credentials
-- Qdrant storage, snapshots, WAL
-- Vectors / local models
-- Large raw document packs / private requirement snapshots (`data/requirement-snapshots/` is gitignored)
-
-Auth: non-local deployments should keep `AUTH_ENABLED=true` with non-blank keys (startup fails closed when misconfigured).
+0.8 提供十个工具：`nexus_search_requirements`、`nexus_search_code`、`nexus_get_source`、`nexus_development_plan`、`nexus_wiki_page`、`nexus_version_diff`、`nexus_code_graph`、`nexus_impact_analysis`、`nexus_review_doubts`、`nexus_conflict_check`；同时提供实现需求、评审需求、评估改动影响三个 Prompt。
 
 ---
 
-## 13. Current limitations
+## 12. 数据与 Git 边界
 
-Tracked in detail in [nexus-improvement-roadmap.md](nexus-improvement-roadmap.md). Short list:
+**应提交**
 
-1. Server still needs a filesystem (or volume) repository path — not “Git URL only” self-serve sync.
-2. Rerank quality and eval gates are still maturing (larger gold sets, CI quality bars).
-3. Real CI test-result ingestion is incomplete; UI says “no real execution snapshot” when absent.
-4. Static impact cannot resolve all dynamic dispatch; unresolved edges stay explicit.
-5. Multipow clone ≠ automatic NEXUS index; align `projectId` and indexed commit deliberately.
+- 应用与测试代码
+- 小型结构化夹具
+- 打算在 Git 中评审的 Wiki JSON / Markdown
+- 配置模板与文档
 
-Draft / pending-review content must not be treated as confirmed product truth until approved and published.
+**不要提交**
+
+- `.env` 与真实凭据
+- Qdrant 存储、快照、WAL
+- 向量 / 本地模型
+- 大型原始文档包 / 私有需求快照（`data/requirement-snapshots/` 已被忽略）
+
+认证：非本地部署应保持 `AUTH_ENABLED=true` 且 Key 非空（配置错误时启动失败关闭）。
+
+---
+
+## 13. 当前限制
+
+细节见 [nexus-improvement-roadmap.md](nexus-improvement-roadmap.md)。摘要：
+
+1. 服务端仍需要文件系统（或卷）上的仓库路径，尚不支持「只填 Git URL」的自助同步。  
+2. 重排质量与评测门禁仍在完善（更大黄金集、CI 质量阈值）。  
+3. 真实 CI 测试结果接入未完成；缺失时界面显示「没有真实执行快照」。  
+4. 静态影响无法解析全部动态分派；未解析边会显式保留。  
+5. multipow clone ≠ 自动进入 NEXUS 索引；需对齐 `projectId` 与已索引 commit。
+
+草稿 / 待审核内容在批准发布前，不得视为已确认的产品真相。
