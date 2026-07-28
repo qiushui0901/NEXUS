@@ -236,3 +236,36 @@ Added deterministic project/version-scoped conflict analysis for requirement, co
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: Release NEXUS 0.5
+
+**Date**: 2026-07-28
+**Task**: Release NEXUS 0.5
+**Branch**: `main`
+
+### Summary
+
+Completed the NEXUS 0.5 release: unified requirement review retrieval, request-scoped evidence citations, reviewable Wiki draft lifecycle with atomic publish/rollback, fail-safe authentication, bounded BGE timeouts, visible degradation logging, repository hygiene, and full Java 21 verification.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `8b9d8cb` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
