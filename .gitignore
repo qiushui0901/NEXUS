@@ -34,8 +34,9 @@ tools/*.pid
 # Local Git worktrees
 .worktrees/
 
-# Optional IDE/AI tool adapters not used by this project
-.cursor/
+# Cursor MCP is shared; keep every other Cursor-local artifact private.
+.cursor/*
+!.cursor/mcp.json
 .opencode/
 .understand-anything/
 .superpowers/

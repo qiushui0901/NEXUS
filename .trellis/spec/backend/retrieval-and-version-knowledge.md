@@ -14,6 +14,7 @@ Apply this specification when changing any of the following:
 - `tools/build-requirement-snapshots.py` or `data/requirement-snapshots/**`
 - `GitDiffService` or Git-based incremental indexing
 - `WikiRepository` version-index access
+- `com.example.requirementrag.mcp.*`, `/mcp`, or agent client configuration
 - `app.rag.wiki.*` or `app.rag.versioning.*` storage configuration
 - Wiki draft evidence, version comparison, review, or publication behavior
 
@@ -239,6 +240,75 @@ WIKI_DRAFT_PATH=data/wiki-drafts
 VERSION_MANIFEST_ROOT_PATH=data/version-manifests
 REQUIREMENT_SNAPSHOT_ROOT_PATH=data/requirement-snapshots
 ```
+
+## Scenario: Agent-facing MCP knowledge facade
+
+### 1. Scope / Trigger
+
+- Trigger: adding or changing `/mcp`, an MCP tool, client configuration, API-key transport context, response projection, or MCP container wiring.
+
+### 2. Signatures
+
+The WebMVC Streamable HTTP endpoint is `/mcp`. It exposes exactly these read-only tool names:
+
+```text
+nexus_search_requirements
+nexus_search_code
+nexus_get_source
+nexus_development_plan
+nexus_wiki_page
+nexus_version_diff
+```
+
+Tools delegate to existing domain services. They must not create a parallel retrieval, evidence, Wiki, or version-comparison implementation.
+
+### 3. Contracts
+
+- Every result uses the outer fields `resolved`, `data`, `evidence`, `quality`, `warnings`, and `truncated`.
+- `resolved` always contains the effective `projectId` and nullable `version`/`documentId`.
+- Evidence is request-scoped, bounded, and projected without internal chunk IDs, local absolute paths, credentials, vectors, or storage internals.
+- Lists are capped at 20 results, source reads at 200 lines, excerpts at 2,000 characters, evidence at 40 entries, and the serialized response at 120,000 characters by default.
+- The `X-API-Key` header authenticates both REST and MCP through `ApiKeyAuthenticationService`; tool execution authorizes permissions and project scope through `ProjectAuthorizationService`.
+- `nexus_development_plan` requires `OPERATE`; the other five tools require `PUBLIC_READ`.
+- Codex reads the key through `env_http_headers`; Cursor uses `${env:NEXUS_API_KEY}`. Never commit a real key.
+- Environment keys: `MCP_ENABLED`, `MCP_MAX_RESULTS`, `MCP_MAX_SOURCE_LINES`, `MCP_MAX_EXCERPT_CHARACTERS`, `MCP_MAX_EVIDENCE`, `MCP_MAX_RESPONSE_CHARACTERS`, and `NEXUS_API_KEY` on clients.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| Missing or invalid API key | Reject MCP transport initialization with HTTP 401 and stable public text |
+| Role lacks tool permission | Return an MCP tool error without invoking the domain service |
+| User lacks requested/default project access | Return an MCP tool error without cross-project data |
+| Absolute, URI-like, or traversing source path | Reject before filesystem access |
+| Repository-relative path resolves through a symlink outside the real repository root | Reject with `filePath escapes repository root` |
+| Requested result/line/evidence limit exceeds the cap | Clamp output and set `truncated=true` |
+| Serialized response exceeds the total cap | Return no oversized data/evidence, add `MCP_RESPONSE_TRUNCATED`, and set `truncated=true` |
+| Optional dependency data is missing | Preserve existing `DEGRADED`/`NOT_AVAILABLE` status and warnings |
+
+### 5. Good / Base / Bad Cases
+
+- Good: Codex or Cursor sends an environment-derived key, requests `pom.xml` lines 1–2, and receives a bounded result plus a repository-relative evidence reference.
+- Base: a permitted client omits `projectId`; the configured default project is resolved and returned explicitly.
+- Bad: a client requests `/etc/passwd`, `../secret`, `file:///tmp/secret`, or a repository symlink that points outside the root; the request is rejected and no content is returned.
+
+### 6. Tests Required
+
+- Unit tests assert shared authentication, permission and project authorization, caps, redaction, path validation, and total-response truncation.
+- HTTP integration tests assert 401, initialize, six-tool discovery, JSON schemas, and a representative `tools/call`.
+- Source tests assert both normal repository reads and symlink escape rejection.
+- Release smoke tests use MCP Inspector plus current Codex and Cursor clients to call at least one evidence-bearing tool.
+- Full `JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -B verify` remains green.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+Return domain objects directly, trust a normalized lexical path, duplicate authentication in the tool body, or embed an API key in `.codex/config.toml` / `.cursor/mcp.json`.
+
+#### Correct
+
+Project domain data into the bounded MCP envelope, validate the target's real path stays below the real repository root, reuse shared authentication/authorization services, and reference only `NEXUS_API_KEY` from checked-in client configuration.
 
 ## 4. Validation & Error Matrix
 

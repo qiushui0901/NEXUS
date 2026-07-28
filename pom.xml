@@ -13,7 +13,7 @@
 
     <groupId>com.example</groupId>
     <artifactId>NEXUS</artifactId>
-    <version>0.5.0-SNAPSHOT</version>
+    <version>0.6.0-SNAPSHOT</version>
     <name>NEXUS</name>
     <description>Unified requirement and code knowledge service with Spring AI</description>
 
@@ -70,6 +70,10 @@
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-tika-document-reader</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-server-webmvc</artifactId>
         </dependency>
         <dependency>
             <groupId>org.webjars.npm</groupId>

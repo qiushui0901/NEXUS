@@ -26,3 +26,11 @@ project_doc_fallback_filenames = ["AGENTS.md"]
 # aborts the entire config load and blocks Codex from starting. Codex's own
 # default for multi_agent_v2 is used instead; tune it in your user-level
 # config if needed.
+
+# NEXUS 0.6 Streamable HTTP MCP server. The API key is read from the
+# NEXUS_API_KEY environment variable and is never stored in this repository.
+[mcp_servers.nexus]
+url = "http://127.0.0.1:8080/mcp"
+env_http_headers = { "X-API-Key" = "NEXUS_API_KEY" }
+startup_timeout_sec = 20
+tool_timeout_sec = 120

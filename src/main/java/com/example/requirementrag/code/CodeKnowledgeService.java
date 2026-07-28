@@ -155,8 +155,8 @@ public class CodeKnowledgeService {
             throw new IllegalArgumentException("filePath required");
         }
         String repoPath = resolveRepositoryPath(projectId);
-        Path root = Path.of(repoPath).toAbsolutePath().normalize();
-        Path file = root.resolve(filePath).normalize();
+        Path root = Path.of(repoPath).toRealPath();
+        Path file = root.resolve(filePath).normalize().toRealPath();
         if (!file.startsWith(root)) {
             throw new IllegalArgumentException("filePath escapes repository root");
         }

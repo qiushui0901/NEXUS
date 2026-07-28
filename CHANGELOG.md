@@ -1,3 +1,26 @@
+## 0.6.0-SNAPSHOT — 2026-07-28
+
+### Added
+
+- 新增 `/mcp` Streamable HTTP Server，为 Codex、Cursor 和其他 MCP 客户端提供六个只读研发知识工具。
+- MCP 结果统一返回解析后的项目/版本、受控数据、稳定证据、质量、显式告警和截断状态。
+- 新增 MCP 调用指标与安全审计日志，不记录查询正文、API key 或完整证据。
+- 新增固定版本的 stdio 兼容桥、Codex/Cursor/Claude Code 配置说明和常见错误排查。
+- 新增非 root 多阶段容器镜像及包含 NEXUS、Qdrant、Prometheus、Grafana 的 Compose 配置。
+
+### Changed
+
+- API key 认证、角色权限和项目白名单抽取为 REST 与 MCP 共用的传输无关服务。
+- Codex 与 Cursor 的项目级 MCP 配置随仓库提供，密钥只从 `NEXUS_API_KEY` 环境变量读取。
+- NEXUS 平台版本提升到 `0.6.0-SNAPSHOT`；业务需求版本继续独立管理。
+
+### Security
+
+- MCP 初始化及后续 HTTP 请求都校验 `X-API-Key`，工具调用继续执行既有角色与项目授权。
+- MCP 响应统一限制列表、源码行数、摘录、证据和总字符数，并移除绝对路径与内部存储标识。
+- 源码读取按真实路径校验仓库边界，拒绝通过仓库内符号链接读取仓库外文件。
+- 容器构建上下文排除业务数据、仓库、向量存储、凭据、日志、归档和本地环境文件。
+
 ## 0.5.0-SNAPSHOT — 2026-07-28
 
 ### Added

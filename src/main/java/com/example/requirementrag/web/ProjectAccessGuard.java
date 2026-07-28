@@ -1,8 +1,8 @@
 package com.example.requirementrag.web;
 
-import com.example.requirementrag.config.AuthProperties;
-import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.model.UserContext;
+import com.example.requirementrag.security.ApiKeyAuthenticationService;
+import com.example.requirementrag.security.ProjectAuthorizationService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Component;
 
@@ -10,12 +10,13 @@ import org.springframework.stereotype.Component;
 @Component
 public class ProjectAccessGuard {
 
-    private final AuthProperties authProperties;
-    private final ProjectRegistry projectRegistry;
+    private final ApiKeyAuthenticationService authenticationService;
+    private final ProjectAuthorizationService authorizationService;
 
-    public ProjectAccessGuard(AuthProperties authProperties, ProjectRegistry projectRegistry) {
-        this.authProperties = authProperties;
-        this.projectRegistry = projectRegistry;
+    public ProjectAccessGuard(ApiKeyAuthenticationService authenticationService,
+                              ProjectAuthorizationService authorizationService) {
+        this.authenticationService = authenticationService;
+        this.authorizationService = authorizationService;
     }
 
     public UserContext currentUser(HttpServletRequest request) {
@@ -23,24 +24,13 @@ public class ProjectAccessGuard {
         if (user != null) {
             return user;
         }
-        if (!authProperties.enabled()) {
+        if (!authenticationService.enabled()) {
             return UserContext.defaultAdmin();
         }
         throw new AccessDeniedException("未认证");
     }
 
     public void requireProjectAccess(HttpServletRequest request, String projectId) {
-        String effective = hasText(projectId) ? projectId.trim() : projectRegistry.defaultProject().id();
-        if (!hasText(effective)) {
-            return;
-        }
-        UserContext user = currentUser(request);
-        if (!user.hasAccessTo(effective)) {
-            throw new AccessDeniedException("无权访问该项目");
-        }
-    }
-
-    private boolean hasText(String value) {
-        return value != null && !value.isBlank();
+        authorizationService.requireProjectAccess(currentUser(request), projectId);
     }
 }

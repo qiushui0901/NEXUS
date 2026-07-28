@@ -11,6 +11,10 @@ NEXUS 面向产品、开发和测试团队，将分散在需求文档、Git 代�
 
 产品、开发和测试可以通过同一个 Wiki 浏览不同版本的功能全貌，并从结论回到原始需求或代码证据。
 
+从 0.6 起，Codex、Cursor 和其他 MCP 客户端可通过 `/mcp` Streamable HTTP 直接调用需求、
+代码、源码、开发方案、Wiki 和版本差异工具。配置与安全说明见
+[`docs/mcp-quickstart.md`](docs/mcp-quickstart.md)。
+
 ## 项目目标
 
 ```text

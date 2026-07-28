@@ -8,6 +8,13 @@ spring:
       max-file-size: 20MB
       max-request-size: 20MB
   ai:
+    mcp:
+      server:
+        enabled: ${MCP_ENABLED:true}
+        name: nexus
+        version: 0.6.0
+        protocol: STREAMABLE
+        instructions: Evidence-bound requirement, code, Wiki, and version knowledge for development agents.
     chat:
       client:
         enabled: false
@@ -79,6 +86,13 @@ management:
         rag.stage: 0.5,0.95,0.99
 
 app:
+  mcp:
+    enabled: ${MCP_ENABLED:true}
+    max-results: ${MCP_MAX_RESULTS:20}
+    max-source-lines: ${MCP_MAX_SOURCE_LINES:200}
+    max-excerpt-characters: ${MCP_MAX_EXCERPT_CHARACTERS:2000}
+    max-evidence: ${MCP_MAX_EVIDENCE:40}
+    max-response-characters: ${MCP_MAX_RESPONSE_CHARACTERS:120000}
   rag:
     qdrant:
       base-url: ${QDRANT_URL:http://localhost:6333}

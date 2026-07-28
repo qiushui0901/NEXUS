@@ -4,6 +4,8 @@ import com.example.requirementrag.config.AuthProperties;
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.UserContext;
 import com.example.requirementrag.model.UserRole;
+import com.example.requirementrag.security.ApiKeyAuthenticationService;
+import com.example.requirementrag.security.ProjectAuthorizationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,6 +27,8 @@ class ProjectAuthInterceptorTest {
 
     @Mock
     private ProjectIdResolver projectIdResolver;
+    @Mock
+    private com.example.requirementrag.config.ProjectRegistry projectRegistry;
 
     private ProjectAuthInterceptor interceptor;
 
@@ -33,7 +37,10 @@ class ProjectAuthInterceptorTest {
         AuthProperties auth = new AuthProperties(true, List.of(
                 new AuthProperties.AuthUser("dev", "dev-key", UserRole.DEVELOPER, List.of("project-a")),
                 new AuthProperties.AuthUser("viewer", "ro-key", UserRole.READONLY, List.of("project-a"))));
-        interceptor = new ProjectAuthInterceptor(auth, projectIdResolver);
+        interceptor = new ProjectAuthInterceptor(
+                new ApiKeyAuthenticationService(auth),
+                new ProjectAuthorizationService(projectRegistry),
+                projectIdResolver);
     }
 
     @Test
