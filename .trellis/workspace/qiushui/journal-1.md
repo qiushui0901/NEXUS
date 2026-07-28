@@ -302,3 +302,36 @@ Implemented and verified the Spring AI Streamable HTTP MCP facade with six evide
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: NEXUS 0.7 多语言代码智能收口
+
+**Date**: 2026-07-28
+**Task**: NEXUS 0.7 多语言代码智能收口
+**Branch**: `main`
+
+### Summary
+
+完成 Java/Go/Python/TypeScript Tree-sitter 索引、SQLite 符号图、调用与 commit 影响分析、REST/MCP 接口、Wiki Resource Template、权限与降级边界；补齐隔离、事务回滚、删除/重命名和客户端协议测试。JDK 21 verify 181 项通过；Codex 调用通过，Cursor 完成 MCP 初始化但工具调用受团队用量上限阻断。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `97cbf42` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
