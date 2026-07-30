@@ -1,6 +1,7 @@
 package com.example.requirementrag.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
 
 import java.util.List;
 
@@ -68,7 +69,31 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
     }
 
     /** BGE 重排服务配置。 */
-    public record Bge(String baseUrl, String path, String apiKey) {
+    public record Bge(String baseUrl, String path, String apiKey, int connectTimeoutMs, int readTimeoutMs) {
+        public static final int DEFAULT_CONNECT_TIMEOUT_MS = 2_000;
+        public static final int DEFAULT_READ_TIMEOUT_MS = 10_000;
+        private static final int MAX_TIMEOUT_MS = 120_000;
+
+        @ConstructorBinding
+        public Bge {
+            connectTimeoutMs = resolveTimeout("connectTimeoutMs", connectTimeoutMs, DEFAULT_CONNECT_TIMEOUT_MS);
+            readTimeoutMs = resolveTimeout("readTimeoutMs", readTimeoutMs, DEFAULT_READ_TIMEOUT_MS);
+        }
+
+        /** Compatibility constructor for callers created before BGE-specific timeouts were introduced. */
+        public Bge(String baseUrl, String path, String apiKey) {
+            this(baseUrl, path, apiKey, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_READ_TIMEOUT_MS);
+        }
+
+        private static int resolveTimeout(String name, int value, int defaultValue) {
+            if (value == 0) {
+                return defaultValue;
+            }
+            if (value < 0 || value > MAX_TIMEOUT_MS) {
+                throw new IllegalArgumentException(name + " must be between 1 and " + MAX_TIMEOUT_MS + " ms");
+            }
+            return value;
+        }
     }
 
     /** LLM 生成、重排与路由模型名称配置。 */

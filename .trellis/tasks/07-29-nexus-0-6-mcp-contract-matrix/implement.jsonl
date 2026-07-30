@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Defines test and backend quality expectations for the contract suite."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Defines safe exception mapping and degradation conventions."}
+{"file":".trellis/spec/backend/retrieval-and-version-knowledge.md","reason":"Defines version-scoped retrieval and evidence contracts used by the six tools."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Guides MCP-to-service contract and data-flow verification."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Guides reuse of validation and response-policy helpers."}

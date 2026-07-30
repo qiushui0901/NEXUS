@@ -15,6 +15,7 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -175,7 +176,7 @@ public class SQLiteSymbolGraphStore {
             qualified.computeIfAbsent(symbol.qualifiedName(), ignored -> new ArrayList<>()).add(symbol);
             simple.computeIfAbsent(symbol.simpleName(), ignored -> new ArrayList<>()).add(symbol);
         }
-        List<CodeRelation> relations = new ArrayList<>();
+        Map<String, CodeRelation> relations = new LinkedHashMap<>();
         for (CodeCall call : result.calls()) {
             CodeSymbol match = unique(qualified.get(call.targetName()));
             CodeRelation.Resolution resolution = match == null ? null : CodeRelation.Resolution.EXACT;
@@ -191,12 +192,16 @@ public class SQLiteSymbolGraphStore {
             }
             if (resolution == null) resolution = CodeRelation.Resolution.UNRESOLVED;
             String callee = match == null ? null : match.id();
-            String seed = call.id() + '\n' + resolution + '\n' + String.valueOf(callee);
-            relations.add(new CodeRelation(UUID.nameUUIDFromBytes(seed.getBytes(java.nio.charset.StandardCharsets.UTF_8))
-                    .toString(), call.projectId(), call.commitSha(), call.callerSymbolId(), callee,
-                    call.targetName(), call.filePath(), call.line(), resolution, resolution.name()));
+            String seed = String.join("\n", call.projectId(), call.commitSha(), call.callerSymbolId(),
+                    String.valueOf(callee), call.targetName(), call.filePath(), String.valueOf(call.line()),
+                    resolution.name());
+            String relationId = UUID.nameUUIDFromBytes(
+                    seed.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+            relations.putIfAbsent(relationId, new CodeRelation(relationId, call.projectId(), call.commitSha(),
+                    call.callerSymbolId(), callee, call.targetName(), call.filePath(), call.line(),
+                    resolution, resolution.name()));
         }
-        return relations;
+        return List.copyOf(relations.values());
     }
 
     private CodeSymbol unique(List<CodeSymbol> symbols) {

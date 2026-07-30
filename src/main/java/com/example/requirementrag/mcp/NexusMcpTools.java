@@ -32,6 +32,7 @@ import org.springframework.ai.mcp.annotation.McpToolParam;
 import org.springframework.ai.mcp.annotation.context.McpSyncRequestContext;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
 import org.springframework.beans.factory.annotation.Autowired;
 
 import java.io.IOException;
@@ -110,9 +111,9 @@ public class NexusMcpTools {
         return invocations.invoke("nexus_search_requirements", context, projectId, version, Permission.PUBLIC_READ,
                 effectiveProject -> {
                     int resolvedLimit = policy.limit(limit);
-                    RagOutcome<RetrievalBundle> outcome = retrievalPipeline.execute(new RetrievalRequest(
-                            query, RetrievalProfile.REQUIREMENT_REVIEW, effectiveProject, documentId, version,
-                            resolvedLimit));
+                    RagOutcome<RetrievalBundle> outcome = dependency(() -> retrievalPipeline.execute(new RetrievalRequest(
+                            policy.required(query, "query"), RetrievalProfile.REQUIREMENT_REVIEW, effectiveProject, documentId, version,
+                            resolvedLimit)));
                     RetrievalBundle bundle = outcome.data();
                     EvidenceRegistry registry = EvidenceRegistry.from(bundle);
                     List<McpResponsePolicy.RequirementHit> hits = bundle.requirementEvidence().stream()
@@ -121,7 +122,9 @@ public class NexusMcpTools {
                             .toList();
                     List<EvidenceRef> evidence = policy.evidence(registry.references());
                     boolean truncated = policy.truncated(rawLimit(limit), bundle.requirementEvidence().size(),
-                            registry.references());
+                            registry.references())
+                            || bundle.requirementEvidence().stream().limit(resolvedLimit)
+                            .anyMatch(chunk -> policy.textTruncated(chunk.parentText()));
                     return new McpToolResponse<>(scope(bundle.resolvedProjectId(), bundle.version(),
                             bundle.documentId()), hits, evidence, Map.of("status", outcome.status()),
                             outcome.warnings(), truncated);
@@ -142,7 +145,7 @@ public class NexusMcpTools {
         return invocations.invoke("nexus_search_code", context, projectId, null, Permission.PUBLIC_READ,
                 effectiveProject -> {
                     int resolvedLimit = policy.limit(limit);
-                    List<CodeChunk> chunks = codeKnowledgeService.search(query, effectiveProject, resolvedLimit);
+                    List<CodeChunk> chunks = dependency(() -> codeKnowledgeService.search(policy.required(query, "query"), effectiveProject, resolvedLimit));
                     RetrievalBundle bundle = new RetrievalBundle(query, RetrievalProfile.DEVELOPMENT_PLAN,
                             effectiveProject, null, null, List.of(), chunks);
                     EvidenceRegistry registry = EvidenceRegistry.from(bundle);
@@ -152,7 +155,9 @@ public class NexusMcpTools {
                             .toList();
                     return new McpToolResponse<>(scope(effectiveProject, null, null), hits,
                             policy.evidence(registry.references()), Map.of("status", "SUCCESS"), List.of(),
-                            policy.truncated(rawLimit(limit), chunks.size(), registry.references()));
+                            policy.truncated(rawLimit(limit), chunks.size(), registry.references())
+                                    || chunks.stream().limit(resolvedLimit)
+                                    .anyMatch(chunk -> policy.textTruncated(chunk.text())));
                 });
     }
 
@@ -170,24 +175,20 @@ public class NexusMcpTools {
             @McpToolParam(description = "Last line, capped to 200 lines", required = false) Integer endLine) {
         return invocations.invoke("nexus_get_source", context, projectId, null, Permission.PUBLIC_READ,
                 effectiveProject -> {
-                    String safePath = policy.relativePath(filePath);
+                    String safePath = policy.relativePath(policy.required(filePath, "filePath"));
                     int safeEnd = policy.endLine(startLine, endLine);
-                    try {
-                        SourceSnippet snippet = policy.source(codeKnowledgeService.source(
-                                effectiveProject, safePath, startLine, safeEnd));
+                    SourceSnippet source = dependency(() -> codeKnowledgeService.source(
+                            effectiveProject, safePath, startLine, safeEnd));
+                    SourceSnippet snippet = policy.source(source);
                         CodeChunk sourceChunk = new CodeChunk("source:" + safePath + ":" + snippet.startLine(),
                                 effectiveProject, null, safePath, "source", safePath, snippet.startLine(),
                                 snippet.endLine(), snippet.text(), null);
                         RetrievalBundle bundle = new RetrievalBundle(safePath, RetrievalProfile.DEVELOPMENT_PLAN,
                                 effectiveProject, null, null, List.of(), List.of(sourceChunk));
                         EvidenceRegistry registry = EvidenceRegistry.from(bundle);
-                        return new McpToolResponse<>(scope(effectiveProject, null, null), snippet,
-                                policy.evidence(registry.references()), Map.of("status", "SUCCESS"), List.of(),
-                                endLine != null && endLine > safeEnd);
-                    }
-                    catch (IOException exception) {
-                        throw new IllegalStateException("Source is not available");
-                    }
+                    return new McpToolResponse<>(scope(effectiveProject, null, null), snippet,
+                            policy.evidence(registry.references()), Map.of("status", "SUCCESS"), List.of(),
+                            (endLine != null && endLine > safeEnd) || policy.textTruncated(source.text()));
                 });
     }
 
@@ -206,12 +207,12 @@ public class NexusMcpTools {
             @McpToolParam(description = "Maximum evidence hits, 1-20", required = false) Integer limit) {
         return invocations.invoke("nexus_development_plan", context, projectId, version, Permission.OPERATE,
                 effectiveProject -> {
-                    DevelopmentPlanResponse plan = developmentPlanService.plan(query, documentId, version,
-                            effectiveProject, policy.limit(limit));
+                    DevelopmentPlanResponse plan = dependency(() -> developmentPlanService.plan(policy.required(query, "query"), documentId, version,
+                            effectiveProject, policy.limit(limit)));
                     Map<String, Object> data = developmentPlanData(plan);
                     List<EvidenceRef> evidence = policy.evidence(plan.citations().references());
                     boolean truncated = policy.truncated(rawLimit(limit), plan.codeReferences().size(),
-                            plan.citations().references());
+                            plan.citations().references()) || developmentPlanTruncated(plan);
                     return new McpToolResponse<>(scope(effectiveProject, plan.version(), plan.documentId()), data,
                             evidence, plan.citations().quality(), plan.warnings(), truncated);
                 });
@@ -230,13 +231,14 @@ public class NexusMcpTools {
             String projectId) {
         return invocations.invoke("nexus_wiki_page", context, projectId, version, Permission.PUBLIC_READ,
                 effectiveProject -> {
-                    WikiModels.Page page = wikiRepository.getPage(effectiveProject, version, featureId);
+                    WikiModels.Page page = dependency(() -> wikiRepository.getPage(effectiveProject, policy.required(version, "version"),
+                            policy.required(featureId, "featureId")));
                     List<McpResponsePolicy.WikiEvidence> evidence = page.evidence().stream()
                             .limit(40)
                             .map(policy::wikiEvidence)
                             .toList();
                     return new McpToolResponse<>(scope(effectiveProject, page.version(), null), wikiData(page),
-                            evidence, page.quality(), List.of(), page.evidence().size() > evidence.size());
+                            evidence, page.quality(), List.of(), wikiTruncated(page));
                 });
     }
 
@@ -253,8 +255,11 @@ public class NexusMcpTools {
             String projectId) {
         return invocations.invoke("nexus_version_diff", context, projectId, toVersion, Permission.PUBLIC_READ,
                 effectiveProject -> {
-                    VersionComparisonReport report = versionComparisonService.compare(
-                            effectiveProject, fromVersion, toVersion);
+                    String safeFrom = policy.required(fromVersion, "fromVersion");
+                    String safeTo = policy.required(toVersion, "toVersion");
+                    policy.distinct(safeFrom, safeTo, "fromVersion and toVersion must differ");
+                    VersionComparisonReport report = dependency(() -> versionComparisonService.compare(
+                            effectiveProject, safeFrom, safeTo));
                     return new McpToolResponse<>(scope(report.projectId(), report.toVersion(), null),
                             versionDiffData(report),
                             List.of(), Map.of("fromVersion", report.fromVersion(), "toVersion", report.toVersion()),
@@ -372,6 +377,26 @@ public class NexusMcpTools {
                 });
     }
 
+    private <T> T dependency(DependencyCall<T> call) {
+        try {
+            return call.get();
+        }
+        catch (IOException | IllegalStateException exception) {
+            throw new McpDependencyUnavailableException(exception);
+        }
+        catch (ResponseStatusException exception) {
+            if (exception.getStatusCode().is5xxServerError()) {
+                throw new McpDependencyUnavailableException(exception);
+            }
+            throw exception;
+        }
+    }
+
+    @FunctionalInterface
+    private interface DependencyCall<T> {
+        T get() throws IOException;
+    }
+
     private Map<String, Object> developmentPlanData(DevelopmentPlanResponse plan) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", plan.status());
@@ -391,6 +416,24 @@ public class NexusMcpTools {
                 .toList());
         data.put("conflictReport", plan.conflictReport());
         return Map.copyOf(data);
+    }
+
+    private boolean developmentPlanTruncated(DevelopmentPlanResponse plan) {
+        if (policy.textTruncated(plan.summary())
+                || policy.textListTruncated(plan.productUnderstanding())
+                || policy.textListTruncated(plan.developmentConstraints())
+                || policy.textListTruncated(plan.chainOverview())
+                || policy.textListTruncated(plan.implementationOrder())
+                || policy.textListTruncated(plan.steps())
+                || policy.textListTruncated(plan.risks())
+                || policy.collectionTruncated(plan.sections())) {
+            return true;
+        }
+        return plan.sections().stream().limit(20).anyMatch(section ->
+                policy.textTruncated(section.title())
+                        || policy.textTruncated(section.purpose())
+                        || policy.textListTruncated(section.keyQuestions())
+                        || policy.textListTruncated(section.changeSuggestions()));
     }
 
     private Map<String, Object> versionDiffData(VersionComparisonReport report) {
@@ -463,7 +506,15 @@ public class NexusMcpTools {
         return report.requirements().changes().size() > 20
                 || report.code().changes().size() > 20
                 || report.tests().cases().size() > 20
-                || report.wiki().pages().size() > 20;
+                || report.wiki().pages().size() > 20
+                || report.requirements().changes().stream().limit(20).anyMatch(change ->
+                policy.textTruncated(change.filename())
+                        || policy.textTruncated(change.beforeExcerpt())
+                        || policy.textTruncated(change.afterExcerpt()))
+                || report.tests().cases().stream().limit(20).anyMatch(change ->
+                policy.textTruncated(change.caseId()) || policy.textTruncated(change.name()))
+                || report.wiki().pages().stream().limit(20).anyMatch(change ->
+                policy.textTruncated(change.featureId()) || policy.textTruncated(change.title()));
     }
 
     private String safeRelativePath(String path) {
@@ -494,6 +545,27 @@ public class NexusMcpTools {
         data.put("codeEntries", page.codeEntries().stream().limit(20).map(policy::wikiCodeEntry).toList());
         data.put("relations", page.relations().stream().limit(20).toList());
         return Map.copyOf(data);
+    }
+
+    private boolean wikiTruncated(WikiModels.Page page) {
+        return page.evidence().size() > 40
+                || policy.textTruncated(page.title())
+                || policy.textTruncated(page.summary())
+                || policy.textListTruncated(page.productRules())
+                || policy.textListTruncated(page.processSteps())
+                || policy.textListTruncated(page.dataImpacts())
+                || policy.textListTruncated(page.boundaryConditions())
+                || policy.textListTruncated(page.acceptanceCriteria())
+                || policy.textListTruncated(page.testPoints())
+                || policy.textListTruncated(page.risks())
+                || policy.collectionTruncated(page.codeEntries())
+                || page.codeEntries().stream().limit(20)
+                .anyMatch(entry -> policy.textTruncated(entry.role()))
+                || policy.collectionTruncated(page.relations())
+                || page.evidence().stream().limit(40).anyMatch(evidence ->
+                policy.textTruncated(evidence.title())
+                        || policy.textTruncated(evidence.location())
+                        || policy.textTruncated(evidence.excerpt()));
     }
 
     private List<String> bounded(List<String> values) {

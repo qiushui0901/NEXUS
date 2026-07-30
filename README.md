@@ -58,8 +58,13 @@ NEXUS 把分散的产品文档、Git 仓库与测试信号，整理成按**项�
 
 ```bash
 cp .env.example .env          # 填写 Token 与服务地址
+./tools/start-bge-reranker.sh # 首次创建 Python 3.11 环境并下载 Transformers reranker
 ./scripts/nexus.sh start      # 本地 Qdrant + 应用（详见用户指南）
 ```
+
+Ollama 的 `bge-m3` 只负责 Embedding。BGE 重排由独立的 Python/Transformers 服务提供，
+默认使用 `BAAI/bge-reranker-v2-m3` 并监听 `127.0.0.1:8081/rerank`。首次启动会下载模型；
+服务就绪后可运行 `python3 tools/check-bge-reranker.py` 验证健康状态与 NEXUS 响应契约。
 
 启动后访问：
 
@@ -79,7 +84,9 @@ Compose 共享部署、MCP 客户端、索引与 API 说明见下方文档，不
 
 | 文档 | 内容 |
 |------|------|
+| [生态介绍页](docs/nexus-ecosystem.html) | NEXUS × nexuspow 一页总览（可浏览器直接打开） |
 | [用户指南](docs/user-guide.md) | 安装、配置、运行、代码索引、Wiki、API、数据边界 |
+| [人工冒烟手测](docs/manual-smoke-test.md) | 自己验证需求/代码/MCP 效果的可复制清单 |
 | [MCP 快速入门](docs/mcp-quickstart.md) | Cursor / Codex / Claude Code 配置与排障 |
 | [multipow × NEXUS](docs/multipow-nexus-integration.md) | Agent 工作区脚手架与证据闸门（含代码双副本模型） |
 | [改进路线图](docs/nexus-improvement-roadmap.md) | 缺陷清单与迈向全组可用 / GA 的版本计划 |

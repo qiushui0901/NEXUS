@@ -77,6 +77,27 @@ class SQLiteSymbolGraphStoreTest {
                 .extracting(CodeSymbol::id).containsExactly("renamed");
     }
 
+    @Test
+    void deduplicatesIdenticalCallsAndKeepsDistinctRelationsWhenCallIdsCollide() throws Exception {
+        SQLiteSymbolGraphStore store = new SQLiteSymbolGraphStore(
+                Files.createTempDirectory("nexus-graph-duplicate-call-").toString());
+        CodeSymbol caller = symbol("caller", "demo.Caller.run", "run", 10, 20);
+        CodeSymbol callee = symbol("callee", "demo.Caller.save", "save", 2, 5);
+        CodeCall resolved = new CodeCall("same-call-id", "demo", "abc", "java", caller.id(),
+                caller.qualifiedName(), "save", "src/Caller.java", 12);
+        CodeCall identical = new CodeCall("same-call-id", "demo", "abc", "java", caller.id(),
+                caller.qualifiedName(), "save", "src/Caller.java", 12);
+        CodeCall distinct = new CodeCall("same-call-id", "demo", "abc", "java", caller.id(),
+                caller.qualifiedName(), "dynamicTarget", "src/Caller.java", 13);
+
+        store.replaceSnapshot(new CodeScanner.ScanResult("demo", "abc", 1, List.of(),
+                List.of(caller, callee), List.of(resolved, identical, distinct), List.of()));
+
+        assertThat(store.relations("demo", "abc", caller.id(), false, 10))
+                .extracting(CodeRelation::targetName)
+                .containsExactlyInAnyOrder("save", "dynamicTarget");
+    }
+
     private CodeSymbol symbol(String id, String qualified, String simple, int start, int end) {
         return new CodeSymbol(id, "demo", "abc", "java", "method", qualified, simple,
                 "src/Caller.java", start, end, false, false);

@@ -15,6 +15,10 @@ import com.example.requirementrag.service.RagUnavailableException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -162,12 +166,15 @@ class RetrievalPipelineTest {
 
     @Test
     void parallelRecallP95BeatsSequentialBaselineByThirtyPercent() throws Exception {
+        final int branchDelayMs = 100;
+        final int warmupRuns = 2;
+        final int repetitions = 10;
         when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
-                .thenAnswer(invocation -> delayed(List.of(chunk("hit", "命中", "h1"))));
+                .thenAnswer(invocation -> delayed(List.of(chunk("hit", "命中", "h1")), branchDelayMs));
         when(documentStore.scrollVersion("requirements_game", "requirements", "5.1"))
-                .thenAnswer(invocation -> delayed(List.of(chunk("corpus", "正文", "h2"))));
+                .thenAnswer(invocation -> delayed(List.of(chunk("corpus", "正文", "h2")), branchDelayMs));
         when(codeKnowledgeService.search("query", "game", 8))
-                .thenAnswer(invocation -> delayed(List.of(code("code-1"))));
+                .thenAnswer(invocation -> delayed(List.of(code("code-1")), branchDelayMs));
         ExecutorService executor = Executors.newFixedThreadPool(3);
         try {
             RetrievalPipeline concurrent = new RetrievalPipeline(properties, projectRegistry, queryRouter,
@@ -175,18 +182,24 @@ class RetrievalPipelineTest {
                     RequirementReranker.passthrough(),
                     new RetrievalResultCache(Duration.ZERO, 0, "disabled"), executor,
                     new RetrievalCircuitBreaker(0, Duration.ZERO));
-            List<Long> samples = new ArrayList<>();
-            for (int iteration = 0; iteration < 10; iteration++) {
-                long begin = System.nanoTime();
+            long sequentialP95 = measureP95(warmupRuns, repetitions, () -> {
+                delayed(null, branchDelayMs);
+                delayed(null, branchDelayMs);
+                delayed(null, branchDelayMs);
+            });
+            long parallelP95 = measureP95(warmupRuns, repetitions, () -> {
                 RagOutcome<RetrievalBundle> outcome = concurrent.execute(new RetrievalRequest(
                         "query", RetrievalProfile.DEVELOPMENT_PLAN, null, null, null, 8, true));
-                samples.add(Duration.ofNanos(System.nanoTime() - begin).toMillis());
                 assertThat(outcome.status()).isEqualTo(RagOutcomeStatus.SUCCESS);
-            }
-            samples.sort(Long::compareTo);
-            long p95 = samples.get((int) Math.ceil(samples.size() * 0.95) - 1);
+            });
+            double reduction = 1.0 - ((double) parallelP95 / sequentialP95);
+            boolean passed = reduction + 1e-12 >= 0.30;
 
-            assertThat(p95).isLessThan(210);
+            writeParallelBenchmark(branchDelayMs, warmupRuns, repetitions, sequentialP95, parallelP95,
+                    reduction, passed);
+
+            assertThat(sequentialP95).isGreaterThanOrEqualTo(branchDelayMs * 3L);
+            assertThat(reduction).isGreaterThanOrEqualTo(0.30);
         } finally {
             executor.shutdownNow();
         }
@@ -276,9 +289,59 @@ class RetrievalPipelineTest {
         assertThat(otherVersion.data().requirementEvidence()).containsExactly(v52);
     }
 
+    private long measureP95(int warmupRuns, int repetitions, ThrowingRunnable action) throws Exception {
+        for (int iteration = 0; iteration < warmupRuns; iteration++) {
+            action.run();
+        }
+        List<Long> samples = new ArrayList<>();
+        for (int iteration = 0; iteration < repetitions; iteration++) {
+            long begin = System.nanoTime();
+            action.run();
+            samples.add(Duration.ofNanos(System.nanoTime() - begin).toMillis());
+        }
+        samples.sort(Long::compareTo);
+        return samples.get((int) Math.ceil(samples.size() * 0.95) - 1);
+    }
+
+    private void writeParallelBenchmark(int branchDelayMs, int warmupRuns, int repetitions,
+                                        long sequentialP95, long parallelP95, double reduction,
+                                        boolean passed) throws IOException {
+        Path output = Path.of(System.getenv().getOrDefault(
+                "RETRIEVAL_PARALLEL_BENCHMARK_OUTPUT",
+                "target/retrieval-evaluation/parallel-recall-benchmark.json"));
+        Files.createDirectories(output.toAbsolutePath().getParent());
+        String json = """
+                {
+                  "schemaVersion": 1,
+                  "classification": "controlled-fake-dependency",
+                  "profile": "DEVELOPMENT_PLAN",
+                  "branchCount": 3,
+                  "branchDelayMs": %d,
+                  "warmupRuns": %d,
+                  "repetitions": %d,
+                  "sequentialP95Ms": %d,
+                  "parallelP95Ms": %d,
+                  "reduction": %.6f,
+                  "requiredReduction": 0.30,
+                  "passed": %s
+                }
+                """.formatted(branchDelayMs, warmupRuns, repetitions, sequentialP95, parallelP95,
+                reduction, passed);
+        Files.writeString(output, json, StandardCharsets.UTF_8);
+    }
+
     private <T> T delayed(T value) throws InterruptedException {
-        Thread.sleep(100);
+        return delayed(value, 100);
+    }
+
+    private <T> T delayed(T value, int delayMs) throws InterruptedException {
+        Thread.sleep(delayMs);
         return value;
+    }
+
+    @FunctionalInterface
+    private interface ThrowingRunnable {
+        void run() throws Exception;
     }
 
     private ChunkRecord chunk(String parentId, String text, String hash) {

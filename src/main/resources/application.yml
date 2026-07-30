@@ -113,6 +113,8 @@ app:
       base-url: ${BGE_RERANK_URL:http://localhost:8081}
       path: ${BGE_RERANK_PATH:/rerank}
       api-key: ${BGE_RERANK_API_KEY:}
+      connect-timeout-ms: ${BGE_RERANK_CONNECT_TIMEOUT_MS:2000}
+      read-timeout-ms: ${BGE_RERANK_READ_TIMEOUT_MS:10000}
     llm:
       generation-model: ${GENERATION_MODEL:claude-sonnet-4.6}
       reranker-model: ${LLM_RERANK_MODEL:claude-haiku-4-5-20251001}

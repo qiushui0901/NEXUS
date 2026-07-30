@@ -299,12 +299,12 @@ ProjectIdResolver.java:53         catch (RuntimeException ignored) { }
 **验收**
 
 - [x] 在 Cursor 中配置 NEXUS MCP 后，工具列表可见且可调用
-- [ ] 用一个真实需求提问，返回结果包含可回查的 `requirement:*` / `code:*` 编号
+- [x] 用一个真实需求提问，返回结果包含可回查的 `requirement:*` / `code:*` 编号
 - [x] 无 key / 错 key / 越权项目分别返回 401 / 401 / 403 语义
 - [x] BGE 或 Qdrant 停掉时，工具返回降级结果而不是 500
-- [ ] 有针对每个工具的契约测试（入参校验、权限、降级、截断）
+- [x] 有针对每个工具的契约测试（入参校验、权限、降级、截断）
 
-复测记录（2026-07-28）：MCP HTTP 初始化、工具发现、鉴权、代表性工具调用、响应截断和底层降级测试通过；当前注册 9 个工具及 1 个 Wiki Resource Template。真实业务语料冒烟和逐工具完整契约矩阵仍需补齐，因此对应两项暂不勾选。
+复测记录（2026-07-29）：保留原有 MCP HTTP 初始化、工具发现、真实脱敏语料证据链验证，并补齐 6 个 0.6 工具的 6 × 4 入参、权限、降级、截断契约矩阵。`NexusMcpV06ContractTest` 52 项通过，含逐工具单字段静默截断回归；相关 MCP 定向回归通过；JDK 21 `clean verify` 共 258 项测试通过，`git diff --check` 通过。
 
 ---
 
@@ -360,14 +360,47 @@ ProjectIdResolver.java:53         catch (RuntimeException ignored) { }
 
 **验收**
 
-- [ ] 三个 profile 的证据都经过重排，评测显示 Recall@10 相对 0.7 有提升
-- [x] 开发方案 P95 延迟相对 0.7 下降 ≥ 30%（受控三分支 fixture：并行 P95 < 210 ms，对照顺序基线 300 ms）
-- [ ] 评测集 ≥ 50 条，CI 中作为门禁运行
+- [x] 三个 profile 的证据都经过统一重排；固定同条件评测中 Document/Code Recall@10 与 MRR@10 均不低于 0.7 基线
+- [x] 开发方案受控并行召回 P95 相对顺序基线下降 ≥ 30%（315 ms → 112 ms，下降 64.44%）
+- [x] 固定评测集 ≥ 50 条并覆盖六类场景；确定性离线回归作为 CI 门禁，真实依赖评测保留显式开关
 - [x] 覆盖率门禁生效，低于阈值构建失败
 
-0.8 开发记录（2026-07-28）：统一 BGE→可选 LLM 重排已覆盖三个 profile；需求、版本语料和代码召回改为独立超时、分阶段熔断的并行执行；加入检索结果、Embedding、Wiki TTL 缓存及发布失效；MCP 扩展为 10 个工具和 3 个 Prompt。评测集已扩展为 50 条并覆盖六类场景，提交了 0.7 Recall@10/MRR/P95 基线和可选真实依赖回归门禁。JDK 21 下完整 `verify` 共 191 项测试通过，JaCoCo 行覆盖率 61.90%（3,965 / 6,406，门槛 35%）。
+0.8 开发记录（2026-07-28）：统一 BGE→可选 LLM 重排已覆盖三个 profile；需求、版本语料和代码召回改为独立超时、分阶段熔断的并行执行；加入检索结果、Embedding、Wiki TTL 缓存及发布失效；MCP 扩展为 10 个工具和 3 个 Prompt。通用评测集已扩展为 50 条并覆盖六类场景，CI 已具备确定性离线回归门禁和可选真实依赖评测开关。最终 JDK 21 完整 `verify` 共 201 项测试通过，JaCoCo 行覆盖率 65.25%（4,275 / 6,552，门槛 35%）。
 
-仍未勾选的原因：当前环境没有可复现的 Qdrant/Embedding/BGE 黄金索引，尚未执行真实 0.7→0.8 Recall@10 对比；同一原因使真实检索评测尚未作为普通 CI 的无条件门禁。OWASP CVSS 7 门禁已加入 CI，并通过 `NVD_API_KEY` Secret 读取密钥。
+截至 2026-07-28，0.8 仅在授权的拾光仓库上完成一次真实校准，当时还不是完整的 0.7→0.8 同条件门禁：校准时 Ollama Embedding 正常，但独立 BGE `/rerank` endpoint 尚未提供，历史 0.7 提交也不包含拾光 profile、脱敏语料和同一黄金数据集。仓库中的 `retrieval-baseline-v0.7.json` 是通用门禁阈值而非拾光实测基线。该阻塞已由下述 2026-07-29 正式同条件评测闭环解除；真实依赖评测仍保留显式开关。OWASP CVSS 7 门禁已加入 CI，并通过 `NVD_API_KEY` Secret 读取密钥。
+
+真实评测记录（2026-07-28）：使用用户授权的 `qiushui-shiguang` 只读仓库、独立 collection、
+12 条稳定黄金标签和脱敏需求完成 0.8 校准。修复前→修复后：Document Recall@10
+`0.900→1.000`、Code Recall@10 `0.500→1.000`、MRR@10 `0.516→0.863`、Mixed both-hit
+`0.500→1.000`、P50 `3777→2933 ms`、P95 `8617→5888 ms`。真实 MCP 需求、代码和源码
+证据链通过。独立 BGE `/rerank` endpoint 当时尚未提供；Ollama `/api/embed` 返回向量，不能满足
+NEXUS 的 `index`/`score` 重排契约。10 条需求相关用例仍如实报告 `BGE_RERANK_UNAVAILABLE`，
+因此报告为 10/12 失败且全部属于基础设施失败，不能把满召回解释为依赖完整验收。
+
+历史 0.7 提交没有拾光 profile、脱敏语料或同一黄金数据集；已提交的 0.7 JSON 是通用门禁阈值，
+不是拾光实测结果。因此在 2026-07-28 的校准记录中无法复现同条件 0.7→0.8 对照，当时第一项未勾选。
+2026-07-29 已改用同一固定语料、黄金集和运行环境分别测量两个 variant，完成正式闭环；未将通用阈值伪装为实测 baseline。
+
+2026-07-29 修复记录：新增独立 Python/Transformers reranker 服务，默认加载
+`BAAI/bge-reranker-v2-m3`，监听 `127.0.0.1:8081/rerank` 并兼容现有 Java 客户端契约。
+Ollama 中的 reranker 模型不直接复用，因为当前 Ollama 没有 `/api/rerank`，而 `/api/embed`
+只返回向量。历史评测状态不因新增启动脚本而自动改为成功；必须完成真实模型启动和同条件重测。
+同日真实模型已在 CPU 上加载并通过 `/health` 与 NEXUS 响应契约检查；这解除了 endpoint
+可用性阻塞，但不会改写 2026-07-28 的校准记录。随后已完成下述同条件正式重跑。
+
+正式 0.7→0.8 对照闭环（2026-07-29）：在同一拾光提交
+`d29f32589c5bd7c190a23eb3a84f27f0069f312f`、同一脱敏语料、同一 Qdrant collection、
+同一 54 条黄金集（SHA-256 `1ff996579588bfc5b859b5a483427c255325265b211e452af5eaff6471a61b18`）、
+相同 profile/top-k/超时与关闭缓存条件下，分别用独立 JVM 测量 `0.7-baseline` 和
+`0.8-rerank`，每个 case 预热 1 次并重复 3 次。Python/Transformers
+`BAAI/bge-reranker-v2-m3` 在 CPU 上完成 144/144 次成功调用，降级 0 次；18 次无候选跳过
+单独计数，两个 variant 的基础设施失败均为 0。Document Recall@10
+`0.354167→0.354167`、Code Recall@10 `0.738095→0.738095`、MRR@10
+`0.425617→0.425617`，质量持平且不回退；受控三分支并行 P95 `315→112 ms`，下降
+64.44%。`target/retrieval-evaluation/comparison.json` 的全部 acceptance checks 为 PASS，
+`manifest.json` 记录固定数据、语料、运行时、配置指纹且 `secretsRecorded=false`。真实模型端到端
+延迟因 CPU BGE 增加，不用它替代受控并行召回性能指标；真实依赖评测仍通过显式开关运行，避免
+默认 CI 依赖本地 Qdrant、Embedding 与 BGE 服务。
 
 ---
 

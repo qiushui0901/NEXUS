@@ -31,13 +31,32 @@ public class McpResponsePolicy {
         this.jsonMapper = jsonMapper;
     }
 
+    public String required(String value, String name) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(name + " is required");
+        }
+        return value.trim();
+    }
+
+    public void distinct(String first, String second, String message) {
+        if (first.equals(second)) {
+            throw new IllegalArgumentException(message);
+        }
+    }
+
     public int limit(Integer requested) {
         int value = requested == null ? 10 : requested;
         return Math.min(Math.max(value, 1), properties.maxResults());
     }
 
     public int endLine(Integer startLine, Integer requestedEndLine) {
-        int start = Math.max(1, startLine == null ? 1 : startLine);
+        int start = startLine == null ? 1 : startLine;
+        if (start < 1) {
+            throw new IllegalArgumentException("startLine must be positive");
+        }
+        if (requestedEndLine != null && requestedEndLine < start) {
+            throw new IllegalArgumentException("endLine must not be before startLine");
+        }
         int requested = requestedEndLine == null ? start + properties.maxSourceLines() - 1 : requestedEndLine;
         return Math.min(requested, start + properties.maxSourceLines() - 1);
     }
@@ -88,7 +107,35 @@ public class McpResponsePolicy {
     public boolean truncated(int requestedLimit, int resultSize, List<?> evidence) {
         return requestedLimit > properties.maxResults()
                 || resultSize > properties.maxResults()
-                || (evidence != null && evidence.size() > properties.maxEvidence());
+                || evidenceTruncated(evidence);
+    }
+
+    public boolean textTruncated(String value) {
+        return value != null && value.length() > properties.maxExcerptCharacters();
+    }
+
+    public boolean textListTruncated(List<String> values) {
+        return values != null && (values.size() > properties.maxResults()
+                || values.stream().limit(properties.maxResults()).anyMatch(this::textTruncated));
+    }
+
+    public boolean collectionTruncated(List<?> values) {
+        return values != null && values.size() > properties.maxResults();
+    }
+
+    public boolean evidenceTruncated(List<?> evidence) {
+        if (evidence == null) {
+            return false;
+        }
+        if (evidence.size() > properties.maxEvidence()) {
+            return true;
+        }
+        return evidence.stream().limit(properties.maxEvidence())
+                .filter(EvidenceRef.class::isInstance)
+                .map(EvidenceRef.class::cast)
+                .anyMatch(ref -> textTruncated(ref.title())
+                        || textTruncated(ref.location())
+                        || textTruncated(ref.excerpt()));
     }
 
     public <T> McpToolResponse<T> enforceTotalLimit(McpToolResponse<T> response) {

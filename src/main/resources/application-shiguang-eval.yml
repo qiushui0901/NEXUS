@@ -1,0 +1,35 @@
+app:
+  rag:
+    projects:
+      - id: shiguang-eval
+        name: 拾光真实评测
+        group: shiguang
+        side: server
+        requirement-collection: requirements_shiguang_eval
+        code-collection: code_shiguang_eval
+        repository-path: ${SHIGUANG_REPOSITORY_PATH:}
+        git-path: qiushui0901/qiushui-shiguang
+        include-path-substrings:
+          - /shiguang-auth/
+          - /shiguang-note/
+          - /shiguang-comment/
+          - /shiguang-user-relation/
+          - /shiguang-search/
+          - /shiguang-oss/
+          - /shiguang-recommend/
+          - /shiguang-agent/
+        exclude-path-substrings:
+          - /target/
+          - /.git/
+          - /.idea/
+          - /node_modules/
+          - /build/
+          - /src/main/resources/
+          - /src/test/resources/
+          - /简历.md
+        max-file-bytes: 1000000
+        knowledge:
+          bootstrap-enabled: false
+          document-id: shiguang-eval-requirements
+          version: shiguang-eval-v1
+          min-html-bytes: 800

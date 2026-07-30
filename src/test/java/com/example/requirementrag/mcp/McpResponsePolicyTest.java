@@ -1,10 +1,15 @@
 package com.example.requirementrag.mcp;
 
+import com.example.requirementrag.evidence.EvidenceRef;
 import com.example.requirementrag.model.SourceSnippet;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.json.JsonMapper;
 
+import java.util.Collections;
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -23,6 +28,39 @@ class McpResponsePolicyTest {
     }
 
     @Test
+    void validatesRequiredStringsDistinctValuesAndLineRanges() {
+        assertEquals("query", policy.required(" query ", "query"));
+        assertThrows(IllegalArgumentException.class, () -> policy.required(" ", "query"));
+        assertThrows(IllegalArgumentException.class, () -> policy.distinct("5.1", "5.1", "versions differ"));
+        assertThrows(IllegalArgumentException.class, () -> policy.endLine(0, 10));
+        assertThrows(IllegalArgumentException.class, () -> policy.endLine(10, 9));
+    }
+
+    @Test
+    void detectsTextCollectionAndEvidenceTruncationAtConfiguredBounds() {
+        assertFalse(policy.textTruncated(null));
+        assertFalse(policy.textTruncated("12345678"));
+        assertTrue(policy.textTruncated("123456789"));
+
+        assertFalse(policy.textListTruncated(null));
+        assertFalse(policy.textListTruncated(Collections.nCopies(20, "value")));
+        assertTrue(policy.textListTruncated(Collections.nCopies(21, "value")));
+        assertTrue(policy.textListTruncated(List.of("123456789")));
+
+        assertFalse(policy.collectionTruncated(null));
+        assertFalse(policy.collectionTruncated(Collections.nCopies(20, "value")));
+        assertTrue(policy.collectionTruncated(Collections.nCopies(21, "value")));
+
+        EvidenceRef safe = evidence("excerpt");
+        EvidenceRef oversized = evidence("123456789");
+        assertFalse(policy.evidenceTruncated(null));
+        assertFalse(policy.evidenceTruncated(Collections.nCopies(40, safe)));
+        assertTrue(policy.evidenceTruncated(Collections.nCopies(41, safe)));
+        assertTrue(policy.evidenceTruncated(List.of(oversized)));
+        assertTrue(policy.truncated(20, 20, List.of(oversized)));
+    }
+
+    @Test
     void rejectsAbsoluteAndEscapingPaths() {
         assertThrows(IllegalArgumentException.class, () -> policy.relativePath("/tmp/secret"));
         assertThrows(IllegalArgumentException.class, () -> policy.relativePath("../secret"));
@@ -37,6 +75,11 @@ class McpResponsePolicyTest {
         SourceSnippet safe = policy.source(new SourceSnippet("src/Main.java", 1, 1, "123456789"));
         assertEquals("src/Main.java", safe.filePath());
         assertTrue(safe.text().endsWith("…"));
+    }
+
+    private EvidenceRef evidence(String excerpt) {
+        return new EvidenceRef("requirement:1", null, "project", "5.1", "title",
+                "docs/spec.md", "section", excerpt, null, null, null, null);
     }
 
     @Test

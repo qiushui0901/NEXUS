@@ -6,6 +6,7 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
+import tools.jackson.databind.json.JsonMapper;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -19,11 +20,13 @@ public class HttpBgeReranker implements BgeReranker {
 
     private final RestClient client;
     private final RagProperties.Bge properties;
+    private final JsonMapper jsonMapper;
 
     /** 注入 REST 客户端与 BGE 服务配置。 */
-    public HttpBgeReranker(RestClient client, RagProperties.Bge properties) {
+    public HttpBgeReranker(RestClient client, RagProperties.Bge properties, JsonMapper jsonMapper) {
         this.client = client;
         this.properties = properties;
+        this.jsonMapper = jsonMapper;
     }
 
     /** 调用 BGE API 对候选子块文本重排，按分数降序返回 topK。 */
@@ -34,10 +37,15 @@ public class HttpBgeReranker implements BgeReranker {
         if (properties.apiKey() != null && !properties.apiKey().isBlank()) {
             request.header(HttpHeaders.AUTHORIZATION, "Bearer " + properties.apiKey());
         }
-        List<Map<String, Object>> response = request.body(Map.of(
-                        "query", query,
-                        "texts", candidates.stream().map(ChunkRecord::childText).toList(),
-                        "truncate", true))
+        byte[] requestBody;
+        try {
+            requestBody = jsonMapper.writeValueAsBytes(new RerankRequest(
+                    query, candidates.stream().map(ChunkRecord::childText).toList(), true));
+        }
+        catch (RuntimeException exception) {
+            throw new IllegalStateException("Unable to serialize BGE rerank request", exception);
+        }
+        List<Map<String, Object>> response = request.contentLength(requestBody.length).body(requestBody)
                 .retrieve().body(new ParameterizedTypeReference<>() {});
         if (response == null) return List.of();
         List<Scored> scored = new ArrayList<>();
@@ -51,5 +59,8 @@ public class HttpBgeReranker implements BgeReranker {
 
     /** 带相关性分数的分块记录。 */
     private record Scored(ChunkRecord chunk, double score) {
+    }
+
+    private record RerankRequest(String query, List<String> texts, boolean truncate) {
     }
 }

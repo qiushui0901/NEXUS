@@ -335,3 +335,34 @@ Implemented and verified the Spring AI Streamable HTTP MCP facade with six evide
 ### Next Steps
 
 - None - task complete
+
+## Session 11: NEXUS 0.6 六工具契约矩阵收口
+
+**Date**: 2026-07-29
+**Task**: NEXUS 0.6 MCP per-tool contract matrix
+**Branch**: `main`
+
+### Summary
+
+补齐 6 个 NEXUS 0.6 MCP 工具的 6 × 4 契约矩阵，覆盖入参校验、认证/角色/项目白名单、预期依赖降级和数量/文本/总响应截断；增加逐工具单字段静默截断回归，并保持权限集中、窄异常降级和安全 warning 语义。
+
+### Main Changes
+
+- 新增 `NexusMcpV06ContractTest`，52 项测试覆盖六工具完整矩阵及错误不降级、安全信息不泄漏。
+- 强化 `McpResponsePolicy` 和六工具映射的截断传播，并补充策略 helper 的 null、边界、数量和文本单测。
+- 稳定降级 warning code 为 `NEXUS_*_UNAVAILABLE`，且不回显异常消息、绝对路径、凭据或私有端点。
+- 更新 0.6 路线图验收项和任务验证记录；未修改 0.7/0.8 验收历史。
+
+### Testing
+
+- MCP 定向回归通过：契约矩阵 52 项、原工具测试 4 项、策略测试 6 项、HTTP 集成测试 1 项。
+- `JAVA_HOME=$(/usr/libexec/java_home -v 21) ./mvnw -q clean verify`：258 项通过，0 failures/errors/skipped。
+- `git diff --check`：通过。
+
+### Status
+
+[OK] **Implementation and quality check complete; awaiting explicit commit/archive instruction**
+
+### Next Steps
+
+- 用户确认后再提交或归档；本轮未自动 commit、push 或 archive。

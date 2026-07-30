@@ -1,6 +1,8 @@
 # NEXUS MCP 快速入门
 
 安装、索引、Wiki 与 REST 用法见 [用户指南](./user-guide.md)。产品概览见 [根目录 README](../README.md)。
+真实项目的脱敏准备、MCP 证据链和 Recall@10 校准见
+[拾光真实项目评测](./shiguang-evaluation.md)。
 
 NEXUS 0.8 在 Streamable HTTP 端点上提供十个带证据约束的工具和三个工作流 Prompt：
 

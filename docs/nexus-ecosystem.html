@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NEXUS × nexuspow — 研发知识与 Agent 工作流</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #0e1412;
+      --ink-soft: #1a2420;
+      --fog: #c5d4cb;
+      --paper: #e8f0ea;
+      --mint: #3dffa8;
+      --mint-dim: #1fa86a;
+      --warn: #ffb454;
+      --line: rgba(197, 212, 203, 0.14);
+      --muted: rgba(197, 212, 203, 0.62);
+      --max: 1080px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: "Noto Sans SC", system-ui, sans-serif;
+      background: var(--ink);
+      color: var(--fog);
+      line-height: 1.65;
+      font-size: 16px;
+      min-height: 100vh;
+      background-image:
+        radial-gradient(ellipse 90% 60% at 10% -10%, rgba(61, 255, 168, 0.12), transparent 55%),
+        radial-gradient(ellipse 70% 50% at 100% 20%, rgba(255, 180, 84, 0.08), transparent 50%),
+        linear-gradient(rgba(197, 212, 203, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(197, 212, 203, 0.03) 1px, transparent 1px);
+      background-size: auto, auto, 48px 48px, 48px 48px;
+    }
+
+    a { color: var(--mint); text-decoration: none; }
+    a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+    .wrap {
+      width: min(100% - 2.5rem, var(--max));
+      margin-inline: auto;
+    }
+
+    /* —— Hero —— */
+    header.hero {
+      padding: 4.5rem 0 3.5rem;
+      border-bottom: 1px solid var(--line);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .brand-row {
+      display: flex;
+      align-items: baseline;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      margin-bottom: 2rem;
+      animation: rise 0.8s ease both;
+    }
+
+    .brand {
+      font-family: "JetBrains Mono", monospace;
+      font-weight: 500;
+      font-size: clamp(2.4rem, 6vw, 3.6rem);
+      letter-spacing: -0.04em;
+      color: var(--paper);
+      line-height: 1;
+    }
+
+    .brand span { color: var(--mint); }
+
+    .brand-x {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-style: italic;
+      font-size: 1.6rem;
+      color: var(--muted);
+    }
+
+    .brand-sub {
+      font-family: "JetBrains Mono", monospace;
+      font-size: clamp(1.4rem, 3.5vw, 2rem);
+      color: var(--warn);
+      letter-spacing: -0.03em;
+    }
+
+    h1 {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-weight: 400;
+      font-size: clamp(2rem, 5vw, 3.25rem);
+      line-height: 1.15;
+      color: var(--paper);
+      max-width: 16ch;
+      margin-bottom: 1.25rem;
+      animation: rise 0.8s ease 0.08s both;
+    }
+
+    .lede {
+      font-size: 1.125rem;
+      color: var(--muted);
+      max-width: 36rem;
+      margin-bottom: 2rem;
+      animation: rise 0.8s ease 0.16s both;
+    }
+
+    .cta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1rem;
+      animation: rise 0.8s ease 0.24s both;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.7rem 1.15rem;
+      border-radius: 2px;
+      font-size: 0.9rem;
+      font-weight: 500;
+      border: 1px solid transparent;
+      transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease;
+    }
+
+    .btn:hover { text-decoration: none; transform: translateY(-1px); }
+
+    .btn-primary {
+      background: var(--mint);
+      color: var(--ink);
+    }
+
+    .btn-ghost {
+      border-color: var(--line);
+      color: var(--fog);
+      background: rgba(26, 36, 32, 0.6);
+    }
+
+    .btn-ghost:hover { border-color: var(--mint-dim); }
+
+    /* —— Sections —— */
+    section {
+      padding: 3.75rem 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eyebrow {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.75rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--mint-dim);
+      margin-bottom: 0.75rem;
+    }
+
+    h2 {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-weight: 400;
+      font-size: clamp(1.75rem, 3.5vw, 2.35rem);
+      color: var(--paper);
+      margin-bottom: 1rem;
+      line-height: 1.2;
+    }
+
+    h3 {
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--paper);
+      margin-bottom: 0.5rem;
+    }
+
+    .section-lead {
+      color: var(--muted);
+      max-width: 40rem;
+      margin-bottom: 2rem;
+    }
+
+    /* —— Split duo —— */
+    .duo {
+      display: grid;
+      gap: 1.25rem;
+    }
+
+    @media (min-width: 800px) {
+      .duo { grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    }
+
+    .panel {
+      padding: 1.5rem 1.5rem 1.65rem;
+      background: var(--ink-soft);
+      border: 1px solid var(--line);
+      border-left: 3px solid var(--mint);
+      position: relative;
+    }
+
+    .panel.pow { border-left-color: var(--warn); }
+
+    .panel .tag {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.7rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--mint);
+      margin-bottom: 0.65rem;
+    }
+
+    .panel.pow .tag { color: var(--warn); }
+
+    .panel ul {
+      list-style: none;
+      margin-top: 1rem;
+    }
+
+    .panel li {
+      padding: 0.35rem 0 0.35rem 1rem;
+      position: relative;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .panel li::before {
+      content: "→";
+      position: absolute;
+      left: 0;
+      color: var(--mint-dim);
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.8rem;
+    }
+
+    .panel.pow li::before { color: var(--warn); }
+
+    /* —— Flow diagram —— */
+    .flow {
+      font-family: "JetBrains Mono", monospace;
+      font-size: clamp(0.72rem, 1.8vw, 0.85rem);
+      line-height: 1.55;
+      padding: 1.5rem;
+      background: #080c0a;
+      border: 1px solid var(--line);
+      color: var(--fog);
+      overflow-x: auto;
+      white-space: pre;
+    }
+
+    .flow .hi { color: var(--mint); }
+    .flow .lo { color: var(--warn); }
+    .flow .dim { color: var(--muted); }
+
+    /* —— Table —— */
+    .cmp {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+    }
+
+    .cmp th,
+    .cmp td {
+      text-align: left;
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--line);
+      vertical-align: top;
+    }
+
+    .cmp th {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--mint-dim);
+      font-weight: 500;
+    }
+
+    .cmp td:first-child {
+      color: var(--paper);
+      font-weight: 500;
+      white-space: nowrap;
+    }
+
+    .cmp td { color: var(--muted); }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      background: var(--ink-soft);
+    }
+
+    /* —— Efficiency list —— */
+    .eff {
+      display: grid;
+      gap: 1.25rem;
+    }
+
+    @media (min-width: 720px) {
+      .eff { grid-template-columns: 1fr 1fr; }
+    }
+
+    .eff article {
+      padding-bottom: 1.25rem;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .eff .num {
+      font-family: "Instrument Serif", Georgia, serif;
+      font-style: italic;
+      font-size: 1.75rem;
+      color: var(--mint);
+      line-height: 1;
+      margin-bottom: 0.4rem;
+    }
+
+    .eff p { color: var(--muted); font-size: 0.95rem; }
+
+    /* —— Status —— */
+    .status-line {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 1.5rem;
+    }
+
+    .pill {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.72rem;
+      padding: 0.35rem 0.65rem;
+      border: 1px solid var(--line);
+      color: var(--muted);
+    }
+
+    .pill.on {
+      border-color: rgba(61, 255, 168, 0.35);
+      color: var(--mint);
+      background: rgba(61, 255, 168, 0.06);
+    }
+
+    .pill.next {
+      border-color: rgba(255, 180, 84, 0.35);
+      color: var(--warn);
+    }
+
+    footer {
+      padding: 2.5rem 0 3rem;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    footer .mono {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 0.75rem;
+      margin-top: 0.75rem;
+      color: rgba(197, 212, 203, 0.4);
+    }
+
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(14px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      * { animation: none !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <div class="wrap">
+      <div class="brand-row">
+        <div class="brand">NEXUS</div>
+        <div class="brand-x">×</div>
+        <div class="brand-sub">nexuspow</div>
+      </div>
+      <h1>组内共享的知识大脑，<br />本机顺手的开发双手</h1>
+      <p class="lede">
+        NEXUS 把需求、代码与测试沉淀成可回查的版本化知识，并通过 MCP 供给 IDE。
+        nexuspow 在本地搭好 Agent 工作区与研发流程。两者分工协作，而不是两套重复百科。
+      </p>
+      <div class="cta-row">
+        <a class="btn btn-primary" href="#duo">看清分工</a>
+        <a class="btn btn-ghost" href="#flow">协作链路</a>
+        <a class="btn btn-ghost" href="#gain">提效场景</a>
+      </div>
+    </div>
+  </header>
+
+  <section id="duo">
+    <div class="wrap">
+      <p class="eyebrow">01 · Products</p>
+      <h2>两个产品，一件事</h2>
+      <p class="section-lead">
+        一件事是：让全组在写代码时，能快速、一致地拿到「这版需求怎么说、代码在哪、改了会影响谁」——
+        并且结论带得走证据编号，而不是模型空话。
+      </p>
+      <div class="duo">
+        <div class="panel">
+          <div class="tag">Shared service</div>
+          <h3>NEXUS</h3>
+          <p style="color: var(--muted); font-size: 0.95rem;">
+            部署在组内服务器上的<strong style="color: var(--paper); font-weight: 500;">版本化知识服务</strong>。
+            索引需求与代码，生成可审核的 Wiki，对外提供 REST / SSE / MCP。
+          </p>
+          <ul>
+            <li>需求 RAG：按 document + version 隔离检索</li>
+            <li>代码智能：多语言索引、调用图、影响分析</li>
+            <li>版本 Wiki：确定性渲染，草稿须人审后发布</li>
+            <li>MCP：Cursor / Codex 只读调用组内真相</li>
+          </ul>
+        </div>
+        <div class="panel pow">
+          <div class="tag">Local CLI</div>
+          <h3>nexuspow</h3>
+          <p style="color: var(--muted); font-size: 0.95rem;">
+            开发者本机的 <strong style="color: var(--paper); font-weight: 500;">Agent 工作区脚手架</strong>。
+            一键生成记忆文件、流程 skills，并可 clone 业务仓开始干活。
+          </p>
+          <ul>
+            <li>初始化 AGENTS.md / MEMORY.md / docs/</li>
+            <li>内置 brainstorm → plan → implement → test 流程</li>
+            <li>本地可写仓库：编辑、编译、提交</li>
+            <li>通过 MCP 连接共享 NEXUS，先证据后动手</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="flow">
+    <div class="wrap">
+      <p class="eyebrow">02 · Architecture</p>
+      <h2>代码两份副本，职责不混</h2>
+      <p class="section-lead">
+        GitLab 是真源。开发在本机改；NEXUS 在服务端建索引供查询。
+        MCP <strong style="color: var(--paper); font-weight: 500;">不写你的仓库</strong>，只回答「在哪、影响谁」。
+      </p>
+      <pre class="flow"><span class="dim">GitLab（真源）</span>
+   │
+   ├──► <span class="lo">本机 nexuspow 工作区</span>     ← 写代码 / commit / push
+   │         │
+   │         │ MCP（只读）
+   │         ▼
+   └──► <span class="hi">NEXUS 服务器</span>            ← 索引 / Wiki / 检索 / 影响分析
+              │
+              ├── 需求证据  requirement:*
+              ├── 代码证据  code:*
+              └── 版本 Wiki / 冲突检测 / 草稿审核</pre>
+    </div>
+  </section>
+
+  <section id="layers">
+    <div class="wrap">
+      <p class="eyebrow">03 · Knowledge layers</p>
+      <h2>需求 RAG · 代码 RAG · Wiki</h2>
+      <p class="section-lead">三者不是重复百科：前两者是探针与原始证据，Wiki 是审过的定稿目录。</p>
+      <div class="table-wrap">
+        <table class="cmp">
+          <thead>
+            <tr>
+              <th>层</th>
+              <th>原料</th>
+              <th>擅长</th>
+              <th>权威性</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>需求 RAG</td>
+              <td>文档分块 + 向量</td>
+              <td>这版需求怎么说</td>
+              <td>原始证据</td>
+            </tr>
+            <tr>
+              <td>代码 RAG</td>
+              <td>源码索引 + 符号图</td>
+              <td>代码在哪、谁调用谁</td>
+              <td>原始证据</td>
+            </tr>
+            <tr>
+              <td>Wiki</td>
+              <td>结构化事实页</td>
+              <td>功能在本版的全貌</td>
+              <td>派生视图（不能压过前两者）</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="section-lead" style="margin-top: 1.5rem; margin-bottom: 0;">
+        Wiki <strong style="color: var(--paper); font-weight: 500;">不用大模型生成正文</strong>：确定性从源 JSON 渲染。
+        LLM 用在开发方案、存疑、检索重排等处；正式 Wiki 须人审后发布。
+      </p>
+    </div>
+  </section>
+
+  <section id="gain">
+    <div class="wrap">
+      <p class="eyebrow">04 · Why faster</p>
+      <h2>效率从哪来</h2>
+      <p class="section-lead">不是多一个聊天机器人，而是少找人、少翻文档、少漏影响、少串版本。</p>
+      <div class="eff">
+        <article>
+          <div class="num">01</div>
+          <h3>搞清需求</h3>
+          <p>Agent 调 nexus_search_requirements / wiki_page，proposal 带 requirement:*。省掉翻飞书和对错版本。</p>
+        </article>
+        <article>
+          <div class="num">02</div>
+          <h3>动手之前</h3>
+          <p>implement 前 impact_analysis：确定 / 推测 / UNRESOLVED 写进文档，再在本机改代码。</p>
+        </article>
+        <article>
+          <div class="num">03</div>
+          <h3>全组同口径</h3>
+          <p>共享一台 NEXUS，同一 projectId + version；新人不必自建 Qdrant 全家桶。</p>
+        </article>
+        <article>
+          <div class="num">04</div>
+          <h3>流程不靠自觉</h3>
+          <p>nexuspow skills 固定「先证据、后编码」，减少 Agent 跳步瞎改。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="roles">
+    <div class="wrap">
+      <p class="eyebrow">05 · Who does what</p>
+      <h2>谁跑在哪</h2>
+      <div class="table-wrap">
+        <table class="cmp">
+          <thead>
+            <tr>
+              <th>动作</th>
+              <th>谁做</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>clone / 编辑 / 提交</td>
+              <td>本机 nexuspow 工作区</td>
+            </tr>
+            <tr>
+              <td>索引 / 语义搜 / 调用图 / 影响分析</td>
+              <td>共享 NEXUS</td>
+            </tr>
+            <tr>
+              <td>浏览版本 Wiki / 版本对比</td>
+              <td>NEXUS Web（/wiki、/versions）</td>
+            </tr>
+            <tr>
+              <td>在 IDE 里问知识</td>
+              <td>Cursor / Codex → MCP → NEXUS</td>
+            </tr>
+            <tr>
+              <td>发布正式 Wiki</td>
+              <td>人工审核（草稿不得自动发布）</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="status-line">
+        <span class="pill on">NEXUS 0.8 · MCP + 多语言代码智能</span>
+        <span class="pill on">证据白名单 · 版本隔离</span>
+        <span class="pill next">0.9 · GitLab 自助同步 / SSO / 限流</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="wrap">
+      <p>NEXUS — 版本化需求 · 代码 · 测试知识平台　|　nexuspow — Agent 就绪工作区 CLI</p>
+      <p style="margin-top: 0.35rem;">原则：证据优先 · 版本隔离 · 安全降级 · 草稿≠已发布 · MCP 对代码只读</p>
+      <p class="mono">docs/nexus-ecosystem.html · 可本地直接打开</p>
+    </div>
+  </footer>
+</body>
+</html>

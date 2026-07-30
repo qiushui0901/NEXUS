@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
+import tools.jackson.databind.json.JsonMapper;
 
 /**
  * AI 与外部服务 Bean 配置：ChatClient、Qdrant 客户端、BGE 重排器。
@@ -17,8 +18,8 @@ import org.springframework.web.client.RestClient;
 @Configuration
 @EnableConfigurationProperties(RagProperties.class)
 public class AiConfiguration {
-    private static final int CONNECT_TIMEOUT_MS = 2_000;
-    private static final int READ_TIMEOUT_MS = 5_000;
+    private static final int QDRANT_CONNECT_TIMEOUT_MS = 2_000;
+    private static final int QDRANT_READ_TIMEOUT_MS = 5_000;
 
     /** 构建 Spring AI ChatClient。 */
     @Bean
@@ -31,24 +32,32 @@ public class AiConfiguration {
     RestClient qdrantRestClient(RestClient.Builder builder, RagProperties properties) {
         return builder
                 .baseUrl(properties.qdrant().baseUrl())
-                .requestFactory(externalRequestFactory())
+                .requestFactory(qdrantRequestFactory())
                 .build();
     }
 
     /** 注册有界连接/读取超时的 BGE 重排器；统一管线负责结构化降级。 */
     @Bean
-    BgeReranker bgeReranker(RestClient.Builder builder, RagProperties properties) {
+    BgeReranker bgeReranker(RestClient.Builder builder, RagProperties properties, JsonMapper jsonMapper) {
         RestClient client = builder
                 .baseUrl(properties.bge().baseUrl())
-                .requestFactory(externalRequestFactory())
+                .requestFactory(bgeRequestFactory(properties.bge()))
                 .build();
-        return new HttpBgeReranker(client, properties.bge());
+        return new HttpBgeReranker(client, properties.bge(), jsonMapper);
     }
 
-    private SimpleClientHttpRequestFactory externalRequestFactory() {
+    SimpleClientHttpRequestFactory qdrantRequestFactory() {
+        return requestFactory(QDRANT_CONNECT_TIMEOUT_MS, QDRANT_READ_TIMEOUT_MS);
+    }
+
+    SimpleClientHttpRequestFactory bgeRequestFactory(RagProperties.Bge properties) {
+        return requestFactory(properties.connectTimeoutMs(), properties.readTimeoutMs());
+    }
+
+    private SimpleClientHttpRequestFactory requestFactory(int connectTimeoutMs, int readTimeoutMs) {
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
-        requestFactory.setConnectTimeout(CONNECT_TIMEOUT_MS);
-        requestFactory.setReadTimeout(READ_TIMEOUT_MS);
+        requestFactory.setConnectTimeout(connectTimeoutMs);
+        requestFactory.setReadTimeout(readTimeoutMs);
         return requestFactory;
     }
 }

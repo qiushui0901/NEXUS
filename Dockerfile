@@ -16,7 +16,7 @@ RUN apt-get update \
     && useradd --system --gid nexus --home-dir /opt/nexus --create-home nexus
 
 WORKDIR /opt/nexus
-COPY --from=build /workspace/target/NEXUS-0.6.0-SNAPSHOT.jar app.jar
+COPY --from=build /workspace/target/NEXUS-0.8.0-SNAPSHOT.jar app.jar
 RUN mkdir -p /data/wiki /data/wiki-sources /data/wiki-drafts /data/version-manifests \
         /data/requirement-snapshots /workspace/repository \
     && chown -R nexus:nexus /opt/nexus /data /workspace/repository

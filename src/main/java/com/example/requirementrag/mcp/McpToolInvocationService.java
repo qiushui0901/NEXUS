@@ -49,6 +49,19 @@ public class McpToolInvocationService {
             sample.stop(meterRegistry.timer("nexus.mcp.tool.duration", "tool", tool, "status", status));
             return response;
         }
+        catch (McpDependencyUnavailableException exception) {
+            String code = tool.toUpperCase(java.util.Locale.ROOT) + "_UNAVAILABLE";
+            McpToolResponse<T> response = responsePolicy.enforceTotalLimit(new McpToolResponse<>(
+                    new McpToolResponse.ResolvedScope(projectId, version, null), null, java.util.List.of(),
+                    java.util.Map.of("status", "DEGRADED"),
+                    java.util.List.of(new com.example.requirementrag.model.RagWarning(
+                            "mcp", code, "Tool dependency is temporarily unavailable", 0)), false));
+            record(tool, user, projectId, version, "DEGRADED", elapsedMillis(startedAt), response.warnings().size());
+            meterRegistry.counter("nexus.mcp.tool.calls", "tool", tool, "status", "DEGRADED",
+                    "role", user.role().name()).increment();
+            sample.stop(meterRegistry.timer("nexus.mcp.tool.duration", "tool", tool, "status", "DEGRADED"));
+            return response;
+        }
         catch (RuntimeException exception) {
             record(tool, user, projectId, version, "FAILED", elapsedMillis(startedAt), 0);
             meterRegistry.counter("nexus.mcp.tool.calls", "tool", tool, "status", "FAILED",

@@ -1,5 +1,6 @@
 target/
 .m2-cache/
+.venv-bge-reranker/
 .idea/
 .vscode/
 *.iml
@@ -44,3 +45,7 @@ data/code-graph/
 
 # Locally generated requirement facts; may contain private business text
 data/requirement-snapshots/
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]

@@ -54,11 +54,11 @@
 
 ## Acceptance Criteria
 
-- [ ] 三种 retrieval profile 都由统一管线完成需求证据重排，评审服务无重复重排。
-- [ ] 需求、语料和代码召回可并行执行，分支超时/异常会独立降级。
-- [ ] embedding、检索结果和 Wiki 页面缓存均有 TTL、容量边界及隔离/失效测试。
-- [ ] 评测集不少于 50 条并覆盖六类指定场景。
-- [ ] CI 的 Recall@10/MRR 回归、JaCoCo 覆盖率和依赖漏洞检查可阻断失败构建。
-- [ ] 受控基准证明开发计划检索 P95 相对顺序执行基线下降至少 30%。
-- [ ] 新增 `nexus_conflict_check` 与三个 MCP Prompt，并有契约测试。
-- [ ] `./mvnw verify` 通过，0.8 冒烟测试通过。
+- [x] 三种 retrieval profile 都由统一管线完成需求证据重排，评审服务无重复重排。
+- [x] 需求、语料和代码召回可并行执行，分支超时/异常会独立降级。
+- [x] embedding、检索结果和 Wiki 页面缓存均有 TTL、容量边界及隔离/失效测试。
+- [x] 评测集不少于 50 条并覆盖六类指定场景。
+- [x] CI 的 Recall@10/MRR 回归、JaCoCo 覆盖率和依赖漏洞检查可阻断失败构建。
+- [x] 受控基准证明开发计划检索 P95 相对顺序执行基线下降至少 30%。
+- [x] 新增 `nexus_conflict_check` 与三个 MCP Prompt，并有契约测试。
+- [x] `./mvnw verify` 通过，0.8 冒烟测试通过。

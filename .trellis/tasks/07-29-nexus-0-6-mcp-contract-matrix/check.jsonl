@@ -1,0 +1,5 @@
+{"file":".trellis/tasks/07-29-nexus-0-6-mcp-contract-matrix/prd.md","reason":"Acceptance criteria for the six-tool 6×4 matrix."}
+{"file":".trellis/tasks/07-29-nexus-0-6-mcp-contract-matrix/design.md","reason":"Contract boundaries and allowed degradation behavior."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verification and test quality rules."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Review safe error and degradation handling."}
+{"file":".trellis/tasks/07-29-nexus-0-6-mcp-contract-matrix/research/verification.md","reason":"Recorded evidence for the completed six-tool contract matrix, stable degradation warnings, silent-truncation regressions, and clean JDK 21 verification gate."}

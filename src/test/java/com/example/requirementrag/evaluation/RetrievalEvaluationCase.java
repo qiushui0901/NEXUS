@@ -29,7 +29,7 @@ public record RetrievalEvaluationCase(
     public enum RetrievalProfile {
         DEVELOPMENT_PLAN,
         REQUIREMENT_REVIEW,
-        CODE_SEARCH
+        WIKI_BUILD
     }
 
     public enum ExpectedOutcome {

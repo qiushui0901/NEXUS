@@ -274,6 +274,14 @@ void RetrievalCircuitBreaker.failure(String stage)
 - Embedding-cache identity includes model implementation plus input text. Cached arrays are cloned on
   read/write. Wiki index/page cache entries are bounded and TTL-based; successful atomic publication
   invalidates the affected project/version.
+- Code hybrid retrieval indexes full structured text for sparse matching: repository-relative path, symbol
+  type/name, identifier-split terms, generic code-role terms, and source. Dense embedding uses the same
+  metadata plus a bounded source prefix; the original source payload remains unchanged.
+- Code search may retrieve a bounded internal candidate pool larger than the caller limit, then apply a
+  deterministic, domain-generic rerank. Original RRF rank remains the primary signal; symbol-term and
+  generic service/controller/test intent may only refine it. The returned list must still honor the exact
+  caller limit, preserve original order when no intent signal exists, and must never encode evaluation
+  project names, golden labels, or case-specific symbols.
 - Config keys are `APP_RAG_RETRIEVAL_BRANCH_TIMEOUT_MS`, `APP_RAG_RETRIEVAL_PARALLELISM`,
   `APP_RAG_RETRIEVAL_CIRCUIT_BREAKER_FAILURE_THRESHOLD`,
   `APP_RAG_RETRIEVAL_CIRCUIT_BREAKER_OPEN_MS`, `APP_RAG_RETRIEVAL_RESULT_CACHE_TTL_SECONDS`,
@@ -293,6 +301,8 @@ void RetrievalCircuitBreaker.failure(String stage)
 | Cached outcome is degraded/failed | Do not store it |
 | Project/document/version/config differs | Treat as a cache miss |
 | Wiki version is republished | Invalidate that project/version before subsequent reads |
+| Code query has no symbol/role signal | Preserve the original RRF candidate order |
+| Code query has a generic implementation/controller/test intent | Refine only within the bounded candidate pool and still truncate to caller limit |
 
 ### 5. Good / Base / Bad Cases
 
@@ -310,6 +320,9 @@ void RetrievalCircuitBreaker.failure(String stage)
 - Assert failure accumulation across `allow` checks, success reset, stage isolation, and open behavior.
 - Assert cache TTL/capacity, version/config isolation, cloned embedding arrays, Wiki invalidation, and
   exclusion of degraded outcomes.
+- Assert code sparse text contains structured metadata and full source, dense text truncates only the
+  source prefix, generic role intent can promote the appropriate candidate, no-signal queries preserve
+  RRF order, and the public result never exceeds the requested limit.
 - Keep at least 50 evaluation cases spanning normal recall, version leakage, similar-function false
   recall, zero results, dependency degradation, and cross-project pollution. CI enforces Recall@10,
   MRR, P95, and JaCoCo gates.
@@ -319,12 +332,14 @@ void RetrievalCircuitBreaker.failure(String stage)
 #### Wrong
 
 Run branches sequentially, rerank only one caller, clear sub-threshold circuit failures during `allow`,
-or key cached retrieval by query text alone.
+key cached retrieval by query text alone, embed unbounded source for every code chunk, or hard-code
+golden labels and project-specific symbols into code ranking.
 
 #### Correct
 
 Launch independently bounded branches, centralize reranking in `RetrievalPipeline`, retain per-stage
-circuit history until success/expiry, and include every isolation dimension in cache identity.
+circuit history until success/expiry, include every isolation dimension in cache identity, and use bounded,
+deterministic, domain-generic code reranking over structured index text.
 
 ## Scenario: Agent-facing MCP knowledge facade
 
@@ -378,6 +393,27 @@ Tools delegate to existing domain services. They must not create a parallel retr
 | Requested result/line/evidence limit exceeds the cap | Clamp output and set `truncated=true` |
 | Serialized response exceeds the total cap | Return no oversized data/evidence, add `MCP_RESPONSE_TRUNCATED`, and set `truncated=true` |
 | Optional dependency data is missing | Preserve existing `DEGRADED`/`NOT_AVAILABLE` status and warnings |
+
+#### NEXUS 0.6 six-tool contract matrix
+
+Changes to any of the original six tools must retain an executable `6 × 4` matrix in
+`NexusMcpV06ContractTest`: input validation, authorization, expected-dependency degradation, and
+truncation for each tool. Validation and authorization failures happen before downstream invocation.
+
+| Tool | Permission | Stable availability warning | Required boundary checks |
+|---|---|---|---|
+| `nexus_search_requirements` | `PUBLIC_READ` | `NEXUS_SEARCH_REQUIREMENTS_UNAVAILABLE` | non-blank query; bounded limit |
+| `nexus_search_code` | `PUBLIC_READ` | `NEXUS_SEARCH_CODE_UNAVAILABLE` | non-blank query; bounded limit |
+| `nexus_get_source` | `PUBLIC_READ` | `NEXUS_GET_SOURCE_UNAVAILABLE` | safe repository-relative path; valid line range and line cap |
+| `nexus_development_plan` | `OPERATE` | `NEXUS_DEVELOPMENT_PLAN_UNAVAILABLE` | non-blank requirement; bounded evidence/text |
+| `nexus_wiki_page` | `PUBLIC_READ` | `NEXUS_WIKI_PAGE_UNAVAILABLE` | non-blank version and feature ID |
+| `nexus_version_diff` | `PUBLIC_READ` | `NEXUS_VERSION_DIFF_UNAVAILABLE` | non-blank distinct versions |
+
+Only known dependency/IO availability failures may produce these degraded responses. Authentication,
+project authorization, invalid input, not-found behavior, and programming defects remain hard failures.
+Warnings are deterministic and must not contain exception messages, absolute paths, credentials, request
+bodies, or private endpoints. Tool-level list/text/range truncation is OR-combined with global serialized
+response truncation, and tests assert both `truncated=true` and the resulting bounded payload.
 
 ### 5. Good / Base / Bad Cases
 
@@ -623,3 +659,83 @@ git diff --check
 **Wrong:** trust model-provided evidence IDs, pass them directly to JSON/SSE, or count an unknown SSE event as proof that generation succeeded.
 
 **Correct:** validate every ID against the request-scoped registry before serialization, cap and deduplicate citations, ignore unknown event types with a stable warning, and require at least one accepted model event for stream completion.
+
+## Scenario: Authorized real-project retrieval calibration
+
+### 1. Scope / Trigger
+
+- Trigger: a user-authorized repository is used to calibrate live requirement/code retrieval or prove an MCP evidence chain.
+- The source repository stays read-only. Only sanitized requirements, relative stable labels, project filters and runners belong in NEXUS.
+
+### 2. Signatures
+
+```text
+python3 tools/shiguang-eval.py prepare|smoke|all [--base-url URL] [--repository PATH]
+scripts/run-shiguang-eval.sh
+```
+
+The live Java evaluation entry remains `RetrievalEvaluationIT`; the runner selects resources instead of adding a
+second evaluator.
+
+### 3. Contracts
+
+| Key | Requirement |
+| --- | --- |
+| `SHIGUANG_REPOSITORY_PATH` | Required absolute path to the authorized Git checkout; never committed |
+| `NEXUS_API_KEY` | Required by prepare/smoke; never printed or written |
+| `NEXUS_BASE_URL` | Optional; defaults to `http://127.0.0.1:8080` |
+| `RETRIEVAL_EVAL_DATASET_RESOURCE` | Optional classpath JSONL; defaults to the versioned general dataset |
+| `RETRIEVAL_EVAL_BASELINE_RESOURCE` | Absent means the committed default baseline; blank means explicit calibration without a gate |
+| `SHIGUANG_EVAL_BASELINE_RESOURCE` | Optional measured baseline forwarded by the Shiguang runner |
+
+Every real-project profile must use independent requirement/code collections and explicit include/exclude lists.
+Gold code labels are repository-relative paths plus stable symbol names; gold requirements use a sanitized,
+committed filename and bounded text fragments.
+
+A formal Python/Transformers reranker evaluation must pass the virtualenv interpreter entry itself to the
+comparison tool. Do not canonicalize that path through symlink resolution: resolving `.venv/.../bin/python` to
+its base interpreter can silently discard the virtualenv package environment. The manifest must fail closed when
+required `torch` or `transformers` version metadata cannot be read; `unavailable`, blank, or guessed versions are
+not valid formal runtime fingerprints.
+
+The formal evaluation source fingerprint must cover the complete executed reranker chain, including the Java BGE
+HTTP client, evaluation profile/configuration, frozen dataset, comparison and runner scripts, Python reranker
+service, health checker, dependency declaration, and startup script. Runtime metadata must record the preserved
+virtualenv interpreter path, Python/PyTorch/Transformers versions, model identifier, and `secretsRecorded=false`.
+Do not include API keys, request bodies, business source text, or model cache blobs in the manifest.
+
+### 4. Validation & Error Matrix
+
+| Condition | Result |
+| --- | --- |
+| API key or authorized repository path missing | Runner exits non-zero before network mutation |
+| Repository is not Git or the known source anchor is absent | Runner rejects the path |
+| Upload/index/MCP request fails | Runner exits non-zero with bounded HTTP context and no key |
+| MCP search lacks `requirement:*` or `code:*` | Smoke fails |
+| Baseline env key is blank | Report is written, baseline assertion is explicitly skipped |
+| Baseline resource is named but missing | Evaluation fails |
+| Any retrieval dependency warning occurs in a required branch | Case records an infrastructure failure |
+
+### 5. Good / Base / Bad Cases
+
+- Good: fixed repository commit, sanitized corpus and fixed model services produce a report that is compared with a measured, committed baseline.
+- Base: first run uses a blank baseline setting, writes a calibration report, and leaves roadmap/CI acceptance unchecked.
+- Bad: invent threshold numbers, ingest configs/credentials/PII, use absolute paths as Gold labels, or claim completion from a calibration-only report.
+
+### 6. Tests Required
+
+- Dataset loader asserts case count, project ID, all three evaluation paths and absence of resource/config code labels.
+- Profile binding asserts isolated collections, environment-resolved repository path, safe includes and sensitive-path excludes.
+- Settings tests assert default baseline behavior and explicit blank-baseline calibration behavior.
+- Script syntax/help checks run before full Java 21 `verify`.
+- Comparison-tool tests assert that missing required Python packages fail formal manifest generation, the virtualenv
+  interpreter path is preserved without symlink dereferencing, and the executed reranker source set is fingerprinted.
+- Live acceptance records traceable MCP IDs and the generated Recall@10/MRR/P95 report; offline tests cannot substitute for it.
+
+### 7. Wrong vs Correct
+
+**Wrong:** commit a guessed `0.85` baseline and enable CI, or mark the roadmap complete because the dataset parses.
+
+**Correct:** run calibration against fixed dependencies, preserve the actual virtualenv interpreter entry, require
+readable PyTorch/Transformers versions, fingerprint the complete executed reranker chain, rerun as a gate, and only
+then mark the live acceptance item complete.
