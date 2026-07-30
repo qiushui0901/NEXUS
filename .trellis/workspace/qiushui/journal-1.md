@@ -366,3 +366,36 @@ Implemented and verified the Spring AI Streamable HTTP MCP facade with six evide
 ### Next Steps
 
 - 用户确认后再提交或归档；本轮未自动 commit、push 或 archive。
+
+
+## Session 11: Commit and archive 0.8 + MCP contract
+
+**Date**: 2026-07-30
+**Task**: Commit and archive 0.8 + MCP contract
+**Branch**: `main`
+
+### Summary
+
+Committed MCP 0.6 contract matrix, 0.8 BGE/shiguang eval tooling, smoke/ecosystem docs, and Dockerfile 0.8 jar align; archived 07-28-nexus-0-8-quality-performance and 07-29-nexus-0-6-mcp-contract-matrix.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b9489ab` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

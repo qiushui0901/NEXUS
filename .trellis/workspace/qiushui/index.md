@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 10
-- **Last Active**: 2026-07-28
+- **Total Sessions**: 11
+- **Last Active**: 2026-07-30
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~337 | Active |
+| `journal-1.md` | ~401 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 11 | 2026-07-30 | Commit and archive 0.8 + MCP contract | `b9489ab` | `main` |
 | 10 | 2026-07-28 | NEXUS 0.7 多语言代码智能收口 | `97cbf42` | `main` |
 | 9 | 2026-07-28 | NEXUS 0.6 MCP Server | `0c00e95` | `main` |
 | 8 | 2026-07-28 | Release NEXUS 0.5 | `8b9d8cb` | `main` |
