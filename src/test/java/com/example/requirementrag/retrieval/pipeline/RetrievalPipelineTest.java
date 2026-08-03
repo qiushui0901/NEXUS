@@ -250,6 +250,95 @@ class RetrievalPipelineTest {
     }
 
     @Test
+    void selectsQueryRelevantSiblingWithoutChangingBgeParentOrder() {
+        String query = "健康检查失败几次才自动回滚";
+        when(queryRouter.routeWithOutcome(query, null)).thenReturn(RagOutcome.of(
+                RagOutcomeStatus.SUCCESS, new QueryRouting("game", "server", 1.0, "explicit"),
+                "query.route", 1, 1));
+        ChunkRecord parentABoilerplate = new ChunkRecord("a-1", "requirements", "5.1", "release.md",
+                "parent-a", "parent A", "发布回滚流程需要记录项目版本。", "h1", 0, 0);
+        ChunkRecord parentB = new ChunkRecord("b-1", "requirements", "5.1", "other.md",
+                "parent-b", "parent B", "其他系统也会执行检查和恢复。", "h2", 1, 0);
+        ChunkRecord parentAPrecise = new ChunkRecord("a-2", "requirements", "5.1", "release.md",
+                "parent-a", "parent A", "健康检查连续失败三次才触发自动回滚。", "h3", 0, 1);
+        when(documentStore.hybridSearch("requirements_game", query, "requirements", "5.1"))
+                .thenReturn(List.of(parentABoilerplate, parentB, parentAPrecise));
+        when(codeKnowledgeService.search(query, "game", 8)).thenReturn(List.of());
+        RequirementReranker reranker = (ignoredQuery, documentId, version, candidates, limit) ->
+                RagOutcome.of(RagOutcomeStatus.SUCCESS,
+                        List.of(parentABoilerplate, parentB, parentAPrecise),
+                        "retrieval.rerank", 1, 3);
+        RetrievalPipeline childFirst = new RetrievalPipeline(properties, projectRegistry, queryRouter,
+                documentStore, codeKnowledgeService, mock(RagObservability.class), reranker,
+                new RetrievalResultCache(Duration.ZERO, 0, "disabled"), Runnable::run,
+                new RetrievalCircuitBreaker(0, Duration.ZERO));
+
+        RagOutcome<RetrievalBundle> outcome = childFirst.execute(new RetrievalRequest(
+                query, RetrievalProfile.DEVELOPMENT_PLAN, null, null, null, 8));
+
+        assertThat(outcome.data().requirementEvidence()).containsExactly(parentAPrecise, parentB);
+    }
+
+    @Test
+    void preservesBgeSiblingOrderWhenChildOnlyScoresTie() {
+        ChunkRecord first = new ChunkRecord("a-1", "requirements", "5.1", "feature.md",
+                "parent-a", "parent A", "no matching terms", "h1", 0, 0);
+        ChunkRecord second = new ChunkRecord("a-2", "requirements", "5.1", "feature.md",
+                "parent-a", "parent A", "also unrelated", "h2", 0, 1);
+        ChunkRecord otherParent = new ChunkRecord("b-1", "requirements", "5.1", "other.md",
+                "parent-b", "parent B", "still unrelated", "h3", 1, 0);
+        when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
+                .thenReturn(List.of(first, second, otherParent));
+        when(codeKnowledgeService.search("query", "game", 8)).thenReturn(List.of());
+        RequirementReranker reranker = (query, documentId, version, candidates, limit) ->
+                RagOutcome.of(RagOutcomeStatus.SUCCESS, List.of(first, second, otherParent),
+                        "retrieval.rerank", 1, 3);
+        RetrievalPipeline childFirst = new RetrievalPipeline(properties, projectRegistry, queryRouter,
+                documentStore, codeKnowledgeService, mock(RagObservability.class), reranker,
+                new RetrievalResultCache(Duration.ZERO, 0, "disabled"), Runnable::run,
+                new RetrievalCircuitBreaker(0, Duration.ZERO));
+
+        RagOutcome<RetrievalBundle> outcome = childFirst.execute(new RetrievalRequest(
+                "query", RetrievalProfile.DEVELOPMENT_PLAN, null, null, null, 8));
+
+        assertThat(outcome.data().requirementEvidence()).containsExactly(first, otherParent);
+    }
+
+    @Test
+    void preservesBgeSiblingWhenSparseGainIsOnlyMarginal() {
+        String query = "解除冻结后是否可以直接恢复原会话";
+        when(queryRouter.routeWithOutcome(query, null)).thenReturn(RagOutcome.of(
+                RagOutcomeStatus.SUCCESS, new QueryRouting("game", "server", 1.0, "explicit"),
+                "query.route", 1, 1));
+        String shared = ("项目授权撤销只接受服务端状态，操作人员需要看到明确结果。"
+                + "访问冻结与权限撤销记录稳定状态，恢复操作不能扩大权限。").repeat(20);
+        ChunkRecord preciseFirst = new ChunkRecord("a-1", "requirements", "5.1", "access.md",
+                "parent-a", "parent A", shared + "恢复访问必须重新身份验证。",
+                "h1", 0, 0);
+        ChunkRecord marginalSecond = new ChunkRecord("a-2", "requirements", "5.1", "access.md",
+                "parent-a", "parent A", shared + "解除冻结后恢复原会话记录结果。",
+                "h2", 0, 1);
+        ChunkRecord otherParent = new ChunkRecord("b-1", "requirements", "5.1", "other.md",
+                "parent-b", "parent B", "其他访问流程。", "h3", 1, 0);
+        when(documentStore.hybridSearch("requirements_game", query, "requirements", "5.1"))
+                .thenReturn(List.of(preciseFirst, marginalSecond, otherParent));
+        when(codeKnowledgeService.search(query, "game", 8)).thenReturn(List.of());
+        RequirementReranker reranker = (ignoredQuery, documentId, version, candidates, limit) ->
+                RagOutcome.of(RagOutcomeStatus.SUCCESS,
+                        List.of(preciseFirst, marginalSecond, otherParent),
+                        "retrieval.rerank", 1, 3);
+        RetrievalPipeline childFirst = new RetrievalPipeline(properties, projectRegistry, queryRouter,
+                documentStore, codeKnowledgeService, mock(RagObservability.class), reranker,
+                new RetrievalResultCache(Duration.ZERO, 0, "disabled"), Runnable::run,
+                new RetrievalCircuitBreaker(0, Duration.ZERO));
+
+        RagOutcome<RetrievalBundle> outcome = childFirst.execute(new RetrievalRequest(
+                query, RetrievalProfile.DEVELOPMENT_PLAN, null, null, null, 8));
+
+        assertThat(outcome.data().requirementEvidence()).containsExactly(preciseFirst, otherParent);
+    }
+
+    @Test
     void avoidsRedundantChildScoresWhenAllCandidatesShareOneParent() {
         ChunkRecord first = new ChunkRecord("a-1", "requirements", "5.1", "feature.md",
                 "parent-a", "parent A", "first child", "h1", 0, 0);
@@ -280,6 +369,35 @@ class RetrievalPipelineTest {
                     assertThat(diagnostic.stage()).isEqualTo("retrieval.requirement.rerank_candidates");
                     assertThat(diagnostic.itemCount()).isEqualTo(1);
                 });
+    }
+
+    @Test
+    void singleParentOptimizationKeepsTheMostQueryRelevantChild() {
+        String query = "健康检查失败几次才自动回滚";
+        when(queryRouter.routeWithOutcome(query, null)).thenReturn(RagOutcome.of(
+                RagOutcomeStatus.SUCCESS, new QueryRouting("game", "server", 1.0, "explicit"),
+                "query.route", 1, 1));
+        ChunkRecord boilerplate = new ChunkRecord("a-1", "requirements", "5.1", "release.md",
+                "parent-a", "parent A", "发布回滚流程需要记录项目版本。", "h1", 0, 0);
+        ChunkRecord precise = new ChunkRecord("a-2", "requirements", "5.1", "release.md",
+                "parent-a", "parent A", "健康检查连续失败三次才触发自动回滚。", "h2", 0, 1);
+        when(documentStore.hybridSearch("requirements_game", query, "requirements", "5.1"))
+                .thenReturn(List.of(boilerplate, precise));
+        when(codeKnowledgeService.search(query, "game", 8)).thenReturn(List.of());
+        RequirementReranker reranker = (ignoredQuery, documentId, version, candidates, limit) -> {
+            assertThat(candidates).containsExactly(precise);
+            return RagOutcome.of(RagOutcomeStatus.SUCCESS, candidates,
+                    "retrieval.rerank", 1, candidates.size());
+        };
+        RetrievalPipeline childFirst = new RetrievalPipeline(properties, projectRegistry, queryRouter,
+                documentStore, codeKnowledgeService, mock(RagObservability.class), reranker,
+                new RetrievalResultCache(Duration.ZERO, 0, "disabled"), Runnable::run,
+                new RetrievalCircuitBreaker(0, Duration.ZERO));
+
+        RagOutcome<RetrievalBundle> outcome = childFirst.execute(new RetrievalRequest(
+                query, RetrievalProfile.DEVELOPMENT_PLAN, null, null, null, 8));
+
+        assertThat(outcome.data().requirementEvidence()).containsExactly(precise);
     }
 
     @Test

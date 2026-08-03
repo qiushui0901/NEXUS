@@ -33,3 +33,22 @@ app:
           document-id: shiguang-eval-requirements
           version: shiguang-eval-v1
           min-html-bytes: 800
+      - id: document-v2-eval
+        name: 多文档召回评测
+        group: document-v2
+        side: server
+        requirement-collection: requirements_document_v2_eval
+        code-collection: code_document_v2_eval
+        repository-path: ${SHIGUANG_REPOSITORY_PATH:}
+        include-path-substrings: []
+        exclude-path-substrings:
+          - /target/
+          - /.git/
+          - /src/main/resources/
+          - /src/test/resources/
+        max-file-bytes: 1000000
+        knowledge:
+          bootstrap-enabled: false
+          document-id: document-v2-corpus
+          version: document-v2-v2
+          min-html-bytes: 800

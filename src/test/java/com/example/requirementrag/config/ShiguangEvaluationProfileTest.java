@@ -41,5 +41,12 @@ class ShiguangEvaluationProfileTest {
         assertTrue(project.excludes().contains("/src/test/resources/"));
         assertTrue(project.excludes().contains("/简历.md"));
         assertFalse(project.excludes().isEmpty());
+
+        RagProperties.ProjectConfig documentV2 = properties.projects().get(1);
+        assertEquals("document-v2-eval", documentV2.id());
+        assertEquals("requirements_document_v2_eval", documentV2.requirementCollection());
+        assertEquals("code_document_v2_eval", documentV2.codeCollection());
+        assertEquals("document-v2-corpus", documentV2.knowledge().documentId());
+        assertEquals("document-v2-v2", documentV2.knowledge().version());
     }
 }

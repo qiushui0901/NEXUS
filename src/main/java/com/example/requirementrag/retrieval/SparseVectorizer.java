@@ -33,6 +33,34 @@ public class SparseVectorizer {
         return new SparseVector(indices, values);
     }
 
+    /**
+     * 计算两段文本的归一化稀疏余弦相似度。
+     * 向量已在 {@link #vectorize(String)} 中归一化，因此这里只需对有序索引做点积。
+     */
+    public double similarity(String left, String right) {
+        SparseVector leftVector = vectorize(left == null ? "" : left);
+        SparseVector rightVector = vectorize(right == null ? "" : right);
+        int leftIndex = 0;
+        int rightIndex = 0;
+        double score = 0;
+        while (leftIndex < leftVector.indices().size() && rightIndex < rightVector.indices().size()) {
+            int leftTerm = leftVector.indices().get(leftIndex);
+            int rightTerm = rightVector.indices().get(rightIndex);
+            if (leftTerm == rightTerm) {
+                score += leftVector.values().get(leftIndex) * rightVector.values().get(rightIndex);
+                leftIndex++;
+                rightIndex++;
+            }
+            else if (leftTerm < rightTerm) {
+                leftIndex++;
+            }
+            else {
+                rightIndex++;
+            }
+        }
+        return score;
+    }
+
     /** 中英文混合分词：汉字按单字/双字切分，英文按词切分。 */
     private List<String> tokenize(String text) {
         String normalized = text.toLowerCase(Locale.ROOT).replaceAll("[^\\p{IsHan}a-z0-9]+", " ");

@@ -6,10 +6,12 @@ import com.example.requirementrag.model.RagOutcomeStatus;
 import com.example.requirementrag.model.RagStageDiagnostic;
 import com.example.requirementrag.model.RagWarning;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.InputStream;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.util.HashSet;
@@ -120,7 +122,19 @@ class RetrievalEvaluationTest {
     }
 
     @Test
-    void documentGoldCanAccumulateEvidenceAcrossMatchingChunks() {
+    void rejectsInvalidStructuredDocumentPositions() {
+        String structured = validCase("structured-position").replace(
+                "\"mustContain\":[\"证据\"]",
+                "\"parentOrder\":1,\"childOrder\":2,\"mustContain\":[\"证据\"]");
+
+        assertInvalid(structured.replace("\"childOrder\":2", "\"childOrder\":-1"),
+                "line 1", "childOrder must be non-negative");
+        assertInvalid(structured.replace("\"parentOrder\":1,", ""),
+                "line 1", "childOrder requires parentOrder");
+    }
+
+    @Test
+    void legacyDocumentGoldUsesFileLevelMatchingWithoutContentAccumulation() {
         RetrievalEvaluationCase.GoldDocument gold = new RetrievalEvaluationCase.GoldDocument(
                 "5.1/福利-成长基金.html", null,
                 List.of("一键领取", "后端需幂等", "POST /growth-fund/claim-all"));
@@ -129,18 +143,31 @@ class RetrievalEvaluationTest {
                 chunk("5.1/福利-成长基金.html", 2, 0, "一键领取", "后端需幂等"),
                 chunk("5.1/福利-成长基金.html", 3, 0, "接口", "POST /growth-fund/claim-all"));
 
-        assertEquals(3, RetrievalEvaluationMatcher.firstDocumentRank(List.of(gold), candidates, 10));
+        assertEquals(2, RetrievalEvaluationMatcher.firstFileRank(List.of(gold), candidates, 10));
+        assertEquals(2, RetrievalEvaluationMatcher.firstDocumentRank(List.of(gold), candidates, 10));
+        assertNull(RetrievalEvaluationMatcher.firstSectionRank(List.of(gold), candidates, 10));
+        assertNull(RetrievalEvaluationMatcher.firstChildRank(List.of(gold), candidates, 10));
     }
 
     @Test
-    void documentParentOrderMustMatchWhenSpecified() {
+    void fileSectionAndChildRanksStayIndependentAndChildCannotReadParentText() {
         RetrievalEvaluationCase.GoldDocument gold = new RetrievalEvaluationCase.GoldDocument(
-                "5.1/福利-成长基金.html", 1, List.of("显示红点"));
+                "5.1/福利-成长基金.html", 1, 2, List.of("显示红点"));
         List<ChunkRecord> candidates = List.of(
-                chunk("5.1/福利-成长基金.html", 0, 0, "显示红点", ""),
-                chunk("5.1/福利-成长基金.html", 1, 0, "显示红点", ""));
+                chunk("5.1/福利-成长基金.html", 0, 2, "显示红点", "其他章节"),
+                chunk("5.1/福利-成长基金.html", 1, 0, "显示红点", "错误子块"),
+                chunk("5.1/福利-成长基金.html", 1, 2, "显示红点", "仍是错误子块"));
 
-        assertEquals(2, RetrievalEvaluationMatcher.firstDocumentRank(List.of(gold), candidates, 10));
+        assertEquals(1, RetrievalEvaluationMatcher.firstFileRank(List.of(gold), candidates, 10));
+        assertEquals(2, RetrievalEvaluationMatcher.firstSectionRank(List.of(gold), candidates, 10));
+        assertNull(RetrievalEvaluationMatcher.firstChildRank(List.of(gold), candidates, 10));
+        assertNull(RetrievalEvaluationMatcher.firstDocumentRank(List.of(gold), candidates, 10));
+
+        List<ChunkRecord> withCorrectChild = List.of(
+                candidates.get(0), candidates.get(1),
+                chunk("5.1/福利-成长基金.html", 1, 2, "无关父文本", "这里显示红点"));
+        assertEquals(3, RetrievalEvaluationMatcher.firstChildRank(List.of(gold), withCorrectChild, 10));
+        assertEquals(3, RetrievalEvaluationMatcher.firstDocumentRank(List.of(gold), withCorrectChild, 10));
     }
 
     @Test
@@ -196,6 +223,14 @@ class RetrievalEvaluationTest {
         RetrievalEvaluationSettings blankBaseline = RetrievalEvaluationSettings.from(Map.of(
                 RetrievalEvaluationSettings.BASELINE_ENV, " "));
         assertTrue(blankBaseline.baselineResource().isEmpty());
+
+        RetrievalEvaluationSettings documentV2 = RetrievalEvaluationSettings.from(Map.of(
+                RetrievalEvaluationSettings.MODE_ENV, "0.8.2-document-v2",
+                RetrievalEvaluationSettings.DATASET_ENV, "evaluation/retrieval-eval-document-v2.jsonl"));
+        assertEquals(RetrievalEvaluationSettings.EvaluationMode.DOCUMENT_V2_0_8_2, documentV2.mode());
+        assertEquals(Path.of("target", "retrieval-evaluation", "0.8.2-document-v2"),
+                documentV2.outputDirectory());
+        assertEquals("evaluation/retrieval-eval-document-v2.jsonl", documentV2.datasetResource());
     }
 
     @Test
@@ -280,6 +315,72 @@ class RetrievalEvaluationTest {
     }
 
     @Test
+    void uniqueCaseQualityDeduplicatesRepetitionsAndReportsLayerDenominators() {
+        RetrievalEvaluationCase structured = new RetrievalEvaluationCase(
+                "structured", "structured query",
+                RetrievalEvaluationCase.RetrievalProfile.REQUIREMENT_REVIEW,
+                "project", "doc", "1", RetrievalEvaluationCase.ExpectedOutcome.HIT,
+                List.of(new RetrievalEvaluationCase.GoldDocument(
+                        "structured.md", 1, 2, List.of("目标证据"))),
+                List.of(), List.of("structured-gold"), "test");
+        ChunkRecord correct = chunk("structured.md", 1, 2, "父文本", "目标证据");
+        RetrievalEvaluationMatcher.CaseResult first = RetrievalEvaluationMatcher.evaluate(
+                structured, List.of(correct), List.of(), 1, 0, 1,
+                null, null, 1, List.of(), List.of());
+        RetrievalEvaluationMatcher.CaseResult repeatedMiss = RetrievalEvaluationMatcher.evaluate(
+                structured, List.of(), List.of(), 2, 0, 2,
+                null, null, 2, List.of(), List.of());
+
+        RetrievalEvaluationReport report = RetrievalEvaluationReport.create(
+                "v2.jsonl", "0.8.2-document-v2", 0, 2, List.of(first, repeatedMiss));
+
+        assertEquals(2, report.summary().totalCases());
+        assertEquals(1, report.uniqueCaseSummary().totalCases());
+        assertEquals(1, report.uniqueCaseSummary().fileCases());
+        assertEquals(1, report.uniqueCaseSummary().fileHits());
+        assertEquals(1, report.uniqueCaseSummary().sectionCases());
+        assertEquals(1, report.uniqueCaseSummary().sectionHits());
+        assertEquals(1, report.uniqueCaseSummary().childCases());
+        assertEquals(1, report.uniqueCaseSummary().childHits());
+        assertEquals(1.0, report.uniqueCaseSummary().mrrAt10());
+        assertTrue(report.markdown().contains("## Unique case quality"));
+        assertTrue(report.markdown().contains("|File Recall@10|1.000|1/1|"));
+        assertTrue(report.markdown().contains("|Child Recall@10|1.000|1/1|"));
+        assertTrue(report.markdown().contains("|Code Recall@10|N/A|0/0|"));
+    }
+
+    @Test
+    void documentRecallCutoffsExposeWhenTop10MasksRankingMisses() throws Exception {
+        RetrievalEvaluationCase structured = new RetrievalEvaluationCase(
+                "cutoff-sensitive", "cutoff sensitive query",
+                RetrievalEvaluationCase.RetrievalProfile.REQUIREMENT_REVIEW,
+                "project", "doc", "1", RetrievalEvaluationCase.ExpectedOutcome.HIT,
+                List.of(new RetrievalEvaluationCase.GoldDocument(
+                        "structured.md", 1, 2, List.of("目标证据"))),
+                List.of(), List.of("structured-gold"), "test");
+        ChunkRecord distractor = chunk("distractor.md", 1, 2, "干扰父文本", "干扰证据");
+        ChunkRecord correct = chunk("structured.md", 1, 2, "父文本", "目标证据");
+        RetrievalEvaluationMatcher.CaseResult result = RetrievalEvaluationMatcher.evaluate(
+                structured, List.of(distractor, correct), List.of(), 1, 0, 1,
+                null, null, 1, List.of(), List.of());
+
+        RetrievalEvaluationReport report = RetrievalEvaluationReport.create(
+                "v2.jsonl", "0.8.2-document-v2", 0, 1, List.of(result));
+
+        assertEquals(0.0, report.uniqueCaseSummary().fileRecallByCutoff().recallAt1());
+        assertEquals(1.0, report.uniqueCaseSummary().fileRecallByCutoff().recallAt3());
+        assertEquals(1.0, report.uniqueCaseSummary().fileRecallAt10());
+        assertTrue(report.uniqueCaseSummary().top10MasksLowerCutoff());
+        assertTrue(report.markdown().contains("|File|0.000 (0/1)|1.000 (1/1)|"));
+        assertTrue(report.markdown().contains("Ranking sensitivity warning"));
+        String json = new ObjectMapper().writeValueAsString(report);
+        assertTrue(json.contains("\"fileRecallAt10\":1.0"));
+        assertTrue(json.contains("\"fileRecallByCutoff\""));
+        assertTrue(json.contains("\"recallAt1\":0.0"));
+        assertTrue(json.contains("\"top10MasksLowerCutoff\":true"));
+    }
+
+    @Test
     void stageTraceExplainsRankMovementAndAttributesCandidateMisses() {
         RetrievalEvaluationCase mixed = new RetrievalEvaluationCase(
                 "trace-mixed", "trace query", RetrievalEvaluationCase.RetrievalProfile.DEVELOPMENT_PLAN,
@@ -341,6 +442,20 @@ class RetrievalEvaluationTest {
             assertTrue(baseline.contains("\"mrrAt10\": 0.65"));
             assertTrue(baseline.contains("\"p95LatencyMs\": 5000"));
         }
+    }
+
+    @Test
+    void documentV2RunnerFreezesLiveDependencyTimeoutsAndCalibrationScope() throws Exception {
+        String runner = Files.readString(Path.of("scripts", "run-document-v2-eval.sh"));
+
+        assertTrue(runner.contains("BRANCH_TIMEOUT_MS=\"30000\""));
+        assertTrue(runner.contains("BGE_READ_TIMEOUT_MS=\"120000\""));
+        assertTrue(runner.contains("RETRIEVAL_BRANCH_TIMEOUT_MS=\"${BRANCH_TIMEOUT_MS}\""));
+        assertTrue(runner.contains("RETRIEVAL_EVAL_WARMUP_RUNS:-0"));
+        assertTrue(runner.contains("RETRIEVAL_EVAL_REPETITIONS:-1"));
+        assertTrue(runner.contains("RETRIEVAL_EVAL_MODE=\"0.8.2-document-v2\""));
+        assertTrue(runner.contains("RETRIEVAL_EVAL_SETUP_SKIP_CODE=\"true\""));
+        assertTrue(runner.contains("VERSION=\"document-v2-v2\""));
     }
 
     private static RetrievalEvaluationCase documentCase(String id, String filename, String fragment) {

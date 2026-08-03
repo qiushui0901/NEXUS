@@ -1,6 +1,6 @@
 # NEXUS 版本测试与检索评测台账
 
-> 最后更新：2026-07-31
+> 最后更新：2026-08-03
 > 目的：集中记录每个 NEXUS 版本的测试范围、固定环境、质量指标、性能指标和结论。
 > 原则：只有在**语料、黄金集、源码、profile、Top-K、模型和运行环境均固定**时，才允许进行跨版本质量对比。
 
@@ -275,9 +275,14 @@
 
 该结果允许把 `0.8.1-quality` 作为 **v1 单文件评测口径下** 的兼容基线；它不能直接作为多文档章节召回的质量基线。仍需保留 8 个唯一代码失败 case，并在 0.8.2 新增多文档结构化黄金集。
 
-## 7. 0.8.2 可信文档召回评测（准备中，2026-07-31）
+## 7. 0.8.2 可信文档召回评测（首次 calibration，2026-08-03）
 
-0.8.2 不预设“指标一定提升”，先解决评测分数是否可信的问题。固定条件和结果只有在代码实现与正式运行后才能填写；本节当前只冻结口径。
+0.8.2 不预设“指标一定提升”，先解决评测分数是否可信的问题。2026-08-03 已完成
+固定语料、结构化黄金标签、分层 matcher、唯一用例摘要、目录 fixture setup 和隔离 profile；
+离线质量门禁全部通过。首次 `document-v2-v1` calibration 将 6 个文件持久化为 39 个需求块；
+后续 `document-v2-v2` 扩展为 18 个文件、111 个需求块。两版均使用隔离 Qdrant collection、
+30 秒 branch timeout 和 120 秒 BGE read timeout，并完成 24 个唯一 case 的单重复真实
+calibration。
 
 ### 7.1 分层指标
 
@@ -291,7 +296,8 @@
 
 ### 7.2 固定语料目标
 
-- 不少于 6 个文件、12 个可区分章节和 24 个唯一文档 HIT case；
+- `document-v2-v2` 固定为 18 个文件、至少 36 个可区分 parent 和 24 个唯一文档 HIT case；
+- 6 个黄金文件的每个主题配 2 个独立语义 hard negative，共 12 个干扰文件；
 - 同一业务词在多个文件出现，覆盖同义词、同词异义、相似流程、错误阶段和跨文件近似答案；
 - 每个结构化黄金标签包含稳定的 `filename`、`parentOrder`、`childOrder` 和短文本 anchor；
 - repetitions 只用于延迟和稳定性统计，File/Section/Child Recall 与 MRR 按唯一 case 计算；
@@ -304,6 +310,100 @@
 3. 父块全文含目标短语、返回子块不含：Child miss；
 4. 同一 case 重复 3 次：质量分母计 1，延迟样本计 3；
 5. 近似文档出现在 Top-10、目标文档未出现：不得因共享术语判为命中。
+
+### 7.4 当前验证状态
+
+| 检查 | 结果 |
+|---|---|
+| 定向 Java 测试 | 25 项通过 |
+| Java 21 `./mvnw -B clean verify` | 284 项通过，0 失败，JaCoCo 门禁通过 |
+| Python comparison 单元测试 | 15 项通过 |
+| Python 编译 / shell 语法 / task validate / diff check | 全部通过 |
+| Ollama / BGE | Ollama 模型可用；BGE 冻结参数真实 HTTP 契约 PASS |
+| v2-v2 真实 setup | PASS：18 文件、111 需求块、隔离 collection |
+| v2-v2 calibration | PASS：24 次执行，BGE 24/24 成功，degradation 0，基础设施失败 0 |
+
+### 7.5 历史 `document-v2-v1` 首次真实 calibration 结果
+
+| 指标 | 结果 |
+|---|---:|
+| File Recall@10 | 1.000000（24/24） |
+| Section Recall@10 | 1.000000（24/24） |
+| Child Recall@10 | 0.875000（21/24） |
+| MRR@10 | 0.854167 |
+| P50 / P95 | 56,430 / 83,651 ms |
+| BGE calls / successes / degradations | 24 / 24 / 0 |
+| Infrastructure failures | 0 |
+
+3 个失败全部归因为 `DOCUMENT_PARENT_AGGREGATION_LOSS`：
+
+- `doc-v2-approval-workflow-02`
+- `doc-v2-audit-retention-02`
+- `doc-v2-release-rollback-02`
+
+三个目标 child 在 BGE 输出中仍分别位于第 20、2、2 名，但最终按 parent 聚合时被同一
+parent 的其他 child 代表项替换。因此，文件和章节均命中不能推出最终证据 child 命中。
+该结论证明 v2 口径确实识别了 v1 文件级指标无法观察的质量损失。
+
+本轮分类为 `calibration`，且只有一次执行。P50/P95 只描述当前 CPU BGE 环境，不作为稳定
+性能门禁；File/Section/Child 指标也不得与 v1 `Document Recall@10` 直接纵向比较。
+
+### 7.6 `document-v2-v2` 语料扩展
+
+针对 v2-v1 只有 6 个文件、File/Section Recall@10 容易饱和的问题，固定语料升级为
+`document-v2-v2`：
+
+- 18 个独立文件、至少 36 个生产 parent；
+- 保留 6 个结构化黄金文件和 24 个唯一 HIT case；
+- 审批、权限、保留、恢复、限流、索引六个主题各新增 2 个语义 hard negative；
+- manifest schema 2 显式记录 `gold` / `hard-negative` 角色和 `hardNegativeFor`；
+- corpus 测试在全部 18 个文件中验证黄金 anchor 唯一，并核对目录集合、逐文件指纹、
+  清洗字符数和 parent/child 数。
+
+v2-v1 的校准数字保留为历史记录，不可沿用为 v2-v2 分数。2026-08-03 已重建隔离 Qdrant
+collection 并完成 v2-v2 真实校准：
+
+| 指标 | @1 | @3 | @5 | @10 |
+|---|---:|---:|---:|---:|
+| File Recall | 0.875000（21/24） | 0.916667（22/24） | 0.916667（22/24） | 1.000000（24/24） |
+| Section Recall | 0.833333（20/24） | 0.875000（21/24） | 0.916667（22/24） | 1.000000（24/24） |
+| Child Recall | 0.791667（19/24） | 0.833333（20/24） | 0.875000（21/24） | 0.916667（22/24） |
+
+- MRR@10 `0.828125`，严格失败 2/24，均为 `DOCUMENT_PARENT_AGGREGATION_LOSS`；
+- 失败 case 为 `doc-v2-approval-workflow-02` 和 `doc-v2-release-rollback-02`；
+- BGE calls/successes/degradations 为 `24/24/0`，infrastructure failure 为 0；
+- P50/P95 为 `49,594/97,672 ms`，只作单重复 CPU calibration 描述；
+- `top10MasksLowerCutoff=true`。与 v2-v1 相比，新增硬负样本使 File/Section 的较小 cutoff
+  不再饱和，达到了暴露真实排序差异的目的；不同 corpus 版本仍不得作为同条件回归比较。
+
+### 7.7 child-first parent 代表项优化
+
+优化前，BGE 对 `childText + parentText` 的富化 passage 排序后，parent 聚合直接保留每个
+parent 的首个 sibling。共享 `parentText` 会让 sibling 的语义分数接近，导致精确证据
+child 已进入 BGE 输出却在聚合时丢失。
+
+本次实现保持 BGE 首次出现位置决定 parent 顺序，并以 `query` 与 sibling 自身
+`childText` 的归一化稀疏余弦相似度做组内代表选择。只有绝对提升至少 `0.01` 且严格超过
+当前代表分数 `10%` 才替换；并列、边际提升和 legacy parent-first 路径均保留原结果。
+single-parent 快捷路径在收口前复用同一选择器。
+
+同一 `document-v2-v2` 语料与 24 个唯一 case 的有效完整重跑结果：
+
+| 指标 | @1 | @3 | @5 | @10 |
+|---|---:|---:|---:|---:|
+| File Recall | 0.875000（21/24） | 0.916667（22/24） | 0.916667（22/24） | 1.000000（24/24） |
+| Section Recall | 0.833333（20/24） | 0.875000（21/24） | 0.916667（22/24） | 1.000000（24/24） |
+| Child Recall | 0.833333（20/24） | 0.875000（21/24） | 0.916667（22/24） | 1.000000（24/24） |
+
+- File/Section 无回退；Child 在四个 cutoff 分别增加 1、1、1、2 个命中；
+- MRR@10 从 `0.828125` 提升到 `0.876736`，严格失败从 2/24 降为 0/24；
+- BGE calls/successes/degradations 为 `24/24/0`，infrastructure failure 为 0；
+- 原失败 `doc-v2-approval-workflow-02` 与 `doc-v2-release-rollback-02` 的 child rank
+  分别为 6 和 1；防边际误换的 `doc-v2-access-revocation-04` 保持 rank 4；
+- P50/P95 为 `52,073/69,296 ms`，仍只属于单重复 CPU calibration。
+
+验证中另一次完整运行发生单次 BGE 约 121 秒超时，报告正确记录 1 个 degradation 和
+infrastructure failure；该污染运行未纳入上述质量结果。
 
 ## 8. 后续版本记录模板
 

@@ -19,25 +19,59 @@ public final class RetrievalEvaluationMatcher {
     private RetrievalEvaluationMatcher() {
     }
 
+    public static Integer firstFileRank(List<RetrievalEvaluationCase.GoldDocument> goldDocuments,
+                                        List<ChunkRecord> candidates, int cutoff) {
+        return firstMatchingDocumentRank(goldDocuments, candidates, cutoff,
+                (gold, candidate) -> gold.filename().equals(candidate.filename()));
+    }
+
+    public static Integer firstSectionRank(List<RetrievalEvaluationCase.GoldDocument> goldDocuments,
+                                           List<ChunkRecord> candidates, int cutoff) {
+        return firstMatchingDocumentRank(goldDocuments.stream()
+                        .filter(gold -> gold.parentOrder() != null)
+                        .toList(),
+                candidates, cutoff,
+                (gold, candidate) -> gold.filename().equals(candidate.filename())
+                        && gold.parentOrder() == candidate.parentOrder());
+    }
+
+    public static Integer firstChildRank(List<RetrievalEvaluationCase.GoldDocument> goldDocuments,
+                                         List<ChunkRecord> candidates, int cutoff) {
+        return firstMatchingDocumentRank(goldDocuments.stream()
+                        .filter(gold -> gold.parentOrder() != null && gold.childOrder() != null)
+                        .toList(),
+                candidates, cutoff,
+                (gold, candidate) -> gold.filename().equals(candidate.filename())
+                        && gold.parentOrder() == candidate.parentOrder()
+                        && gold.childOrder() == candidate.childOrder()
+                        && containsAll(candidate.childText(), gold.mustContain()));
+    }
+
     public static Integer firstDocumentRank(List<RetrievalEvaluationCase.GoldDocument> goldDocuments,
                                             List<ChunkRecord> candidates, int cutoff) {
-        Integer best = null;
-        for (RetrievalEvaluationCase.GoldDocument gold : goldDocuments) {
-            StringBuilder accumulated = new StringBuilder();
-            for (int i = 0; i < Math.min(cutoff, candidates.size()); i++) {
-                ChunkRecord candidate = candidates.get(i);
-                if (!gold.filename().equals(candidate.filename())
-                        || (gold.parentOrder() != null && gold.parentOrder() != candidate.parentOrder())) {
-                    continue;
-                }
-                accumulated.append('\n').append(candidate.parentText()).append('\n').append(candidate.childText());
-                if (containsAll(accumulated.toString(), gold.mustContain())) {
-                    best = best == null ? i + 1 : Math.min(best, i + 1);
-                    break;
+        if (goldDocuments.stream().anyMatch(gold -> gold.childOrder() != null)) {
+            return firstChildRank(goldDocuments, candidates, cutoff);
+        }
+        if (goldDocuments.stream().anyMatch(gold -> gold.parentOrder() != null)) {
+            return firstSectionRank(goldDocuments, candidates, cutoff);
+        }
+        return firstFileRank(goldDocuments, candidates, cutoff);
+    }
+
+    private static Integer firstMatchingDocumentRank(
+            List<RetrievalEvaluationCase.GoldDocument> goldDocuments,
+            List<ChunkRecord> candidates,
+            int cutoff,
+            DocumentMatch match) {
+        for (int index = 0; index < Math.min(cutoff, candidates.size()); index++) {
+            ChunkRecord candidate = candidates.get(index);
+            for (RetrievalEvaluationCase.GoldDocument gold : goldDocuments) {
+                if (match.test(gold, candidate)) {
+                    return index + 1;
                 }
             }
         }
-        return best;
+        return null;
     }
 
     public static Integer firstCodeRank(List<RetrievalEvaluationCase.GoldCode> goldCode,
@@ -88,7 +122,11 @@ public final class RetrievalEvaluationMatcher {
         List<RagStageDiagnostic> safeDiagnostics = safeList(diagnostics);
         EvaluationTrace safeTrace = trace == null ? EvaluationTrace.empty() : trace;
 
-        Integer documentRank = firstDocumentRank(c.goldDocuments(), finalDocuments, DEFAULT_CUTOFF);
+        Integer documentFileRank = firstFileRank(c.goldDocuments(), finalDocuments, DEFAULT_CUTOFF);
+        Integer documentSectionRank = firstSectionRank(c.goldDocuments(), finalDocuments, DEFAULT_CUTOFF);
+        Integer documentChildRank = firstChildRank(c.goldDocuments(), finalDocuments, DEFAULT_CUTOFF);
+        Integer documentRank = strictestDocumentRank(
+                c.goldDocuments(), documentFileRank, documentSectionRank, documentChildRank);
         Integer codeRank = firstCodeRank(c.goldCode(), finalCode, DEFAULT_CUTOFF);
         Integer documentRawRank = stageDocumentRank(c, safeTrace.documentRawCandidates());
         Integer documentRerankInputRank = stageDocumentRank(c, safeTrace.documentRerankCandidates());
@@ -97,6 +135,10 @@ public final class RetrievalEvaluationMatcher {
         Integer codeRankedRank = stageCodeRank(c, safeTrace.codeRankedCandidates());
 
         boolean expectsDocuments = !c.goldDocuments().isEmpty();
+        boolean expectsDocumentSections = c.goldDocuments().stream()
+                .anyMatch(gold -> gold.parentOrder() != null);
+        boolean expectsDocumentChildren = c.goldDocuments().stream()
+                .anyMatch(gold -> gold.childOrder() != null);
         boolean expectsCode = !c.goldCode().isEmpty();
         boolean failed = documentError != null || codeError != null;
         boolean success = !failed && (c.expectedOutcome() == RetrievalEvaluationCase.ExpectedOutcome.NO_RESULTS
@@ -121,7 +163,8 @@ public final class RetrievalEvaluationMatcher {
 
         return new CaseResult(
                 c.id(), c.query(), c.profile(), c.expectedOutcome(), repetition,
-                expectsDocuments, expectsCode,
+                expectsDocuments, expectsDocumentSections, expectsDocumentChildren, expectsCode,
+                documentFileRank, documentSectionRank, documentChildRank,
                 documentRawRank, documentRerankInputRank, documentRerankedRank, documentRank,
                 rankMovement(documentRawRank, documentRank),
                 documentOrderChanged(safeTrace.documentRawCandidates(), finalDocuments),
@@ -147,6 +190,20 @@ public final class RetrievalEvaluationMatcher {
     private static Integer stageDocumentRank(RetrievalEvaluationCase c, List<ChunkRecord> candidates) {
         return c.goldDocuments().isEmpty() ? null
                 : firstDocumentRank(c.goldDocuments(), candidates, candidates.size());
+    }
+
+    private static Integer strictestDocumentRank(
+            List<RetrievalEvaluationCase.GoldDocument> goldDocuments,
+            Integer fileRank,
+            Integer sectionRank,
+            Integer childRank) {
+        if (goldDocuments.stream().anyMatch(gold -> gold.childOrder() != null)) {
+            return childRank;
+        }
+        if (goldDocuments.stream().anyMatch(gold -> gold.parentOrder() != null)) {
+            return sectionRank;
+        }
+        return fileRank;
     }
 
     private static Integer stageCodeRank(RetrievalEvaluationCase c, List<CodeChunk> candidates) {
@@ -321,6 +378,11 @@ public final class RetrievalEvaluationMatcher {
         return values == null ? List.of() : List.copyOf(values);
     }
 
+    @FunctionalInterface
+    private interface DocumentMatch {
+        boolean test(RetrievalEvaluationCase.GoldDocument gold, ChunkRecord candidate);
+    }
+
     public record EvaluationTrace(
             boolean documentTraceAvailable,
             List<ChunkRecord> documentRawCandidates,
@@ -356,7 +418,12 @@ public final class RetrievalEvaluationMatcher {
             RetrievalEvaluationCase.ExpectedOutcome expectedOutcome,
             int repetition,
             boolean expectsDocuments,
+            boolean expectsDocumentSections,
+            boolean expectsDocumentChildren,
             boolean expectsCode,
+            Integer documentFileRank,
+            Integer documentSectionRank,
+            Integer documentChildRank,
             Integer documentRawRank,
             Integer documentRerankInputRank,
             Integer documentRerankedRank,

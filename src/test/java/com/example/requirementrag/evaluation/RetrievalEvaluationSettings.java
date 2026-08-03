@@ -68,7 +68,8 @@ record RetrievalEvaluationSettings(
     enum EvaluationMode {
         BASELINE_0_7("0.7-baseline"),
         RERANK_0_8("0.8-rerank"),
-        QUALITY_0_8_1("0.8.1-quality");
+        QUALITY_0_8_1("0.8.1-quality"),
+        DOCUMENT_V2_0_8_2("0.8.2-document-v2");
 
         private final String id;
 
@@ -86,8 +87,10 @@ record RetrievalEvaluationSettings(
             }
             if (BASELINE_0_7.id.equalsIgnoreCase(value.trim())) return BASELINE_0_7;
             if (QUALITY_0_8_1.id.equalsIgnoreCase(value.trim())) return QUALITY_0_8_1;
+            if (DOCUMENT_V2_0_8_2.id.equalsIgnoreCase(value.trim())) return DOCUMENT_V2_0_8_2;
             throw new IllegalArgumentException(
-                    MODE_ENV + " must be 0.7-baseline, 0.8-rerank, or 0.8.1-quality");
+                    MODE_ENV + " must be 0.7-baseline, 0.8-rerank, 0.8.1-quality, "
+                            + "or 0.8.2-document-v2");
         }
     }
 }

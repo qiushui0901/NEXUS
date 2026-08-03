@@ -12,6 +12,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.function.Function;
+import java.util.function.Predicate;
 import java.util.stream.Collectors;
 
 /** Reproducible JSON and Markdown report generated only under target/. */
@@ -25,6 +27,7 @@ public record RetrievalEvaluationReport(
         int repetitions,
         int datasetCaseCount,
         Summary summary,
+        UniqueCaseSummary uniqueCaseSummary,
         Map<String, Summary> profiles,
         Map<String, Integer> failureAttributions,
         List<RetrievalEvaluationMatcher.CaseResult> cases
@@ -56,6 +59,7 @@ public record RetrievalEvaluationReport(
                 repetitions,
                 unique,
                 summarize(cases),
+                summarizeUniqueCases(selectUniqueCases(cases)),
                 Map.copyOf(perProfile),
                 summarizeFailureAttributions(cases),
                 List.copyOf(cases));
@@ -75,6 +79,7 @@ public record RetrievalEvaluationReport(
                 .append("- Dataset cases: ").append(datasetCaseCount).append('\n')
                 .append("- Warm-up runs: ").append(warmupRuns).append('\n')
                 .append("- Repetitions: ").append(repetitions).append("\n\n");
+        appendUniqueCaseSummary(table, uniqueCaseSummary);
         appendSummary(table, "Overall", summary);
         profiles.forEach((name, value) -> appendSummary(table, name, value));
         appendFailureAttributions(table);
@@ -137,6 +142,57 @@ public record RetrievalEvaluationReport(
                 .append(summary.bgeDegradations()).append('/').append(summary.bgeNoCandidateSkips())
                 .append('/').append(summary.bgeSingletonSkips())
                 .append(".\n\n");
+    }
+
+    private static void appendUniqueCaseSummary(StringBuilder table, UniqueCaseSummary summary) {
+        table.append("## Unique case quality\n\n")
+                .append("| Metric | Value | Raw |\n")
+                .append("|---|---:|---:|\n");
+        optionalMetric(table, "File Recall@10", summary.fileRecallAt10(),
+                summary.fileHits(), summary.fileCases());
+        optionalMetric(table, "Section Recall@10", summary.sectionRecallAt10(),
+                summary.sectionHits(), summary.sectionCases());
+        optionalMetric(table, "Child Recall@10", summary.childRecallAt10(),
+                summary.childHits(), summary.childCases());
+        optionalMetric(table, "Code Recall@10", summary.codeRecallAt10(),
+                summary.codeHits(), summary.codeCases());
+        table.append("|MRR@10|")
+                .append(optionalRate(summary.mrrAt10(), summary.reciprocalRankItems()))
+                .append('|').append(String.format(Locale.ROOT, "%.3f", summary.reciprocalRankSum()))
+                .append('/').append(summary.reciprocalRankItems()).append("|\n");
+        optionalMetric(table, "No-result accuracy", summary.noResultAccuracy(),
+                summary.noResultHits(), summary.noResultCases());
+        table.append("\nUnique cases ").append(summary.totalCases())
+                .append("; failed ").append(summary.failedCases()).append(".\n\n");
+        appendDocumentRecallCutoffs(table, summary);
+        if (summary.top10MasksLowerCutoff()) {
+            table.append("> Ranking sensitivity warning: Recall@10 is saturated for at least one document ")
+                    .append("layer while a lower cutoff still misses. Do not use @10 alone for small-corpus ")
+                    .append("decisions.\n\n");
+        }
+    }
+
+    private static void appendDocumentRecallCutoffs(StringBuilder table, UniqueCaseSummary summary) {
+        table.append("### Document recall by cutoff\n\n")
+                .append("| Layer | Recall@1 | Recall@3 | Recall@5 | Recall@10 |\n")
+                .append("|---|---:|---:|---:|---:|\n");
+        cutoffRow(table, "File", summary.fileRecallByCutoff());
+        cutoffRow(table, "Section", summary.sectionRecallByCutoff());
+        cutoffRow(table, "Child", summary.childRecallByCutoff());
+        table.append('\n');
+    }
+
+    private static void cutoffRow(StringBuilder table, String layer, RecallByCutoff recall) {
+        table.append('|').append(layer)
+                .append('|').append(cutoffCell(recall.recallAt1(), recall.hitsAt1(), recall.cases()))
+                .append('|').append(cutoffCell(recall.recallAt3(), recall.hitsAt3(), recall.cases()))
+                .append('|').append(cutoffCell(recall.recallAt5(), recall.hitsAt5(), recall.cases()))
+                .append('|').append(cutoffCell(recall.recallAt10(), recall.hitsAt10(), recall.cases()))
+                .append("|\n");
+    }
+
+    private static String cutoffCell(double value, int hits, int cases) {
+        return optionalRate(value, cases) + " (" + hits + "/" + cases + ")";
     }
 
     private static Summary summarize(List<RetrievalEvaluationMatcher.CaseResult> cases) {
@@ -215,6 +271,101 @@ public record RetrievalEvaluationReport(
                 bgeCalls, bgeSuccesses, bgeDegradations, bgeSkips, bgeSingletonSkips);
     }
 
+    private static List<RetrievalEvaluationMatcher.CaseResult> selectUniqueCases(
+            List<RetrievalEvaluationMatcher.CaseResult> cases) {
+        Map<String, RetrievalEvaluationMatcher.CaseResult> selected = new LinkedHashMap<>();
+        for (RetrievalEvaluationMatcher.CaseResult result : cases) {
+            selected.merge(result.id(), result,
+                    (current, candidate) -> candidate.repetition() < current.repetition() ? candidate : current);
+        }
+        return List.copyOf(selected.values());
+    }
+
+    private static UniqueCaseSummary summarizeUniqueCases(
+            List<RetrievalEvaluationMatcher.CaseResult> cases) {
+        int failedCases = 0;
+        int codeCases = 0;
+        int codeHits = 0;
+        int reciprocalRankItems = 0;
+        double reciprocalRankSum = 0;
+        int noResultCases = 0;
+        int noResultHits = 0;
+
+        for (RetrievalEvaluationMatcher.CaseResult result : cases) {
+            if (!result.success()) {
+                failedCases++;
+            }
+            if (result.expectsDocuments()) {
+                reciprocalRankItems++;
+                if (result.documentRank() != null) {
+                    reciprocalRankSum += 1d / result.documentRank();
+                }
+            }
+            if (result.expectsCode()) {
+                codeCases++;
+                reciprocalRankItems++;
+                if (result.codeRank() != null) {
+                    codeHits++;
+                    reciprocalRankSum += 1d / result.codeRank();
+                }
+            }
+            if (result.expectedOutcome() == RetrievalEvaluationCase.ExpectedOutcome.NO_RESULTS) {
+                noResultCases++;
+                if (result.success()) {
+                    noResultHits++;
+                }
+            }
+        }
+        RecallByCutoff fileRecall = recallByCutoff(cases,
+                RetrievalEvaluationMatcher.CaseResult::expectsDocuments,
+                RetrievalEvaluationMatcher.CaseResult::documentFileRank);
+        RecallByCutoff sectionRecall = recallByCutoff(cases,
+                RetrievalEvaluationMatcher.CaseResult::expectsDocumentSections,
+                RetrievalEvaluationMatcher.CaseResult::documentSectionRank);
+        RecallByCutoff childRecall = recallByCutoff(cases,
+                RetrievalEvaluationMatcher.CaseResult::expectsDocumentChildren,
+                RetrievalEvaluationMatcher.CaseResult::documentChildRank);
+        boolean top10MasksLowerCutoff = masksLowerCutoff(fileRecall)
+                || masksLowerCutoff(sectionRecall) || masksLowerCutoff(childRecall);
+        return new UniqueCaseSummary(
+                cases.size(), failedCases,
+                fileRecall.cases(), fileRecall.hitsAt10(), fileRecall.recallAt10(),
+                sectionRecall.cases(), sectionRecall.hitsAt10(), sectionRecall.recallAt10(),
+                childRecall.cases(), childRecall.hitsAt10(), childRecall.recallAt10(),
+                codeCases, codeHits, rate(codeHits, codeCases),
+                reciprocalRankItems, reciprocalRankSum, rate(reciprocalRankSum, reciprocalRankItems),
+                noResultCases, noResultHits, rate(noResultHits, noResultCases),
+                fileRecall, sectionRecall, childRecall, top10MasksLowerCutoff);
+    }
+
+    private static RecallByCutoff recallByCutoff(
+            List<RetrievalEvaluationMatcher.CaseResult> cases,
+            Predicate<RetrievalEvaluationMatcher.CaseResult> included,
+            Function<RetrievalEvaluationMatcher.CaseResult, Integer> rank) {
+        List<Integer> ranks = cases.stream().filter(included).map(rank).toList();
+        int hitsAt1 = hitsAt(ranks, 1);
+        int hitsAt3 = hitsAt(ranks, 3);
+        int hitsAt5 = hitsAt(ranks, 5);
+        int hitsAt10 = hitsAt(ranks, 10);
+        return new RecallByCutoff(
+                ranks.size(),
+                hitsAt1, rate(hitsAt1, ranks.size()),
+                hitsAt3, rate(hitsAt3, ranks.size()),
+                hitsAt5, rate(hitsAt5, ranks.size()),
+                hitsAt10, rate(hitsAt10, ranks.size()));
+    }
+
+    private static int hitsAt(List<Integer> ranks, int cutoff) {
+        return (int) ranks.stream().filter(rank -> rank != null && rank <= cutoff).count();
+    }
+
+    private static boolean masksLowerCutoff(RecallByCutoff recall) {
+        return recall.cases() > 0 && recall.hitsAt10() == recall.cases()
+                && (recall.hitsAt1() < recall.cases()
+                || recall.hitsAt3() < recall.cases()
+                || recall.hitsAt5() < recall.cases());
+    }
+
     private static Map<String, Integer> summarizeFailureAttributions(
             List<RetrievalEvaluationMatcher.CaseResult> cases) {
         Map<String, Integer> counts = new TreeMap<>();
@@ -241,6 +392,17 @@ public record RetrievalEvaluationReport(
         table.append('|').append(name).append('|')
                 .append(String.format(Locale.ROOT, "%.3f", value)).append('|')
                 .append(hits).append('/').append(cases).append("|\n");
+    }
+
+    private static void optionalMetric(
+            StringBuilder table, String name, double value, int hits, int cases) {
+        table.append('|').append(name).append('|')
+                .append(optionalRate(value, cases)).append('|')
+                .append(hits).append('/').append(cases).append("|\n");
+    }
+
+    private static String optionalRate(double value, int cases) {
+        return cases == 0 ? "N/A" : String.format(Locale.ROOT, "%.3f", value);
     }
 
     private static String rankPath(Integer... ranks) {
@@ -282,6 +444,47 @@ public record RetrievalEvaluationReport(
             int bgeDegradations,
             int bgeNoCandidateSkips,
             int bgeSingletonSkips
+    ) {
+    }
+
+    public record UniqueCaseSummary(
+            int totalCases,
+            int failedCases,
+            int fileCases,
+            int fileHits,
+            double fileRecallAt10,
+            int sectionCases,
+            int sectionHits,
+            double sectionRecallAt10,
+            int childCases,
+            int childHits,
+            double childRecallAt10,
+            int codeCases,
+            int codeHits,
+            double codeRecallAt10,
+            int reciprocalRankItems,
+            double reciprocalRankSum,
+            double mrrAt10,
+            int noResultCases,
+            int noResultHits,
+            double noResultAccuracy,
+            RecallByCutoff fileRecallByCutoff,
+            RecallByCutoff sectionRecallByCutoff,
+            RecallByCutoff childRecallByCutoff,
+            boolean top10MasksLowerCutoff
+    ) {
+    }
+
+    public record RecallByCutoff(
+            int cases,
+            int hitsAt1,
+            double recallAt1,
+            int hitsAt3,
+            double recallAt3,
+            int hitsAt5,
+            double recallAt5,
+            int hitsAt10,
+            double recallAt10
     ) {
     }
 }

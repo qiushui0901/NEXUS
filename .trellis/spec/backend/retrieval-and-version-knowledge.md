@@ -364,10 +364,19 @@ Existing v1 JSONL without `parentOrder` or `childOrder` remains loadable and con
 - Section hit requires `filename + parentOrder`. Evidence fragments may be checked only inside candidates from that matching parent; never accumulate text across parents.
 - Child hit requires `filename + parentOrder + childOrder`; every `mustContain` fragment must occur in that exact candidate's `childText`. `parentText` must not satisfy a child label.
 - The compatibility `documentRank` uses the strictest label present for the case: child, then section, then file.
-- JSON and Markdown reports expose File/Section/Child Recall@10 separately. A layer contributes to a denominator only when its required structured label exists.
+- JSON and Markdown reports expose File/Section/Child Recall@1/@3/@5/@10 separately. A layer contributes to a denominator only when its required structured label exists.
+- Keep the existing flat @10 fields and add typed per-layer cutoff summaries. When @10 is perfect but a
+  lower cutoff still misses, emit a ranking-sensitivity warning; small-corpus decisions must not rely on
+  @10 alone.
 - Quality metrics are computed from one deterministic result per unique case id. Repetitions remain execution samples for latency, dependency health, degradation, and stability diagnostics.
 - Keep the existing execution-level summary fields until all comparison consumers migrate; the v2 formal conclusion must use the unique-case layered summary.
-- The v2 frozen corpus contains at least six documents, twelve distinguishable parent sections, twenty-four unique document HIT cases, and hard negatives spanning shared terms, wrong workflow stages, synonyms, near duplicates, and no-result queries.
+- The `document-v2-v2` frozen corpus contains eighteen documents and at least thirty-six parent chunks:
+  six gold documents plus two independent semantic hard negatives for each gold theme. It retains
+  twenty-four unique document HIT cases and spans shared terms, wrong workflow stages, synonyms and near
+  duplicates.
+- Manifest schema 2 labels each file as `gold` or `hard-negative`; every hard negative has a
+  `hardNegativeFor` reference to a declared gold filename. The corpus test loads all eighteen files when
+  proving that every structured anchor is unique.
 - Corpus and dataset manifests record SHA-256 values. Changing a fixture, structured label, chunking rule, or preprocessing rule invalidates the previous manifest and requires regeneration before a formal run.
 - Never add evaluation filenames, case ids, anchors, or project-specific golden labels to production retrieval/ranking code.
 
@@ -913,3 +922,224 @@ The evaluation summary exposes integer counters named `bgeCalls`, `bgeSuccesses`
 **Correct:** "0.8.1 independently proved the live Python and Java BGE contracts, retained real BGE for
 multi-candidate inputs, and skipped only 144 mathematically order-invariant singleton decisions; 18 empty
 and 144 singleton decisions account for all 162 executions with zero unexpected degradation."
+
+## Scenario: 0.8.2 structured document retrieval evaluation
+
+### 1. Scope / Trigger
+
+Apply this scenario when changing `RetrievalEvaluationCase`, dataset validation, matcher rank semantics,
+evaluation JSON/Markdown summaries, setup fixture selection, or the versioned `document-v2` corpus.
+It prevents file-level matches and parent-text leakage from being reported as precise evidence retrieval.
+
+### 2. Signatures
+
+```java
+record GoldDocument(
+        String filename,
+        Integer parentOrder,
+        Integer childOrder,
+        List<String> mustContain)
+
+record RecallByCutoff(
+        int cases,
+        int hitsAt1, double recallAt1,
+        int hitsAt3, double recallAt3,
+        int hitsAt5, double recallAt5,
+        int hitsAt10, double recallAt10)
+```
+
+```text
+RETRIEVAL_EVAL_MODE=0.8.2-document-v2
+RETRIEVAL_EVAL_SETUP_FIXTURE=<single-markdown-file-or-directory>
+RETRIEVAL_EVAL_SETUP_PROJECT_ID=<registered-project>
+RETRIEVAL_EVAL_SETUP_DOCUMENT_ID=<document-id>
+RETRIEVAL_EVAL_SETUP_VERSION=<version>
+RETRIEVAL_EVAL_SETUP_SKIP_CODE=true|false
+scripts/run-document-v2-eval.sh
+```
+
+The report keeps the legacy execution-level `summary` and flat @10 fields, and adds typed
+`fileRecallByCutoff`, `sectionRecallByCutoff`, and `childRecallByCutoff` summaries for @1/@3/@5/@10,
+plus strict document MRR@10 and no-result accuracy.
+
+### 3. Contracts
+
+- `parentOrder` and `childOrder` are zero-based, optional structured labels. `childOrder` requires
+  `parentOrder`; old v1 labels without either field remain valid file-level labels.
+- File rank matches `filename`. Section rank matches `filename + parentOrder`. Child rank matches
+  `filename + parentOrder + childOrder` and every `mustContain` fragment in that candidate's own
+  `childText`.
+- Never read `parentText` or another child to satisfy a child anchor. Never fall back to a looser rank
+  when a stricter structured label exists but misses.
+- Strict document MRR uses child rank when a child label exists, otherwise section rank, otherwise file
+  rank.
+- Quality metrics select one deterministic execution per case id, preferring the smallest repetition.
+  Latency, BGE accounting and stability continue to use every execution.
+- `document-v2-v1` is the historical six-document calibration corpus. `document-v2-v2` contains eighteen
+  independent documents: six gold files plus twelve query-theme hard negatives. Renamed or mechanically
+  duplicated fixtures do not count, and scores from the two corpus versions must not be mixed.
+- A fixture path may name one Markdown file or a directory. Directory ingestion uses sorted `.md` files.
+  Setup records deterministic per-file hashes; document-only evaluation may explicitly skip code indexing.
+- The frozen corpus manifest records dataset hash, file hash, byte count, parent count and stable anchors.
+  Any corpus edit requires updating the manifest and structured-position contract test.
+- The versioned runner must freeze `RETRIEVAL_BRANCH_TIMEOUT_MS=30000` and
+  `BGE_RERANK_READ_TIMEOUT_MS=120000` for the local CPU calibration. It checks Qdrant, Ollama and the
+  BGE health/rerank contract before setup, rebuilds only the isolated v2 requirement collection, and
+  defaults to zero warmups and one repetition.
+- A single-repetition run is classified as calibration. Its quality metrics and failure attribution are
+  usable, but its P50/P95 are descriptive only and must not become a stable performance gate.
+- `DOCUMENT_PARENT_AGGREGATION_LOSS` is a valid child-level failure when the structured gold child remains
+  in BGE output but final parent aggregation chooses a sibling as the parent representative. Do not
+  relabel it as a child hit because file and section still match.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| `parentOrder < 0` or `childOrder < 0` | Dataset load fails |
+| `childOrder` exists without `parentOrder` | Dataset load fails |
+| Correct file, wrong parent | File hit; Section and Child miss |
+| Correct parent, wrong child | File and Section hit; Child miss |
+| Anchor exists only in `parentText` or a sibling child | Child miss |
+| Duplicate case executions | One quality denominator item; all executions remain latency samples |
+| Fixture is neither a Markdown file nor a directory with Markdown files | Setup fails before indexing |
+| Source `.md` set differs from the schema-2 manifest | Corpus contract test fails before live calibration |
+| `hardNegativeFor` is missing or does not reference a declared gold file | Corpus contract test fails |
+| Any v2-v2 corpus file produces fewer than two parent chunks | Corpus contract test fails |
+| Dataset case version and corpus manifest version differ | Calibration is invalid; do not publish or merge scores |
+| Required live dependency is unavailable | No formal score is recorded |
+| Retrieval branch exceeds 30 seconds | Case records a branch timeout; calibration is infrastructure-contaminated |
+| BGE response exceeds 120 seconds | Case records BGE degradation; calibration is infrastructure-contaminated |
+| BGE succeeds but parent aggregation drops the gold child | Child miss with `DOCUMENT_PARENT_AGGREGATION_LOSS` |
+| A layer has no structured gold cases | Every cutoff renders `N/A`; hit counters remain zero |
+| A gold rank is greater than a requested cutoff | Miss at that cutoff, even when it hits at a larger cutoff |
+| @10 is perfect while @1, @3, or @5 still misses | Preserve the score and emit `top10MasksLowerCutoff=true` plus the Markdown warning |
+
+### 5. Good / Base / Bad Cases
+
+- Good: a result matches the frozen filename, parent and child positions, and its own `childText` contains
+  the stable anchor at rank one; all three document layers hit at every cutoff.
+- Base: a v1 file-only label loads and contributes only to File Recall and legacy summary compatibility.
+- Bad: a sibling child is returned and counted as a child hit because the full parent contains the anchor,
+  three repetitions are counted as three quality cases, or a saturated @10 is presented without lower
+  cutoffs as proof of perfect ranking.
+
+### 6. Tests Required
+
+- Dataset tests reject negative child positions and child-without-parent while preserving v1 loading.
+- Matcher tests independently assert file, section and child ranks, strict-rank behavior and parent-text
+  leakage prevention.
+- Report tests assert unique-case deduplication, legacy `summary` compatibility, JSON serialization for
+  flat @10 and typed cutoff fields, per-cutoff hit arithmetic, and the conditional Markdown warning.
+- Corpus tests run the production `TextPreprocessor` and `ParentChildChunker`, prove all structured labels
+  resolve uniquely across all eighteen files, and verify the source directory set, schema-2 roles,
+  `hardNegativeFor` references, dataset/per-file hashes, cleaned length and parent/child counts. They also
+  require every file to produce at least two parents and every dataset case to use the manifest version.
+- Runner contract tests assert the v2 mode, document-only setup, calibration scope and both frozen timeout
+  values; `bash -n scripts/run-document-v2-eval.sh` remains required.
+- Profile tests assert the v2 project has isolated requirement/code collections.
+- Delivery requires targeted tests, Java 21 `./mvnw -B verify`, Python comparison tests and compilation,
+  shell syntax, task validation and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+**Wrong:** count a candidate as a child hit because its `parentText` contains the expected phrase, then
+multiply that hit by every timing repetition.
+
+**Correct:** require the exact filename/parent/child position and anchor in the returned `childText`, use
+one execution per case for quality, and retain all repetitions only for latency and dependency stability.
+
+**Wrong:** count a BGE-ranked gold child as a final hit after parent aggregation replaced it with a sibling,
+or publish a single CPU run as a stable latency gate.
+
+**Correct:** record `DOCUMENT_PARENT_AGGREGATION_LOSS`, keep Child Recall strict, and label the single-run
+latency as calibration-only.
+
+**Wrong:** report only File/Section Recall@10 from a six-document corpus and describe both `1.0` values
+as perfect document ranking.
+
+**Correct:** preserve the compatible @10 fields, report File/Section/Child @1/@3/@5/@10 from the same
+unique cases, emit the saturation warning, and require substantially more independent hard negatives
+before treating @10 as a formal gate.
+
+**Wrong:** add files beside the fixture without updating the manifest, point a hard negative at an
+undeclared gold file, or publish v2-v1 scores under a v2-v2 corpus label.
+
+**Correct:** require exact source/manifest set equality, valid `hardNegativeFor` references, at least two
+production parents per file, and identical dataset/manifest versions before live calibration.
+
+## Scenario: 0.8.2 child-first parent representative selection
+
+### 1. Scope / Trigger
+
+Apply this scenario when changing child-first reranking, parent aggregation, single-parent rerank
+optimization, `SparseVectorizer`, or evidence child selection. It prevents shared parent context from
+making an imprecise sibling the final evidence representative while preserving BGE's semantic parent
+ordering.
+
+### 2. Signatures
+
+```java
+double SparseVectorizer.similarity(String left, String right)
+
+List<ChunkRecord> selectParentRepresentatives(
+        String query,
+        List<ChunkRecord> rankedChildren,
+        boolean childFirstRerank)
+```
+
+The representative selector is internal to `RetrievalPipeline`. Spring injects the shared
+`SparseVectorizer`; compatibility constructors used by focused tests create the same pure vectorizer.
+
+### 3. Contracts
+
+- In child-first mode, group ranked children by stable parent key in first-occurrence order. This order
+  is the final parent order and must not be changed by child-only scoring.
+- The first BGE sibling is the default representative. Compare siblings using only `query` and each
+  candidate's own `childText`; never use shared `parentText`.
+- Replace the current representative only when the child-only score gains at least `0.01` absolutely
+  and is strictly greater than `currentScore * 1.10`. Ties and marginal gains preserve BGE's sibling.
+- The single-parent shortcut must call the same selector before collapsing candidates, because skipping
+  BGE must not force the first RRF child to become the evidence representative.
+- Parent-first legacy mode keeps stable parent deduplication and does not apply child-only reselection.
+- Selection is local and deterministic: no second external rerank call, case id, filename, gold anchor,
+  or query-specific rule is allowed.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Child-first disabled | Keep legacy first parent occurrence |
+| Multiple parents | Preserve BGE first-occurrence parent order |
+| Sibling has absolute gain `< 0.01` | Keep current representative |
+| Sibling is not more than `10%` better | Keep current representative |
+| Sibling clears both thresholds | Replace representative |
+| Equal child-only scores | Keep BGE's first sibling |
+| Every candidate belongs to one parent | Select the representative before singleton rerank skip |
+| Null/empty ranked children | Return an empty immutable list |
+
+### 5. Good / Base / Bad Cases
+
+- Good: BGE ranks parent A before parent B, then a clearly more query-relevant sibling becomes A's
+  representative without moving A or B.
+- Base: siblings tie or differ only marginally, so the first BGE sibling remains the representative.
+- Bad: sort all children globally by sparse score, always replace on any positive delta, or keep the
+  first RRF child in the single-parent shortcut without evaluating its siblings.
+
+### 6. Tests Required
+
+- `SparseVectorizerTest` asserts precise Chinese evidence scores above boilerplate and empty text/query
+  produces zero similarity.
+- `RetrievalPipelineTest` asserts significant sibling replacement without parent reordering, tie
+  preservation, marginal-gain preservation, and single-parent shortcut selection.
+- Run the frozen `document-v2-v2` live calibration with 24/24 successful BGE calls and zero degradation;
+  compare File/Section/Child @1/@3/@5/@10 and strict MRR against the pre-optimization baseline.
+- Run Java 21 `clean verify` and retain the existing evaluation, compatibility and JaCoCo gates.
+
+### 7. Wrong vs Correct
+
+**Wrong:** after BGE reranks enriched child-plus-parent passages, collapse each parent with unconditional
+`putIfAbsent`; or replace the first BGE sibling for any tiny child-only score increase.
+
+**Correct:** preserve BGE's parent order, keep its first sibling by default, and replace only when the
+candidate's own child text clears both conservative gain thresholds.

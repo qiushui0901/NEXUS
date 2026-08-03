@@ -11,6 +11,7 @@ import com.example.requirementrag.model.RagOutcomeStatus;
 import com.example.requirementrag.model.RagStageDiagnostic;
 import com.example.requirementrag.model.RagWarning;
 import com.example.requirementrag.observability.RagObservability;
+import com.example.requirementrag.retrieval.SparseVectorizer;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
 import com.example.requirementrag.service.QueryRouter;
 import com.example.requirementrag.service.RagUnavailableException;
@@ -36,6 +37,8 @@ public class RetrievalPipeline {
     private static final String DOCUMENT_STAGE = "qdrant.hybrid_search";
     private static final String DOCUMENT_CORPUS_STAGE = "qdrant.scroll";
     private static final String CODE_STAGE = "code.hybrid_search";
+    private static final double MIN_REPRESENTATIVE_ABSOLUTE_GAIN = 0.01;
+    private static final double MIN_REPRESENTATIVE_RELATIVE_GAIN = 0.10;
 
     private final RagProperties properties;
     private final ProjectRegistry projectRegistry;
@@ -47,6 +50,7 @@ public class RetrievalPipeline {
     private final RetrievalResultCache resultCache;
     private final Executor retrievalExecutor;
     private final RetrievalCircuitBreaker circuitBreaker;
+    private final SparseVectorizer sparseVectorizer;
 
     @Autowired
     public RetrievalPipeline(RagProperties properties, ProjectRegistry projectRegistry, QueryRouter queryRouter,
@@ -54,7 +58,8 @@ public class RetrievalPipeline {
                              RagObservability observability, RequirementReranker requirementReranker,
                              RetrievalResultCache resultCache,
                              @Qualifier("retrievalExecutor") Executor retrievalExecutor,
-                             RetrievalCircuitBreaker circuitBreaker) {
+                             RetrievalCircuitBreaker circuitBreaker,
+                             SparseVectorizer sparseVectorizer) {
         this.properties = properties;
         this.projectRegistry = projectRegistry;
         this.queryRouter = queryRouter;
@@ -65,6 +70,17 @@ public class RetrievalPipeline {
         this.resultCache = resultCache;
         this.retrievalExecutor = retrievalExecutor;
         this.circuitBreaker = circuitBreaker;
+        this.sparseVectorizer = sparseVectorizer;
+    }
+
+    /** Compatibility constructor for focused tests that do not use Spring injection. */
+    public RetrievalPipeline(RagProperties properties, ProjectRegistry projectRegistry, QueryRouter queryRouter,
+                             QdrantHybridStore documentStore, CodeKnowledgeService codeKnowledgeService,
+                             RagObservability observability, RequirementReranker requirementReranker,
+                             RetrievalResultCache resultCache, Executor retrievalExecutor,
+                             RetrievalCircuitBreaker circuitBreaker) {
+        this(properties, projectRegistry, queryRouter, documentStore, codeKnowledgeService, observability,
+                requirementReranker, resultCache, retrievalExecutor, circuitBreaker, new SparseVectorizer());
     }
 
     /** Compatibility constructor for focused unit tests and pre-0.8 callers. */
@@ -127,14 +143,16 @@ public class RetrievalPipeline {
         boolean childFirstRerank = retrieval != null && retrieval.resolvedChildFirstRerankEnabled();
         List<ChunkRecord> requirementCandidates = deduplicate(requirementOutcome.data(),
                 childFirstRerank ? this::requirementCandidateKey : this::requirementKey);
-        List<ChunkRecord> rerankCandidates = optimizeSingleParentRerank(requirementCandidates, childFirstRerank);
+        List<ChunkRecord> rerankCandidates = optimizeSingleParentRerank(
+                request.query(), requirementCandidates, childFirstRerank);
         int rerankLimit = childFirstRerank
                 ? Math.max(limit, retrieval.resolvedBgeTopK())
                 : limit;
         RagOutcome<List<ChunkRecord>> rerankOutcome = request.profile().usesRequirementEvidence()
                 ? requirementReranker.rerank(request.query(), documentId, version, rerankCandidates, rerankLimit)
                 : RagOutcome.of(RagOutcomeStatus.NO_RESULTS, List.of(), "retrieval.rerank", 0, 0);
-        List<ChunkRecord> requirements = deduplicate(rerankOutcome.data(), this::requirementKey)
+        List<ChunkRecord> requirements = selectParentRepresentatives(
+                request.query(), rerankOutcome.data(), childFirstRerank)
                 .stream().limit(limit).toList();
         List<ChunkRecord> corpus = deduplicate(corpusOutcome.data(), this::requirementKey);
         List<CodeChunk> code = deduplicate(codeOutcome.data(), this::codeKey).stream().limit(limit).toList();
@@ -181,16 +199,53 @@ public class RetrievalPipeline {
 
     /**
      * Scoring several children cannot change the final parent order when every candidate belongs to the same parent.
-     * Keep the first RRF child in that special case so the richer 0.8.1 passage does not multiply CPU reranker work.
+     * Select the query-relevant representative in that special case before skipping redundant BGE scoring.
      * Multi-parent candidate sets still reach BGE child-first without an early parent collapse.
      */
-    private List<ChunkRecord> optimizeSingleParentRerank(List<ChunkRecord> candidates, boolean childFirstRerank) {
+    private List<ChunkRecord> optimizeSingleParentRerank(
+            String query, List<ChunkRecord> candidates, boolean childFirstRerank) {
         if (!childFirstRerank || candidates.size() <= 1) {
             return candidates;
         }
         String firstParent = requirementKey(candidates.getFirst());
         boolean singleParent = candidates.stream().allMatch(candidate -> requirementKey(candidate).equals(firstParent));
-        return singleParent ? List.of(candidates.getFirst()) : candidates;
+        return singleParent ? selectParentRepresentatives(query, candidates, true) : candidates;
+    }
+
+    /**
+     * Keep BGE's first occurrence as the parent rank, then choose the most query-relevant child inside
+     * that parent. Enriched BGE passages contain shared parent context, so sibling scores can be dominated
+     * by the same parent text; the child-only sparse score selects a more precise evidence representative
+     * without changing parent ordering or making another external rerank call.
+     */
+    private List<ChunkRecord> selectParentRepresentatives(
+            String query, List<ChunkRecord> rankedChildren, boolean childFirstRerank) {
+        if (!childFirstRerank) {
+            return deduplicate(rankedChildren, this::requirementKey);
+        }
+        Map<String, List<ChunkRecord>> childrenByParent = new LinkedHashMap<>();
+        for (ChunkRecord child : rankedChildren == null ? List.<ChunkRecord>of() : rankedChildren) {
+            if (child != null) {
+                childrenByParent.computeIfAbsent(requirementKey(child), ignored -> new ArrayList<>()).add(child);
+            }
+        }
+        List<ChunkRecord> representatives = new ArrayList<>(childrenByParent.size());
+        for (List<ChunkRecord> siblings : childrenByParent.values()) {
+            ChunkRecord representative = siblings.getFirst();
+            double bestScore = sparseVectorizer.similarity(query, representative.childText());
+            for (int index = 1; index < siblings.size(); index++) {
+                ChunkRecord candidate = siblings.get(index);
+                double score = sparseVectorizer.similarity(query, candidate.childText());
+                double absoluteGain = score - bestScore;
+                double relativeThreshold = bestScore * (1 + MIN_REPRESENTATIVE_RELATIVE_GAIN);
+                if (absoluteGain >= MIN_REPRESENTATIVE_ABSOLUTE_GAIN && score > relativeThreshold) {
+                    representative = candidate;
+                    bestScore = score;
+                }
+            }
+            representatives.add(representative);
+        }
+        return List.copyOf(representatives);
     }
 
     private <T> CompletableFuture<RagOutcome<List<T>>> submit(String stage,

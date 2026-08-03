@@ -37,7 +37,16 @@ public record RetrievalEvaluationCase(
         NO_RESULTS
     }
 
-    public record GoldDocument(String filename, Integer parentOrder, List<String> mustContain) {
+    public record GoldDocument(
+            String filename,
+            Integer parentOrder,
+            Integer childOrder,
+            List<String> mustContain
+    ) {
+        public GoldDocument(String filename, Integer parentOrder, List<String> mustContain) {
+            this(filename, parentOrder, null, mustContain);
+        }
+
         public GoldDocument {
             mustContain = mustContain == null ? List.of() : List.copyOf(mustContain);
         }

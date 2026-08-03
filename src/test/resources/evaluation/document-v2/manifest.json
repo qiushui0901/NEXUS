@@ -1,11 +1,13 @@
 {
-  "schemaVersion": 1,
-  "datasetVersion": "document-v2-v1",
-  "status": "prepared-not-formally-evaluated",
+  "schemaVersion": 2,
+  "datasetVersion": "document-v2-v2",
+  "status": "expanded-calibration-corpus",
   "projectId": "document-v2-eval",
   "documentId": "document-v2-corpus",
-  "version": "document-v2-v1",
-  "fileCount": 6,
+  "version": "document-v2-v2",
+  "fileCount": 18,
+  "goldFileCount": 6,
+  "hardNegativeFileCount": 12,
   "structuredHitCases": 24,
   "hardNegativeTags": [
     "cross-file-near-duplicate",
@@ -14,10 +16,11 @@
     "synonym-cross-document"
   ],
   "datasetPath": "src/test/resources/evaluation/retrieval-eval-document-v2.jsonl",
-  "datasetSha256": "ebf1eb6ee725adc142aea934b2501064be4fbb99c572564256c67e7a295f3b70",
+  "datasetSha256": "0bffabcbb9c301860aefe54f4c076640b05f90fe90074df71a12335245527e2f",
   "files": [
     {
       "filename": "approval-workflow.md",
+      "role": "gold",
       "sha256": "191b201c4ce981f22da10bfe4e0a52adc160fb4b6081dc4edca48b25da352187",
       "bytes": 8595,
       "cleanedCharacters": 2872,
@@ -51,6 +54,7 @@
     },
     {
       "filename": "access-revocation.md",
+      "role": "gold",
       "sha256": "ab63cf190a5bf93535fcca74b576443aa80007bc7ba8513106360c1e35f84167",
       "bytes": 8565,
       "cleanedCharacters": 2862,
@@ -84,6 +88,7 @@
     },
     {
       "filename": "audit-retention.md",
+      "role": "gold",
       "sha256": "606ed8d186a9cbaed59c21c04697a8755aefaa5aa44d71cdf711569c0ca8ea41",
       "bytes": 8637,
       "cleanedCharacters": 2886,
@@ -117,6 +122,7 @@
     },
     {
       "filename": "release-rollback.md",
+      "role": "gold",
       "sha256": "419d10b158efc61b9c5ffd84ef268e2bc25f1d710663ab1ab34d5cf00f1fa311",
       "bytes": 8568,
       "cleanedCharacters": 2863,
@@ -150,6 +156,7 @@
     },
     {
       "filename": "quota-throttling.md",
+      "role": "gold",
       "sha256": "2dc9b23289ee259f69469812fc8502baf8a4a9e12af2cdb47e06f2629934406d",
       "bytes": 8604,
       "cleanedCharacters": 2875,
@@ -183,6 +190,7 @@
     },
     {
       "filename": "repository-indexing.md",
+      "role": "gold",
       "sha256": "9265e23f4242a9667655696b5d722761607bf63538b45550921f9668870cd15c",
       "bytes": 8700,
       "cleanedCharacters": 2907,
@@ -213,7 +221,127 @@
           "childOrder": 0
         }
       ]
+    },
+    {
+      "filename": "artifact-registry-sync.md",
+      "role": "hard-negative",
+      "hardNegativeFor": ["repository-indexing.md"],
+      "sha256": "5c629a80819be4f5c6567876153b380fee884df4e1d996f95d9be1a8ef7aee0b",
+      "bytes": 6062,
+      "cleanedCharacters": 2036,
+      "parentCount": 2,
+      "childCounts": [5, 1]
+    },
+    {
+      "filename": "batch-job-concurrency.md",
+      "role": "hard-negative",
+      "hardNegativeFor": ["quota-throttling.md"],
+      "sha256": "2ffbf38eba147b29f0ef733d4f88bdb021c25343638ba5aec2ff642fecbf9d28",
+      "bytes": 6079,
+      "cleanedCharacters": 2045,
+      "parentCount": 2,
+      "childCounts": [5, 1]
+    },
+    {
+      "filename": "billing-record-retention.md",
+      "role": "hard-negative",
+      "hardNegativeFor": ["audit-retention.md"],
+      "sha256": "efcc82a5e961b8a04dff90a4007abd2e9f3d86e2642925f8c7bcc4922382eb82",
+      "bytes": 6061,
+      "cleanedCharacters": 2035,
+      "parentCount": 2,
+      "childCounts": [5, 1]
+    },
+    {
+      "filename": "data-export-approval.md",
+      "role": "hard-negative",
+      "hardNegativeFor": ["approval-workflow.md"],
+      "sha256": "df0194d509baa84a60fa39001eba648cf205a4f6dda41a299d3587d9932bc2b8",
+      "bytes": 6167,
+      "cleanedCharacters": 2069,
+      "parentCount": 2,
+      "childCounts": [5, 1]
+    },
+    {
+      "filename": "database-migration-recovery.md",
+      "role": "hard-negative",
+      "hardNegativeFor": ["release-rollback.md"],
+      "sha256": "1444aaf56b93d2d257a3c9cf4ab9774cdae93e147c6dae44317ebfc719e7df42",
+      "bytes": 6054,
+      "cleanedCharacters": 2038,
+      "parentCount": 2,
+      "childCounts": [5, 1]
+    },
+    {
+      "filename": "documentation-site-indexing.md",
+      "role": "hard-negative",
+      "hardNegativeFor": ["repository-indexing.md"],
+      "sha256": "47dd8d632366821f6a954991451bf9d1876200448f6cd9c7f58bd5c2ce04dff9",
+      "bytes": 5946,
+      "cleanedCharacters": 2041,
+      "parentCount": 2,
+      "childCounts": [5, 1]
+    },
+    {
+      "filename": "feature-flag-recovery.md",
+      "role": "hard-negative",
+      "hardNegativeFor": ["release-rollback.md"],
+      "sha256": "a989cbc74dab89d3e78a2f1b58bdc0d60c93f663d8defa7aad9f8a35962c2ffd",
+      "bytes": 6203,
+      "cleanedCharacters": 2091,
+      "parentCount": 2,
+      "childCounts": [5, 1]
+    },
+    {
+      "filename": "notification-rate-control.md",
+      "role": "hard-negative",
+      "hardNegativeFor": ["quota-throttling.md"],
+      "sha256": "06eae477ad53e947dba9f3c7fe9e5bf88d4070e0bdeca4c8ddb05945537caf9f",
+      "bytes": 6015,
+      "cleanedCharacters": 2020,
+      "parentCount": 2,
+      "childCounts": [5, 1]
+    },
+    {
+      "filename": "procurement-approval.md",
+      "role": "hard-negative",
+      "hardNegativeFor": ["approval-workflow.md"],
+      "sha256": "b5be25a958c5f3a8414c460128159e9d0c1a6d347e26f6456f767d09c8794308",
+      "bytes": 6228,
+      "cleanedCharacters": 2089,
+      "parentCount": 2,
+      "childCounts": [5, 1]
+    },
+    {
+      "filename": "service-account-rotation.md",
+      "role": "hard-negative",
+      "hardNegativeFor": ["access-revocation.md"],
+      "sha256": "fae9c7b1f537038e4e1640b7abd882b5ada568fcf7d476c1d63930d21f46d92b",
+      "bytes": 6092,
+      "cleanedCharacters": 2045,
+      "parentCount": 2,
+      "childCounts": [5, 1]
+    },
+    {
+      "filename": "telemetry-retention.md",
+      "role": "hard-negative",
+      "hardNegativeFor": ["audit-retention.md"],
+      "sha256": "c10604c78119f89ae52d862e1b94671ba6d873925a5fafc627839c0e4c1ed499",
+      "bytes": 6211,
+      "cleanedCharacters": 2085,
+      "parentCount": 2,
+      "childCounts": [5, 1]
+    },
+    {
+      "filename": "temporary-access-expiry.md",
+      "role": "hard-negative",
+      "hardNegativeFor": ["access-revocation.md"],
+      "sha256": "609a4f519d285ab8b8bcbcab697a041d7b6786393072a99aaef6324d276075ec",
+      "bytes": 5983,
+      "cleanedCharacters": 2008,
+      "parentCount": 2,
+      "childCounts": [5, 1]
     }
   ],
-  "note": "Positions mirror TextPreprocessor.clean and ParentChildChunker constants as of 2026-07-31; the future corpus contract test must verify them with production Java code before a formal run."
+  "note": "Positions and fingerprints are verified against TextPreprocessor.clean and ParentChildChunker by RetrievalEvaluationV2CorpusTest."
 }

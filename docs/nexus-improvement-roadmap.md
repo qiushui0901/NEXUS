@@ -362,7 +362,8 @@ ProjectIdResolver.java:53         catch (RuntimeException ignored) { }
 **验收**
 
 - [x] 三个 profile 的证据都经过统一重排；固定同条件评测中 Document/Code Recall@10 与 MRR@10 均不低于 0.7 基线
-- [ ] 0.8.2 多文档固定集不少于 6 个文件、12 个章节、24 个 HIT case；File/Section/Child Recall 分层且无 `parentText` 泄漏
+- [x] 0.8.2 多文档固定集达到 18 个文件、至少 36 个 parent、24 个 HIT case，并包含
+  12 个显式映射的独立 hard negative；File/Section/Child Recall 分层且无 `parentText` 泄漏
 - [x] 开发方案受控并行召回 P95 相对顺序基线下降 ≥ 30%（315 ms → 112 ms，下降 64.44%）
 - [x] 固定评测集 ≥ 50 条并覆盖六类场景；确定性离线回归作为 CI 门禁，真实依赖评测保留显式开关
 - [x] 覆盖率门禁生效，低于阈值构建失败

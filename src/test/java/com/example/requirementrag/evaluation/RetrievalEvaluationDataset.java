@@ -130,6 +130,12 @@ public final class RetrievalEvaluationDataset {
         if (gold.parentOrder() != null && gold.parentOrder() < 0) {
             throw invalid(lineNumber, "goldDocuments[" + index + "].parentOrder must be non-negative");
         }
+        if (gold.childOrder() != null && gold.childOrder() < 0) {
+            throw invalid(lineNumber, "goldDocuments[" + index + "].childOrder must be non-negative");
+        }
+        if (gold.childOrder() != null && gold.parentOrder() == null) {
+            throw invalid(lineNumber, "goldDocuments[" + index + "].childOrder requires parentOrder");
+        }
         for (String fragment : gold.mustContain()) {
             if (isBlank(fragment)) {
                 throw invalid(lineNumber, "goldDocuments[" + index + "].mustContain contains a blank value");
