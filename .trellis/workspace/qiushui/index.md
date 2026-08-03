@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
-- **Last Active**: 2026-07-30
+- **Total Sessions**: 12
+- **Last Active**: 2026-08-03
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~401 | Active |
+| `journal-1.md` | ~434 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-08-03 | 完成 0.8.2 可信文档召回与 parent 代表项优化 | `fe171e2` | `main` |
 | 11 | 2026-07-30 | Commit and archive 0.8 + MCP contract | `b9489ab` | `main` |
 | 10 | 2026-07-28 | NEXUS 0.7 多语言代码智能收口 | `97cbf42` | `main` |
 | 9 | 2026-07-28 | NEXUS 0.6 MCP Server | `0c00e95` | `main` |

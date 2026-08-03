@@ -399,3 +399,36 @@ Committed MCP 0.6 contract matrix, 0.8 BGE/shiguang eval tooling, smoke/ecosyste
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: 完成 0.8.2 可信文档召回与 parent 代表项优化
+
+**Date**: 2026-08-03
+**Task**: 完成 0.8.2 可信文档召回与 parent 代表项优化
+**Branch**: `main`
+
+### Summary
+
+扩展 document-v2-v2 至 18 个文档与 24 个结构化用例，新增分层召回评测；优化 child-first parent 代表项选择，使 Child Recall@10 从 0.916667 提升到 1.0，并通过 289 项 Java 测试和完整真实 calibration。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fe171e2` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
