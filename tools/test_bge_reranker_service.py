@@ -26,7 +26,17 @@ class FakeReranker:
 class RerankerServerTest(unittest.TestCase):
     def setUp(self):
         handler = service.build_handler(
-            FakeReranker(), api_key="test-key", max_texts=4, max_request_bytes=4096
+            FakeReranker(),
+            api_key="test-key",
+            max_texts=4,
+            max_request_bytes=4096,
+            health_details={
+                "maxLength": 384,
+                "batchSize": 4,
+                "normalize": True,
+                "maxTexts": 4,
+                "torchThreads": 8,
+            },
         )
         self.server = service.ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -54,6 +64,12 @@ class RerankerServerTest(unittest.TestCase):
         self.assertEqual(200, status)
         self.assertEqual("UP", body["status"])
         self.assertEqual("test-reranker", body["model"])
+        self.assertEqual("cpu", body["device"])
+        self.assertEqual(384, body["maxLength"])
+        self.assertEqual(4, body["batchSize"])
+        self.assertIs(True, body["normalize"])
+        self.assertEqual(4, body["maxTexts"])
+        self.assertEqual(8, body["torchThreads"])
 
     def test_rerank_returns_current_nexus_array_contract(self):
         status, body = self.request(

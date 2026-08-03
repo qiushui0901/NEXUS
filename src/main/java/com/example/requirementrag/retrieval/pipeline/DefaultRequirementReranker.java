@@ -25,6 +25,7 @@ import java.util.stream.Collectors;
 @Service
 public class DefaultRequirementReranker implements RequirementReranker {
     private static final String BGE_STAGE = "bge.rerank";
+    private static final String BGE_SINGLETON_SKIP_STAGE = "bge.rerank.singleton_skip";
     private static final String LLM_STAGE = "llm.rerank";
 
     private final BgeReranker bgeReranker;
@@ -49,12 +50,24 @@ public class DefaultRequirementReranker implements RequirementReranker {
         }
         List<RagWarning> warnings = new ArrayList<>();
         List<RagStageDiagnostic> diagnostics = new ArrayList<>();
-        List<ChunkRecord> bge = stage(BGE_STAGE, "BGE_RERANK_UNAVAILABLE", "BGE 重排暂时不可用",
-                documentId, version, source,
-                () -> bgeReranker.rerank(query, source, Math.min(properties.retrieval().resolvedBgeTopK(), source.size())),
-                warnings, diagnostics);
+        RagProperties.Retrieval retrieval = properties.retrieval();
+        boolean childFirstRerank = retrieval != null && retrieval.resolvedChildFirstRerankEnabled();
+        List<ChunkRecord> bge;
+        if (childFirstRerank && source.size() == 1) {
+            bge = source;
+            diagnostics.add(new RagStageDiagnostic(
+                    BGE_SINGLETON_SKIP_STAGE, RagOutcomeStatus.SUCCESS, 0, source.size()));
+            observability.outcome(BGE_SINGLETON_SKIP_STAGE, documentId, version,
+                    RagOutcomeStatus.SUCCESS, 0, null, null);
+        } else {
+            bge = stage(BGE_STAGE, "BGE_RERANK_UNAVAILABLE", "BGE 重排暂时不可用",
+                    documentId, version, source,
+                    () -> bgeReranker.rerank(query, source,
+                            Math.min(retrieval == null ? limit : retrieval.resolvedBgeTopK(), source.size())),
+                    warnings, diagnostics);
+        }
         List<ChunkRecord> result = bge;
-        if (properties.retrieval().llmRerankEnabled()) {
+        if (retrieval != null && retrieval.llmRerankEnabled()) {
             result = stage(LLM_STAGE, "LLM_RERANK_UNAVAILABLE", "LLM 重排暂时不可用",
                     documentId, version, bge, () -> llmRerank(query, bge),
                     warnings, diagnostics);

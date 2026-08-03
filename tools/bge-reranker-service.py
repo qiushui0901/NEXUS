@@ -108,6 +108,12 @@ class TransformersReranker:
             return "cuda"
         return "cpu"
 
+    @property
+    def torch_threads(self) -> int:
+        if self._torch is None:
+            raise RuntimeError("Reranker model has not been loaded")
+        return int(self._torch.get_num_threads())
+
     def score(self, query: str, texts: list[str], truncate: bool) -> list[float]:
         if self._model is None or self._tokenizer is None or self._torch is None:
             raise RuntimeError("Reranker model has not been loaded")
@@ -159,7 +165,10 @@ def build_handler(
     api_key: str,
     max_texts: int,
     max_request_bytes: int,
+    health_details: dict[str, Any] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
+    health_payload = dict(health_details or {})
+
     class RerankerHandler(BaseHTTPRequestHandler):
         server_version = "NexusBgeReranker/1.0"
 
@@ -173,6 +182,7 @@ def build_handler(
                     "status": "UP",
                     "model": reranker.model_id,
                     "device": reranker.device,
+                    **health_payload,
                 },
             )
 
@@ -273,6 +283,14 @@ def main() -> None:
         api_key=config.api_key,
         max_texts=config.max_texts,
         max_request_bytes=config.max_request_bytes,
+        health_details={
+            "maxLength": config.max_length,
+            "batchSize": config.batch_size,
+            "normalize": config.normalize,
+            "maxTexts": config.max_texts,
+            "maxRequestBytes": config.max_request_bytes,
+            "torchThreads": reranker.torch_threads,
+        },
     )
     server = ThreadingHTTPServer((config.host, config.port), handler)
     LOGGER.info("Listening host=%s port=%s path=/rerank", config.host, config.port)

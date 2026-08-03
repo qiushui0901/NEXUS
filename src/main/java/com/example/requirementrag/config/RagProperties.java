@@ -118,7 +118,10 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
             long resultCacheTtlSeconds,
             int resultCacheMaxEntries,
             long embeddingCacheTtlSeconds,
-            int embeddingCacheMaxEntries
+            int embeddingCacheMaxEntries,
+            Boolean childFirstRerankEnabled,
+            Boolean enrichedBgePassageEnabled,
+            Boolean codeQueryExpansionEnabled
     ) {
         public int resolvedBgeTopK() {
             return bgeTopK <= 0 ? 20 : bgeTopK;
@@ -163,9 +166,27 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
                     : embeddingCacheMaxEntries == 0 ? 10_000 : embeddingCacheMaxEntries;
         }
 
+        /** 0.8.1 默认启用 child-first 重排；显式 false 可回退到 0.8 parent-first 行为。 */
+        public boolean resolvedChildFirstRerankEnabled() {
+            return childFirstRerankEnabled == null || childFirstRerankEnabled;
+        }
+
+        /** 0.8.1 默认向 BGE 发送有界 child + parent 上下文；显式 false 仅发送 child。 */
+        public boolean resolvedEnrichedBgePassageEnabled() {
+            return enrichedBgePassageEnabled == null || enrichedBgePassageEnabled;
+        }
+
+        /** 0.8.1 默认启用中英文代码意图归一化；显式 false 保持 0.8 排序。 */
+        public boolean resolvedCodeQueryExpansionEnabled() {
+            return codeQueryExpansionEnabled == null || codeQueryExpansionEnabled;
+        }
+
         public String fingerprint() {
             return denseTopK + ":" + sparseTopK + ":" + hybridTopK + ":" + resolvedBgeTopK()
-                    + ":" + resolvedLlmTopK() + ":" + llmRerankEnabled;
+                    + ":" + resolvedLlmTopK() + ":" + llmRerankEnabled
+                    + ":" + resolvedChildFirstRerankEnabled()
+                    + ":" + resolvedEnrichedBgePassageEnabled()
+                    + ":" + resolvedCodeQueryExpansionEnabled();
         }
     }
 

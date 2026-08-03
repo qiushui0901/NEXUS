@@ -17,6 +17,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -29,7 +30,7 @@ class DefaultRequirementRerankerTest {
         RagObservability observability = mock(RagObservability.class);
         when(properties.retrieval()).thenReturn(new RagProperties.Retrieval(
                 50, 50, 40, 20, 10, false, 1_000, 2, 3, 30_000,
-                -1, -1, -1, -1));
+                -1, -1, -1, -1, null, null, null));
         when(bgeReranker.rerank(any(), any(), anyInt()))
                 .thenThrow(new IllegalStateException("endpoint unavailable"));
         DefaultRequirementReranker reranker = new DefaultRequirementReranker(
@@ -56,6 +57,74 @@ class DefaultRequirementRerankerTest {
         verify(observability).outcome(
                 eq("bge.rerank"), eq("requirements"), eq("5.1"), eq(RagOutcomeStatus.DEGRADED),
                 anyLong(), eq("BGE_RERANK_UNAVAILABLE"), any(RuntimeException.class));
+    }
+
+
+    @Test
+    void skipsBgeForSingletonOnlyWhenChildFirstQualityModeIsEnabled() {
+        BgeReranker bgeReranker = mock(BgeReranker.class);
+        RagProperties properties = mock(RagProperties.class);
+        RagObservability observability = mock(RagObservability.class);
+        when(properties.retrieval()).thenReturn(retrieval(true));
+        DefaultRequirementReranker reranker = new DefaultRequirementReranker(
+                bgeReranker, mock(ChatClient.class), properties, observability);
+        ChunkRecord only = chunk("only");
+
+        RagOutcome<List<ChunkRecord>> outcome = reranker.rerank(
+                "query", "requirements", "5.1", List.of(only), 10);
+
+        assertThat(outcome.status()).isEqualTo(RagOutcomeStatus.SUCCESS);
+        assertThat(outcome.data()).containsExactly(only);
+        assertThat(outcome.stageDiagnostics()).singleElement().satisfies(diagnostic -> {
+            assertThat(diagnostic.stage()).isEqualTo("bge.rerank.singleton_skip");
+            assertThat(diagnostic.status()).isEqualTo(RagOutcomeStatus.SUCCESS);
+            assertThat(diagnostic.itemCount()).isEqualTo(1);
+        });
+        verify(bgeReranker, never()).rerank(any(), any(), anyInt());
+        verify(observability).outcome(
+                "bge.rerank.singleton_skip", "requirements", "5.1",
+                RagOutcomeStatus.SUCCESS, 0, null, null);
+    }
+
+    @Test
+    void baselineStillCallsBgeForSingletonCandidate() {
+        BgeReranker bgeReranker = mock(BgeReranker.class);
+        RagProperties properties = mock(RagProperties.class);
+        when(properties.retrieval()).thenReturn(retrieval(false));
+        ChunkRecord only = chunk("only");
+        when(bgeReranker.rerank(any(), any(), anyInt())).thenReturn(List.of(only));
+        DefaultRequirementReranker reranker = new DefaultRequirementReranker(
+                bgeReranker, mock(ChatClient.class), properties, mock(RagObservability.class));
+
+        RagOutcome<List<ChunkRecord>> outcome = reranker.rerank(
+                "query", "requirements", "5.1", List.of(only), 10);
+
+        assertThat(outcome.stageDiagnostics()).singleElement().satisfies(diagnostic ->
+                assertThat(diagnostic.stage()).isEqualTo("bge.rerank"));
+        verify(bgeReranker).rerank("query", List.of(only), 1);
+    }
+
+    @Test
+    void missingRetrievalConfigKeepsLegacyBgeBehavior() {
+        BgeReranker bgeReranker = mock(BgeReranker.class);
+        RagProperties properties = mock(RagProperties.class);
+        ChunkRecord only = chunk("only");
+        when(bgeReranker.rerank(any(), any(), anyInt())).thenReturn(List.of(only));
+        DefaultRequirementReranker reranker = new DefaultRequirementReranker(
+                bgeReranker, mock(ChatClient.class), properties, mock(RagObservability.class));
+
+        RagOutcome<List<ChunkRecord>> outcome = reranker.rerank(
+                "query", "requirements", "5.1", List.of(only), 10);
+
+        assertThat(outcome.status()).isEqualTo(RagOutcomeStatus.SUCCESS);
+        assertThat(outcome.data()).containsExactly(only);
+        verify(bgeReranker).rerank("query", List.of(only), 1);
+    }
+
+    private RagProperties.Retrieval retrieval(Boolean childFirst) {
+        return new RagProperties.Retrieval(
+                50, 50, 40, 20, 10, false, 1_000, 2, 3, 30_000,
+                -1, -1, -1, -1, childFirst, null, null);
     }
 
     private ChunkRecord chunk(String id) {

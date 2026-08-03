@@ -10,6 +10,9 @@ import urllib.request
 BASE_URL = os.getenv("BGE_RERANK_URL", "http://127.0.0.1:8081").rstrip("/")
 PATH = os.getenv("BGE_RERANK_PATH", "/rerank")
 API_KEY = os.getenv("BGE_RERANK_API_KEY", "")
+EXPECTED_DEVICE = os.getenv("BGE_RERANK_EXPECT_DEVICE", "").strip()
+EXPECTED_MAX_LENGTH = os.getenv("BGE_RERANK_EXPECT_MAX_LENGTH", "").strip()
+EXPECTED_BATCH_SIZE = os.getenv("BGE_RERANK_EXPECT_BATCH_SIZE", "").strip()
 
 
 def request(path: str, body: dict[str, object] | None = None) -> tuple[int, object]:
@@ -29,6 +32,26 @@ def request(path: str, body: dict[str, object] | None = None) -> tuple[int, obje
         raise RuntimeError(f"HTTP {error.code}: {detail[:300]}") from error
 
 
+def require_expected_health(health: object) -> dict[str, object]:
+    if not isinstance(health, dict):
+        raise RuntimeError("reranker health response must be a JSON object")
+    expected: tuple[tuple[str, str, type], ...] = (
+        ("device", EXPECTED_DEVICE, str),
+        ("maxLength", EXPECTED_MAX_LENGTH, int),
+        ("batchSize", EXPECTED_BATCH_SIZE, int),
+    )
+    for field, configured, value_type in expected:
+        if not configured:
+            continue
+        expected_value: object = int(configured) if value_type is int else configured
+        actual = health.get(field)
+        if actual != expected_value:
+            raise RuntimeError(
+                f"reranker {field} mismatch: expected {expected_value!r}, got {actual!r}"
+            )
+    return health
+
+
 def main() -> None:
     health_status, health = request("/health")
     rerank_status, ranked = request(
@@ -41,6 +64,7 @@ def main() -> None:
     )
     if health_status != 200 or rerank_status != 200:
         raise RuntimeError("reranker health check failed")
+    health_payload = require_expected_health(health)
     if not isinstance(ranked, list) or len(ranked) != 2:
         raise RuntimeError("reranker response must contain two score entries")
     if any(not isinstance(item, dict) or "index" not in item or "score" not in item for item in ranked):
@@ -52,8 +76,13 @@ def main() -> None:
         json.dumps(
             {
                 "status": "UP",
-                "model": health.get("model") if isinstance(health, dict) else None,
-                "device": health.get("device") if isinstance(health, dict) else None,
+                "model": health_payload.get("model"),
+                "device": health_payload.get("device"),
+                "maxLength": health_payload.get("maxLength"),
+                "batchSize": health_payload.get("batchSize"),
+                "normalize": health_payload.get("normalize"),
+                "maxTexts": health_payload.get("maxTexts"),
+                "torchThreads": health_payload.get("torchThreads"),
                 "contract": "PASS",
             },
             ensure_ascii=False,

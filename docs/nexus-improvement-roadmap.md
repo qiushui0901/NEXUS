@@ -357,10 +357,12 @@ ProjectIdResolver.java:53         catch (RuntimeException ignored) { }
 4. **评测集扩到 50+ 条**，覆盖：正常召回、版本串线、相似功能误召回、空结果、依赖降级、跨项目污染。
 5. **CI 质量门禁**：加入 JaCoCo 覆盖率下限、检索评测回归（Recall@K / MRR 不得低于基线）、依赖漏洞扫描。
 6. 引入**查询改写 / 多路召回**（可选）：把口语化提问改写成检索友好的多个子查询。
+7. **0.8.2 可信文档评测**：修正 v1 单文件文件级 Recall 的宽松口径，新增多文档、多章节、hard-negative 固定语料，分别报告 File / Section / Child Recall@10，并按唯一 case 统计质量。
 
 **验收**
 
 - [x] 三个 profile 的证据都经过统一重排；固定同条件评测中 Document/Code Recall@10 与 MRR@10 均不低于 0.7 基线
+- [ ] 0.8.2 多文档固定集不少于 6 个文件、12 个章节、24 个 HIT case；File/Section/Child Recall 分层且无 `parentText` 泄漏
 - [x] 开发方案受控并行召回 P95 相对顺序基线下降 ≥ 30%（315 ms → 112 ms，下降 64.44%）
 - [x] 固定评测集 ≥ 50 条并覆盖六类场景；确定性离线回归作为 CI 门禁，真实依赖评测保留显式开关
 - [x] 覆盖率门禁生效，低于阈值构建失败
@@ -401,6 +403,8 @@ Ollama 中的 reranker 模型不直接复用，因为当前 Ollama 没有 `/api/
 `manifest.json` 记录固定数据、语料、运行时、配置指纹且 `secretsRecorded=false`。真实模型端到端
 延迟因 CPU BGE 增加，不用它替代受控并行召回性能指标；真实依赖评测仍通过显式开关运行，避免
 默认 CI 依赖本地 Qdrant、Embedding 与 BGE 服务。
+
+0.8.1 正式质量收口（2026-07-31）：在固定 54 条黄金集、拾光 commit、三个 profile、Top-K、Python/Transformers BGE 与运行环境下完成 `0.8-rerank` → `0.8.1-quality` 对照。0.8.1 达到 Document Recall@10 `1.000000`、Code Recall@10 `0.809524`、MRR@10 `0.823951`、no-result accuracy `1.000000`、污染率 `0`、P95 `34 ms`，相对历史 0.8 的三项质量门槛全部通过。同工作树控制组为 `1.000000 / 0.809524 / 0.806636`，因此只声明 MRR 增长 `0.017315`，不把持平的 Recall 伪装成 reranker 增益。144 次文档决策在最终仅有单候选时走结构化 singleton skip；正式 runner 已独立验证 Python 健康和 Java→BGE 实时契约，多候选仍使用真实 BGE，意外 degradation 为 0。24 次重复失败对应 8 个唯一代码 case，归因为 `CODE_CANDIDATE_RECALL_MISS=7`、`CODE_RERANK_LOSS=1`。正式 comparison 为 PASS，详见 `docs/retrieval-evaluation-history.md`。
 
 ---
 

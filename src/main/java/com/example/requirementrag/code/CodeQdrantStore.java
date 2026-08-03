@@ -90,8 +90,16 @@ public class CodeQdrantStore {
 
     /** 对代码 chunk 做 dense+sparse 混合检索。 */
     public List<CodeChunk> hybridSearch(String collection, String query, String projectId, int limit) {
+        return hybridSearchTrace(collection, query, projectId, limit).ranked();
+    }
+
+    /**
+     * 返回 RRF 候选与确定性精排结果，供离线评测定位候选召回和最终排序损失。
+     * 两组结果均有界，且执行路径与 {@link #hybridSearch(String, String, String, int)} 完全一致。
+     */
+    public CodeSearchTrace hybridSearchTrace(String collection, String query, String projectId, int limit) {
         ensureCollection(collection);
-        float[] dense = embeddingModel.embed(query);
+        float[] dense = embeddingBatcher.embedAll(List.of(query)).getFirst();
         SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorize(query);
         int candidateLimit = Math.max(limit * CANDIDATE_MULTIPLIER, MIN_CANDIDATE_LIMIT);
         int prefetchLimit = candidateLimit * CANDIDATE_MULTIPLIER;
@@ -109,7 +117,10 @@ public class CodeQdrantStore {
                 .body(body)
                 .retrieve()
                 .body(new ParameterizedTypeReference<>() {}));
-        return rerankCandidates(query, extractPoints(response), limit);
+        List<CodeChunk> candidates = extractPoints(response);
+        List<CodeChunk> ranked = rerankCandidates(query, candidates, limit,
+                properties.retrieval().resolvedCodeQueryExpansionEnabled());
+        return new CodeSearchTrace(candidates, ranked);
     }
 
     /** 统计项目代码 chunk 数。使用默认 collection。 */
@@ -209,13 +220,19 @@ public class CodeQdrantStore {
      * 在有限 RRF 候选池内做确定性结构重排。原始名次仍是主信号，仅对明确的符号词和代码角色意图加分。
      */
     static List<CodeChunk> rerankCandidates(String query, List<CodeChunk> candidates, int limit) {
+        return rerankCandidates(query, candidates, limit, true);
+    }
+
+    private static List<CodeChunk> rerankCandidates(String query, List<CodeChunk> candidates, int limit,
+                                                     boolean queryExpansionEnabled) {
         if (candidates.isEmpty() || limit <= 0) {
             return List.of();
         }
+        String rankingQuery = queryExpansionEnabled ? expandQuery(query) : query;
         List<RankedCodeChunk> ranked = new ArrayList<>(candidates.size());
         for (int index = 0; index < candidates.size(); index++) {
             CodeChunk chunk = candidates.get(index);
-            ranked.add(new RankedCodeChunk(chunk, index, candidateScore(query, chunk, index, candidates.size())));
+            ranked.add(new RankedCodeChunk(chunk, index, candidateScore(rankingQuery, chunk, index, candidates.size())));
         }
         return ranked.stream()
                 .sorted(Comparator.comparingDouble(RankedCodeChunk::score).reversed()
@@ -272,6 +289,31 @@ public class CodeQdrantStore {
         return score;
     }
 
+    static String expandQuery(String query) {
+        StringBuilder expanded = new StringBuilder(safeText(query));
+        appendAlias(expanded, query, "流式对话", "chat stream");
+        appendAlias(expanded, query, "普通对话", "chat");
+        appendAlias(expanded, query, "AI 对话", "chat");
+        appendAlias(expanded, query, "搜索摘要", "search summary");
+        appendAlias(expanded, query, "用户搜索", "search user");
+        appendAlias(expanded, query, "笔记搜索", "search note");
+        appendAlias(expanded, query, "粉丝列表", "find fans list");
+        appendAlias(expanded, query, "关注列表", "find following list");
+        appendAlias(expanded, query, "子评论", "child comment");
+        appendAlias(expanded, query, "一级评论", "comment page list");
+        appendAlias(expanded, query, "取消点赞", "unlike");
+        appendAlias(expanded, query, "文件上传", "upload file");
+        appendAlias(expanded, query, "推荐", "recommend");
+        appendAlias(expanded, query, "热门", "trending");
+        return expanded.toString();
+    }
+
+    private static void appendAlias(StringBuilder expanded, String query, String phrase, String alias) {
+        if (query.contains(phrase.toLowerCase(java.util.Locale.ROOT))) {
+            expanded.append(' ').append(alias);
+        }
+    }
+
     private static boolean asksForServiceImplementation(String query) {
         return containsAny(query, "服务实现", "实现入口", "业务逻辑", "service implementation",
                 "implementation entry", "business logic");
@@ -280,6 +322,7 @@ public class CodeQdrantStore {
     private static boolean asksForBusinessBehavior(String query) {
         return asksForServiceImplementation(query) || containsAny(query, "如何", "保证", "触发", "同步",
                 "生成", "处理", "上传", "签发", "限制", "缓存", "排序", "去重", "返回",
+                "搜索", "查询", "对话", "摘要", "列表", "推荐",
                 "how ", "ensure", "trigger", "synchronize", "generate", "handle", "upload", "return");
     }
 
@@ -476,5 +519,13 @@ public class CodeQdrantStore {
     @SuppressWarnings("unchecked")
     private List<Object> list(Object value) {
         return value instanceof List<?> l ? (List<Object>) l : List.of();
+    }
+
+    /** Bounded code-search stages used by the reproducible retrieval evaluation. */
+    public record CodeSearchTrace(List<CodeChunk> candidates, List<CodeChunk> ranked) {
+        public CodeSearchTrace {
+            candidates = candidates == null ? List.of() : List.copyOf(candidates);
+            ranked = ranked == null ? List.of() : List.copyOf(ranked);
+        }
     }
 }

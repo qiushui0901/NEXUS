@@ -222,13 +222,15 @@ class RetrievalEvaluationTest {
                         new RagStageDiagnostic("retrieval.rerank", RagOutcomeStatus.SUCCESS, 1, 1),
                         new RagStageDiagnostic("bge.rerank", RagOutcomeStatus.SUCCESS, 1, 1),
                         new RagStageDiagnostic("bge.rerank", RagOutcomeStatus.DEGRADED, 1, 1),
-                        new RagStageDiagnostic("bge.rerank", RagOutcomeStatus.NO_RESULTS, 0, 0)));
+                        new RagStageDiagnostic("bge.rerank", RagOutcomeStatus.NO_RESULTS, 0, 0),
+                        new RagStageDiagnostic("bge.rerank.singleton_skip", RagOutcomeStatus.SUCCESS, 0, 1)));
 
         assertEquals(2, result.repetition());
         assertEquals(2, result.bgeCalls());
         assertEquals(1, result.bgeSuccesses());
         assertEquals(1, result.bgeDegradations());
         assertEquals(1, result.bgeNoCandidateSkips());
+        assertEquals(1, result.bgeSingletonSkips());
     }
 
     @Test
@@ -271,9 +273,61 @@ class RetrievalEvaluationTest {
         assertEquals(1, calibration.summary().bgeSuccesses());
         assertEquals(1, calibration.summary().bgeDegradations());
         assertEquals(0, calibration.summary().bgeNoCandidateSkips());
+        assertEquals(0, calibration.summary().bgeSingletonSkips());
         assertEquals(1, calibration.summary().infrastructureFailureCases());
         assertTrue(calibration.markdown().contains("1.500/2"));
         assertFalse(calibration.markdown().contains("2.000/2"));
+    }
+
+    @Test
+    void stageTraceExplainsRankMovementAndAttributesCandidateMisses() {
+        RetrievalEvaluationCase mixed = new RetrievalEvaluationCase(
+                "trace-mixed", "trace query", RetrievalEvaluationCase.RetrievalProfile.DEVELOPMENT_PLAN,
+                "project", "doc", "1", RetrievalEvaluationCase.ExpectedOutcome.HIT,
+                List.of(new RetrievalEvaluationCase.GoldDocument("gold.html", null, List.of("gold"))),
+                List.of(new RetrievalEvaluationCase.GoldCode("project", "src/Gold.java", "goldMethod")),
+                List.of("normal-recall"), "trace");
+        ChunkRecord otherDocument = new ChunkRecord("doc-other", "doc", "1", "other.html",
+                "parent-other", "other", "", "hash-other", 0, 0);
+        ChunkRecord goldDocument = new ChunkRecord("doc-gold", "doc", "1", "gold.html",
+                "parent-gold", "gold", "", "hash-gold", 1, 0);
+        CodeChunk otherCode = new CodeChunk("code-other", "project", "commit", "src/Other.java",
+                "method", "otherMethod", 1, 2, "other", "hash-other");
+        CodeChunk goldCode = new CodeChunk("code-gold", "project", "commit", "src/Gold.java",
+                "method", "goldMethod", 1, 2, "gold", "hash-gold");
+
+        RetrievalEvaluationMatcher.CaseResult promoted = RetrievalEvaluationMatcher.evaluate(
+                mixed, List.of(goldDocument), List.of(goldCode), 4, 3, 5,
+                null, null, 1, List.of(), List.of(),
+                new RetrievalEvaluationMatcher.EvaluationTrace(
+                        true, List.of(otherDocument, goldDocument),
+                        List.of(otherDocument, goldDocument), List.of(goldDocument, otherDocument),
+                        true, List.of(otherCode, goldCode), List.of(goldCode, otherCode)));
+
+        assertEquals(2, promoted.documentRawRank());
+        assertEquals(2, promoted.documentRerankInputRank());
+        assertEquals(1, promoted.documentRerankedRank());
+        assertEquals(1, promoted.documentRank());
+        assertEquals("PROMOTED", promoted.documentRankMovement());
+        assertTrue(promoted.documentOrderChanged());
+        assertEquals(2, promoted.codeRawRank());
+        assertEquals(1, promoted.codeRankedRank());
+        assertEquals(1, promoted.codeRank());
+        assertEquals("PROMOTED", promoted.codeRankMovement());
+        assertTrue(promoted.codeOrderChanged());
+        assertTrue(promoted.failureAttributions().isEmpty());
+
+        RetrievalEvaluationCase documentOnly = documentCase("candidate-miss", "gold.html", "gold");
+        RetrievalEvaluationMatcher.CaseResult missed = RetrievalEvaluationMatcher.evaluate(
+                documentOnly, List.of(), List.of(), 2, 0, 2,
+                null, null, 1, List.of(), List.of(),
+                new RetrievalEvaluationMatcher.EvaluationTrace(
+                        true, List.of(otherDocument), List.of(otherDocument), List.of(otherDocument),
+                        false, List.of(), List.of()));
+        assertFalse(missed.success());
+        assertEquals(List.of("DOCUMENT_CANDIDATE_RECALL_MISS"), missed.failureAttributions());
+        assertEquals(1, RetrievalEvaluationReport.create("trace.jsonl", List.of(missed))
+                .failureAttributions().get("DOCUMENT_CANDIDATE_RECALL_MISS"));
     }
 
     @Test

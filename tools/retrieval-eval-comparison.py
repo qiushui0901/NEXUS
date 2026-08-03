@@ -29,6 +29,11 @@ REQUIRED_TAGS = {
 }
 BASELINE_MODE = "0.7-baseline"
 RERANK_MODE = "0.8-rerank"
+QUALITY_MODE = "0.8.1-quality"
+QUALITY_DOCUMENT_RECALL_MIN = 0.504167
+QUALITY_CODE_RECALL_MIN = 0.788095
+QUALITY_MRR_MIN = 0.525617
+QUALITY_P95_MAX_MS = 5131
 MODEL = "BAAI/bge-reranker-v2-m3"
 PARALLEL_BENCHMARK_CLASSIFICATION = "controlled-fake-dependency"
 PARALLEL_BENCHMARK_PROFILE = "DEVELOPMENT_PLAN"
@@ -125,6 +130,38 @@ def report_contract(report: dict[str, Any], mode: str, repetitions: int) -> list
         total = (profiles.get(profile) or {}).get("totalCases")
         if total != count * repetitions:
             errors.append(f"{profile}.totalCases must be {count * repetitions}")
+    if mode == "0.8.1-quality":
+        for field in ("bgeCalls", "bgeSuccesses", "bgeDegradations",
+                      "bgeNoCandidateSkips", "bgeSingletonSkips"):
+            if not isinstance(summary.get(field), int):
+                errors.append(f"summary.{field} must be an integer")
+        cases = report.get("cases")
+        if not isinstance(cases, list) or len(cases) != 54 * repetitions:
+            errors.append(f"cases must contain {54 * repetitions} stage-diagnostic rows")
+        else:
+            required = {
+                "documentRawRank", "documentRerankInputRank", "documentRerankedRank",
+                "documentRank", "documentRankMovement", "documentOrderChanged",
+                "codeRawRank", "codeRankedRank", "codeRank", "codeRankMovement",
+                "codeOrderChanged", "documentRawCandidateCount",
+                "documentRerankCandidateCount", "documentRerankedCandidateCount",
+                "codeRawCandidateCount", "codeRankedCandidateCount",
+                "failureAttributions",
+            }
+            for index, case in enumerate(cases):
+                missing = sorted(required.difference(case))
+                if missing:
+                    errors.append(f"cases[{index}] missing diagnostics: {', '.join(missing)}")
+                    continue
+                if case.get("expectsDocuments") and not case.get("documentTraceAvailable"):
+                    errors.append(f"cases[{index}] document trace must be available")
+                if case.get("expectsCode") and not case.get("codeTraceAvailable"):
+                    errors.append(f"cases[{index}] code trace must be available")
+                attributions = case.get("failureAttributions")
+                if not case.get("success") and (not isinstance(attributions, list) or not attributions):
+                    errors.append(f"cases[{index}] failed without stage attribution")
+        if not isinstance(report.get("failureAttributions"), dict):
+            errors.append("failureAttributions summary must be an object")
     return errors
 
 
@@ -240,6 +277,26 @@ def non_regression_check(
     }
 
 
+def healthy_bge_decisions(summary: dict[str, Any], live_contract_verified: bool) -> bool:
+    def count(name: str, default: int = 0) -> int:
+        value = summary.get(name, default)
+        return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+    calls = count("bgeCalls")
+    successes = count("bgeSuccesses")
+    degradations = count("bgeDegradations")
+    no_candidate_skips = count("bgeNoCandidateSkips")
+    singleton_skips = count("bgeSingletonSkips")
+    total_cases = count("totalCases", -1)
+    exercised_or_proven = calls > 0 or singleton_skips > 0 and live_contract_verified
+    return (
+        successes == calls
+        and degradations == 0
+        and calls + no_candidate_skips + singleton_skips == total_cases
+        and exercised_or_proven
+    )
+
+
 def summarize_changes(baseline: dict[str, Any], rerank: dict[str, Any]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     keys = (
@@ -255,6 +312,7 @@ def summarize_changes(baseline: dict[str, Any], rerank: dict[str, Any]) -> dict[
         "bgeSuccesses",
         "bgeDegradations",
         "bgeNoCandidateSkips",
+        "bgeSingletonSkips",
     )
     for key in keys:
         result[key] = metric_change(baseline.get(key, 0), rerank.get(key, 0))
@@ -287,15 +345,18 @@ def required_package_version(python: Path, package: str) -> str:
 def evaluation_source_paths(root: Path) -> list[Path]:
     return [
         root / "src/test/java/com/example/requirementrag/evaluation/RetrievalEvaluationIT.java",
+        root / "src/test/java/com/example/requirementrag/evaluation/RetrievalEvaluationSetupIT.java",
         root / "src/test/java/com/example/requirementrag/evaluation/RetrievalEvaluationMatcher.java",
         root / "src/test/java/com/example/requirementrag/evaluation/RetrievalEvaluationReport.java",
         root / "src/test/java/com/example/requirementrag/evaluation/RetrievalEvaluationSettings.java",
         root / "src/test/java/com/example/requirementrag/retrieval/pipeline/RetrievalPipelineTest.java",
         root / "src/test/java/com/example/requirementrag/rerank/HttpBgeRerankerLiveIT.java",
+        root / "src/main/java/com/example/requirementrag/code/CodeQdrantStore.java",
         root / "src/main/java/com/example/requirementrag/config/AiConfiguration.java",
         root / "src/main/java/com/example/requirementrag/config/RagProperties.java",
         root / "src/main/java/com/example/requirementrag/rerank/HttpBgeReranker.java",
         root / "src/main/java/com/example/requirementrag/retrieval/pipeline/DefaultRequirementReranker.java",
+        root / "src/main/java/com/example/requirementrag/retrieval/pipeline/RetrievalPipeline.java",
         root / "src/main/resources/application.yml",
         root / "src/main/resources/application-shiguang-eval.yml",
         root / "src/test/resources/evaluation/retrieval-eval-shiguang-v1.jsonl",
@@ -363,6 +424,7 @@ def build_manifest(args: argparse.Namespace, dataset: dict[str, Any]) -> dict[st
             "torchVersion": required_package_version(python_executable, "torch"),
             "transformersVersion": required_package_version(python_executable, "transformers"),
             "rerankerModel": MODEL,
+            "rerankerDevice": args.bge_device,
         },
         "configuration": {
             "common": {
@@ -376,24 +438,42 @@ def build_manifest(args: argparse.Namespace, dataset: dict[str, Any]) -> dict[st
                 "llmRerankEnabled": False,
                 "retrievalCacheTtlSeconds": -1,
                 "retrievalCacheMaxEntries": -1,
-                "embeddingCacheTtlSeconds": -1,
-                "embeddingCacheMaxEntries": -1,
+                "embeddingCacheTtlSeconds": args.embedding_cache_ttl_seconds,
+                "embeddingCacheMaxEntries": args.embedding_cache_max_entries,
                 "warmupRuns": args.warmup_runs,
                 "repetitions": args.repetitions,
                 "bgeBaseUrl": "http://127.0.0.1:8081",
                 "bgePath": "/rerank",
                 "bgeConnectTimeoutMs": 2000,
-                "bgeReadTimeoutMs": 10000,
+                "bgeReadTimeoutMs": args.bge_read_timeout_ms,
+                "bgeLiveContractVerified": args.bge_live_contract_verified,
                 "bgeAuthentication": "none",
+                "bgeDevice": args.bge_device,
+                "bgeMaxLength": args.bge_max_length,
+                "bgeBatchSize": args.bge_batch_size,
             },
             "variants": {
-                BASELINE_MODE: {"requirementReranker": "passthrough", "bgeExpected": False},
-                RERANK_MODE: {
+                args.baseline_mode: {
+                    "requirementReranker": (
+                        "passthrough" if args.baseline_mode == BASELINE_MODE
+                        else "DefaultRequirementReranker"
+                    ),
+                    "bgeExpected": args.baseline_mode != BASELINE_MODE,
+                    "childFirstRerankEnabled": args.baseline_mode == QUALITY_MODE,
+                    "enrichedBgePassageEnabled": args.baseline_mode == QUALITY_MODE,
+                    "codeQueryExpansionEnabled": args.baseline_mode == QUALITY_MODE,
+                },
+                args.candidate_mode: {
                     "requirementReranker": "DefaultRequirementReranker",
                     "bgeExpected": True,
+                    "singletonBgeSkipEnabled": args.candidate_mode == QUALITY_MODE,
+                    "childFirstRerankEnabled": args.candidate_mode == QUALITY_MODE,
+                    "enrichedBgePassageEnabled": args.candidate_mode == QUALITY_MODE,
+                    "codeQueryExpansionEnabled": args.candidate_mode == QUALITY_MODE,
                 },
             },
         },
+        "setup": read_json(args.setup_manifest) if args.setup_manifest else None,
         "secretsRecorded": False,
     }
 
@@ -401,7 +481,8 @@ def build_manifest(args: argparse.Namespace, dataset: dict[str, Any]) -> dict[st
 def render_markdown(comparison: dict[str, Any]) -> str:
     acceptance = comparison["acceptance"]
     lines = [
-        "# Retrieval Evaluation 0.7 → 0.8",
+        f"# Retrieval Evaluation {comparison.get('baselineMode', BASELINE_MODE)} → "
+        f"{comparison.get('candidateMode', RERANK_MODE)}",
         "",
         f"- Classification: `{comparison['classification']}`",
         f"- Acceptance: `{'PASS' if acceptance['passed'] else 'FAIL'}`",
@@ -410,7 +491,8 @@ def render_markdown(comparison: dict[str, Any]) -> str:
         "",
         "## Overall",
         "",
-        "| Metric | 0.7 baseline | 0.8 rerank | Absolute | Relative |",
+        f"| Metric | {comparison.get('baselineMode', BASELINE_MODE)} | "
+        f"{comparison.get('candidateMode', RERANK_MODE)} | Absolute | Relative |",
         "|---|---:|---:|---:|---:|",
     ]
     labels = {
@@ -426,6 +508,7 @@ def render_markdown(comparison: dict[str, Any]) -> str:
         "bgeSuccesses": "BGE successes",
         "bgeDegradations": "BGE degradations",
         "bgeNoCandidateSkips": "BGE no-candidate skips",
+        "bgeSingletonSkips": "BGE singleton skips",
     }
     for key, label in labels.items():
         change = comparison["overall"][key]
@@ -434,7 +517,10 @@ def render_markdown(comparison: dict[str, Any]) -> str:
             f"| {label} | {change['baseline']:.3f} | {change['rerank']:.3f} | "
             f"{change['absolute']:.3f} | {relative} |"
         )
-    lines.extend(["", "## Per profile P95", "", "| Profile | 0.7 (ms) | 0.8 (ms) | Change |", "|---|---:|---:|---:|"])
+    lines.extend(["", "## Per profile P95", "",
+                  f"| Profile | {comparison.get('baselineMode', BASELINE_MODE)} (ms) | "
+                  f"{comparison.get('candidateMode', RERANK_MODE)} (ms) | Change |",
+                  "|---|---:|---:|---:|"])
     for profile, change in comparison["profileP95"].items():
         relative = "n/a" if change["relative"] is None else f"{change['relative'] * 100:.2f}%"
         lines.append(f"| {profile} | {change['baseline']} | {change['rerank']} | {relative} |")
@@ -460,13 +546,13 @@ def render_markdown(comparison: dict[str, Any]) -> str:
 
 def compare(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
     dataset = validate_dataset(args.dataset, args.dataset_sha256)
-    baseline_path = args.output_root / BASELINE_MODE / "report.json"
-    rerank_path = args.output_root / RERANK_MODE / "report.json"
+    baseline_path = args.output_root / args.baseline_mode / "report.json"
+    rerank_path = args.output_root / args.candidate_mode / "report.json"
     baseline = read_json(baseline_path)
     rerank = read_json(rerank_path)
     parallel_benchmark = read_json(args.parallel_benchmark)
-    baseline_errors = report_contract(baseline, BASELINE_MODE, args.repetitions)
-    rerank_errors = report_contract(rerank, RERANK_MODE, args.repetitions)
+    baseline_errors = report_contract(baseline, args.baseline_mode, args.repetitions)
+    rerank_errors = report_contract(rerank, args.candidate_mode, args.repetitions)
     benchmark_errors = parallel_benchmark_contract(parallel_benchmark)
     if baseline.get("dataset") != args.dataset_resource or rerank.get("dataset") != args.dataset_resource:
         baseline_errors.append("both reports must use the frozen dataset resource")
@@ -495,19 +581,31 @@ def compare(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
             "detail": "valid" if not rerank_errors else "; ".join(rerank_errors),
         },
         {
-            "name": "baseline bypasses BGE",
-            "passed": baseline_summary.get("bgeCalls") == 0,
-            "detail": f"calls={baseline_summary.get('bgeCalls')}",
+            "name": "baseline BGE behavior matches the selected mode",
+            "passed": (
+                baseline_summary.get("bgeCalls") == 0
+                if args.baseline_mode == BASELINE_MODE
+                else baseline_summary.get("bgeCalls", 0) > 0
+                and baseline_summary.get("bgeSuccesses") == baseline_summary.get("bgeCalls")
+                and baseline_summary.get("bgeDegradations") == 0
+            ),
+            "detail": (
+                f"attempts/success/degradation={baseline_summary.get('bgeCalls')}/"
+                f"{baseline_summary.get('bgeSuccesses')}/{baseline_summary.get('bgeDegradations')}"
+            ),
         },
         {
-            "name": "rerank exercises healthy BGE",
-            "passed": rerank_summary.get("bgeCalls", 0) > 0
-            and rerank_summary.get("bgeSuccesses") == rerank_summary.get("bgeCalls")
-            and rerank_summary.get("bgeDegradations") == 0,
+            "name": "rerank BGE decisions are healthy and fully accounted",
+            "passed": healthy_bge_decisions(
+                rerank_summary, args.bge_live_contract_verified
+            ),
             "detail": (
-                f"attempts/success/degradation/no-candidate-skips={rerank_summary.get('bgeCalls')}/"
-                f"{rerank_summary.get('bgeSuccesses')}/{rerank_summary.get('bgeDegradations')}/"
-                f"{rerank_summary.get('bgeNoCandidateSkips')}"
+                f"attempts/success/degradation/no-candidate/singleton-skips="
+                f"{rerank_summary.get('bgeCalls')}/{rerank_summary.get('bgeSuccesses')}/"
+                f"{rerank_summary.get('bgeDegradations')}/"
+                f"{rerank_summary.get('bgeNoCandidateSkips')}/"
+                f"{rerank_summary.get('bgeSingletonSkips')}; "
+                f"live-contract-verified={args.bge_live_contract_verified}"
             ),
         },
         non_regression_check(
@@ -534,6 +632,57 @@ def compare(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
             "detail": benchmark_detail,
         },
     ]
+    if args.candidate_mode == QUALITY_MODE:
+        checks.extend([
+            {
+                "name": "0.8.1 Document Recall@10 reaches the quality threshold",
+                "passed": rerank_summary.get("documentRecallAt10", 0) >= QUALITY_DOCUMENT_RECALL_MIN,
+                "detail": (
+                    f"{rerank_summary.get('documentRecallAt10', 0):.6f} >= "
+                    f"{QUALITY_DOCUMENT_RECALL_MIN:.6f}"
+                ),
+            },
+            {
+                "name": "0.8.1 Code Recall@10 reaches the quality threshold",
+                "passed": rerank_summary.get("codeRecallAt10", 0) >= QUALITY_CODE_RECALL_MIN,
+                "detail": (
+                    f"{rerank_summary.get('codeRecallAt10', 0):.6f} >= "
+                    f"{QUALITY_CODE_RECALL_MIN:.6f}"
+                ),
+            },
+            {
+                "name": "0.8.1 MRR@10 reaches the quality threshold",
+                "passed": rerank_summary.get("mrrAt10", 0) >= QUALITY_MRR_MIN,
+                "detail": f"{rerank_summary.get('mrrAt10', 0):.6f} >= {QUALITY_MRR_MIN:.6f}",
+            },
+            {
+                "name": "0.8.1 no-result accuracy remains perfect",
+                "passed": rerank_summary.get("noResultAccuracy") == 1.0,
+                "detail": f"accuracy={rerank_summary.get('noResultAccuracy')}",
+            },
+            {
+                "name": "0.8.1 real P95 stays within the 0.8 budget",
+                "passed": rerank_summary.get("p95LatencyMs", QUALITY_P95_MAX_MS + 1)
+                <= QUALITY_P95_MAX_MS,
+                "detail": (
+                    f"{rerank_summary.get('p95LatencyMs')} ms <= {QUALITY_P95_MAX_MS} ms"
+                ),
+            },
+        ])
+        if args.setup_manifest:
+            setup = read_json(args.setup_manifest)
+            checks.append({
+                "name": "frozen corpus was rebuilt and fingerprinted",
+                "passed": setup.get("schemaVersion") == 1
+                and setup.get("codeCommit") == args.shiguang_commit
+                and setup.get("requirementChunksWritten") == setup.get("requirementChunksPersisted")
+                and setup.get("codeChunksWritten") == setup.get("codeChunksPersisted"),
+                "detail": (
+                    f"requirements={setup.get('requirementChunksPersisted')}, "
+                    f"code={setup.get('codeChunksPersisted')}, commit={setup.get('codeCommit')}"
+                ),
+            })
+
     profile_p95 = {
         profile: metric_change(
             ((baseline.get("profiles") or {}).get(profile) or {}).get("p95LatencyMs", 0),
@@ -547,14 +696,16 @@ def compare(args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "classification": "formal" if passed else "formal-not-accepted",
         "datasetSha256": dataset["sha256"],
+        "baselineMode": args.baseline_mode,
+        "candidateMode": args.candidate_mode,
         "repetitions": args.repetitions,
         "overall": summarize_changes(baseline_summary, rerank_summary),
         "profileP95": profile_p95,
         "parallelRecallBenchmark": benchmark_summary,
         "acceptance": {"passed": passed, "checks": checks},
         "reports": {
-            BASELINE_MODE: str(baseline_path),
-            RERANK_MODE: str(rerank_path),
+            args.baseline_mode: str(baseline_path),
+            args.candidate_mode: str(rerank_path),
             "parallelRecallBenchmark": str(args.parallel_benchmark),
         },
     }
@@ -575,6 +726,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--parallel-benchmark", type=Path, required=True)
     parser.add_argument("--warmup-runs", type=int, required=True)
     parser.add_argument("--repetitions", type=int, required=True)
+    parser.add_argument("--embedding-cache-ttl-seconds", type=int, required=True)
+    parser.add_argument("--embedding-cache-max-entries", type=int, required=True)
+    parser.add_argument("--bge-device", required=True)
+    parser.add_argument("--bge-max-length", type=int, required=True)
+    parser.add_argument("--bge-batch-size", type=int, required=True)
+    parser.add_argument("--bge-read-timeout-ms", type=int, required=True)
+    parser.add_argument("--bge-live-contract-verified", action="store_true")
+    parser.add_argument("--baseline-mode", default=BASELINE_MODE)
+    parser.add_argument("--candidate-mode", default=RERANK_MODE)
+    parser.add_argument("--setup-manifest", type=Path)
     return parser.parse_args(argv)
 
 

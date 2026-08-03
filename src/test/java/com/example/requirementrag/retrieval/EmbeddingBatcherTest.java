@@ -7,6 +7,12 @@ import org.springframework.ai.embedding.EmbeddingModel;
 import java.util.ArrayList;
 import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -55,6 +61,36 @@ class EmbeddingBatcherTest {
                 .isInstanceOf(EmbeddingUnavailableException.class)
                 .hasMessageContaining("第 2 个文本")
                 .hasMessageContaining("Ollama");
+    }
+
+    @Test
+    void coalescesConcurrentMissesForTheSameText() throws Exception {
+        EmbeddingModel model = mock(EmbeddingModel.class);
+        AtomicInteger modelCalls = new AtomicInteger();
+        CountDownLatch started = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        when(model.embed(anyList())).thenAnswer(invocation -> {
+            modelCalls.incrementAndGet();
+            started.countDown();
+            assertThat(release.await(2, TimeUnit.SECONDS)).isTrue();
+            return List.of(new float[]{42.0f});
+        });
+        EmbeddingBatcher batcher = new EmbeddingBatcher(model,
+                new BoundedTtlCache<>(Duration.ofMinutes(1), 10));
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<List<float[]>> first = executor.submit(() -> batcher.embedAll(List.of("same query")));
+            assertThat(started.await(2, TimeUnit.SECONDS)).isTrue();
+            Future<List<float[]>> second = executor.submit(() -> batcher.embedAll(List.of("same query")));
+
+            release.countDown();
+            assertThat(first.get(2, TimeUnit.SECONDS).getFirst()[0]).isEqualTo(42.0f);
+            assertThat(second.get(2, TimeUnit.SECONDS).getFirst()[0]).isEqualTo(42.0f);
+            assertThat(modelCalls).hasValue(1);
+        } finally {
+            release.countDown();
+            executor.shutdownNow();
+        }
     }
 
     @Test

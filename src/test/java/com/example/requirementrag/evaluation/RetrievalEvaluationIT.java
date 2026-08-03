@@ -1,8 +1,13 @@
 package com.example.requirementrag.evaluation;
 
+import com.example.requirementrag.code.CodeKnowledgeService;
+import com.example.requirementrag.code.CodeQdrantStore;
+import com.example.requirementrag.config.ProjectRegistry;
+import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.model.RagOutcome;
 import com.example.requirementrag.model.RagStageDiagnostic;
 import com.example.requirementrag.model.RagWarning;
+import com.example.requirementrag.retrieval.QdrantHybridStore;
 import com.example.requirementrag.retrieval.pipeline.DefaultRequirementReranker;
 import com.example.requirementrag.retrieval.pipeline.RequirementReranker;
 import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
@@ -22,6 +27,7 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 @SpringBootTest(properties = {
         "logging.structured.format.console=",
@@ -39,6 +45,18 @@ class RetrievalEvaluationIT {
     private RetrievalPipeline retrievalPipeline;
 
     @Autowired
+    private ProjectRegistry projectRegistry;
+
+    @Autowired
+    private QdrantHybridStore documentStore;
+
+    @Autowired
+    private CodeKnowledgeService codeKnowledgeService;
+
+    @Autowired
+    private TracingRequirementReranker tracingRequirementReranker;
+
+    @Autowired
     private ObjectMapper objectMapper;
 
     @Test
@@ -48,14 +66,15 @@ class RetrievalEvaluationIT {
 
         for (int warmup = 0; warmup < SETTINGS.warmupRuns(); warmup++) {
             for (RetrievalEvaluationCase evaluationCase : dataset) {
-                retrieve(evaluationCase);
+                retrieve(evaluationCase, false);
             }
         }
+        tracingRequirementReranker.clear();
 
         List<RetrievalEvaluationMatcher.CaseResult> results = new ArrayList<>();
         for (int repetition = 1; repetition <= SETTINGS.repetitions(); repetition++) {
             for (RetrievalEvaluationCase evaluationCase : dataset) {
-                EvaluationRetrieval retrieval = retrieve(evaluationCase);
+                EvaluationRetrieval retrieval = retrieve(evaluationCase, true);
                 results.add(RetrievalEvaluationMatcher.evaluate(
                         evaluationCase,
                         retrieval.bundle().requirementEvidence(),
@@ -67,7 +86,8 @@ class RetrievalEvaluationIT {
                         retrieval.codeError(),
                         repetition,
                         retrieval.warnings(),
-                        retrieval.diagnostics()));
+                        retrieval.diagnostics(),
+                        retrieval.trace()));
             }
         }
 
@@ -92,13 +112,26 @@ class RetrievalEvaluationIT {
                 && report.summary().bgeCalls() != 0) {
             throw new AssertionError("0.7 baseline must not call the BGE reranker");
         }
-        if (SETTINGS.mode() == RetrievalEvaluationSettings.EvaluationMode.RERANK_0_8
-                && report.summary().bgeCalls() == 0) {
-            throw new AssertionError("0.8 rerank evaluation did not exercise the BGE reranker");
+        if (SETTINGS.mode() != RetrievalEvaluationSettings.EvaluationMode.BASELINE_0_7
+                && report.summary().bgeCalls() == 0
+                && report.summary().bgeSingletonSkips() == 0) {
+            throw new AssertionError(SETTINGS.mode().id()
+                    + " evaluation neither exercised BGE nor recorded safe singleton skips");
+        }
+        if (SETTINGS.mode() != RetrievalEvaluationSettings.EvaluationMode.BASELINE_0_7
+                && report.summary().bgeCalls()
+                + report.summary().bgeNoCandidateSkips()
+                + report.summary().bgeSingletonSkips() != report.summary().totalCases()) {
+            throw new AssertionError(SETTINGS.mode().id()
+                    + " evaluation did not account for every BGE decision");
+        }
+        if (report.cases().stream().anyMatch(result -> !result.success()
+                && result.failureAttributions().isEmpty())) {
+            throw new AssertionError("Every failed retrieval case must have a stage-level failure attribution");
         }
     }
 
-    private EvaluationRetrieval retrieve(RetrievalEvaluationCase evaluationCase) {
+    private EvaluationRetrieval retrieve(RetrievalEvaluationCase evaluationCase, boolean collectTrace) {
         RetrievalProfile profile = productionProfile(evaluationCase.profile());
         long started = System.nanoTime();
         try {
@@ -110,6 +143,10 @@ class RetrievalEvaluationIT {
             RetrievalBundle bundle = outcome.data() == null
                     ? emptyBundle(evaluationCase, profile)
                     : outcome.data();
+            RequirementTrace rerankTrace = tracingRequirementReranker.take(evaluationCase.query());
+            RetrievalEvaluationMatcher.EvaluationTrace trace = collectTrace
+                    ? collectTrace(evaluationCase, profile, rerankTrace)
+                    : RetrievalEvaluationMatcher.EvaluationTrace.empty();
             return new EvaluationRetrieval(
                     bundle,
                     stageLatency(outcome.stageDiagnostics(), false),
@@ -118,10 +155,12 @@ class RetrievalEvaluationIT {
                     null,
                     null,
                     outcome.warnings(),
-                    outcome.stageDiagnostics());
+                    outcome.stageDiagnostics(),
+                    trace);
         } catch (RuntimeException exception) {
             long latency = elapsedMillis(started);
             String error = safeError(exception);
+            tracingRequirementReranker.take(evaluationCase.query());
             return new EvaluationRetrieval(
                     emptyBundle(evaluationCase, profile),
                     latency,
@@ -130,8 +169,49 @@ class RetrievalEvaluationIT {
                     error,
                     profile.usesCodeEvidence() ? error : null,
                     List.of(),
-                    List.of());
+                    List.of(),
+                    RetrievalEvaluationMatcher.EvaluationTrace.empty());
         }
+    }
+
+    private RetrievalEvaluationMatcher.EvaluationTrace collectTrace(
+            RetrievalEvaluationCase evaluationCase,
+            RetrievalProfile profile,
+            RequirementTrace rerankTrace) {
+        boolean documentTraceAvailable = false;
+        boolean codeTraceAvailable = false;
+        List<ChunkRecord> rawDocuments = List.of();
+        CodeQdrantStore.CodeSearchTrace codeTrace = new CodeQdrantStore.CodeSearchTrace(List.of(), List.of());
+
+        if (profile.usesRequirementEvidence()) {
+            try {
+                String collection = projectRegistry.resolveRequirementCollection(evaluationCase.projectId());
+                rawDocuments = documentStore.hybridSearch(collection, evaluationCase.query(),
+                        evaluationCase.documentId(), evaluationCase.version());
+                documentTraceAvailable = true;
+            } catch (RuntimeException ignored) {
+                documentTraceAvailable = false;
+            }
+        }
+        if (profile.usesCodeEvidence()) {
+            try {
+                codeTrace = codeKnowledgeService.searchTrace(evaluationCase.query(), evaluationCase.projectId(),
+                        RetrievalEvaluationMatcher.DEFAULT_CUTOFF);
+                codeTraceAvailable = true;
+            } catch (RuntimeException ignored) {
+                codeTraceAvailable = false;
+            }
+        }
+
+        RequirementTrace safeRerankTrace = rerankTrace == null ? RequirementTrace.empty() : rerankTrace;
+        return new RetrievalEvaluationMatcher.EvaluationTrace(
+                documentTraceAvailable,
+                rawDocuments,
+                safeRerankTrace.candidates(),
+                safeRerankTrace.reranked(),
+                codeTraceAvailable,
+                codeTrace.candidates(),
+                codeTrace.ranked());
     }
 
     private RetrievalProfile productionProfile(RetrievalEvaluationCase.RetrievalProfile profile) {
@@ -176,19 +256,65 @@ class RetrievalEvaluationIT {
             String documentError,
             String codeError,
             List<RagWarning> warnings,
-            List<RagStageDiagnostic> diagnostics
+            List<RagStageDiagnostic> diagnostics,
+            RetrievalEvaluationMatcher.EvaluationTrace trace
     ) {
+    }
+
+    record RequirementTrace(List<ChunkRecord> candidates, List<ChunkRecord> reranked) {
+        RequirementTrace {
+            candidates = candidates == null ? List.of() : List.copyOf(candidates);
+            reranked = reranked == null ? List.of() : List.copyOf(reranked);
+        }
+
+        static RequirementTrace empty() {
+            return new RequirementTrace(List.of(), List.of());
+        }
+    }
+
+    static final class TracingRequirementReranker implements RequirementReranker {
+        private final RequirementReranker delegate;
+        private final ConcurrentHashMap<String, RequirementTrace> traces = new ConcurrentHashMap<>();
+
+        TracingRequirementReranker(RequirementReranker delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public RagOutcome<List<ChunkRecord>> rerank(String query, String documentId, String version,
+                                                    List<ChunkRecord> candidates, int limit) {
+            List<ChunkRecord> safeCandidates = candidates == null ? List.of() : List.copyOf(candidates);
+            try {
+                RagOutcome<List<ChunkRecord>> outcome = delegate.rerank(
+                        query, documentId, version, safeCandidates, limit);
+                List<ChunkRecord> reranked = outcome.data() == null ? List.of() : outcome.data();
+                traces.put(query, new RequirementTrace(safeCandidates, reranked));
+                return outcome;
+            } catch (RuntimeException exception) {
+                traces.put(query, new RequirementTrace(safeCandidates, List.of()));
+                throw exception;
+            }
+        }
+
+        RequirementTrace take(String query) {
+            return traces.remove(query);
+        }
+
+        void clear() {
+            traces.clear();
+        }
     }
 
     @TestConfiguration(proxyBeanMethods = false)
     static class EvaluationRerankerConfiguration {
         @Bean
         @Primary
-        RequirementReranker evaluationRequirementReranker(
+        TracingRequirementReranker evaluationRequirementReranker(
                 @Qualifier("defaultRequirementReranker") DefaultRequirementReranker productionReranker) {
-            return SETTINGS.mode() == RetrievalEvaluationSettings.EvaluationMode.BASELINE_0_7
+            RequirementReranker delegate = SETTINGS.mode() == RetrievalEvaluationSettings.EvaluationMode.BASELINE_0_7
                     ? RequirementReranker.passthrough()
                     : productionReranker;
+            return new TracingRequirementReranker(delegate);
         }
     }
 }

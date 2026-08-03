@@ -81,6 +81,14 @@ public class CodeKnowledgeService {
         return store.hybridSearch(collection, query, resolvedProject, resolvedLimit);
     }
 
+    /** 返回代码 RRF 候选与最终精排结果，仅用于有界离线诊断。 */
+    public CodeQdrantStore.CodeSearchTrace searchTrace(String query, String projectId, Integer limit) {
+        String resolvedProject = projectId == null || projectId.isBlank() ? properties.code().projectId() : projectId;
+        int resolvedLimit = Math.min(Math.max(limit == null ? 10 : limit, 1), 50);
+        String collection = resolveCodeCollection(resolvedProject);
+        return store.hybridSearchTrace(collection, query, resolvedProject, resolvedLimit);
+    }
+
     /** 同时检索当前项目与同组对端（不同 side）项目的代码 chunk。 */
     private List<CodeChunk> searchCrossSide(String query, String projectId, int limit) {
         String resolvedProject = projectId == null || projectId.isBlank() ? properties.code().projectId() : projectId;

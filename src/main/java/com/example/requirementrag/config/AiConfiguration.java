@@ -43,7 +43,8 @@ public class AiConfiguration {
                 .baseUrl(properties.bge().baseUrl())
                 .requestFactory(bgeRequestFactory(properties.bge()))
                 .build();
-        return new HttpBgeReranker(client, properties.bge(), jsonMapper);
+        return new HttpBgeReranker(client, properties.bge(), jsonMapper,
+                properties.retrieval().resolvedEnrichedBgePassageEnabled());
     }
 
     SimpleClientHttpRequestFactory qdrantRequestFactory() {

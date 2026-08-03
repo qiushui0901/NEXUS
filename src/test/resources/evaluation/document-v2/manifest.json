@@ -1,0 +1,219 @@
+{
+  "schemaVersion": 1,
+  "datasetVersion": "document-v2-v1",
+  "status": "prepared-not-formally-evaluated",
+  "projectId": "document-v2-eval",
+  "documentId": "document-v2-corpus",
+  "version": "document-v2-v1",
+  "fileCount": 6,
+  "structuredHitCases": 24,
+  "hardNegativeTags": [
+    "cross-file-near-duplicate",
+    "same-term-different-policy",
+    "similar-workflow-wrong-stage",
+    "synonym-cross-document"
+  ],
+  "datasetPath": "src/test/resources/evaluation/retrieval-eval-document-v2.jsonl",
+  "datasetSha256": "ebf1eb6ee725adc142aea934b2501064be4fbb99c572564256c67e7a295f3b70",
+  "files": [
+    {
+      "filename": "approval-workflow.md",
+      "sha256": "191b201c4ce981f22da10bfe4e0a52adc160fb4b6081dc4edca48b25da352187",
+      "bytes": 8595,
+      "cleanedCharacters": 2872,
+      "parentCount": 2,
+      "childCounts": [
+        5,
+        2
+      ],
+      "anchors": [
+        {
+          "anchor": "审批请求超过四小时未处理时只提醒原审批人，不自动批准",
+          "parentOrder": 0,
+          "childOrder": 0
+        },
+        {
+          "anchor": "发布动作必须校验批准记录与当前内容摘要完全一致",
+          "parentOrder": 0,
+          "childOrder": 1
+        },
+        {
+          "anchor": "被驳回草稿重新提交后必须生成新的审核轮次",
+          "parentOrder": 0,
+          "childOrder": 4
+        },
+        {
+          "anchor": "紧急发布也不得绕过双人复核与审计留痕",
+          "parentOrder": 1,
+          "childOrder": 0
+        }
+      ]
+    },
+    {
+      "filename": "access-revocation.md",
+      "sha256": "ab63cf190a5bf93535fcca74b576443aa80007bc7ba8513106360c1e35f84167",
+      "bytes": 8565,
+      "cleanedCharacters": 2862,
+      "parentCount": 2,
+      "childCounts": [
+        5,
+        2
+      ],
+      "anchors": [
+        {
+          "anchor": "账号冻结后新会话立即拒绝，现有会话最多保留五分钟",
+          "parentOrder": 0,
+          "childOrder": 0
+        },
+        {
+          "anchor": "权限撤销传播必须在五分钟内完成",
+          "parentOrder": 0,
+          "childOrder": 1
+        },
+        {
+          "anchor": "项目移除只撤销该项目授权，不影响其他项目",
+          "parentOrder": 0,
+          "childOrder": 4
+        },
+        {
+          "anchor": "恢复访问必须重新执行身份验证与项目授权",
+          "parentOrder": 1,
+          "childOrder": 0
+        }
+      ]
+    },
+    {
+      "filename": "audit-retention.md",
+      "sha256": "606ed8d186a9cbaed59c21c04697a8755aefaa5aa44d71cdf711569c0ca8ea41",
+      "bytes": 8637,
+      "cleanedCharacters": 2886,
+      "parentCount": 2,
+      "childCounts": [
+        5,
+        3
+      ],
+      "anchors": [
+        {
+          "anchor": "敏感操作审计日志在线保留一百八十天",
+          "parentOrder": 0,
+          "childOrder": 0
+        },
+        {
+          "anchor": "审计导出文件必须在二十四小时后自动失效",
+          "parentOrder": 0,
+          "childOrder": 1
+        },
+        {
+          "anchor": "检索审计记录必须同时限定操作者与项目",
+          "parentOrder": 0,
+          "childOrder": 4
+        },
+        {
+          "anchor": "任何清理任务都不得删除处于调查保全状态的记录",
+          "parentOrder": 1,
+          "childOrder": 0
+        }
+      ]
+    },
+    {
+      "filename": "release-rollback.md",
+      "sha256": "419d10b158efc61b9c5ffd84ef268e2bc25f1d710663ab1ab34d5cf00f1fa311",
+      "bytes": 8568,
+      "cleanedCharacters": 2863,
+      "parentCount": 2,
+      "childCounts": [
+        5,
+        2
+      ],
+      "anchors": [
+        {
+          "anchor": "发布前必须记录可回滚的制品摘要与配置版本",
+          "parentOrder": 0,
+          "childOrder": 0
+        },
+        {
+          "anchor": "健康检查连续失败三次才触发自动回滚",
+          "parentOrder": 0,
+          "childOrder": 1
+        },
+        {
+          "anchor": "回滚只恢复应用与配置，不回退已经提交的业务数据",
+          "parentOrder": 0,
+          "childOrder": 4
+        },
+        {
+          "anchor": "回滚完成后必须重新执行冒烟检查并通知值班人",
+          "parentOrder": 1,
+          "childOrder": 0
+        }
+      ]
+    },
+    {
+      "filename": "quota-throttling.md",
+      "sha256": "2dc9b23289ee259f69469812fc8502baf8a4a9e12af2cdb47e06f2629934406d",
+      "bytes": 8604,
+      "cleanedCharacters": 2875,
+      "parentCount": 2,
+      "childCounts": [
+        5,
+        2
+      ],
+      "anchors": [
+        {
+          "anchor": "写操作配额按用户与项目两个维度同时计算",
+          "parentOrder": 0,
+          "childOrder": 0
+        },
+        {
+          "anchor": "配额窗口使用服务端时间，客户端时间不得参与计算",
+          "parentOrder": 0,
+          "childOrder": 1
+        },
+        {
+          "anchor": "达到软限制时返回告警但仍允许完成当前请求",
+          "parentOrder": 0,
+          "childOrder": 4
+        },
+        {
+          "anchor": "超过硬限制必须返回可重试时间且不得继续调用下游",
+          "parentOrder": 1,
+          "childOrder": 0
+        }
+      ]
+    },
+    {
+      "filename": "repository-indexing.md",
+      "sha256": "9265e23f4242a9667655696b5d722761607bf63538b45550921f9668870cd15c",
+      "bytes": 8700,
+      "cleanedCharacters": 2907,
+      "parentCount": 2,
+      "childCounts": [
+        5,
+        2
+      ],
+      "anchors": [
+        {
+          "anchor": "首次注册仓库必须先验证默认分支与只读凭据",
+          "parentOrder": 0,
+          "childOrder": 0
+        },
+        {
+          "anchor": "增量索引以最后成功提交为起点，不使用工作区时间戳",
+          "parentOrder": 0,
+          "childOrder": 1
+        },
+        {
+          "anchor": "文件删除与重命名必须同步清理旧向量和符号关系",
+          "parentOrder": 0,
+          "childOrder": 4
+        },
+        {
+          "anchor": "索引失败时保留上一版可查询快照并标记同步降级",
+          "parentOrder": 1,
+          "childOrder": 0
+        }
+      ]
+    }
+  ],
+  "note": "Positions mirror TextPreprocessor.clean and ParentChildChunker constants as of 2026-07-31; the future corpus contract test must verify them with production Java code before a formal run."
+}

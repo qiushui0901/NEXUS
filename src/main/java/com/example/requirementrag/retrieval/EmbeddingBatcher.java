@@ -9,6 +9,9 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 以受控批次生成向量。批次失败时自动二分降级，避免并发请求压垮本地嵌入服务。
@@ -21,6 +24,8 @@ public class EmbeddingBatcher {
     private final EmbeddingModel embeddingModel;
     private final BoundedTtlCache<String, float[]> cache;
     private final String modelFingerprint;
+    /** 同一文本并发 miss 只允许一次模型调用，避免需求与代码分支重复击穿本地 Ollama。 */
+    private final ConcurrentHashMap<String, CompletableFuture<float[]>> inFlight = new ConcurrentHashMap<>();
 
     public EmbeddingBatcher(EmbeddingModel embeddingModel) {
         this(embeddingModel, new BoundedTtlCache<>(Duration.ZERO, 0));
@@ -54,28 +59,59 @@ public class EmbeddingBatcher {
 
     private List<float[]> embedCachedBatch(List<String> texts, int absoluteStart) {
         List<float[]> result = new ArrayList<>(java.util.Collections.nCopies(texts.size(), null));
-        List<String> misses = new ArrayList<>();
-        List<Integer> missIndexes = new ArrayList<>();
+        List<PendingEmbedding> pending = new ArrayList<>();
+        List<PendingEmbedding> owners = new ArrayList<>();
         for (int index = 0; index < texts.size(); index++) {
-            String key = key(texts.get(index));
+            String text = texts.get(index);
+            String key = key(text);
             var cached = cache.get(key);
             if (cached.isPresent()) {
                 result.set(index, cached.get().clone());
-            } else {
-                misses.add(texts.get(index));
-                missIndexes.add(index);
+                continue;
+            }
+
+            CompletableFuture<float[]> candidate = new CompletableFuture<>();
+            CompletableFuture<float[]> future = inFlight.putIfAbsent(key, candidate);
+            if (future == null) {
+                future = candidate;
+                owners.add(new PendingEmbedding(key, text, index, future));
+            }
+            pending.add(new PendingEmbedding(key, text, index, future));
+        }
+
+        if (!owners.isEmpty()) {
+            try {
+                List<float[]> embedded = embedBatch(owners.stream().map(PendingEmbedding::text).toList(),
+                        absoluteStart + owners.getFirst().resultIndex());
+                for (int index = 0; index < owners.size(); index++) {
+                    PendingEmbedding owner = owners.get(index);
+                    float[] vector = embedded.get(index);
+                    cache.put(owner.key(), vector.clone());
+                    owner.future().complete(vector.clone());
+                }
+            } catch (RuntimeException exception) {
+                owners.forEach(owner -> owner.future().completeExceptionally(exception));
+                throw exception;
+            } finally {
+                owners.forEach(owner -> inFlight.remove(owner.key(), owner.future()));
             }
         }
-        if (!misses.isEmpty()) {
-            List<float[]> embedded = embedBatch(misses, absoluteStart);
-            for (int index = 0; index < embedded.size(); index++) {
-                float[] vector = embedded.get(index);
-                int resultIndex = missIndexes.get(index);
-                cache.put(key(texts.get(resultIndex)), vector.clone());
-                result.set(resultIndex, vector);
+
+        try {
+            for (PendingEmbedding item : pending) {
+                result.set(item.resultIndex(), item.future().join().clone());
             }
+        } catch (CompletionException exception) {
+            Throwable cause = exception.getCause();
+            if (cause instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            throw new IllegalStateException("嵌入服务并发请求失败", cause);
         }
         return List.copyOf(result);
+    }
+
+    private record PendingEmbedding(String key, String text, int resultIndex, CompletableFuture<float[]> future) {
     }
 
     private String key(String text) {

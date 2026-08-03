@@ -18,15 +18,26 @@ import java.util.Map;
  */
 public class HttpBgeReranker implements BgeReranker {
 
+    static final int MAX_CHILD_CHARACTERS = 700;
+    static final int MAX_PARENT_CONTEXT_CHARACTERS = 900;
+
     private final RestClient client;
     private final RagProperties.Bge properties;
     private final JsonMapper jsonMapper;
+    private final boolean enrichedPassageEnabled;
 
     /** 注入 REST 客户端与 BGE 服务配置。 */
     public HttpBgeReranker(RestClient client, RagProperties.Bge properties, JsonMapper jsonMapper) {
+        this(client, properties, jsonMapper, true);
+    }
+
+    /** 构造可显式回退到 0.8 child-only passage 的重排器。 */
+    public HttpBgeReranker(RestClient client, RagProperties.Bge properties, JsonMapper jsonMapper,
+                           boolean enrichedPassageEnabled) {
         this.client = client;
         this.properties = properties;
         this.jsonMapper = jsonMapper;
+        this.enrichedPassageEnabled = enrichedPassageEnabled;
     }
 
     /** 调用 BGE API 对候选子块文本重排，按分数降序返回 topK。 */
@@ -40,7 +51,7 @@ public class HttpBgeReranker implements BgeReranker {
         byte[] requestBody;
         try {
             requestBody = jsonMapper.writeValueAsBytes(new RerankRequest(
-                    query, candidates.stream().map(ChunkRecord::childText).toList(), true));
+                    query, candidates.stream().map(this::requestPassage).toList(), true));
         }
         catch (RuntimeException exception) {
             throw new IllegalStateException("Unable to serialize BGE rerank request", exception);
@@ -55,6 +66,35 @@ public class HttpBgeReranker implements BgeReranker {
             if (index >= 0 && index < candidates.size()) scored.add(new Scored(candidates.get(index), score));
         }
         return scored.stream().sorted(Comparator.comparingDouble(Scored::score).reversed()).limit(topK).map(Scored::chunk).toList();
+    }
+
+
+    private String requestPassage(ChunkRecord chunk) {
+        return enrichedPassageEnabled ? passage(chunk) : normalize(chunk.childText());
+    }
+
+    static String passage(ChunkRecord chunk) {
+        String child = bounded(normalize(chunk.childText()), MAX_CHILD_CHARACTERS);
+        String parent = parentContext(normalize(chunk.parentText()), child, MAX_PARENT_CONTEXT_CHARACTERS);
+        return "file: " + normalize(chunk.filename())
+                + "\nmatching child:\n" + child
+                + "\nparent context:\n" + parent;
+    }
+
+    private static String parentContext(String parent, String child, int limit) {
+        if (parent.length() <= limit) return parent;
+        int match = child.isBlank() ? -1 : parent.indexOf(child);
+        int center = match < 0 ? 0 : match + child.length() / 2;
+        int start = Math.max(0, Math.min(center - limit / 2, parent.length() - limit));
+        return parent.substring(start, start + limit);
+    }
+
+    private static String bounded(String value, int limit) {
+        return value.length() <= limit ? value : value.substring(0, limit);
+    }
+
+    private static String normalize(String value) {
+        return value == null ? "" : value.replaceAll("\\s+", " ").trim();
     }
 
     /** 带相关性分数的分块记录。 */

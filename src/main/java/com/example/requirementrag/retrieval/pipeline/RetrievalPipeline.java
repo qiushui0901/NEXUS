@@ -123,11 +123,19 @@ public class RetrievalPipeline {
         RagOutcome<List<CodeChunk>> codeOutcome = await(codeFuture, CODE_STAGE,
                 "CODE_RETRIEVAL_TIMEOUT", "代码检索超时", documentId, version);
 
-        List<ChunkRecord> requirementCandidates = deduplicate(requirementOutcome.data(), this::requirementKey);
+        RagProperties.Retrieval retrieval = properties.retrieval();
+        boolean childFirstRerank = retrieval != null && retrieval.resolvedChildFirstRerankEnabled();
+        List<ChunkRecord> requirementCandidates = deduplicate(requirementOutcome.data(),
+                childFirstRerank ? this::requirementCandidateKey : this::requirementKey);
+        List<ChunkRecord> rerankCandidates = optimizeSingleParentRerank(requirementCandidates, childFirstRerank);
+        int rerankLimit = childFirstRerank
+                ? Math.max(limit, retrieval.resolvedBgeTopK())
+                : limit;
         RagOutcome<List<ChunkRecord>> rerankOutcome = request.profile().usesRequirementEvidence()
-                ? requirementReranker.rerank(request.query(), documentId, version, requirementCandidates, limit)
+                ? requirementReranker.rerank(request.query(), documentId, version, rerankCandidates, rerankLimit)
                 : RagOutcome.of(RagOutcomeStatus.NO_RESULTS, List.of(), "retrieval.rerank", 0, 0);
-        List<ChunkRecord> requirements = rerankOutcome.data().stream().limit(limit).toList();
+        List<ChunkRecord> requirements = deduplicate(rerankOutcome.data(), this::requirementKey)
+                .stream().limit(limit).toList();
         List<ChunkRecord> corpus = deduplicate(corpusOutcome.data(), this::requirementKey);
         List<CodeChunk> code = deduplicate(codeOutcome.data(), this::codeKey).stream().limit(limit).toList();
         List<RagWarning> warnings = new ArrayList<>();
@@ -136,6 +144,15 @@ public class RetrievalPipeline {
         collect(requirementOutcome, warnings, diagnostics);
         if (request.profile().usesRequirementEvidence()) {
             collect(rerankOutcome, warnings, diagnostics);
+            diagnostics.add(new RagStageDiagnostic("retrieval.requirement.candidates",
+                    requirementCandidates.isEmpty() ? RagOutcomeStatus.NO_RESULTS : RagOutcomeStatus.SUCCESS,
+                    0, requirementCandidates.size()));
+            diagnostics.add(new RagStageDiagnostic("retrieval.requirement.rerank_candidates",
+                    rerankCandidates.isEmpty() ? RagOutcomeStatus.NO_RESULTS : RagOutcomeStatus.SUCCESS,
+                    0, rerankCandidates.size()));
+            diagnostics.add(new RagStageDiagnostic("retrieval.requirement.parents",
+                    requirements.isEmpty() ? RagOutcomeStatus.NO_RESULTS : RagOutcomeStatus.SUCCESS,
+                    0, requirements.size()));
         }
         if (request.includeVersionCorpus()) {
             collect(corpusOutcome, warnings, diagnostics);
@@ -160,6 +177,20 @@ public class RetrievalPipeline {
             resultCache.put(request, projectId, documentId, version, limit, outcome);
         }
         return outcome;
+    }
+
+    /**
+     * Scoring several children cannot change the final parent order when every candidate belongs to the same parent.
+     * Keep the first RRF child in that special case so the richer 0.8.1 passage does not multiply CPU reranker work.
+     * Multi-parent candidate sets still reach BGE child-first without an early parent collapse.
+     */
+    private List<ChunkRecord> optimizeSingleParentRerank(List<ChunkRecord> candidates, boolean childFirstRerank) {
+        if (!childFirstRerank || candidates.size() <= 1) {
+            return candidates;
+        }
+        String firstParent = requirementKey(candidates.getFirst());
+        boolean singleParent = candidates.stream().allMatch(candidate -> requirementKey(candidate).equals(firstParent));
+        return singleParent ? List.of(candidates.getFirst()) : candidates;
     }
 
     private <T> CompletableFuture<RagOutcome<List<T>>> submit(String stage,
@@ -231,6 +262,11 @@ public class RetrievalPipeline {
             }
         }
         return List.copyOf(unique.values());
+    }
+
+    private String requirementCandidateKey(ChunkRecord chunk) {
+        return hasText(chunk.id()) ? chunk.id()
+                : requirementKey(chunk) + ':' + chunk.childOrder() + ':' + chunk.contentHash();
     }
 
     private String requirementKey(ChunkRecord chunk) {

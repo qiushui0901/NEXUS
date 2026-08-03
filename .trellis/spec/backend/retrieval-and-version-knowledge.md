@@ -341,6 +341,67 @@ Launch independently bounded branches, centralize reranking in `RetrievalPipelin
 circuit history until success/expiry, include every isolation dimension in cache identity, and use bounded,
 deterministic, domain-generic code reranking over structured index text.
 
+## Scenario: 0.8.2 trustworthy document retrieval evaluation
+
+### 1. Scope / Trigger
+
+- Trigger: changing retrieval evaluation JSONL labels, document matching, report aggregation, fixed corpus setup, or quality-gate interpretation.
+
+### 2. Stable labels and signatures
+
+```java
+record GoldDocument(String filename, Integer parentOrder, Integer childOrder, List<String> mustContain)
+Integer firstDocumentFileRank(List<GoldDocument> gold, List<ChunkRecord> candidates, int cutoff)
+Integer firstDocumentSectionRank(List<GoldDocument> gold, List<ChunkRecord> candidates, int cutoff)
+Integer firstDocumentChildRank(List<GoldDocument> gold, List<ChunkRecord> candidates, int cutoff)
+```
+
+Existing v1 JSONL without `parentOrder` or `childOrder` remains loadable and contributes only to file-level metrics. `childOrder` requires `parentOrder`; both orders are non-negative.
+
+### 3. Contracts
+
+- File hit matches only stable `filename`; it must not inspect parent or child text.
+- Section hit requires `filename + parentOrder`. Evidence fragments may be checked only inside candidates from that matching parent; never accumulate text across parents.
+- Child hit requires `filename + parentOrder + childOrder`; every `mustContain` fragment must occur in that exact candidate's `childText`. `parentText` must not satisfy a child label.
+- The compatibility `documentRank` uses the strictest label present for the case: child, then section, then file.
+- JSON and Markdown reports expose File/Section/Child Recall@10 separately. A layer contributes to a denominator only when its required structured label exists.
+- Quality metrics are computed from one deterministic result per unique case id. Repetitions remain execution samples for latency, dependency health, degradation, and stability diagnostics.
+- Keep the existing execution-level summary fields until all comparison consumers migrate; the v2 formal conclusion must use the unique-case layered summary.
+- The v2 frozen corpus contains at least six documents, twelve distinguishable parent sections, twenty-four unique document HIT cases, and hard negatives spanning shared terms, wrong workflow stages, synonyms, near duplicates, and no-result queries.
+- Corpus and dataset manifests record SHA-256 values. Changing a fixture, structured label, chunking rule, or preprocessing rule invalidates the previous manifest and requires regeneration before a formal run.
+- Never add evaluation filenames, case ids, anchors, or project-specific golden labels to production retrieval/ranking code.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+|---|---|
+| `parentOrder < 0` or `childOrder < 0` | Reject the JSONL line with a stable line-numbered validation error |
+| `childOrder` exists without `parentOrder` | Reject the JSONL line |
+| Correct file, wrong parent | File hit; Section and Child miss |
+| Correct parent, wrong child | File and Section hit; Child miss |
+| Parent text contains anchor but child text does not | Child miss |
+| Same case runs three times | Quality denominator +1; latency sample count +3 |
+| Legacy v1 document label has no positions | File metric only; Section/Child denominators unchanged |
+| Near-duplicate wrong file is returned | No file/section/child hit for the target gold label |
+
+### 5. Tests Required
+
+- Dataset compatibility tests for v1 and validation tests for structured v2 orders.
+- Matcher regression tests for file-only, wrong-section, wrong-child, parent-text leakage, and bounded cutoff behavior.
+- Report tests proving unique-case quality deduplication while execution-level latency still uses every repetition.
+- Frozen-corpus contract test proving every v2 structured gold label maps to exactly one expected filename/parent/child after the production preprocessor and chunker.
+- Existing comparison-tool tests must continue to parse legacy summary fields.
+
+### 6. Wrong vs Correct
+
+#### Wrong
+
+Declare document quality solved because every gold label names the only indexed file, concatenate all matching `parentText` values until an anchor appears, or count three repetitions as three independent quality cases.
+
+#### Correct
+
+Use a multi-document hard-negative corpus, score file/section/child levels independently, validate child evidence only in the returned child, and separate unique-case quality from execution-level performance.
+
 ## Scenario: Agent-facing MCP knowledge facade
 
 ### 1. Scope / Trigger
@@ -739,3 +800,116 @@ Do not include API keys, request bodies, business source text, or model cache bl
 **Correct:** run calibration against fixed dependencies, preserve the actual virtualenv interpreter entry, require
 readable PyTorch/Transformers versions, fingerprint the complete executed reranker chain, rerun as a gate, and only
 then mark the live acceptance item complete.
+
+## Scenario: 0.8.1 child-first rerank and singleton-safe evaluation
+
+### 1. Scope / Trigger
+
+Apply this scenario when changing requirement rerank candidate lifecycle, BGE passage construction,
+parent aggregation, code candidate ranking, retrieval-evaluation stage diagnostics, or the formal
+`0.8-rerank` to `0.8.1-quality` comparison runner.
+
+The optimization is valid only when the rerank input has exactly one candidate and child-first quality
+mode is enabled. It is not a general switch for disabling BGE.
+
+### 2. Signatures
+
+```java
+RagOutcome<List<ChunkRecord>> DefaultRequirementReranker.rerank(
+        String query,
+        String documentId,
+        String version,
+        List<ChunkRecord> candidates,
+        int limit)
+```
+
+```text
+RagStageDiagnostic(
+  stage = "bge.rerank.singleton_skip",
+  status = SUCCESS,
+  latencyMs = 0,
+  itemCount = 1
+)
+```
+
+```text
+scripts/run-shiguang-eval.sh
+  -> Python /health contract
+  -> Java HttpBgeRerankerLiveIT contract
+  -> frozen corpus rebuild
+  -> 0.8-rerank report
+  -> 0.8.1-quality report
+  -> comparison.json / comparison.md / manifest.json
+```
+
+The evaluation summary exposes integer counters named `bgeCalls`, `bgeSuccesses`,
+`bgeDegradations`, `bgeNoCandidateSkips`, and `bgeSingletonSkips`.
+
+### 3. Contracts
+
+- Child candidates remain available through BGE rerank; stable parent aggregation happens after child
+  rerank and before final Top-K output.
+- BGE passages are bounded and include filename, parent context, and child text. Candidate count,
+  passage length, batch size, and final Top-K remain configuration-bounded.
+- When child-first quality mode is enabled and rerank input size is exactly one, preserve that candidate,
+  do not invoke `BgeReranker`, emit `bge.rerank.singleton_skip`, and report a successful decision.
+- Empty input remains `NO_RESULTS`; it is counted as `bgeNoCandidateSkips`, not a singleton skip.
+- Two or more candidates must continue through the real BGE path. When child-first quality mode is
+  disabled, even a singleton follows the baseline BGE path for behavior-control compatibility.
+- Optional LLM rerank still runs after the BGE or singleton decision when it is enabled.
+- Expected BGE failure preserves original retrieval order and uses the existing bounded warning. A
+  singleton skip must never conceal a real multi-candidate BGE failure.
+- Formal candidate acceptance requires every evaluated execution to be accounted for by exactly one
+  BGE decision: real call, no-candidate skip, or singleton skip. Unexpected degradation remains zero.
+- A singleton-only formal candidate is healthy only when the runner has independently verified both the
+  Python reranker health contract and the Java-to-BGE live `/rerank` contract in the same run.
+- Formal manifests record the live-contract proof, timeouts, model/runtime fingerprint, variant flags,
+  source hashes, and `secretsRecorded=false`; they never record model input or business text.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| Candidate input is empty | `NO_RESULTS`; increment no-candidate skip; do not call BGE |
+| Child-first enabled and input size is one | Preserve candidate; `SUCCESS`; emit singleton diagnostic; do not call BGE |
+| Child-first disabled and input size is one | Call BGE with limit one; record normal BGE diagnostic |
+| Input size is two or more | Call BGE with bounded Top-K regardless of singleton optimization |
+| BGE throws an expected availability/runtime failure | Preserve source order; return structured degraded warning; increment degradation |
+| Candidate report omits or mis-types a BGE counter | Formal report-contract check fails closed |
+| Singleton-only candidate lacks independent live-contract proof | Formal comparison fails BGE-health acceptance |
+| Calls + no-candidate skips + singleton skips differs from total executions | Formal comparison fails decision-accounting acceptance |
+| Any cross-project or cross-version result appears | Quality gate fails; never trade isolation for Recall |
+
+### 5. Good / Base / Bad Cases
+
+- Good: five child chunks are reranked, then aggregated to one parent; because the next invocation sees a
+  single final candidate, it records `bge.rerank.singleton_skip`; the formal runner already proved the
+  live BGE contract and all decisions are accounted for.
+- Base: quality mode is disabled for a behavior-control run; one candidate still calls BGE, allowing the
+  control report to expose the CPU cost of the legacy no-op inference.
+- Bad: set BGE off globally, count zero calls as healthy without a live proof, skip a two-candidate rerank,
+  or claim Recall improvement when the same-worktree control has equal Recall.
+
+### 6. Tests Required
+
+- `DefaultRequirementRerankerTest` asserts singleton skip only in child-first mode, preserved data,
+  success diagnostic, zero BGE calls, and the baseline singleton compatibility path.
+- Multi-candidate and failure tests assert BGE is invoked with bounded Top-K and fallback preserves order.
+- Pipeline tests assert child-first rerank precedes stable parent aggregation and that enriched passages
+  remain bounded.
+- Evaluation matcher/report tests assert singleton counters, stage detection, failure attribution, and
+  complete decision accounting.
+- Comparison-tool tests assert real-call health, singleton-only health with live proof, failure without
+  proof, failure on degradation, and failure on incomplete accounting.
+- The formal runner must execute Python health, Java live contract, fixed corpus rebuild, both isolated
+  variants, and comparison generation before the result may be marked `formal` and `PASS`.
+- Final task verification includes Java 21 `./mvnw -B verify`, Python unit tests and compile, shell syntax,
+  task-context validation, and `git diff --check`.
+
+### 7. Wrong vs Correct
+
+**Wrong:** "0.8.1 made zero BGE calls, therefore reranking was disabled and the latency result is invalid."
+
+**Correct:** "0.8.1 independently proved the live Python and Java BGE contracts, retained real BGE for
+multi-candidate inputs, and skipped only 144 mathematically order-invariant singleton decisions; 18 empty
+and 144 singleton decisions account for all 162 executions with zero unexpected degradation."

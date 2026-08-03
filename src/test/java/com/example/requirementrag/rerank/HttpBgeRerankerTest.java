@@ -42,7 +42,11 @@ class HttpBgeRerankerTest {
                 .andExpect(content().json("""
                         {
                           "query": "target query",
-                          "texts": ["first passage", "second passage", "third passage"],
+                          "texts": [
+                            "file: first.md\nmatching child:\nfirst passage\nparent context:\nparent text",
+                            "file: second.md\nmatching child:\nsecond passage\nparent context:\nparent text",
+                            "file: third.md\nmatching child:\nthird passage\nparent context:\nparent text"
+                          ],
                           "truncate": true
                         }
                         """))
@@ -77,6 +81,22 @@ class HttpBgeRerankerTest {
                 .extracting(ChunkRecord::id)
                 .containsExactly("first");
         server.verify();
+    }
+
+    @Test
+    void passageKeepsMatchingChildBeforeBoundedParentContext() {
+        String child = "TARGET-CHILD-" + "c".repeat(900);
+        ChunkRecord chunk = new ChunkRecord("id", "requirements", "5.1", "feature.md", "parent",
+                "prefix-" + "p".repeat(1_200) + child + "-suffix", child, "hash", 0, 0);
+
+        String passage = HttpBgeReranker.passage(chunk);
+
+        assertThat(passage)
+                .startsWith("file: feature.md\nmatching child:\nTARGET-CHILD-")
+                .contains("\nparent context:\n")
+                .hasSizeLessThanOrEqualTo(
+                        HttpBgeReranker.MAX_CHILD_CHARACTERS
+                                + HttpBgeReranker.MAX_PARENT_CONTEXT_CHARACTERS + 80);
     }
 
     private ChunkRecord chunk(String id, String childText) {

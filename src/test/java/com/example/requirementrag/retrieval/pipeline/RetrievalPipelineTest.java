@@ -49,7 +49,7 @@ class RetrievalPipelineTest {
                 false, null, null, "requirements", "5.1", null, null, 0));
         when(properties.retrieval()).thenReturn(new RagProperties.Retrieval(
                 50, 50, 40, 20, 10, false, 1_000, 3, 3, 30_000,
-                -1, -1, -1, -1));
+                -1, -1, -1, -1, null, null, null));
         when(queryRouter.routeWithOutcome("query", null)).thenReturn(RagOutcome.of(
                 RagOutcomeStatus.SUCCESS, new QueryRouting("game", "server", 1.0, "explicit"),
                 "query.route", 1, 1));
@@ -75,6 +75,22 @@ class RetrievalPipelineTest {
         assertThat(outcome.data().codeEvidence()).containsExactly(code);
         assertThat(outcome.stageDiagnostics()).extracting("stage")
                 .contains("query.route", "qdrant.hybrid_search", "code.hybrid_search");
+    }
+
+    @Test
+    void compatibilityConstructorUsesLegacyParentDeduplicationWhenRetrievalConfigIsMissing() {
+        when(properties.retrieval()).thenReturn(null);
+        ChunkRecord first = chunk("p1", "需求一", "h1");
+        ChunkRecord duplicateParent = chunk("p1", "需求一子块", "h2");
+        when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
+                .thenReturn(List.of(first, duplicateParent));
+        when(codeKnowledgeService.search("query", "game", 8)).thenReturn(List.of());
+
+        RagOutcome<RetrievalBundle> outcome = pipeline.execute(new RetrievalRequest(
+                "query", RetrievalProfile.DEVELOPMENT_PLAN, null, null, null, 8));
+
+        assertThat(outcome.status()).isEqualTo(RagOutcomeStatus.SUCCESS);
+        assertThat(outcome.data().requirementEvidence()).containsExactly(first);
     }
 
     @Test
@@ -206,6 +222,67 @@ class RetrievalPipelineTest {
     }
 
     @Test
+    void reranksChildCandidatesBeforeAggregatingParents() {
+        ChunkRecord parentAFirst = new ChunkRecord("a-1", "requirements", "5.1", "feature.md",
+                "parent-a", "parent A", "irrelevant child", "h1", 0, 0);
+        ChunkRecord parentARelevant = new ChunkRecord("a-2", "requirements", "5.1", "feature.md",
+                "parent-a", "parent A", "relevant child", "h2", 0, 1);
+        ChunkRecord parentB = new ChunkRecord("b-1", "requirements", "5.1", "other.md",
+                "parent-b", "parent B", "other child", "h3", 1, 0);
+        when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
+                .thenReturn(List.of(parentAFirst, parentARelevant, parentB));
+        when(codeKnowledgeService.search("query", "game", 8)).thenReturn(List.of());
+        RequirementReranker reranker = (query, documentId, version, candidates, limit) -> {
+            assertThat(candidates).containsExactly(parentAFirst, parentARelevant, parentB);
+            assertThat(limit).isEqualTo(20);
+            return RagOutcome.of(RagOutcomeStatus.SUCCESS,
+                    List.of(parentARelevant, parentAFirst, parentB), "retrieval.rerank", 1, 3);
+        };
+        RetrievalPipeline childFirst = new RetrievalPipeline(properties, projectRegistry, queryRouter,
+                documentStore, codeKnowledgeService, mock(RagObservability.class), reranker,
+                new RetrievalResultCache(Duration.ZERO, 0, "disabled"), Runnable::run,
+                new RetrievalCircuitBreaker(0, Duration.ZERO));
+
+        RagOutcome<RetrievalBundle> outcome = childFirst.execute(new RetrievalRequest(
+                "query", RetrievalProfile.DEVELOPMENT_PLAN, null, null, null, 8));
+
+        assertThat(outcome.data().requirementEvidence()).containsExactly(parentARelevant, parentB);
+    }
+
+    @Test
+    void avoidsRedundantChildScoresWhenAllCandidatesShareOneParent() {
+        ChunkRecord first = new ChunkRecord("a-1", "requirements", "5.1", "feature.md",
+                "parent-a", "parent A", "first child", "h1", 0, 0);
+        ChunkRecord second = new ChunkRecord("a-2", "requirements", "5.1", "feature.md",
+                "parent-a", "parent A", "second child", "h2", 0, 1);
+        when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
+                .thenReturn(List.of(first, second));
+        when(codeKnowledgeService.search("query", "game", 8)).thenReturn(List.of());
+        RequirementReranker reranker = (query, documentId, version, candidates, limit) -> {
+            assertThat(candidates).containsExactly(first);
+            return RagOutcome.of(RagOutcomeStatus.SUCCESS, candidates, "retrieval.rerank", 1, candidates.size());
+        };
+        RetrievalPipeline childFirst = new RetrievalPipeline(properties, projectRegistry, queryRouter,
+                documentStore, codeKnowledgeService, mock(RagObservability.class), reranker,
+                new RetrievalResultCache(Duration.ZERO, 0, "disabled"), Runnable::run,
+                new RetrievalCircuitBreaker(0, Duration.ZERO));
+
+        RagOutcome<RetrievalBundle> outcome = childFirst.execute(new RetrievalRequest(
+                "query", RetrievalProfile.DEVELOPMENT_PLAN, null, null, null, 8));
+
+        assertThat(outcome.data().requirementEvidence()).containsExactly(first);
+        assertThat(outcome.stageDiagnostics())
+                .anySatisfy(diagnostic -> {
+                    assertThat(diagnostic.stage()).isEqualTo("retrieval.requirement.candidates");
+                    assertThat(diagnostic.itemCount()).isEqualTo(2);
+                })
+                .anySatisfy(diagnostic -> {
+                    assertThat(diagnostic.stage()).isEqualTo("retrieval.requirement.rerank_candidates");
+                    assertThat(diagnostic.itemCount()).isEqualTo(1);
+                });
+    }
+
+    @Test
     void appliesUnifiedRerankerToEveryProfile() {
         RequirementReranker reranker = mock(RequirementReranker.class);
         ChunkRecord hit = chunk("hit", "需求", "h1");
@@ -230,7 +307,7 @@ class RetrievalPipelineTest {
     void timesOutOnlyTheSlowBranchAndKeepsAvailableEvidence() throws Exception {
         when(properties.retrieval()).thenReturn(new RagProperties.Retrieval(
                 50, 50, 40, 20, 10, false, 50, 2, 3, 30_000,
-                -1, -1, -1, -1));
+                -1, -1, -1, -1, null, null, null));
         when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
                 .thenReturn(List.of(chunk("hit", "需求", "h1")));
         when(codeKnowledgeService.search("query", "game", 8)).thenAnswer(invocation -> {

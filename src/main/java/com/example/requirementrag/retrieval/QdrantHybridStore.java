@@ -105,7 +105,7 @@ public class QdrantHybridStore {
     /** 执行稠密+稀疏 prefetch 与 RRF 融合的混合检索。 */
     public List<ChunkRecord> hybridSearch(String collection, String query, String documentId, String version) {
         ensureCollection(collection);
-        float[] dense = embeddingModel.embed(query);
+        float[] dense = embeddingBatcher.embedAll(List.of(query)).getFirst();
         SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorize(query);
         RagProperties.Retrieval cfg = properties.retrieval();
         Map<String, Object> body = new LinkedHashMap<>();
@@ -124,7 +124,7 @@ public class QdrantHybridStore {
     /** 执行混合检索并返回带 Qdrant 原生分数的结果。 */
     public List<ScoredChunk> hybridSearchWithScores(String collection, String query, String documentId, String version) {
         ensureCollection(collection);
-        float[] dense = embeddingModel.embed(query);
+        float[] dense = embeddingBatcher.embedAll(List.of(query)).getFirst();
         SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorize(query);
         RagProperties.Retrieval cfg = properties.retrieval();
         Map<String, Object> body = new LinkedHashMap<>();

@@ -67,7 +67,8 @@ record RetrievalEvaluationSettings(
 
     enum EvaluationMode {
         BASELINE_0_7("0.7-baseline"),
-        RERANK_0_8("0.8-rerank");
+        RERANK_0_8("0.8-rerank"),
+        QUALITY_0_8_1("0.8.1-quality");
 
         private final String id;
 
@@ -84,7 +85,9 @@ record RetrievalEvaluationSettings(
                 return RERANK_0_8;
             }
             if (BASELINE_0_7.id.equalsIgnoreCase(value.trim())) return BASELINE_0_7;
-            throw new IllegalArgumentException(MODE_ENV + " must be 0.7-baseline or 0.8-rerank");
+            if (QUALITY_0_8_1.id.equalsIgnoreCase(value.trim())) return QUALITY_0_8_1;
+            throw new IllegalArgumentException(
+                    MODE_ENV + " must be 0.7-baseline, 0.8-rerank, or 0.8.1-quality");
         }
     }
 }

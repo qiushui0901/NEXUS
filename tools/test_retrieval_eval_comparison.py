@@ -89,6 +89,34 @@ class RetrievalEvalComparisonTest(unittest.TestCase):
         self.assertFalse(worse["passed"])
         self.assertEqual("0.750000 -> 0.740000", worse["detail"])
 
+
+    def test_healthy_bge_decisions_accepts_verified_singleton_fast_path(self):
+        summary = {
+            "totalCases": 162,
+            "bgeCalls": 0,
+            "bgeSuccesses": 0,
+            "bgeDegradations": 0,
+            "bgeNoCandidateSkips": 18,
+            "bgeSingletonSkips": 144,
+        }
+        self.assertTrue(MODULE.healthy_bge_decisions(summary, True))
+        self.assertFalse(MODULE.healthy_bge_decisions(summary, False))
+        summary["bgeSingletonSkips"] = 143
+        self.assertFalse(MODULE.healthy_bge_decisions(summary, True))
+
+    def test_healthy_bge_decisions_accepts_real_calls_and_rejects_degradation(self):
+        summary = {
+            "totalCases": 162,
+            "bgeCalls": 144,
+            "bgeSuccesses": 144,
+            "bgeDegradations": 0,
+            "bgeNoCandidateSkips": 18,
+            "bgeSingletonSkips": 0,
+        }
+        self.assertTrue(MODULE.healthy_bge_decisions(summary, False))
+        summary["bgeDegradations"] = 1
+        self.assertFalse(MODULE.healthy_bge_decisions(summary, True))
+
     def test_report_contract_requires_formal_repeated_report(self):
         report = {
             "mode": "0.7-baseline",
@@ -106,6 +134,60 @@ class RetrievalEvalComparisonTest(unittest.TestCase):
         self.assertEqual([], MODULE.report_contract(report, "0.7-baseline", 3))
         report["classification"] = "calibration"
         self.assertIn("classification must be formal", MODULE.report_contract(report, "0.7-baseline", 3))
+
+    def test_quality_report_contract_requires_stage_diagnostics_and_failure_attribution(self):
+        diagnostic_case = {
+            "success": False,
+            "expectsDocuments": True,
+            "expectsCode": True,
+            "documentTraceAvailable": True,
+            "codeTraceAvailable": True,
+            "documentRawRank": None,
+            "documentRerankInputRank": None,
+            "documentRerankedRank": None,
+            "documentRank": None,
+            "documentRankMovement": "MISSING",
+            "documentOrderChanged": False,
+            "codeRawRank": 2,
+            "codeRankedRank": None,
+            "codeRank": None,
+            "codeRankMovement": "LOST",
+            "codeOrderChanged": True,
+            "documentRawCandidateCount": 40,
+            "documentRerankCandidateCount": 20,
+            "documentRerankedCandidateCount": 10,
+            "codeRawCandidateCount": 50,
+            "codeRankedCandidateCount": 10,
+            "failureAttributions": [
+                "DOCUMENT_CANDIDATE_RECALL_MISS", "CODE_RERANK_LOSS"
+            ],
+        }
+        report = {
+            "mode": "0.8.1-quality",
+            "classification": "formal",
+            "datasetCaseCount": 54,
+            "cutoff": 10,
+            "repetitions": 1,
+            "summary": {
+                "totalCases": 54, "infrastructureFailureCases": 0,
+                "bgeCalls": 0, "bgeSuccesses": 0, "bgeDegradations": 0,
+                "bgeNoCandidateSkips": 6, "bgeSingletonSkips": 48,
+            },
+            "profiles": {
+                "DEVELOPMENT_PLAN": {"totalCases": 30},
+                "REQUIREMENT_REVIEW": {"totalCases": 12},
+                "WIKI_BUILD": {"totalCases": 12},
+            },
+            "failureAttributions": {"DOCUMENT_CANDIDATE_RECALL_MISS": 54},
+            "cases": [dict(diagnostic_case) for _ in range(54)],
+        }
+
+        self.assertEqual([], MODULE.report_contract(report, "0.8.1-quality", 1))
+        report["cases"][0]["failureAttributions"] = []
+        self.assertIn(
+            "cases[0] failed without stage attribution",
+            MODULE.report_contract(report, "0.8.1-quality", 1),
+        )
 
     def test_parallel_benchmark_contract_accepts_recomputed_thirty_percent_reduction(self):
         report = {
@@ -180,6 +262,7 @@ class RetrievalEvalComparisonTest(unittest.TestCase):
                     "documentRecallAt10", "codeRecallAt10", "mrrAt10", "mixedBothHitRate",
                     "noResultAccuracy", "p50LatencyMs", "p95LatencyMs", "failedCases",
                     "bgeCalls", "bgeSuccesses", "bgeDegradations", "bgeNoCandidateSkips",
+                    "bgeSingletonSkips",
                 )
             },
             "profileP95": {
