@@ -1,6 +1,6 @@
 package com.example.requirementrag.retrieval.pipeline;
 
-/** Input contract for the shared requirement/code evidence retrieval pipeline. */
+/** 共享需求/代码证据检索管线的输入契约。 */
 public record RetrievalRequest(
         String query,
         RetrievalProfile profile,
@@ -15,6 +15,7 @@ public record RetrievalRequest(
         this(query, profile, projectId, documentId, version, limit, false);
     }
 
+    /** 校验 query 必填；profile 为空时默认使用 DEVELOPMENT_PLAN。 */
     public RetrievalRequest {
         if (query == null || query.isBlank()) {
             throw new IllegalArgumentException("query required");

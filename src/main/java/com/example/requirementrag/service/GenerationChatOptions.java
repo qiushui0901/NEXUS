@@ -8,6 +8,7 @@ final class GenerationChatOptions {
     private GenerationChatOptions() {
     }
 
+    /** 构建仅携带模型名的基础选项，避免向不支持 temperature 的模型发送该参数。 */
     static OpenAiChatOptions.Builder forModel(String model) {
         return OpenAiChatOptions.builder()
                 .model(model);

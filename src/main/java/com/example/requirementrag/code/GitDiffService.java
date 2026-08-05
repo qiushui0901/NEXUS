@@ -14,17 +14,21 @@ import java.util.List;
 import java.util.Locale;
 import java.util.regex.Pattern;
 
-/** Executes a fixed, file-level Git diff for validated commit SHAs. */
+/** 对已验证的 commit SHA 执行固定文件级 Git diff，输出变更统计与文件变更列表。 */
 @Service
 public class GitDiffService {
     private static final Logger log = LoggerFactory.getLogger(GitDiffService.class);
     private static final Pattern COMMIT = Pattern.compile("[0-9a-fA-F]{7,64}");
 
+    /** 差异分析结果的可用性状态。 */
     public enum Availability { AVAILABLE, NOT_AVAILABLE }
+    /** 文件变更类型：新增/修改/删除/重命名。 */
     public enum ChangeType { ADDED, MODIFIED, DELETED, RENAMED }
 
+    /** 单个文件变更：类型与新旧路径（新增时旧路径为空，删除时新路径为空，重命名时两者均有）。 */
     public record GitFileChange(ChangeType type, String oldPath, String newPath) {}
 
+    /** 一次 diff 的汇总结果：总变更数、按类型计数、Java/测试/配置文件数量与逐文件变更列表。 */
     public record GitDiffResult(
             Availability availability,
             int changedFiles,
@@ -40,9 +44,12 @@ public class GitDiffService {
         public GitDiffResult {
             changes = changes == null ? List.of() : List.copyOf(changes);
         }
+        /** 返回不可用占位结果（如仓库未配置或不可用时）。 */
         public static GitDiffResult unavailable() {
             return new GitDiffResult(Availability.NOT_AVAILABLE, 0, 0, 0, 0, 0, 0, 0, 0, List.of());
         }
+
+        /** 返回去重后的变更路径集合（新旧路径均计入）。 */
         public List<String> changedPaths() {
             return changes.stream().flatMap(change -> java.util.stream.Stream.of(change.oldPath(), change.newPath()))
                     .filter(path -> path != null && !path.isBlank()).distinct().toList();
@@ -57,6 +64,16 @@ public class GitDiffService {
         this.projectRegistry = projectRegistry;
     }
 
+    /**
+     * 计算 fromCommit 到 toCommit 的文件级变更。
+     *
+     * @param projectId  项目 ID
+     * @param fromCommit 起始 commit SHA（7-64 位十六进制）
+     * @param toCommit   目标 commit SHA
+     * @return 变更统计与逐文件变更列表
+     * @throws IOException          执行 git 命令失败
+     * @throws InterruptedException 等待 git 进程被中断
+     */
     public GitDiffResult diff(String projectId, String fromCommit, String toCommit)
             throws IOException, InterruptedException {
         String from = commit(fromCommit, "fromCommit");
@@ -80,6 +97,7 @@ public class GitDiffService {
         return summarize(changes);
     }
 
+    /** 解析 git diff --name-status 输出的一行（制表符分隔），无法识别时返回 null。 */
     private GitFileChange parse(String line) {
         String[] fields = line.split("\\t");
         if (fields.length < 2) return null;
@@ -96,6 +114,7 @@ public class GitDiffService {
         };
     }
 
+    /** 按变更类型汇总统计，并额外计算 Java/测试/配置文件数量。 */
     private GitDiffResult summarize(List<GitFileChange> changes) {
         int added = count(changes, ChangeType.ADDED);
         int modified = count(changes, ChangeType.MODIFIED);
@@ -124,6 +143,7 @@ public class GitDiffService {
                 || lower.endsWith(".xml") || lower.endsWith(".json") || lower.endsWith(".toml");
     }
 
+    /** 校验并规范化 commit SHA：必须为 7-64 位十六进制，非法时抛出 IllegalArgumentException。 */
     private String commit(String value, String field) {
         if (!hasText(value) || !COMMIT.matcher(value.trim()).matches()) {
             throw new IllegalArgumentException(field + " 必须是具体的 Git commit SHA");

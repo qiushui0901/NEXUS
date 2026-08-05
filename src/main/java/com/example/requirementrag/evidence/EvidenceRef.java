@@ -1,6 +1,6 @@
 package com.example.requirementrag.evidence;
 
-/** A safe, bounded reference to one item in the current retrieval result. */
+/** 指向当前检索结果中某一项证据的安全有界引用。 */
 public record EvidenceRef(
         String evidenceId,
         EvidenceType type,

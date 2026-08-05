@@ -35,7 +35,15 @@ public class RagObservability {
         this.meterRegistry = meterRegistry;
     }
 
-    /** 观测带返回值的操作，记录耗时、成功/失败日志与失败计数。 */
+    /**
+     * 观测带返回值的操作，记录耗时、成功/失败日志与失败计数。
+     *
+     * @param stage     阶段标识，用于指标与日志
+     * @param documentId 文档 ID，参与日志与最近事件记录
+     * @param version   文档版本，参与日志与最近事件记录
+     * @param action    待执行的操作
+     * @return 操作返回值；操作抛出运行时异常时统计失败后原样抛出
+     */
     public <T> T observe(String stage, String documentId, String version, Supplier<T> action) {
         long started = System.nanoTime();
         Observation observation = Observation.createNotStarted("rag.stage", observationRegistry)
@@ -70,7 +78,17 @@ public class RagObservability {
         observe(stage, documentId, version, () -> { action.run(); return null; });
     }
 
-    /** 记录已被调用方归类的阶段结果；公开诊断只保存稳定 warning code。 */
+    /**
+     * 记录已被调用方归类的阶段结果；公开诊断只保存稳定 warning code。
+     *
+     * @param stage       阶段标识
+     * @param documentId  文档 ID
+     * @param version     文档版本
+     * @param status      阶段最终状态，影响日志级别与失败计数
+     * @param durationMs  阶段耗时（毫秒）
+     * @param warningCode 稳定告警码，可空；空则不记录告警指标
+     * @param failure     导致失败的异常，可空；仅 FAILED 状态用于失败计数与日志原因
+     */
     public void outcome(String stage, String documentId, String version, RagOutcomeStatus status,
                         long durationMs, String warningCode, RuntimeException failure) {
         String normalizedStatus = status.name().toLowerCase();
@@ -100,7 +118,13 @@ public class RagObservability {
                 durationMs, warningCode == null ? "" : warningCode));
     }
 
-    /** 记录某阶段处理的条目数量分布。 */
+    /**
+     * 记录某阶段处理的条目数量分布。
+     *
+     * @param stage 阶段标识
+     * @param kind  条目类别（如输入/输出/移除）
+     * @param count 条目数量
+     */
     public void items(String stage, String kind, long count) {
         DistributionSummary.builder("rag.stage.items")
                 .description("Number of items entering or leaving a RAG stage")
@@ -112,7 +136,11 @@ public class RagObservability {
         Counter.builder("rag.events").tag("type", type).register(meterRegistry).increment();
     }
 
-    /** 返回最近的 RAG 阶段事件，最新在前。 */
+    /**
+     * 返回最近的 RAG 阶段事件，最新在前。
+     *
+     * @return 最近事件的只读副本（最多保留固定窗口条数）
+     */
     public synchronized List<RagStageEvent> recentEvents() {
         List<RagStageEvent> copy = new ArrayList<>(recentEvents);
         Collections.reverse(copy);

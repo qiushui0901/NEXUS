@@ -17,7 +17,7 @@ import java.util.Map;
 
 import static com.example.requirementrag.versioning.VersionModels.ManifestStatus.RELEASED;
 
-/** Resolves an effective version archive from formal manifests, Wiki indexes and requirement snapshots. */
+/** 由正式清单、Wiki 索引与需求快照解析出有效的版本档案集合。 */
 @Service
 public class VersionManifestResolver {
     private final VersionManifestService manifests;
@@ -31,6 +31,13 @@ public class VersionManifestResolver {
         this.requirementSnapshots = requirementSnapshots;
     }
 
+    /**
+     * 按版本号取档案，不存在时返回 404。
+     *
+     * @param projectId 项目标识
+     * @param version   版本号
+     * @return 该版本的档案
+     */
     public VersionManifest get(String projectId, String version) {
         String project = VersionPathPolicy.identifier(projectId, "projectId");
         String target = VersionPathPolicy.identifier(version, "version");
@@ -40,6 +47,13 @@ public class VersionManifestResolver {
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "版本档案不存在"));
     }
 
+    /**
+     * 合并 Wiki 版本索引与正式清单，生成项目全部版本的档案，按版本号降序排列。
+     * Wiki 索引合成的档案标记为只读；正式清单缺需求引用时从需求快照补齐。
+     *
+     * @param projectId 项目标识
+     * @return 全部版本档案
+     */
     public List<VersionManifest> list(String projectId) {
         String project = VersionPathPolicy.identifier(projectId, "projectId");
         List<VersionIndex> indexes = wikiRepository.listVersions(project);
@@ -64,6 +78,7 @@ public class VersionManifestResolver {
         return List.copyOf(result);
     }
 
+    /** 由 Wiki 版本索引合成只读版本档案，并尽量关联需求快照的文档与需求版本。 */
     private VersionManifest synthesize(String project, VersionIndex index, String baseVersion, Snapshot snapshot) {
         String generatedAt = hasText(index.generatedAt()) ? index.generatedAt() : Instant.now().toString();
         List<String> notes = new ArrayList<>();
@@ -78,6 +93,7 @@ public class VersionManifestResolver {
                 "wiki-" + index.version(), RELEASED, generatedAt, generatedAt, notes);
     }
 
+    /** 当正式清单缺少需求引用时，从需求快照补齐并追加说明笔记。 */
     private VersionManifest enrichRequirementReference(VersionManifest manifest, Snapshot snapshot) {
         if (hasText(manifest.requirementDocumentId()) && hasText(manifest.requirementVersion())) return manifest;
         if (snapshot == null) return manifest;
@@ -90,6 +106,7 @@ public class VersionManifestResolver {
                 manifest.wikiBuildId(), manifest.status(), manifest.createdAt(), manifest.updatedAt(), notes);
     }
 
+    /** 建立“需求版本/别名 -> 快照”的映射，先到先得。 */
     private Map<String, Snapshot> snapshotsByBusinessVersion(String project) {
         Map<String, Snapshot> result = new LinkedHashMap<>();
         for (Snapshot snapshot : requirementSnapshots.list(project)) {

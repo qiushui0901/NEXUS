@@ -55,14 +55,17 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
             List<String> excludePathSubstrings,
             int maxFileBytes
     ) {
+        /** 包含路径子串列表，未配置时为默认空列表。 */
         public List<String> includes() {
             return includePathSubstrings == null ? List.of() : includePathSubstrings;
         }
 
+        /** 排除路径子串列表，未配置时为默认空列表。 */
         public List<String> excludes() {
             return excludePathSubstrings == null ? List.of() : excludePathSubstrings;
         }
 
+        /** 解析单文件大小上限（字节），未配置或 ≤0 时默认 1MB。 */
         public int resolvedMaxFileBytes() {
             return maxFileBytes <= 0 ? 1_000_000 : maxFileBytes;
         }
@@ -74,17 +77,19 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
         public static final int DEFAULT_READ_TIMEOUT_MS = 10_000;
         private static final int MAX_TIMEOUT_MS = 120_000;
 
+        /** 归一化超时配置：0 取默认值，小于 0 或超过上限抛 IllegalArgumentException。 */
         @ConstructorBinding
         public Bge {
             connectTimeoutMs = resolveTimeout("connectTimeoutMs", connectTimeoutMs, DEFAULT_CONNECT_TIMEOUT_MS);
             readTimeoutMs = resolveTimeout("readTimeoutMs", readTimeoutMs, DEFAULT_READ_TIMEOUT_MS);
         }
 
-        /** Compatibility constructor for callers created before BGE-specific timeouts were introduced. */
+        /** 兼容构造器，供引入 BGE 专属超时之前创建的调用方使用，超时取默认值。 */
         public Bge(String baseUrl, String path, String apiKey) {
             this(baseUrl, path, apiKey, DEFAULT_CONNECT_TIMEOUT_MS, DEFAULT_READ_TIMEOUT_MS);
         }
 
+        /** 校验并归一化超时毫秒数：0 表示使用默认值，越界抛异常。 */
         private static int resolveTimeout(String name, int value, int defaultValue) {
             if (value == 0) {
                 return defaultValue;
@@ -98,6 +103,7 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
 
     /** LLM 生成、重排与路由模型名称配置。 */
     public record Llm(String generationModel, String rerankerModel, String routingModel) {
+        /** 路由模型名，未配置时回退到重排模型名。 */
         public String resolvedRoutingModel() {
             return (routingModel != null && !routingModel.isBlank()) ? routingModel : rerankerModel;
         }
@@ -121,46 +127,58 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
             int embeddingCacheMaxEntries,
             Boolean childFirstRerankEnabled,
             Boolean enrichedBgePassageEnabled,
-            Boolean codeQueryExpansionEnabled
+            Boolean codeQueryExpansionEnabled,
+            Boolean codeBgeRerankEnabled,
+            Integer codeCandidateMultiplier
     ) {
+        /** BGE 重排候选数，未配置或 ≤0 时默认 20。 */
         public int resolvedBgeTopK() {
             return bgeTopK <= 0 ? 20 : bgeTopK;
         }
 
+        /** LLM 重排候选数，未配置或 ≤0 时默认 10。 */
         public int resolvedLlmTopK() {
             return llmTopK <= 0 ? 10 : llmTopK;
         }
 
+        /** 检索分支超时，未配置或 ≤0 时默认 5 秒。 */
         public long resolvedBranchTimeoutMs() {
             return branchTimeoutMs <= 0 ? 5_000 : branchTimeoutMs;
         }
 
+        /** 并行分支数，未配置或 ≤0 时默认 6，上限 32。 */
         public int resolvedParallelism() {
             return parallelism <= 0 ? 6 : Math.min(parallelism, 32);
         }
 
+        /** 熔断失败阈值：负数禁用熔断，0 取默认 3。 */
         public int resolvedCircuitBreakerFailureThreshold() {
             return circuitBreakerFailureThreshold < 0 ? 0
                     : circuitBreakerFailureThreshold == 0 ? 3 : circuitBreakerFailureThreshold;
         }
 
+        /** 熔断打开时长：负数禁用，0 取默认 30 秒。 */
         public long resolvedCircuitBreakerOpenMs() {
             return circuitBreakerOpenMs < 0 ? 0 : circuitBreakerOpenMs == 0 ? 30_000 : circuitBreakerOpenMs;
         }
 
+        /** 结果缓存 TTL：负数禁用缓存，0 取默认 120 秒。 */
         public long resolvedResultCacheTtlSeconds() {
             return resultCacheTtlSeconds < 0 ? 0 : resultCacheTtlSeconds == 0 ? 120 : resultCacheTtlSeconds;
         }
 
+        /** 结果缓存容量上限：负数禁用，0 取默认 1000 条。 */
         public int resolvedResultCacheMaxEntries() {
             return resultCacheMaxEntries < 0 ? 0 : resultCacheMaxEntries == 0 ? 1_000 : resultCacheMaxEntries;
         }
 
+        /** 嵌入缓存 TTL：负数禁用，0 取默认 900 秒。 */
         public long resolvedEmbeddingCacheTtlSeconds() {
             return embeddingCacheTtlSeconds < 0 ? 0
                     : embeddingCacheTtlSeconds == 0 ? 900 : embeddingCacheTtlSeconds;
         }
 
+        /** 嵌入缓存容量上限：负数禁用，0 取默认 10000 条。 */
         public int resolvedEmbeddingCacheMaxEntries() {
             return embeddingCacheMaxEntries < 0 ? 0
                     : embeddingCacheMaxEntries == 0 ? 10_000 : embeddingCacheMaxEntries;
@@ -181,12 +199,25 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
             return codeQueryExpansionEnabled == null || codeQueryExpansionEnabled;
         }
 
+        /** 代码候选池同样经过 BGE 语义重排；显式 false 保持 RRF + 确定性结构重排。 */
+        public boolean resolvedCodeBgeRerankEnabled() {
+            return codeBgeRerankEnabled == null || codeBgeRerankEnabled;
+        }
+
+        /** 代码 RRF 候选池 = limit * 倍率（下限 50）；调大提升召回但增加重排成本。 */
+        public int resolvedCodeCandidateMultiplier() {
+            return codeCandidateMultiplier == null || codeCandidateMultiplier <= 0 ? 3 : codeCandidateMultiplier;
+        }
+
+        /** 检索关键参数的指纹字符串，配置变化时指纹随之改变，用于相关缓存失效判断。 */
         public String fingerprint() {
             return denseTopK + ":" + sparseTopK + ":" + hybridTopK + ":" + resolvedBgeTopK()
                     + ":" + resolvedLlmTopK() + ":" + llmRerankEnabled
                     + ":" + resolvedChildFirstRerankEnabled()
                     + ":" + resolvedEnrichedBgePassageEnabled()
-                    + ":" + resolvedCodeQueryExpansionEnabled();
+                    + ":" + resolvedCodeQueryExpansionEnabled()
+                    + ":" + resolvedCodeBgeRerankEnabled()
+                    + ":" + resolvedCodeCandidateMultiplier();
         }
     }
 
@@ -205,14 +236,17 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
             List<String> excludePathSubstrings,
             int maxFileBytes
     ) {
+        /** 包含路径子串列表，未配置时为默认空列表。 */
         public List<String> includes() {
             return includePathSubstrings == null ? List.of() : includePathSubstrings;
         }
 
+        /** 排除路径子串列表，未配置时为默认空列表。 */
         public List<String> excludes() {
             return excludePathSubstrings == null ? List.of() : excludePathSubstrings;
         }
 
+        /** 解析单文件大小上限（字节），未配置或 ≤0 时默认 1MB。 */
         public int resolvedMaxFileBytes() {
             return maxFileBytes <= 0 ? 1_000_000 : maxFileBytes;
         }
@@ -235,6 +269,7 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
             String xlsxSheetPrefix,
             int minHtmlBytes
     ) {
+        /** 解析 ZIP 内目标文件夹前缀，未配置时回退为版本号。 */
         public String resolvedZipFolderPrefix() {
             if (zipFolderPrefix != null && !zipFolderPrefix.isBlank()) {
                 return zipFolderPrefix.trim().replace('\\', '/');

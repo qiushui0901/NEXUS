@@ -15,13 +15,17 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
-/** Extension registry and native parser capability probe. */
+/**
+ * 语言扩展注册表：注册各语言 Tree-sitter 适配器，并在构造时探测原生解析器能力。
+ * 解析器不可用的语言会被降级为诊断信息（LANGUAGE_DISABLED），而非导致启动失败。
+ */
 @Component
 public class CodeLanguageRegistry {
     private static final Logger log = LoggerFactory.getLogger(CodeLanguageRegistry.class);
     private final Map<CodeLanguage, TreeSitterLanguageAdapter> adapters = new EnumMap<>(CodeLanguage.class);
     private final List<CodeScanDiagnostic> capabilities;
 
+    /** 注册 Java/Go/Python/TypeScript/Kotlin 五种适配器并逐一探测原生解析器可用性。 */
     public CodeLanguageRegistry() {
         List<AdapterRegistration> registrations = List.of(
                 new AdapterRegistration(CodeLanguage.JAVA, new TreeSitterLanguageAdapter(CodeLanguage.JAVA,
@@ -60,14 +64,17 @@ public class CodeLanguageRegistry {
         capabilities = List.copyOf(status);
     }
 
+    /** 判断路径对应的语言是否有可用的解析适配器。 */
     public boolean supports(String path) {
         return adapters.containsKey(CodeLanguage.fromPath(path));
     }
 
+    /** 返回路径对应语言的适配器；该语言不可用时返回空 Optional。 */
     Optional<TreeSitterLanguageAdapter> adapter(String path) {
         return Optional.ofNullable(adapters.get(CodeLanguage.fromPath(path)));
     }
 
+    /** 返回启动时探测到的语言能力降级诊断（如某语言解析器不可用）。 */
     public List<CodeScanDiagnostic> capabilityDiagnostics() {
         return capabilities;
     }

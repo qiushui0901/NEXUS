@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** Analyzes structured claims without mutating or automatically arbitrating source evidence. */
+/** 分析结构化声明之间的知识冲突，不修改或自动仲裁原始证据。 */
 @RestController
 @RequestMapping("/api/knowledge/conflicts")
 public class KnowledgeConflictController {
@@ -27,6 +27,7 @@ public class KnowledgeConflictController {
         this.accessGuard = accessGuard;
     }
 
+    /** 分析请求中的声明并返回冲突报告。对应 POST /api/knowledge/conflicts/analyze。 */
     @RequiresPermission(Permission.OPERATE)
     @PostMapping("/analyze")
     public KnowledgeConflictReport analyze(@Valid @RequestBody AnalyzeRequest request,

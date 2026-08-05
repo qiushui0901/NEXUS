@@ -70,7 +70,7 @@ public class DevelopmentPlanService {
         this.citationService = citationService;
     }
 
-    /** Backward-compatible constructor kept for focused unit tests and embedded consumers. */
+    /** 向后兼容构造器，供聚焦单元测试与嵌入式调用方使用。 */
     public DevelopmentPlanService(RagProperties properties, RetrievalPipeline retrievalPipeline,
                                   ChatClient chatClient, RagObservability observability,
                                   KnowledgeConflictService conflictService) {
@@ -78,14 +78,14 @@ public class DevelopmentPlanService {
                 new EvidenceCitationService());
     }
 
-    /** Backward-compatible constructor kept for focused unit tests and embedded consumers. */
+    /** 向后兼容构造器，供聚焦单元测试与嵌入式调用方使用。 */
     public DevelopmentPlanService(RagProperties properties, RetrievalPipeline retrievalPipeline,
                                   ChatClient chatClient, RagObservability observability) {
         this(properties, retrievalPipeline, chatClient, observability, new KnowledgeConflictService(),
                 new EvidenceCitationService());
     }
 
-    /** Backward-compatible constructor kept for focused unit tests and embedded consumers. */
+    /** 向后兼容构造器，供聚焦单元测试与嵌入式调用方使用。 */
     public DevelopmentPlanService(RagProperties properties, ProjectRegistry projectRegistry,
                                   QueryRouter queryRouter, QdrantHybridStore documentStore,
                                   CodeKnowledgeService codeKnowledgeService, ChatClient chatClient,
@@ -95,7 +95,17 @@ public class DevelopmentPlanService {
                 new EvidenceCitationService());
     }
 
-    /** 结合需求文档与代码检索结果，生成可落地的开发入手建议。 */
+    /**
+     * 结合需求文档与代码检索结果，生成可落地的开发入手建议。
+     * 各环节优先采用模型生成内容，缺省或模型失败时回退到规则化内容，并统一完成证据引用。
+     *
+     * @param query      用户提出的需求问题
+     * @param documentId 需求文档 ID，可空（由检索管线解析）
+     * @param version    需求文档版本，可空（由检索管线解析）
+     * @param projectId  项目 ID，可空（由路由解析）
+     * @param limit      检索证据条数上限，可空（使用默认值）
+     * @return 含各开发环节、证据引用与状态诊断的完整开发方案
+     */
     public DevelopmentPlanResponse plan(String query, String documentId, String version, String projectId, Integer limit) {
         RagOutcome<RetrievalBundle> retrieval = retrievalPipeline.execute(new RetrievalRequest(
                 query, RetrievalProfile.DEVELOPMENT_PLAN, projectId, documentId, version, limit));
@@ -181,6 +191,7 @@ public class DevelopmentPlanService {
                 citations);
     }
 
+    /** 将检索到的需求与代码证据转换为知识声明，交给冲突分析服务做版本一致性检查。 */
     private KnowledgeConflictReport retrievalConflictReport(RetrievalBundle bundle) {
         List<KnowledgeClaim> claims = new ArrayList<>();
         for (ChunkRecord chunk : bundle.requirementEvidence()) {
@@ -208,6 +219,7 @@ public class DevelopmentPlanService {
         return conflictService.analyze(bundle.resolvedProjectId(), bundle.version(), claims);
     }
 
+    /** 带产品上下文调用生成模型产出方案草稿；无证据或模型失败时降级为空草稿并记录可观测结果。 */
     private RagOutcome<PlanDraft> draftWithProductContext(String query, List<ChunkRecord> documents,
                                                            List<CodeChunk> code, String documentId, String version,
                                                            EvidenceRegistry registry) {
@@ -541,6 +553,7 @@ public class DevelopmentPlanService {
         return value != null && !value.isBlank();
     }
 
+    /** 模型生成的完整方案草稿，各字段在构造时归一化，避免下游空指针。 */
     private record PlanDraft(
             DraftCitedText summary,
             List<DraftCitedText> productUnderstanding,
@@ -568,6 +581,7 @@ public class DevelopmentPlanService {
         }
     }
 
+    /** 带证据引用的草稿文本，文本与证据列表均不允许为 null。 */
     private record DraftCitedText(String text, List<String> evidenceIds) {
         private DraftCitedText {
             text = text == null ? "" : text;
@@ -579,6 +593,7 @@ public class DevelopmentPlanService {
         }
     }
 
+    /** 模型生成的单个开发环节草稿，关键问题与改动建议列表不允许为 null。 */
     private record DraftSection(String title, String purpose, List<String> keyQuestions,
                                 List<String> changeSuggestions, List<String> evidenceIds) {
         private DraftSection {

@@ -85,6 +85,7 @@ public class RequirementController {
                 .body(xlsx);
     }
 
+    /** 按项目解析需求 collection；未指定项目时返回 null 走全局默认。 */
     private String resolveRequirementCollection(String projectId) {
         if (projectId == null || projectId.isBlank()) {
             return null;
@@ -92,6 +93,7 @@ public class RequirementController {
         return projectRegistry.resolveRequirementCollection(projectId);
     }
 
+    /** 生成导出文件名：文档ID（缺省为「需求」）+ 版本 + 存疑.xlsx。 */
     private String resolveExportFilename(ReviewRequest request) {
         String prefix = request.documentId() != null ? request.documentId() : "需求";
         return prefix + request.version() + "存疑.xlsx";

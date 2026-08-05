@@ -31,7 +31,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
-/** Shared orchestration for routing, requirement retrieval, code retrieval and degradation semantics. */
+/** 共享编排：查询路由、需求/代码检索、重排与降级语义的统一入口。 */
 @Service
 public class RetrievalPipeline {
     private static final String DOCUMENT_STAGE = "qdrant.hybrid_search";
@@ -73,7 +73,7 @@ public class RetrievalPipeline {
         this.sparseVectorizer = sparseVectorizer;
     }
 
-    /** Compatibility constructor for focused tests that do not use Spring injection. */
+    /** 供聚焦测试使用的兼容构造器，不依赖 Spring 注入（无稀疏向量化器）。 */
     public RetrievalPipeline(RagProperties properties, ProjectRegistry projectRegistry, QueryRouter queryRouter,
                              QdrantHybridStore documentStore, CodeKnowledgeService codeKnowledgeService,
                              RagObservability observability, RequirementReranker requirementReranker,
@@ -83,7 +83,7 @@ public class RetrievalPipeline {
                 requirementReranker, resultCache, retrievalExecutor, circuitBreaker, new SparseVectorizer());
     }
 
-    /** Compatibility constructor for focused unit tests and pre-0.8 callers. */
+    /** 供聚焦单元测试与 0.8 版本前调用方使用的兼容构造器（无重排、无缓存、无熔断）。 */
     public RetrievalPipeline(RagProperties properties, ProjectRegistry projectRegistry, QueryRouter queryRouter,
                              QdrantHybridStore documentStore, CodeKnowledgeService codeKnowledgeService,
                              RagObservability observability) {
@@ -93,6 +93,14 @@ public class RetrievalPipeline {
                 new RetrievalCircuitBreaker(0, Duration.ZERO));
     }
 
+    /**
+     * 执行一次检索：路由解析项目 → 按 profile 并行检索需求证据/需求正文/代码证据 →
+     * 需求证据重排 → 选择父级代表 → 汇总警告与诊断。
+     * 各分支有超时与熔断保护；核心阶段全部失败且无任何结果时抛 {@link RagUnavailableException}。
+     *
+     * @param request 检索请求（query、profile、limit 等）
+     * @return 检索结果：证据、解析后的项目 ID 及状态/警告/诊断
+     */
     public RagOutcome<RetrievalBundle> execute(RetrievalRequest request) {
         String documentId = hasText(request.documentId()) ? request.documentId() : properties.knowledge().documentId();
         String version = hasText(request.version()) ? request.version() : properties.knowledge().version();
@@ -198,9 +206,9 @@ public class RetrievalPipeline {
     }
 
     /**
-     * Scoring several children cannot change the final parent order when every candidate belongs to the same parent.
-     * Select the query-relevant representative in that special case before skipping redundant BGE scoring.
-     * Multi-parent candidate sets still reach BGE child-first without an early parent collapse.
+     * 所有候选属于同一父级时，对子块逐条打分无法改变最终父级顺序；
+     * 该特殊情况先选出最相关的子块代表，跳过冗余的 BGE 打分。
+     * 多父级候选集仍走 BGE child-first 路径，不做提前合并。
      */
     private List<ChunkRecord> optimizeSingleParentRerank(
             String query, List<ChunkRecord> candidates, boolean childFirstRerank) {
@@ -213,10 +221,9 @@ public class RetrievalPipeline {
     }
 
     /**
-     * Keep BGE's first occurrence as the parent rank, then choose the most query-relevant child inside
-     * that parent. Enriched BGE passages contain shared parent context, so sibling scores can be dominated
-     * by the same parent text; the child-only sparse score selects a more precise evidence representative
-     * without changing parent ordering or making another external rerank call.
+     * 保留 BGE 给出的父级首次出现顺序，在父级内部选出与查询最相关的子块代表。
+     * 富化 BGE passage 共享父级上下文，兄弟分数可能被同一父文本主导；
+     * 用仅含子块的稀疏相似度挑选更精确的证据代表，不改变父级排序、也不再发起外部重排调用。
      */
     private List<ChunkRecord> selectParentRepresentatives(
             String query, List<ChunkRecord> rankedChildren, boolean childFirstRerank) {
@@ -248,6 +255,7 @@ public class RetrievalPipeline {
         return List.copyOf(representatives);
     }
 
+    /** 熔断未开则异步提交分支任务并设置超时，否则直接返回熔断失败结果。 */
     private <T> CompletableFuture<RagOutcome<List<T>>> submit(String stage,
                                                                Supplier<RagOutcome<List<T>>> action,
                                                                long timeoutMs) {
@@ -264,6 +272,7 @@ public class RetrievalPipeline {
                 RagOutcome.of(RagOutcomeStatus.NO_RESULTS, List.of(), stage, 0, 0));
     }
 
+    /** 等待分支结果并维护熔断状态；中断或执行异常（含超时）时返回该阶段的失败结果。 */
     private <T> RagOutcome<List<T>> await(CompletableFuture<RagOutcome<List<T>>> future, String stage,
                                           String warningCode, String warningMessage,
                                           String documentId, String version) {
@@ -289,6 +298,7 @@ public class RetrievalPipeline {
         }
     }
 
+    /** 执行实际检索动作并封装结果；异常时降级为 FAILED 结果并上报可观测性，而非向上抛出。 */
     private <T> RagOutcome<List<T>> retrieve(String stage, String documentId, String version,
                                               String warningCode, String warningMessage,
                                               Supplier<List<T>> action) {
@@ -309,6 +319,7 @@ public class RetrievalPipeline {
         }
     }
 
+    /** 按 key 去重并保持首次出现顺序。 */
     private <T> List<T> deduplicate(List<T> values, Function<T, String> keyFunction) {
         Map<String, T> unique = new LinkedHashMap<>();
         for (T value : values == null ? List.<T>of() : values) {
@@ -319,26 +330,31 @@ public class RetrievalPipeline {
         return List.copyOf(unique.values());
     }
 
+    /** 子块级去重键：优先 chunk id，缺失时退回父级键 + childOrder + contentHash。 */
     private String requirementCandidateKey(ChunkRecord chunk) {
         return hasText(chunk.id()) ? chunk.id()
                 : requirementKey(chunk) + ':' + chunk.childOrder() + ':' + chunk.contentHash();
     }
 
+    /** 父级去重键：优先 parentId，缺失时用 filename + parentOrder。 */
     private String requirementKey(ChunkRecord chunk) {
         return hasText(chunk.parentId()) ? chunk.parentId() : chunk.filename() + ':' + chunk.parentOrder();
     }
 
+    /** 代码块去重键：优先 chunk id，缺失时用 filePath + symbolName + startLine。 */
     private String codeKey(CodeChunk chunk) {
         return hasText(chunk.id()) ? chunk.id()
                 : chunk.filePath() + ':' + chunk.symbolName() + ':' + chunk.startLine();
     }
 
+    /** 汇总子结果中的警告与阶段诊断到外层集合。 */
     private void collect(RagOutcome<?> outcome, List<RagWarning> warnings,
                          List<RagStageDiagnostic> diagnostics) {
         warnings.addAll(outcome.warnings());
         diagnostics.addAll(outcome.stageDiagnostics());
     }
 
+    /** 将结果中的各阶段诊断逐条上报可观测性，附带首个警告代码（如有）。 */
     private void recordOutcome(RagOutcome<?> outcome, String documentId, String version) {
         for (RagStageDiagnostic diagnostic : outcome.stageDiagnostics()) {
             String warningCode = outcome.warnings().isEmpty() ? null : outcome.warnings().getFirst().code();

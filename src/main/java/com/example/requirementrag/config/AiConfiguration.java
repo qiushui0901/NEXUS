@@ -47,10 +47,12 @@ public class AiConfiguration {
                 properties.retrieval().resolvedEnrichedBgePassageEnabled());
     }
 
+    /** 构造 Qdrant 固定超时的请求工厂。 */
     SimpleClientHttpRequestFactory qdrantRequestFactory() {
         return requestFactory(QDRANT_CONNECT_TIMEOUT_MS, QDRANT_READ_TIMEOUT_MS);
     }
 
+    /** 构造 BGE 请求工厂，超时值取自配置。 */
     SimpleClientHttpRequestFactory bgeRequestFactory(RagProperties.Bge properties) {
         return requestFactory(properties.connectTimeoutMs(), properties.readTimeoutMs());
     }

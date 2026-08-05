@@ -22,7 +22,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
 
-/** Reads and materializes small, reviewable requirement snapshots that never contain vectors. */
+/** 读取并物化小巧、可审阅、永不含向量的需求快照。 */
 @Repository
 public class RequirementSnapshotRepository {
     private final ObjectMapper objectMapper;
@@ -33,6 +33,13 @@ public class RequirementSnapshotRepository {
         this.root = Path.of(properties.requirementSnapshotRootPath()).toAbsolutePath().normalize();
     }
 
+    /**
+     * 按业务版本查找快照：匹配 requirementVersion 或任一别名（alias）。
+     *
+     * @param projectId       项目标识
+     * @param businessVersion 业务版本号
+     * @return 匹配的快照，不存在时为空
+     */
     public Optional<Snapshot> findForBusinessVersion(String projectId, String businessVersion) {
         String project = VersionPathPolicy.identifier(projectId, "projectId");
         String version = VersionPathPolicy.identifier(businessVersion, "businessVersion");
@@ -41,6 +48,14 @@ public class RequirementSnapshotRepository {
                 .findFirst();
     }
 
+    /**
+     * 直接读取指定文档与需求版本的快照文件，并校验文件内元数据与请求一致。
+     *
+     * @param projectId        项目标识
+     * @param documentId       需求文档标识
+     * @param requirementVersion 需求版本
+     * @return 匹配的快照，文件缺失或元数据不一致时为空
+     */
     public Optional<Snapshot> find(String projectId, String documentId, String requirementVersion) {
         String project = VersionPathPolicy.identifier(projectId, "projectId");
         String document = VersionPathPolicy.identifier(documentId, "documentId");
@@ -53,7 +68,7 @@ public class RequirementSnapshotRepository {
         return Optional.of(snapshot);
     }
 
-    /** Builds the complete requirement state by replaying incremental snapshots from the baseline forward. */
+    /** 从基线快照向前重放增量条目，构建该版本的完整需求状态。 */
     public Optional<Snapshot> materialize(String projectId, String documentId, String requirementVersion) {
         String project = VersionPathPolicy.identifier(projectId, "projectId");
         String document = VersionPathPolicy.identifier(documentId, "documentId");
@@ -65,6 +80,12 @@ public class RequirementSnapshotRepository {
         return Optional.of(materialize(target, snapshotsByVersion, new HashSet<>(), new HashMap<>()));
     }
 
+    /**
+     * 列出项目下全部快照，按语义化版本号降序排序。
+     *
+     * @param projectId 项目标识
+     * @return 快照列表，项目目录不存在时为空
+     */
     public List<Snapshot> list(String projectId) {
         String project = VersionPathPolicy.identifier(projectId, "projectId");
         Path projectRoot = VersionPathPolicy.resolveBelow(root, project);
@@ -88,6 +109,7 @@ public class RequirementSnapshotRepository {
         return root;
     }
 
+    /** 递归重放基线到当前快照：UPSERT 写入条目、REMOVE 删除条目，带循环检测与结果缓存。 */
     private Snapshot materialize(Snapshot snapshot, Map<String, Snapshot> snapshotsByVersion,
                                  Set<String> visiting, Map<String, Snapshot> cache) {
         String key = snapshot.documentId() + "@" + snapshot.requirementVersion();
@@ -133,6 +155,7 @@ public class RequirementSnapshotRepository {
         }
     }
 
+    /** 从 JSON 文件读取快照并校验，失败统一转为 500 响应。 */
     private Snapshot read(Path file) {
         try {
             return validate(objectMapper.readValue(Files.readAllBytes(file), Snapshot.class), file);
@@ -141,6 +164,7 @@ public class RequirementSnapshotRepository {
         }
     }
 
+    /** 校验快照的 schema 版本、标识符合法性、条目不完整与 entryId 重复等约束。 */
     private Snapshot validate(Snapshot snapshot, Path file) {
         if (snapshot == null || snapshot.schemaVersion() != 1) {
             throw new IllegalArgumentException("不支持的需求快照格式");

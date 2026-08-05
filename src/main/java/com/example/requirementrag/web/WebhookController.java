@@ -44,6 +44,7 @@ public class WebhookController {
         this.webhookSecret = webhookSecret;
     }
 
+    /** 接收 GitLab push 事件：校验 HMAC 签名后按 Git 路径解析项目并异步触发增量代码索引。对应 POST /api/webhooks/gitlab。 */
     @PostMapping("/gitlab")
     @ResponseStatus(HttpStatus.ACCEPTED)
     public Map<String, String> gitlabPush(
@@ -60,6 +61,7 @@ public class WebhookController {
         return Map.of("status", "accepted", "projectId", projectId);
     }
 
+    /** 校验 webhook 签名：secret 未配置、签名缺失或摘要不匹配均返回 401。 */
     private void validateHmacSha256(byte[] body, String signature) {
         if (webhookSecret == null || webhookSecret.isBlank()) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Webhook secret 未配置");
@@ -80,6 +82,7 @@ public class WebhookController {
         }
     }
 
+    /** 使用 HmacSHA256 计算请求体的消息摘要。 */
     private byte[] hmacSha256(String secret, byte[] body) {
         try {
             Mac mac = Mac.getInstance("HmacSHA256");

@@ -20,6 +20,7 @@ import java.util.List;
 /**
  * 知识库引导服务：扫描 ZIP、等待 Qdrant 就绪并批量导入向量库。
  * 支持按 projectId 引导指定项目，或引导所有已启用的项目。
+ * 全局引导使用单次运行锁，项目引导使用项目级锁，进度统一通过 BootstrapState 追踪。
  */
 @Service
 public class KnowledgeBootstrapService {
@@ -34,6 +35,7 @@ public class KnowledgeBootstrapService {
     private final RagObservability observability;
     private final QdrantHybridStore store;
 
+    /** 注入配置、项目注册表、ZIP 加载器、导入服务、状态追踪、可观测性与向量存储。 */
     public KnowledgeBootstrapService(RagProperties properties, ProjectRegistry projectRegistry,
                                      ZipHtmlKnowledgeLoader zipLoader,
                                      RequirementIngestionService ingestionService,
@@ -126,6 +128,7 @@ public class KnowledgeBootstrapService {
         }
     }
 
+    /** 引导主流程：统计候选数 → 加载 ZIP 条目 → 等待 Qdrant 就绪 → 批量导入，并更新状态、可观测性与日志。 */
     private IngestResponse doBootstrap(String collection, Path zipPath, String documentId, String version) {
         try {
             bootstrapState.phase("scan");

@@ -204,6 +204,7 @@ public class CodeKnowledgeService {
         }
     }
 
+    /** 将旧版仅支持 Java 的扫描器适配为 CodeScanner 契约，兼容 pre-0.7 单元调用方。 */
     static CodeScanner legacy(JavaCodeScanner scanner) {
         return new CodeScanner() {
             @Override
@@ -243,6 +244,7 @@ public class CodeKnowledgeService {
         }
     }
 
+    /** 视图为空或 auto 时，按查询关键词推断 flow/class/method 视图，否则返回结构视图 structure。 */
     private String resolveView(String query, String view) {
         if (view != null && !view.isBlank() && !"auto".equalsIgnoreCase(view)) {
             return view;
@@ -259,6 +261,7 @@ public class CodeKnowledgeService {
         return "structure";
     }
 
+    /** 将检索命中的 chunk 按视图（flow/class/method/structure）组装为前端代码图谱：节点、分层、讲解步骤与命中列表。 */
     private static final class GraphBuilder {
         private final String query;
         private final String view;
@@ -277,6 +280,7 @@ public class CodeKnowledgeService {
             this.projectSides = projectSides == null ? Map.of() : projectSides;
         }
 
+        /** 按视图分发构建：flow 走调用链式连接，class/method 只取对应符号类型，其他走结构视图。 */
         private CodeGraphResponse build() {
             if ("flow".equals(view)) {
                 buildFlow();
@@ -311,6 +315,7 @@ public class CodeKnowledgeService {
             return "已更新";
         }
 
+        /** 结构视图：每个命中生成一个文件节点和符号节点，并以「文件包含符号」边相连。 */
         private void buildStructure() {
             for (CodeChunk hit : hits) {
                 String fileId = fileId(hit.filePath(), hit);
@@ -321,6 +326,7 @@ public class CodeKnowledgeService {
             }
         }
 
+        /** 链路视图：按命中顺序把类/方法符号串成 next 边，方法节点补充同文件的类容器边。 */
         private void buildFlow() {
             String previous = null;
             CodeChunk previousHit = null;
@@ -405,6 +411,7 @@ public class CodeKnowledgeService {
             };
         }
 
+        /** 固定注册 8 个业务分层的名称与描述，节点按所属层分组；层间按固定顺序排序。 */
         private List<CodeGraphResponse.CodeGraphLayer> layers() {
             Map<String, List<String>> nodeIdsByLayer = new LinkedHashMap<>();
             Map<String, String> layerNames = new LinkedHashMap<>();
@@ -434,6 +441,7 @@ public class CodeKnowledgeService {
                     .toList();
         }
 
+        /** 为非空分层生成讲解步骤：每层一句引导文案，最多带 5 个节点供前端展开。 */
         private List<CodeGraphResponse.CodeGraphTourStep> tour(List<CodeGraphResponse.CodeGraphLayer> layers) {
             List<CodeGraphResponse.CodeGraphTourStep> steps = new ArrayList<>();
             int order = 1;
@@ -477,6 +485,7 @@ public class CodeKnowledgeService {
             };
         }
 
+        /** 按符号名、路径与命中文本启发式归类代码角色（入口/编排/规则/配置等），用于分层与讲解文案。 */
         private String role(String type, String label, String filePath, String relevance) {
             String text = ((type == null ? "" : type) + " " + (label == null ? "" : label) + " "
                     + (filePath == null ? "" : filePath) + " " + (relevance == null ? "" : relevance)).toLowerCase(Locale.ROOT);
@@ -510,6 +519,7 @@ public class CodeKnowledgeService {
             return "相关实现";
         }
 
+        /** 将角色映射为前端展示分层 ID，文件节点一律归入 types 层。 */
         private String layerId(String role, String type) {
             if ("file".equals(type)) {
                 return "layer:types";
@@ -526,6 +536,7 @@ public class CodeKnowledgeService {
             };
         }
 
+        /** 按符号名与源码文本启发式归类方法/类/文件的具体职责（类走 classRole 分支）。 */
         private String role(CodeChunk hit) {
             String name = hit.symbolName() == null ? "" : hit.symbolName();
             String text = (name + " " + (hit.text() == null ? "" : hit.text())).toLowerCase(Locale.ROOT);
@@ -556,6 +567,7 @@ public class CodeKnowledgeService {
             return "业务实现";
         }
 
+        /** 按类名后缀与文本关键词归类类的职责（返回结构/请求参数/业务编排/配置承载等）。 */
         private String classRole(String name, String text) {
             String lowerName = name == null ? "" : name.toLowerCase(Locale.ROOT);
             if (containsAny(lowerName, "result", "response", "vo", "dto")) {

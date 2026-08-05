@@ -56,7 +56,10 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-/** Builds versioned knowledge drafts from requirement-version deltas without publishing them. */
+/**
+ * 版本知识构建流水线：基于需求版本增量差异（新增/修改/删除）生成可审核的知识草稿，
+ * 不直接发布；产物以 build.json 与 wiki-source.json 原子落盘，并初始化草稿状态机。
+ */
 @Service
 public class VersionKnowledgeBuildPipeline {
     private static final Logger log = LoggerFactory.getLogger(VersionKnowledgeBuildPipeline.class);
@@ -76,6 +79,7 @@ public class VersionKnowledgeBuildPipeline {
     private final Path draftRoot;
     private final KnowledgeDraftLifecycleService draftLifecycleService;
 
+    /** 注入 JSON 序列化器、项目注册表、向量存储、检索流水线与草稿生命周期服务。 */
     @Autowired
     public VersionKnowledgeBuildPipeline(ObjectMapper objectMapper, WikiProperties wikiProperties,
                                          ProjectRegistry projectRegistry, QdrantHybridStore documentStore,
@@ -89,17 +93,19 @@ public class VersionKnowledgeBuildPipeline {
         this.draftLifecycleService = draftLifecycleService;
     }
 
-    /** Keeps direct test/embedded construction source-compatible. */
+    /** 兼容直接测试/嵌入式构造的简化构造器（不携带草稿生命周期服务，构建后不初始化草稿）。 */
     public VersionKnowledgeBuildPipeline(ObjectMapper objectMapper, WikiProperties wikiProperties,
                                          ProjectRegistry projectRegistry, QdrantHybridStore documentStore,
                                          RetrievalPipeline retrievalPipeline) {
         this(objectMapper, wikiProperties, projectRegistry, documentStore, retrievalPipeline, null);
     }
 
+    /** 以 “system” 为操作人执行一次构建。 */
     public BuildResult build(BuildRequest request) {
         return build(request, "system");
     }
 
+    /** 执行构建主流程：读取当前/基线版本块 → 生成变化候选 → 组装功能草稿 → 落盘产物与 Wiki 源 → 初始化草稿元数据。 */
     public BuildResult build(BuildRequest request, String actor) {
         String projectId = identifier(request.projectId(), "projectId");
         String version = identifier(request.version(), "version");
@@ -151,6 +157,7 @@ public class VersionKnowledgeBuildPipeline {
                 target.toString(), generatedAt, uniqueWarnings(warnings));
     }
 
+    /** 将单个变化候选转换为功能事实草稿：检索代码证据、汇总产品规则与测试要点，并计算置信度。 */
     private FeatureFactDraft toFeature(BuildRequest request, String projectId, String version,
                                        Candidate candidate, Set<String> usedIds, List<RagWarning> warnings) {
         String title = title(candidate.filename());
@@ -197,6 +204,7 @@ public class VersionKnowledgeBuildPipeline {
                 "PENDING_REVIEW");
     }
 
+    /** 将功能草稿列表转换为 Wiki 页面源（VersionSource），统一标注待审核状态与缺失证据。 */
     private VersionSource toWikiSource(BuildRequest request, RagProperties.ProjectConfig project, String version,
                                        String generatedAt, List<FeatureFactDraft> features) {
         String projectName = hasText(project.name()) ? project.name() : project.id();
@@ -230,6 +238,7 @@ public class VersionKnowledgeBuildPipeline {
                 safe(request.baseCodeCommit()), safe(request.codeCommit()), generatedAt, pages);
     }
 
+    /** 以暂存目录方式原子落盘 build.json 与 wiki-source.json，整体移入目标草稿目录。 */
     private Path writeDraft(String projectId, String version, String buildId,
                             BuildArtifact artifact, VersionSource wikiSource) {
         Path versionRoot = resolveBelow(draftRoot, projectId, version);
@@ -252,6 +261,7 @@ public class VersionKnowledgeBuildPipeline {
         }
     }
 
+    /** 序列化对象为 JSON 并校验不含向量、Qdrant 运行数据或凭据等敏感字段后写入文件。 */
     private void writeSafeJson(Path file, Object value) throws IOException {
         String json = objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(value) + System.lineSeparator();
         if (FORBIDDEN_FIELD.matcher(json).find()) {
@@ -260,6 +270,7 @@ public class VersionKnowledgeBuildPipeline {
         Files.writeString(file, json, StandardCharsets.UTF_8);
     }
 
+    /** 原子移动暂存目录到草稿目录；目标已存在则报错，文件系统不支持原子移动时回退普通移动。 */
     private void move(Path source, Path target) throws IOException {
         if (Files.exists(target)) {
             throw new IllegalStateException("知识草稿目录已存在");
@@ -272,6 +283,7 @@ public class VersionKnowledgeBuildPipeline {
         }
     }
 
+    /** 生成变化候选：全量构建取全部条目；增量构建对比基线，分离出新增/修改与删除条目。 */
     private List<Candidate> candidates(List<ChunkRecord> current, List<ChunkRecord> baseline, boolean fullVersion) {
         if (fullVersion) {
             return groupCandidates(current.stream().map(chunk -> new VersionedChunk(chunk, chunk.version())).toList(),
@@ -287,6 +299,7 @@ public class VersionKnowledgeBuildPipeline {
         return groupCandidates(changed, removed, null);
     }
 
+    /** 按文件名分组变化/删除条目为候选：推断变化类型（MODIFIED / ADDED_OR_CHANGED / REMOVED），证据按 parentOrder 排序。 */
     private List<Candidate> groupCandidates(List<VersionedChunk> changed, List<VersionedChunk> removed,
                                             String fixedChangeType) {
         Map<String, CandidateParts> grouped = new LinkedHashMap<>();
@@ -306,6 +319,7 @@ public class VersionKnowledgeBuildPipeline {
         }).sorted(Comparator.comparing(Candidate::filename)).toList();
     }
 
+    /** 滚动读取某文档指定版本的全部块数据并去重父级，失败时抛出统一异常。 */
     private List<ChunkRecord> readVersion(String collection, String documentId, String version) {
         try {
             return deduplicateParents(documentStore.scrollVersion(collection, documentId, version));
@@ -316,26 +330,31 @@ public class VersionKnowledgeBuildPipeline {
         }
     }
 
+    /** 去重父级块（委托给 RequirementChunkDiff）。 */
     private List<ChunkRecord> deduplicateParents(List<ChunkRecord> chunks) {
         return RequirementChunkDiff.deduplicate(chunks);
     }
 
+    /** 构造需求证据条目：来源为需求块文件名，位置标注 parentOrder，待审核状态。 */
     private Evidence requirementEvidence(ChunkRecord chunk, String evidenceVersion) {
         return new Evidence("REQUIREMENT", filename(chunk), filename(chunk), evidenceVersion,
                 "parentOrder=" + chunk.parentOrder(), excerpt(chunk.parentText(), 360), "", "", "",
                 "PENDING_REVIEW");
     }
 
+    /** 构造代码证据条目：标注行号区间与提交、文件、符号信息，待审核状态。 */
     private Evidence codeEvidence(CodeChunk chunk, String commit, String version, String projectId) {
         return new Evidence("CODE", safe(chunk.symbolName()), projectId, version,
                 "lines=" + chunk.startLine() + '-' + chunk.endLine(), excerpt(chunk.text(), 360), safe(commit),
                 safe(chunk.filePath()), safe(chunk.symbolName()), "PENDING_REVIEW");
     }
 
+    /** 冲突检测：当前阶段不自动生成冲突，返回空列表交由人工审核补充。 */
     private List<String> featureConflicts(String title) {
         return List.of();
     }
 
+    /** 由标题生成唯一功能 ID：转 kebab-case，冲突时依次追加文件哈希后缀与数字后缀。 */
     private String uniqueFeatureId(String title, String filename, Set<String> usedIds) {
         String base = title.replaceAll("([a-z0-9])([A-Z])", "$1-$2")
                 .toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("^-|-$", "");
@@ -348,6 +367,7 @@ public class VersionKnowledgeBuildPipeline {
         return candidate;
     }
 
+    /** 从文件名提取标题：去掉目录前缀与扩展名。 */
     private String title(String filename) {
         String normalized = filename(filename);
         int slash = normalized.lastIndexOf('/');
@@ -356,14 +376,17 @@ public class VersionKnowledgeBuildPipeline {
         return dot > 0 ? name.substring(0, dot) : name;
     }
 
+    /** 规范化块的文件名（反斜杠转正斜杠），缺失时用占位名。 */
     private String filename(ChunkRecord chunk) {
         return hasText(chunk.filename()) ? chunk.filename().replace('\\', '/') : "unknown-requirement";
     }
 
+    /** 规范化文件名字符串（反斜杠转正斜杠），缺失时用占位名。 */
     private String filename(String value) {
         return hasText(value) ? value.replace('\\', '/') : "unknown-requirement";
     }
 
+    /** 计算字符串的 SHA-256 十六进制摘要。 */
     private String sha256(String value) {
         try {
             return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
@@ -373,6 +396,7 @@ public class VersionKnowledgeBuildPipeline {
         }
     }
 
+    /** 在根目录下拼接多级标识符路径并归一化，校验结果不越出根目录。 */
     private Path resolveBelow(Path root, String... parts) {
         Path result = root;
         for (String part : parts) result = result.resolve(identifier(part, "path"));
@@ -381,6 +405,7 @@ public class VersionKnowledgeBuildPipeline {
         return result;
     }
 
+    /** 校验并规范化标识符：拒绝含不安全字符或路径穿越（..）的值。 */
     private String identifier(String value, String field) {
         String normalized = safe(value).trim();
         if (!SAFE_IDENTIFIER.matcher(normalized).matches() || normalized.contains("..")) {
@@ -389,11 +414,13 @@ public class VersionKnowledgeBuildPipeline {
         return normalized;
     }
 
+    /** 折叠连续空白并截断文本到指定最大字符数（超长以省略号结尾）。 */
     private String excerpt(String value, int maxChars) {
         String normalized = safe(value).replaceAll("\\s+", " ").trim();
         return normalized.length() <= maxChars ? normalized : normalized.substring(0, maxChars) + "…";
     }
 
+    /** 按 “阶段+代码” 键去重警告列表。 */
     private List<RagWarning> uniqueWarnings(List<RagWarning> warnings) {
         Map<String, RagWarning> unique = new LinkedHashMap<>();
         for (RagWarning warning : warnings) {
@@ -402,12 +429,14 @@ public class VersionKnowledgeBuildPipeline {
         return List.copyOf(unique.values());
     }
 
+    /** 拼接两段证据列表为不可变副本。 */
     private List<Evidence> concat(List<Evidence> first, List<Evidence> second) {
         List<Evidence> result = new ArrayList<>(first);
         result.addAll(second);
         return List.copyOf(result);
     }
 
+    /** 递归删除目录：先删子项再删目录本身。 */
     private void deleteRecursively(Path root) throws IOException {
         if (!Files.exists(root)) return;
         try (Stream<Path> paths = Files.walk(root)) {
@@ -415,6 +444,7 @@ public class VersionKnowledgeBuildPipeline {
         }
     }
 
+    /** 尽力而为的静默删除：失败仅记录警告，不抛出。 */
     private void deleteQuietly(Path root) {
         try {
             deleteRecursively(root);
@@ -423,22 +453,28 @@ public class VersionKnowledgeBuildPipeline {
         }
     }
 
+    /** 判断字符串非空（非 null 且不含空白）。 */
     private boolean hasText(String value) {
         return value != null && !value.isBlank();
     }
 
+    /** null 安全取值：空引用返回空字符串。 */
     private String safe(String value) {
         return value == null ? "" : value;
     }
 
+    /** 带版本标注的需求块。 */
     private record VersionedChunk(ChunkRecord chunk, String version) {}
 
+    /** 构建候选：文件名、变化类型与证据块列表。 */
     private record Candidate(String filename, String changeType, List<VersionedChunk> evidence) {
+        /** 候选主文本：取首条证据的父文本，无证据时退回文件名。 */
         private String primaryText() {
             return evidence.isEmpty() ? filename : evidence.getFirst().chunk().parentText();
         }
     }
 
+    /** 按文件分组时的聚合容器：收集新增/修改块与删除块。 */
     private static final class CandidateParts {
         private final List<VersionedChunk> changed = new ArrayList<>();
         private final List<VersionedChunk> removed = new ArrayList<>();

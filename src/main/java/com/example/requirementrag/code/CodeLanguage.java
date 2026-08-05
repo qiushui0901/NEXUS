@@ -2,7 +2,7 @@ package com.example.requirementrag.code;
 
 import java.util.Locale;
 
-/** Languages understood by the code intelligence index. */
+/** 代码智能索引支持的编程语言。 */
 public enum CodeLanguage {
     JAVA("java"), GO("go"), PYTHON("python"), TYPESCRIPT("typescript"), KOTLIN("kotlin"), UNKNOWN("unknown");
 
@@ -16,6 +16,7 @@ public enum CodeLanguage {
         return id;
     }
 
+    /** 根据文件路径后缀判断语言，无法识别时返回 UNKNOWN。 */
     public static CodeLanguage fromPath(String path) {
         String value = path == null ? "" : path.toLowerCase(Locale.ROOT);
         if (value.endsWith(".java")) return JAVA;

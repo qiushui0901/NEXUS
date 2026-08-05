@@ -69,10 +69,12 @@ public class HttpBgeReranker implements BgeReranker {
     }
 
 
+    /** 根据配置选择发送富化 passage（child + parent 上下文）还是仅 child 文本。 */
     private String requestPassage(ChunkRecord chunk) {
         return enrichedPassageEnabled ? passage(chunk) : normalize(chunk.childText());
     }
 
+    /** 拼接 filename、child 文本与按 child 居中的 parent 上下文，构造富化 passage。 */
     static String passage(ChunkRecord chunk) {
         String child = bounded(normalize(chunk.childText()), MAX_CHILD_CHARACTERS);
         String parent = parentContext(normalize(chunk.parentText()), child, MAX_PARENT_CONTEXT_CHARACTERS);
@@ -81,6 +83,7 @@ public class HttpBgeReranker implements BgeReranker {
                 + "\nparent context:\n" + parent;
     }
 
+    /** 超长 parent 截断为 limit 长度，截断窗口以 child 匹配位置为中心，避免截掉相关内容。 */
     private static String parentContext(String parent, String child, int limit) {
         if (parent.length() <= limit) return parent;
         int match = child.isBlank() ? -1 : parent.indexOf(child);
@@ -89,10 +92,12 @@ public class HttpBgeReranker implements BgeReranker {
         return parent.substring(start, start + limit);
     }
 
+    /** 超出 limit 时从开头截断。 */
     private static String bounded(String value, int limit) {
         return value.length() <= limit ? value : value.substring(0, limit);
     }
 
+    /** 将连续空白折叠为单个空格并去除首尾空白；null 视为空串。 */
     private static String normalize(String value) {
         return value == null ? "" : value.replaceAll("\\s+", " ").trim();
     }

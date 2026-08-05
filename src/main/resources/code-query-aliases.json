@@ -1,0 +1,16 @@
+{
+  "流式对话": "chat stream",
+  "普通对话": "chat",
+  "AI 对话": "chat",
+  "搜索摘要": "search summary",
+  "用户搜索": "search user",
+  "笔记搜索": "search note",
+  "粉丝列表": "find fans list",
+  "关注列表": "find following list",
+  "子评论": "child comment",
+  "一级评论": "comment page list",
+  "取消点赞": "unlike",
+  "文件上传": "upload file",
+  "推荐": "recommend",
+  "热门": "trending"
+}

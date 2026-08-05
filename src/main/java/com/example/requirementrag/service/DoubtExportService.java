@@ -18,6 +18,11 @@ public class DoubtExportService {
 
     /**
      * 将存疑批次导出为 XLSX 字节数组，表头与产品评审模板对齐。
+     *
+     * @param batch   待导出的存疑批次，逐条存疑生成一行数据
+     * @param version 需求版本，拼入工作表名作为后缀
+     * @return XLSX 文件字节
+     * @throws IOException 工作簿写入失败时抛出
      */
     public byte[] toXlsx(DoubtBatch batch, String version) throws IOException {
         try (XSSFWorkbook workbook = new XSSFWorkbook(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
@@ -70,6 +75,7 @@ public class DoubtExportService {
         };
     }
 
+    /** 生成工作表名「需求存疑[-版本]」，并截断到 Excel 允许的 31 字符上限。 */
     private String sheetName(String version) {
         String suffix = version == null || version.isBlank() ? "" : "-" + version.trim();
         String name = "需求存疑" + suffix;

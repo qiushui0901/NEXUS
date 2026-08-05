@@ -29,12 +29,13 @@ public record DevelopmentPlanResponse(
         KnowledgeConflictReport conflictReport,
         PlanCitationBundle citations
 ) {
+    /** 规范化构造：conflictReport 与 citations 为 null 时补默认空值，避免下游空指针。 */
     public DevelopmentPlanResponse {
         conflictReport = conflictReport == null ? KnowledgeConflictReport.empty(null, version) : conflictReport;
         citations = citations == null ? PlanCitationBundle.empty() : citations;
     }
 
-    /** Backward-compatible constructor for callers that predate evidence citations. */
+    /** 兼容旧构造器：供缺少引用（citations）字段的调用方使用。 */
     public DevelopmentPlanResponse(
             String query,
             String documentId,
@@ -60,7 +61,7 @@ public record DevelopmentPlanResponse(
                 status, warnings, stageDiagnostics, conflictReport, PlanCitationBundle.empty());
     }
 
-    /** Backward-compatible constructor for callers that predate conflict reporting. */
+    /** 兼容旧构造器：供缺少冲突报告（conflictReport）字段的调用方使用。 */
     public DevelopmentPlanResponse(
             String query,
             String documentId,

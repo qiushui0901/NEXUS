@@ -40,7 +40,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Read-only MCP facade over the existing NEXUS domain services. */
+/**
+ * 面向既有 NEXUS 领域服务的只读 MCP 工具门面：
+ * 暴露需求检索、代码检索、源码读取、开发计划、Wiki 页面、版本差异、
+ * 代码图/影响分析、需求存疑与冲突检查等工具，全部经 {@link McpToolInvocationService}
+ * 统一完成认证、权限、审计与指标，返回结果经 {@link McpResponsePolicy} 做边界约束与脱敏。
+ */
 @Component
 @ConditionalOnProperty(prefix = "app.mcp", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class NexusMcpTools {
@@ -76,7 +81,7 @@ public class NexusMcpTools {
         this.knowledgeConflictService = knowledgeConflictService;
     }
 
-    /** Compatibility constructor for pre-0.7 unit callers. */
+    /** 为未提供代码图/评审/冲突服务的旧版调用方（0.7 之前）保留的兼容构造器。 */
     NexusMcpTools(RetrievalPipeline retrievalPipeline, CodeKnowledgeService codeKnowledgeService,
                   DevelopmentPlanService developmentPlanService, WikiRepository wikiRepository,
                   VersionComparisonService versionComparisonService, McpResponsePolicy policy,
@@ -85,7 +90,7 @@ public class NexusMcpTools {
                 versionComparisonService, policy, invocations, null, null, null);
     }
 
-    /** Compatibility constructor for 0.7 callers that provide code graph and review services. */
+    /** 为提供代码图与评审服务但尚未接入冲突服务的 0.7 调用方保留的兼容构造器。 */
     NexusMcpTools(RetrievalPipeline retrievalPipeline, CodeKnowledgeService codeKnowledgeService,
                   DevelopmentPlanService developmentPlanService, WikiRepository wikiRepository,
                   VersionComparisonService versionComparisonService, McpResponsePolicy policy,
@@ -95,6 +100,18 @@ public class NexusMcpTools {
                 versionComparisonService, policy, invocations, codeIntelligenceService, reviewFacadeService, null);
     }
 
+    /**
+     * 检索版本作用域下的需求证据，返回带稳定证据 ID 的命中列表。
+     * 结果条数收敛到 [1,20]，证据条目受限，且标记需求正文是否被截断。
+     *
+     * @param context    MCP 同步请求上下文
+     * @param query      自然语言需求查询
+     * @param projectId  项目 ID，null 时走默认项目
+     * @param documentId 需求文档 ID，可为 null
+     * @param version    需求版本，可为 null
+     * @param limit      最大命中条数，1-20
+     * @return 需求命中列表 + 证据 + 状态/截断标记
+     */
     @McpTool(
             name = "nexus_search_requirements",
             description = "Search version-scoped requirement evidence. Returns stable requirement evidence IDs.",
@@ -131,6 +148,15 @@ public class NexusMcpTools {
                 });
     }
 
+    /**
+     * 检索仓库代码，返回带稳定代码证据 ID 的截断摘录列表。
+     *
+     * @param context   MCP 同步请求上下文
+     * @param query     自然语言代码查询
+     * @param projectId 项目 ID，null 时走默认项目
+     * @param limit     最大命中条数，1-20
+     * @return 代码命中列表 + 证据 + 截断标记
+     */
     @McpTool(
             name = "nexus_search_code",
             description = "Search repository code and return bounded excerpts with stable code evidence IDs.",
@@ -161,6 +187,17 @@ public class NexusMcpTools {
                 });
     }
 
+    /**
+     * 从仓库相对路径读取一段受长度限制的源码摘录。
+     * 路径会校验为仓库相对路径，结束行收敛到起始行后的 200 行内。
+     *
+     * @param context    MCP 同步请求上下文
+     * @param filePath   仓库相对源码路径
+     * @param projectId  项目 ID，null 时走默认项目
+     * @param startLine  起始行（从 1 计），可为 null
+     * @param endLine    结束行，上限 200 行，可为 null
+     * @return 源码摘录 + 证据 + 截断标记
+     */
     @McpTool(
             name = "nexus_get_source",
             description = "Read a bounded source excerpt from a repository-relative path.",
@@ -192,6 +229,17 @@ public class NexusMcpTools {
                 });
     }
 
+    /**
+     * 为需求与代码范围生成带证据引用的开发计划（需 OPERATE 权限）。
+     *
+     * @param context    MCP 同步请求上下文
+     * @param query      开发任务或需求查询
+     * @param projectId  项目 ID，null 时走默认项目
+     * @param documentId 需求文档 ID，可为 null
+     * @param version    需求版本，可为 null
+     * @param limit      最大证据命中条数，1-20
+     * @return 开发计划数据 + 证据引用 + 质量信息 + 截断标记
+     */
     @McpTool(
             name = "nexus_development_plan",
             description = "Generate an evidence-cited development plan for a requirement and code scope.",
@@ -218,6 +266,15 @@ public class NexusMcpTools {
                 });
     }
 
+    /**
+     * 读取一篇已发布、按版本作用的 NEXUS Wiki 页面。
+     *
+     * @param context    MCP 同步请求上下文
+     * @param version    已发布的 Wiki 版本
+     * @param featureId  稳定的 Wiki 特性 ID
+     * @param projectId  项目 ID，null 时走默认项目
+     * @return 页面数据 + 受限证据列表 + 截断标记
+     */
     @McpTool(
             name = "nexus_wiki_page",
             description = "Read a published, versioned NEXUS Wiki page.",
@@ -242,6 +299,16 @@ public class NexusMcpTools {
                 });
     }
 
+    /**
+     * 比较两个版本之间的需求、代码、测试与 Wiki 知识差异；
+     * 起止版本必填且必须不同。
+     *
+     * @param context      MCP 同步请求上下文
+     * @param fromVersion  基准版本
+     * @param toVersion    目标版本
+     * @param projectId    项目 ID，null 时走默认项目
+     * @return 四类差异数据 + 起止版本信息 + 截断标记
+     */
     @McpTool(
             name = "nexus_version_diff",
             description = "Compare requirement, code, test, and Wiki knowledge between two versions.",
@@ -267,6 +334,17 @@ public class NexusMcpTools {
                 });
     }
 
+    /**
+     * 遍历最新项目/提交作用域下的静态符号调用图。
+     *
+     * @param context   MCP 同步请求上下文
+     * @param symbol    限定名或简单符号名
+     * @param projectId 项目 ID，null 时走默认项目
+     * @param direction inbound 或 outbound，可为 null
+     * @param depth     遍历深度，1-5，可为 null
+     * @param limit     最大图关系数，1-200，可为 null
+     * @return 代码图数据 + 可用性/警告 + 截断标记
+     */
     @McpTool(
             name = "nexus_code_graph",
             description = "Traverse the latest project/commit-scoped static symbol call graph.",
@@ -289,6 +367,19 @@ public class NexusMcpTools {
                 });
     }
 
+    /**
+     * 分析单个符号或 Git 提交区间（fromCommit+toCommit）的入向影响；
+     * 两种模式必须恰好选择一种。
+     *
+     * @param context     MCP 同步请求上下文
+     * @param projectId   项目 ID，null 时走默认项目
+     * @param symbol      符号选择器，与提交模式互斥
+     * @param fromCommit  基准 Git 提交，可为 null
+     * @param toCommit    目标 Git 提交，可为 null
+     * @param depth       遍历深度，1-5，可为 null
+     * @param limit       最大图关系数，1-200，可为 null
+     * @return 影响分析数据 + 可用性/警告 + 截断标记
+     */
     @McpTool(
             name = "nexus_impact_analysis",
             description = "Analyze inbound impact for one symbol or a Git commit range.",
@@ -321,6 +412,7 @@ public class NexusMcpTools {
                 });
     }
 
+    /** 把代码图服务的警告收敛为统一 code-graph 域警告，最多 20 条。 */
     private List<RagWarning> graphWarnings(CodeIntelligenceResponse data) {
         return data.warnings().stream()
                 .limit(20)
@@ -329,6 +421,16 @@ public class NexusMcpTools {
                 .toList();
     }
 
+    /**
+     * 基于版本作用域证据生成受长度限制的需求存疑清单（需 OPERATE 权限）。
+     *
+     * @param context    MCP 同步请求上下文
+     * @param documentId 需求文档 ID
+     * @param version    需求版本
+     * @param module     可选模块过滤
+     * @param projectId  项目 ID，null 时走默认项目
+     * @return 存疑命中列表（限 50 条）+ 条数 + 截断标记
+     */
     @McpTool(
             name = "nexus_review_doubts",
             description = "Generate a bounded requirement doubt list from version-scoped evidence.",
@@ -352,6 +454,15 @@ public class NexusMcpTools {
                 });
     }
 
+    /**
+     * 对结构化需求/代码/测试/Wiki claims 做确定性冲突检查（需 OPERATE 权限）。
+     *
+     * @param context   MCP 同步请求上下文
+     * @param version   所有 claims 必须归属的业务版本
+     * @param claims    待比较的结构化证据 claims
+     * @param projectId 项目 ID，null 时走默认项目
+     * @return 冲突报告 + 状态/冲突数 + 规范化警告 + 截断标记
+     */
     @McpTool(
             name = "nexus_conflict_check",
             description = "Deterministically check structured requirement, code, test, and Wiki claims for conflicts.",
@@ -377,6 +488,14 @@ public class NexusMcpTools {
                 });
     }
 
+    /**
+     * 执行底层依赖调用，把「预期内不可用」统一转换为 {@link McpDependencyUnavailableException}：
+     * IO 异常、状态异常直接转换；5xx 的 HTTP 状态异常也视为依赖不可用，其余状态原样抛出。
+     *
+     * @param call 底层依赖调用
+     * @param <T>  返回值类型
+     * @return 依赖调用结果
+     */
     private <T> T dependency(DependencyCall<T> call) {
         try {
             return call.get();
@@ -392,11 +511,13 @@ public class NexusMcpTools {
         }
     }
 
+    /** 底层依赖调用抽象：允许抛出 IO 异常。 */
     @FunctionalInterface
     private interface DependencyCall<T> {
         T get() throws IOException;
     }
 
+    /** 把开发计划响应整理为对外 Map：各文本字段截断、分节限 20 条。 */
     private Map<String, Object> developmentPlanData(DevelopmentPlanResponse plan) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("status", plan.status());
@@ -418,6 +539,7 @@ public class NexusMcpTools {
         return Map.copyOf(data);
     }
 
+    /** 开发计划是否因任一字段超长或分节超限（20 条）而被截断。 */
     private boolean developmentPlanTruncated(DevelopmentPlanResponse plan) {
         if (policy.textTruncated(plan.summary())
                 || policy.textListTruncated(plan.productUnderstanding())
@@ -436,6 +558,7 @@ public class NexusMcpTools {
                         || policy.textListTruncated(section.changeSuggestions()));
     }
 
+    /** 把版本比较报告整理为对外 Map：四类差异（需求/代码/测试/Wiki）各限 20 条变更，路径做相对化处理。 */
     private Map<String, Object> versionDiffData(VersionComparisonReport report) {
         Map<String, Object> requirements = Map.of(
                 "availability", report.requirements().availability(),
@@ -502,6 +625,7 @@ public class NexusMcpTools {
                 "wiki", wiki);
     }
 
+    /** 版本比较结果是否因任一变更列表超 20 条或字段超长而被截断。 */
     private boolean versionDiffTruncated(VersionComparisonReport report) {
         return report.requirements().changes().size() > 20
                 || report.code().changes().size() > 20
@@ -517,6 +641,7 @@ public class NexusMcpTools {
                 policy.textTruncated(change.featureId()) || policy.textTruncated(change.title()));
     }
 
+    /** 尽力把路径转为仓库相对路径；失败（如空串、URI 或越界路径）时返回空串。 */
     private String safeRelativePath(String path) {
         if (path == null || path.isBlank()) {
             return "";
@@ -529,6 +654,7 @@ public class NexusMcpTools {
         }
     }
 
+    /** 把 Wiki 页面整理为对外 Map：各文本列表截断（限 20 条）、代码条目与关系受限。 */
     private Map<String, Object> wikiData(WikiModels.Page page) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("featureId", page.featureId());
@@ -547,6 +673,7 @@ public class NexusMcpTools {
         return Map.copyOf(data);
     }
 
+    /** Wiki 页面是否因证据超 40 条、任一字段超长或列表超限而被截断。 */
     private boolean wikiTruncated(WikiModels.Page page) {
         return page.evidence().size() > 40
                 || policy.textTruncated(page.title())
@@ -568,6 +695,7 @@ public class NexusMcpTools {
                         || policy.textTruncated(evidence.excerpt()));
     }
 
+    /** 字符串列表统一截断：最多 20 条，每条经 {@code policy} 截断；null 视为空列表。 */
     private List<String> bounded(List<String> values) {
         return values == null ? List.of() : values.stream().limit(20).map(policy::bounded).toList();
     }

@@ -35,7 +35,7 @@ import java.util.UUID;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-/** Validates versioned facts and publishes human-readable Markdown plus JSON artifacts. */
+/** 校验版本化事实，并发布人读 Markdown 与 JSON 产物。 */
 @Service
 public class WikiGenerationService {
     private static final Logger log = LoggerFactory.getLogger(WikiGenerationService.class);
@@ -55,6 +55,14 @@ public class WikiGenerationService {
         this.sourceRoot = Path.of(properties.sourcePath()).toAbsolutePath().normalize();
     }
 
+    /**
+     * 读取并校验 Wiki 源定义后，生成各页面的 JSON/Markdown 与版本索引，
+     * 再原子发布到项目/版本目录，并失效对应缓存。
+     *
+     * @param projectId 项目标识
+     * @param version   版本号
+     * @return 生成结果（页数、输出路径与生成时间）
+     */
     public GenerationResult generate(String projectId, String version) {
         String safeProject = WikiPathPolicy.identifier(projectId, "projectId");
         String safeVersion = WikiPathPolicy.identifier(version, "version");
@@ -106,6 +114,7 @@ public class WikiGenerationService {
         }
     }
 
+    /** 校验源定义整体及每个页面的必填字段、重复 featureId、关联引用完整性等约束。 */
     private void validate(VersionSource source, String projectId, String version) {
         if (source == null) throw new IllegalArgumentException("Wiki 源定义不能为空");
         if (source.schemaVersion() < 1 || source.schemaVersion() > 2) throw new IllegalArgumentException("不支持的 Wiki schemaVersion");
@@ -171,6 +180,7 @@ public class WikiGenerationService {
         }
     }
 
+    /** 将页面源数据补齐默认值（分类、引入版本、测试知识、版本变化、质量评估）并转为页面模型。 */
     private Page toPage(VersionSource source, PageSource page, String generatedAt) {
         String featureId = WikiPathPolicy.identifier(page.featureId(), "featureId");
         return new Page(
@@ -188,6 +198,7 @@ public class WikiGenerationService {
                 "pages/" + featureId + ".md");
     }
 
+    /** 将页面模型渲染为带 YAML 元头的 Markdown 文档。 */
     private String renderMarkdown(Page page) {
         StringBuilder out = new StringBuilder();
         out.append("---\n")
@@ -234,6 +245,7 @@ public class WikiGenerationService {
     }
 
 
+    /** 归一化测试知识，缺失时以“没有真实执行快照”兜底。 */
     private TestKnowledge testKnowledge(TestKnowledge value) {
         if (value == null) {
             return new TestKnowledge("NOT_AVAILABLE", "", "没有真实执行快照", List.of());
@@ -242,12 +254,14 @@ public class WikiGenerationService {
                 text(value.executionReference()), fallback(value.summary(), "没有真实执行快照"), list(value.cases()));
     }
 
+    /** 归一化版本变化，缺失时以“尚未记录结构化版本变化”兜底。 */
     private VersionChange versionChange(VersionChange value, String version) {
         if (value == null) return new VersionChange("UNKNOWN", "", version, "尚未记录结构化版本变化");
         return new VersionChange(fallback(value.changeType(), "UNKNOWN"), text(value.baseVersion()),
                 fallback(value.version(), version), fallback(value.summary(), "尚未记录结构化版本变化"));
     }
 
+    /** 计算知识质量：有定义时复用并补齐缺省值，否则按需求/代码证据缺失情况生成待评审质量。 */
     private KnowledgeQuality quality(KnowledgeQuality value, List<RequirementSource> requirements,
                                      List<CodeEntry> codeEntries) {
         if (value != null) {
@@ -284,11 +298,13 @@ public class WikiGenerationService {
         return "\"" + text(value).replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
     }
 
+    /** 以格式化 JSON 写文件，并补一个结尾换行。 */
     private void writeJson(Path file, Object value) throws IOException {
         objectMapper.writerWithDefaultPrettyPrinter().writeValue(file.toFile(), value);
         Files.writeString(file, Files.readString(file, StandardCharsets.UTF_8) + "\n", StandardCharsets.UTF_8);
     }
 
+    /** 原子替换发布目录：先备份旧版本，失败时回滚备份。 */
     private void publish(Path staging, Path target) throws IOException {
         synchronized (publishLock) {
             Files.createDirectories(target.getParent());
@@ -326,6 +342,7 @@ public class WikiGenerationService {
         }
     }
 
+    /** 递归删除目录树（先删子项后删自身）。 */
     private void deleteTree(Path path) throws IOException {
         if (!Files.exists(path)) return;
         try (Stream<Path> paths = Files.walk(path)) {

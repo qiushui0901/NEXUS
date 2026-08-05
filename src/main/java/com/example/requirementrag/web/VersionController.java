@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/** Manages version baselines and compares requirement, code, test and Wiki sources. */
+/** 版本基线管理接口：保存与查询基线，并对比需求、代码、测试与 Wiki 来源。 */
 @RestController
 @RequestMapping("/api/versions")
 public class VersionController {
@@ -39,6 +39,7 @@ public class VersionController {
         this.accessGuard = accessGuard;
     }
 
+    /** 保存版本基线清单。对应 PUT /api/versions/manifests。 */
     @RequiresPermission(Permission.WRITE)
     @PutMapping("/manifests")
     public VersionManifest save(@Valid @RequestBody VersionManifest manifest, HttpServletRequest request) {
@@ -46,6 +47,7 @@ public class VersionController {
         return manifests.save(manifest);
     }
 
+    /** 列出指定项目的全部版本基线。对应 GET /api/versions/manifests。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @GetMapping("/manifests")
     public List<VersionManifest> list(@RequestParam String projectId, HttpServletRequest request) {
@@ -53,6 +55,7 @@ public class VersionController {
         return manifestResolver.list(projectId);
     }
 
+    /** 获取指定版本号的基线清单。对应 GET /api/versions/manifests/{version}。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @GetMapping("/manifests/{version}")
     public VersionManifest get(@PathVariable String version, @RequestParam String projectId,
@@ -61,6 +64,7 @@ public class VersionController {
         return manifestResolver.get(projectId, version);
     }
 
+    /** 对比 fromVersion 与 toVersion 的差异并生成报告。对应 GET /api/versions/compare。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @GetMapping("/compare")
     public VersionComparisonReport compare(@RequestParam String projectId,
@@ -71,6 +75,7 @@ public class VersionController {
         return comparisons.compare(projectId, fromVersion, toVersion);
     }
 
+    /** 校验项目存在且当前用户有访问权。 */
     private void requireAccess(String projectId, HttpServletRequest request) {
         projectRegistry.require(projectId);
         accessGuard.requireProjectAccess(request, projectId);

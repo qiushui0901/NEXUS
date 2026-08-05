@@ -26,18 +26,28 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 
-/** Deterministic conflict detection for already structured, version-scoped knowledge claims. */
+/** 对已结构化、版本范围内的知识声明做确定性冲突检测。 */
 @Service
 public class KnowledgeConflictService {
     private static final int MAX_FACT_KEY_CHARS = 240;
     private static final int MAX_VALUE_CHARS = 2_000;
     private static final int MAX_EXCERPT_CHARS = 360;
 
+    /** 分析请求中的声明并返回冲突报告。 */
     public KnowledgeConflictReport analyze(AnalyzeRequest request) {
         Objects.requireNonNull(request, "request");
         return analyze(request.projectId(), request.targetVersion(), request.claims());
     }
 
+    /**
+     * 分析指定项目与版本下的声明：校验项目/版本归属与 Wiki 证据支撑，
+     * 并对同一事实键下结论不同的声明生成冲突；结果按严重级别排序。
+     *
+     * @param projectId     期望的项目，非空时校验声明归属
+     * @param targetVersion 期望的版本，非空时校验声明归属
+     * @param claims        待分析的声明列表
+     * @return 冲突报告，含总体状态、统计与冲突列表
+     */
     public KnowledgeConflictReport analyze(String projectId, String targetVersion, List<KnowledgeClaim> claims) {
         String expectedProject = clean(projectId, 160);
         String expectedVersion = clean(targetVersion, 160);
@@ -108,6 +118,7 @@ public class KnowledgeConflictService {
                 normalized.size(), conflicts.size(), conflicts, List.copyOf(warnings));
     }
 
+    /** 规范化声明列表：剔除非法项、按内容去重合并，并生成相应警告。 */
     private List<KnowledgeClaim> normalizeClaims(List<KnowledgeClaim> claims, List<String> warnings) {
         Map<String, KnowledgeClaim> unique = new LinkedHashMap<>();
         int ignored = 0;
@@ -132,6 +143,7 @@ public class KnowledgeConflictService {
         return List.copyOf(unique.values());
     }
 
+    /** 单条声明规范化：清理字段、按来源推导权威级别、补齐缺失的 claimId；字段缺失返回 null。 */
     private KnowledgeClaim normalize(KnowledgeClaim value) {
         if (value == null || value.sourceType() == null || value.evidence() == null) {
             return null;
@@ -162,6 +174,7 @@ public class KnowledgeConflictService {
                 value.sourceType(), authority, evidence, supporting);
     }
 
+    /** 合并重复声明的支撑证据 ID（去重后仅在新增时重建声明）。 */
     private KnowledgeClaim mergeSupportingEvidence(KnowledgeClaim existing, KnowledgeClaim duplicate) {
         LinkedHashSet<String> supporting = new LinkedHashSet<>(existing.supportingEvidenceIds());
         supporting.addAll(duplicate.supportingEvidenceIds());
@@ -172,6 +185,7 @@ public class KnowledgeConflictService {
                 existing.value(), existing.sourceType(), existing.authority(), existing.evidence(), List.copyOf(supporting));
     }
 
+    /** 为单条声明生成冲突（项目/版本污染、Wiki 缺少原始证据）。 */
     private KnowledgeConflict singleClaimConflict(ConflictType type, Severity severity,
                                                    KnowledgeClaim claim, String message) {
         String key = type + "|" + claim.factKey() + "|" + claim.evidence().evidenceId();
@@ -179,6 +193,7 @@ public class KnowledgeConflictService {
                 claim.factKey(), message, List.of(claim));
     }
 
+    /** 为一对结论不同的声明生成冲突，消息按冲突类型给出对应的中文提示。 */
     private KnowledgeConflict pairConflict(ConflictType type, Severity severity, String factKey,
                                            KnowledgeClaim left, KnowledgeClaim right) {
         String message = switch (type) {
@@ -194,6 +209,7 @@ public class KnowledgeConflictService {
                 factKey, message, List.of(left, right));
     }
 
+    /** 生成冲突去重键：类型 + 事实键 + 归一化结论 + 证据 ID（均排序后拼接）。 */
     private String conflictKey(ConflictType type, String factKey, KnowledgeClaim left, KnowledgeClaim right) {
         List<String> values = List.of(normalizedValue(left.value()), normalizedValue(right.value())).stream()
                 .sorted().toList();
@@ -202,6 +218,7 @@ public class KnowledgeConflictService {
         return type + "|" + factKey + "|" + String.join("|", values) + "|" + String.join("|", evidence);
     }
 
+    /** 根据来源类型组合判定冲突类型：同源内部、Wiki 对原始证据，其余按需求/代码/测试配对。 */
     private ConflictType classify(SourceType left, SourceType right) {
         if (left == right) return ConflictType.SOURCE_INTERNAL;
         Set<SourceType> types = Set.of(left, right);
@@ -220,6 +237,7 @@ public class KnowledgeConflictService {
         return type == ConflictType.WIKI_PRIMARY ? Severity.BLOCKING : Severity.ERROR;
     }
 
+    /** 汇总冲突与警告得到报告总体状态：有 BLOCKING 冲突则 BLOCKED，否则有冲突或警告则需复核。 */
     private ReportStatus reportStatus(List<KnowledgeConflict> conflicts, List<String> warnings) {
         if (conflicts.stream().anyMatch(conflict -> conflict.severity() == Severity.BLOCKING)) {
             return ReportStatus.BLOCKED;
@@ -227,6 +245,7 @@ public class KnowledgeConflictService {
         return conflicts.isEmpty() && warnings.isEmpty() ? ReportStatus.CLEAR : ReportStatus.REVIEW_REQUIRED;
     }
 
+    /** 依据输入内容生成确定性的冲突 ID（conflict- + UUID）。 */
     private String id(String value) {
         return "conflict-" + UUID.nameUUIDFromBytes(value.getBytes(StandardCharsets.UTF_8));
     }

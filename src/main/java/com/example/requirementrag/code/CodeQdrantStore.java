@@ -1,7 +1,9 @@
 package com.example.requirementrag.code;
 
 import com.example.requirementrag.config.RagProperties;
+import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.model.CodeChunk;
+import com.example.requirementrag.rerank.BgeReranker;
 import com.example.requirementrag.retrieval.EmbeddingBatcher;
 import com.example.requirementrag.retrieval.SparseVectorizer;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -12,7 +14,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
+import tools.jackson.core.type.TypeReference;
+import tools.jackson.databind.json.JsonMapper;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -33,23 +39,38 @@ public class CodeQdrantStore {
     private static final int CANDIDATE_MULTIPLIER = 3;
     private static final int MIN_CANDIDATE_LIMIT = 50;
     private static final int DENSE_SOURCE_PREFIX_CHARACTERS = 800;
+    private static final JsonMapper JSON = new JsonMapper();
+    private static final String ALIAS_RESOURCE = "/code-query-aliases.json";
+
+    private static final org.slf4j.Logger LOGGER =
+            org.slf4j.LoggerFactory.getLogger(CodeQdrantStore.class);
 
     private final RestClient client;
     private final EmbeddingModel embeddingModel;
     private final EmbeddingBatcher embeddingBatcher;
     private final SparseVectorizer sparseVectorizer;
     private final RagProperties properties;
+    private final BgeReranker bgeReranker;
     private final Set<String> initializedCollections = ConcurrentHashMap.newKeySet();
 
     /** 注入 Qdrant 客户端、嵌入模型、稀疏向量化器与配置。 */
     public CodeQdrantStore(RestClient qdrantRestClient, EmbeddingModel embeddingModel,
                            EmbeddingBatcher embeddingBatcher, SparseVectorizer sparseVectorizer,
                            RagProperties properties) {
+        this(qdrantRestClient, embeddingModel, embeddingBatcher, sparseVectorizer, properties, null);
+    }
+
+    /** 注入可选 BGE 重排器；为 null 时跳过代码语义重排。 */
+    @org.springframework.beans.factory.annotation.Autowired
+    public CodeQdrantStore(RestClient qdrantRestClient, EmbeddingModel embeddingModel,
+                           EmbeddingBatcher embeddingBatcher, SparseVectorizer sparseVectorizer,
+                           RagProperties properties, BgeReranker bgeReranker) {
         this.client = qdrantRestClient;
         this.embeddingModel = embeddingModel;
         this.embeddingBatcher = embeddingBatcher;
         this.sparseVectorizer = sparseVectorizer;
         this.properties = properties;
+        this.bgeReranker = bgeReranker;
     }
 
     /** 替换某个项目的全部代码 chunk。使用默认 collection。 */
@@ -90,7 +111,7 @@ public class CodeQdrantStore {
 
     /** 对代码 chunk 做 dense+sparse 混合检索。 */
     public List<CodeChunk> hybridSearch(String collection, String query, String projectId, int limit) {
-        return hybridSearchTrace(collection, query, projectId, limit).ranked();
+        return fusedSearch(collection, query, projectId, limit);
     }
 
     /**
@@ -100,9 +121,36 @@ public class CodeQdrantStore {
     public CodeSearchTrace hybridSearchTrace(String collection, String query, String projectId, int limit) {
         ensureCollection(collection);
         float[] dense = embeddingBatcher.embedAll(List.of(query)).getFirst();
-        SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorize(query);
-        int candidateLimit = Math.max(limit * CANDIDATE_MULTIPLIER, MIN_CANDIDATE_LIMIT);
+        SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorizeCode(query);
+        int candidateLimit = Math.max(limit * resolvedCandidateMultiplier(), MIN_CANDIDATE_LIMIT);
         int prefetchLimit = candidateLimit * CANDIDATE_MULTIPLIER;
+        List<CodeChunk> candidates = fusedCandidates(collection, dense, sparse, projectId,
+                candidateLimit, prefetchLimit);
+        List<CodeChunk> rerankInput = codeBgeRerankEnabled() ? semanticRerank(query, candidates) : candidates;
+        List<CodeChunk> ranked = rerankCandidates(query, rerankInput, limit,
+                properties.retrieval().resolvedCodeQueryExpansionEnabled());
+        return new CodeSearchTrace(candidates, ranked,
+                prefetchOnly(collection, dense, projectId, prefetchLimit),
+                prefetchOnly(collection, sparse, projectId, prefetchLimit));
+    }
+
+    /** 生产路径：仅执行一次 fused 查询，不收集 prefetch 归因列表。 */
+    private List<CodeChunk> fusedSearch(String collection, String query, String projectId, int limit) {
+        ensureCollection(collection);
+        float[] dense = embeddingBatcher.embedAll(List.of(query)).getFirst();
+        SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorizeCode(query);
+        int candidateLimit = Math.max(limit * resolvedCandidateMultiplier(), MIN_CANDIDATE_LIMIT);
+        List<CodeChunk> candidates = fusedCandidates(collection, dense, sparse, projectId,
+                candidateLimit, candidateLimit * CANDIDATE_MULTIPLIER);
+        List<CodeChunk> rerankInput = codeBgeRerankEnabled() ? semanticRerank(query, candidates) : candidates;
+        return rerankCandidates(query, rerankInput, limit,
+                properties.retrieval().resolvedCodeQueryExpansionEnabled());
+    }
+
+    /** 执行 dense+sparse 双预取 + RRF 融合查询，返回候选代码 chunk。 */
+    private List<CodeChunk> fusedCandidates(String collection, float[] dense,
+                                            SparseVectorizer.SparseVector sparse, String projectId,
+                                            int candidateLimit, int prefetchLimit) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("prefetch", List.of(
                 Map.of("query", dense, "using", "dense", "limit", prefetchLimit, "filter", filter(projectId)),
@@ -117,10 +165,77 @@ public class CodeQdrantStore {
                 .body(body)
                 .retrieve()
                 .body(new ParameterizedTypeReference<>() {}));
-        List<CodeChunk> candidates = extractPoints(response);
-        List<CodeChunk> ranked = rerankCandidates(query, candidates, limit,
-                properties.retrieval().resolvedCodeQueryExpansionEnabled());
-        return new CodeSearchTrace(candidates, ranked);
+        return extractPoints(response);
+    }
+
+    /** 仅用于离线评测归因：单独查询 dense / sparse 预取结果，不参与生产检索路径。 */
+    private List<CodeChunk> prefetchOnly(String collection, float[] dense, String projectId, int prefetchLimit) {
+        Map<String, Object> response = executeIdempotentQuery(() -> client.post()
+                .uri("/collections/{collection}/points/query", collection)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of(
+                        "query", dense, "using", "dense", "limit", prefetchLimit,
+                        "filter", filter(projectId), "with_payload", true))
+                .retrieve()
+                .body(new ParameterizedTypeReference<>() {}));
+        return extractPoints(response);
+    }
+
+    private List<CodeChunk> prefetchOnly(String collection, SparseVectorizer.SparseVector sparse,
+                                         String projectId, int prefetchLimit) {
+        Map<String, Object> response = executeIdempotentQuery(() -> client.post()
+                .uri("/collections/{collection}/points/query", collection)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of(
+                        "query", Map.of("indices", sparse.indices(), "values", sparse.values()),
+                        "using", "sparse", "limit", prefetchLimit,
+                        "filter", filter(projectId), "with_payload", true))
+                .retrieve()
+                .body(new ParameterizedTypeReference<>() {}));
+        return extractPoints(response);
+    }
+
+    private boolean codeBgeRerankEnabled() {
+        return bgeReranker != null && properties.retrieval() != null
+                && properties.retrieval().resolvedCodeBgeRerankEnabled();
+    }
+
+    private int resolvedCandidateMultiplier() {
+        return properties.retrieval() == null ? CANDIDATE_MULTIPLIER
+                : properties.retrieval().resolvedCodeCandidateMultiplier();
+    }
+
+    /** BGE 语义重排 RRF 候选；服务不可用时回退原始 RRF 顺序并记录警告。 */
+    List<CodeChunk> semanticRerank(String query, List<CodeChunk> candidates) {
+        if (candidates.isEmpty() || bgeReranker == null) {
+            return candidates;
+        }
+        try {
+            List<ChunkRecord> adapted = candidates.stream().map(CodeQdrantStore::toRerankCandidate).toList();
+            int topK = Math.min(properties.retrieval().resolvedBgeTopK(), adapted.size());
+            List<ChunkRecord> reranked = bgeReranker.rerank(query, adapted, topK);
+            Map<String, CodeChunk> byId = new LinkedHashMap<>();
+            for (CodeChunk candidate : candidates) {
+                byId.put(candidate.id(), candidate);
+            }
+            List<CodeChunk> result = new ArrayList<>();
+            for (ChunkRecord chunk : reranked) {
+                CodeChunk match = byId.get(chunk.id());
+                if (match != null) {
+                    result.add(match);
+                }
+            }
+            return result.isEmpty() ? candidates : result;
+        } catch (RuntimeException exception) {
+            LOGGER.warn("Code BGE rerank unavailable, using RRF order: {}", exception.getMessage());
+            return candidates;
+        }
+    }
+
+    /** 把代码 chunk 适配为 BGE 契约要求的 ChunkRecord，childText 复用向量检索文本。 */
+    private static ChunkRecord toRerankCandidate(CodeChunk chunk) {
+        return new ChunkRecord(chunk.id(), chunk.projectId(), chunk.commitSha(), chunk.filePath(),
+                null, "", retrievalText(chunk), chunk.contentHash(), chunk.startLine(), chunk.endLine());
     }
 
     /** 统计项目代码 chunk 数。使用默认 collection。 */
@@ -141,6 +256,7 @@ public class CodeQdrantStore {
     }
 
 
+    /** 按指定批量大小切分 chunk 列表，便于分批写入。 */
     private List<List<Map<String, Object>>> buildPointBatches(List<CodeChunk> chunks, int batchSize) {
         List<List<Map<String, Object>>> batches = new ArrayList<>();
         for (int start = 0; start < chunks.size(); start += batchSize) {
@@ -159,6 +275,7 @@ public class CodeQdrantStore {
         }
     }
 
+    /** 为每个 chunk 计算 dense 嵌入与 sparse 向量，组装成 Qdrant 点（含完整 payload 元数据）。 */
     private List<Map<String, Object>> buildPoints(List<CodeChunk> chunks) {
         List<String> retrievalTexts = chunks.stream().map(CodeQdrantStore::retrievalText).toList();
         List<String> denseRetrievalTexts = chunks.stream().map(CodeQdrantStore::denseRetrievalText).toList();
@@ -166,7 +283,7 @@ public class CodeQdrantStore {
         List<Map<String, Object>> points = new ArrayList<>(chunks.size());
         for (int index = 0; index < chunks.size(); index++) {
             CodeChunk chunk = chunks.get(index);
-            SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorize(retrievalTexts.get(index));
+            SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorizeCode(retrievalTexts.get(index));
             points.add(Map.of(
                     "id", chunk.id(),
                     "vector", Map.of("dense", denseVectors.get(index),
@@ -223,6 +340,7 @@ public class CodeQdrantStore {
         return rerankCandidates(query, candidates, limit, true);
     }
 
+    /** 在有限 RRF 候选池内做确定性结构重排：原始名次仍是主信号，仅对明确的符号词和代码角色意图加分。 */
     private static List<CodeChunk> rerankCandidates(String query, List<CodeChunk> candidates, int limit,
                                                      boolean queryExpansionEnabled) {
         if (candidates.isEmpty() || limit <= 0) {
@@ -242,6 +360,7 @@ public class CodeQdrantStore {
                 .toList();
     }
 
+    /** 结构打分：以 RRF 原始名次为基础分，对符号名命中、服务实现/控制器/测试等代码角色意图加权。 */
     private static double candidateScore(String query, CodeChunk chunk, int index, int candidateCount) {
         String normalizedQuery = safeText(query).toLowerCase(java.util.Locale.ROOT);
         String normalizedSymbol = safeText(chunk.symbolName()).toLowerCase(java.util.Locale.ROOT);
@@ -289,23 +408,46 @@ public class CodeQdrantStore {
         return score;
     }
 
+    /** 内置中英文意图别名，classpath 中的 code-query-aliases.json 可追加或覆盖。 */
+    private static final Map<String, String> QUERY_ALIASES = loadQueryAliases();
+
+    /** 将查询命中的中英文意图别名追加到查询文本，增强跨语言检索召回。 */
     static String expandQuery(String query) {
         StringBuilder expanded = new StringBuilder(safeText(query));
-        appendAlias(expanded, query, "流式对话", "chat stream");
-        appendAlias(expanded, query, "普通对话", "chat");
-        appendAlias(expanded, query, "AI 对话", "chat");
-        appendAlias(expanded, query, "搜索摘要", "search summary");
-        appendAlias(expanded, query, "用户搜索", "search user");
-        appendAlias(expanded, query, "笔记搜索", "search note");
-        appendAlias(expanded, query, "粉丝列表", "find fans list");
-        appendAlias(expanded, query, "关注列表", "find following list");
-        appendAlias(expanded, query, "子评论", "child comment");
-        appendAlias(expanded, query, "一级评论", "comment page list");
-        appendAlias(expanded, query, "取消点赞", "unlike");
-        appendAlias(expanded, query, "文件上传", "upload file");
-        appendAlias(expanded, query, "推荐", "recommend");
-        appendAlias(expanded, query, "热门", "trending");
+        for (Map.Entry<String, String> alias : QUERY_ALIASES.entrySet()) {
+            appendAlias(expanded, query, alias.getKey(), alias.getValue());
+        }
         return expanded.toString();
+    }
+
+    /** 加载查询别名：先放入内置中英文意图别名，再加载 classpath 中的 code-query-aliases.json 覆盖/追加；外部文件无效时忽略。 */
+    private static Map<String, String> loadQueryAliases() {
+        Map<String, String> aliases = new LinkedHashMap<>();
+        aliases.put("流式对话", "chat stream");
+        aliases.put("普通对话", "chat");
+        aliases.put("AI 对话", "chat");
+        aliases.put("搜索摘要", "search summary");
+        aliases.put("用户搜索", "search user");
+        aliases.put("笔记搜索", "search note");
+        aliases.put("粉丝列表", "find fans list");
+        aliases.put("关注列表", "find following list");
+        aliases.put("子评论", "child comment");
+        aliases.put("一级评论", "comment page list");
+        aliases.put("取消点赞", "unlike");
+        aliases.put("文件上传", "upload file");
+        aliases.put("推荐", "recommend");
+        aliases.put("热门", "trending");
+        try (InputStream in = CodeQdrantStore.class.getResourceAsStream(ALIAS_RESOURCE)) {
+            if (in != null) {
+                Map<String, String> external = JSON.readValue(in, new TypeReference<Map<String, String>>() {});
+                if (external != null) {
+                    aliases.putAll(external);
+                }
+            }
+        } catch (IOException | RuntimeException exception) {
+            LOGGER.warn("Ignoring invalid {}; using built-in query aliases", ALIAS_RESOURCE, exception);
+        }
+        return Map.copyOf(aliases);
     }
 
     private static void appendAlias(StringBuilder expanded, String query, String phrase, String alias) {
@@ -386,8 +528,8 @@ public class CodeQdrantStore {
     }
 
     /**
-     * Qdrant query uses POST but is read-only and safe to repeat once after a transient client-side I/O failure.
-     * HTTP status and serialization-contract failures are deliberately not retried.
+     * Qdrant 查询走 POST 但语义只读，客户端侧瞬时 IO 失败后安全重试一次；
+     * HTTP 状态错误与序列化契约错误刻意不重试。
      */
     static <T> T executeIdempotentQuery(Supplier<T> query) {
         try {
@@ -418,6 +560,10 @@ public class CodeQdrantStore {
         return false;
     }
 
+    /**
+     * 确保 collection 已存在：不存在则按 dense（Cosine）+ sparse（idf）配置创建；
+     * 连接失败时按退避间隔重试，最多 10 次后抛出异常。
+     */
     private void ensureCollection(String collection) {
         if (initializedCollections.contains(collection)) {
             return;
@@ -451,6 +597,7 @@ public class CodeQdrantStore {
         }
     }
 
+    /** 删除某项目在该 collection 中的全部点（替换写入前使用）。 */
     private void deleteProject(String collection, String projectId) {
         client.post().uri("/collections/{collection}/points/delete?wait=true", collection)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -475,6 +622,7 @@ public class CodeQdrantStore {
         return list(points).stream().map(this::toChunk).toList();
     }
 
+    /** 将 Qdrant 返回的点负载反序列化为 CodeChunk；language 为空时按文件路径后缀推断。 */
     private CodeChunk toChunk(Object raw) {
         Map<String, Object> point = map(raw);
         Map<String, Object> p = map(point.get("payload"));
@@ -521,11 +669,19 @@ public class CodeQdrantStore {
         return value instanceof List<?> l ? (List<Object>) l : List.of();
     }
 
-    /** Bounded code-search stages used by the reproducible retrieval evaluation. */
-    public record CodeSearchTrace(List<CodeChunk> candidates, List<CodeChunk> ranked) {
+    /** 可复现检索评测用的有界检索阶段结果：RRF 候选、最终精排结果及 dense/sparse 各自的预取归因。 */
+    public record CodeSearchTrace(List<CodeChunk> candidates, List<CodeChunk> ranked,
+                                  List<CodeChunk> denseCandidates, List<CodeChunk> sparseCandidates) {
         public CodeSearchTrace {
             candidates = candidates == null ? List.of() : List.copyOf(candidates);
             ranked = ranked == null ? List.of() : List.copyOf(ranked);
+            denseCandidates = denseCandidates == null ? List.of() : List.copyOf(denseCandidates);
+            sparseCandidates = sparseCandidates == null ? List.of() : List.copyOf(sparseCandidates);
+        }
+
+        /** 兼容旧调用方的构造器：不提供 dense/sparse 预取归因结果。 */
+        public CodeSearchTrace(List<CodeChunk> candidates, List<CodeChunk> ranked) {
+            this(candidates, ranked, List.of(), List.of());
         }
     }
 }

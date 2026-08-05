@@ -7,15 +7,17 @@ import jakarta.validation.constraints.Size;
 
 import java.util.List;
 
-/** Public contracts for building reviewable version-knowledge drafts. */
+/** 构建可审核的版本知识草稿所需的公开契约模型（请求、状态、草稿与结果）。 */
 public final class KnowledgeBuildModels {
     private KnowledgeBuildModels() {}
 
+    /** 构建状态：DRAFT 表示生成了可审核草稿，NO_CHANGES 表示版本间无变化。 */
     public enum BuildStatus {
         DRAFT,
         NO_CHANGES
     }
 
+    /** 构建请求：指定项目、版本、基线版本、文档 ID 及可选的基线/当前代码提交号。 */
     public record BuildRequest(
             @NotBlank @Size(max = 100) String projectId,
             @NotBlank @Size(max = 100) String version,
@@ -25,6 +27,7 @@ public final class KnowledgeBuildModels {
             @Size(max = 128) String codeCommit
     ) {}
 
+    /** 单个功能事实草稿：变化类型、产品规则、代码符号、测试要点与三类证据列表，附置信度和审核状态。 */
     public record FeatureFactDraft(
             String featureId,
             String title,
@@ -54,6 +57,7 @@ public final class KnowledgeBuildModels {
         }
     }
 
+    /** 构建产物：构建 ID、状态、原始请求、功能草稿列表与警告。 */
     public record BuildArtifact(
             String buildId,
             BuildStatus status,
@@ -68,6 +72,7 @@ public final class KnowledgeBuildModels {
         }
     }
 
+    /** 构建结果摘要：统计功能数、冲突数、缺代码/缺测试数及草稿落盘路径。 */
     public record BuildResult(
             String buildId,
             BuildStatus status,

@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/** Creates reviewable version-knowledge drafts; it never publishes the formal Wiki. */
+/** 创建可审阅的版本知识草稿，但不发布正式 Wiki。 */
 @RestController
 @RequestMapping("/api/knowledge")
 public class KnowledgeBuildController {
@@ -42,11 +42,12 @@ public class KnowledgeBuildController {
         this.projectRegistry = projectRegistry;
     }
 
-    /** Keeps standalone controller tests source-compatible. */
+    /** 保持独立 Controller 测试源码兼容。 */
     public KnowledgeBuildController(VersionKnowledgeBuildPipeline buildPipeline, ProjectAccessGuard accessGuard) {
         this(buildPipeline, accessGuard, null, null);
     }
 
+    /** 按构建请求生成知识草稿，记录当前用户为作者。对应 POST /api/knowledge/build。 */
     @RequiresPermission(Permission.WRITE)
     @PostMapping("/build")
     public BuildResult build(@Valid @RequestBody BuildRequest request, HttpServletRequest httpRequest) {
@@ -54,6 +55,7 @@ public class KnowledgeBuildController {
         return buildPipeline.build(request, accessGuard.currentUser(httpRequest).username());
     }
 
+    /** 列出指定项目版本的草稿元数据列表。对应 GET /api/knowledge/drafts。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @GetMapping("/drafts")
     public List<DraftMetadata> drafts(@RequestParam String projectId, @RequestParam String version,
@@ -64,6 +66,7 @@ public class KnowledgeBuildController {
         return draftLifecycleService.list(projectId, version);
     }
 
+    /** 获取单个草稿的元数据。对应 GET /api/knowledge/drafts/{buildId}。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @GetMapping("/drafts/{buildId}")
     public DraftMetadata draft(@PathVariable String buildId, @RequestParam String projectId,
@@ -74,6 +77,7 @@ public class KnowledgeBuildController {
         return draftLifecycleService.get(projectId, version, buildId);
     }
 
+    /** 推进草稿状态流转（如待审→通过），记录操作人。对应 POST /api/knowledge/drafts/{buildId}/transition。 */
     @RequiresPermission(Permission.WRITE)
     @PostMapping("/drafts/{buildId}/transition")
     public DraftMetadata transition(@PathVariable String buildId, @RequestParam String projectId,
@@ -86,6 +90,7 @@ public class KnowledgeBuildController {
                 accessGuard.currentUser(request).username(), transition.comment());
     }
 
+    /** 发布草稿为正式版本知识。对应 POST /api/knowledge/drafts/{buildId}/publish。 */
     @RequiresPermission(Permission.WRITE)
     @PostMapping("/drafts/{buildId}/publish")
     public PublishResult publish(@PathVariable String buildId, @RequestParam String projectId,
@@ -98,6 +103,7 @@ public class KnowledgeBuildController {
                 accessGuard.currentUser(request).username(), comment);
     }
 
+    /** 回滚已发布的版本知识为草稿。对应 POST /api/knowledge/drafts/{buildId}/rollback。 */
     @RequiresPermission(Permission.WRITE)
     @PostMapping("/drafts/{buildId}/rollback")
     public RollbackResult rollback(@PathVariable String buildId, @RequestParam String projectId,
@@ -110,6 +116,7 @@ public class KnowledgeBuildController {
                 accessGuard.currentUser(request).username(), comment);
     }
 
+    /** 校验草稿生命周期服务与项目注册表已注入，缺失时抛 IllegalStateException。 */
     private void requireDraftService() {
         if (draftLifecycleService == null || projectRegistry == null) {
             throw new IllegalStateException("知识草稿生命周期服务未配置");

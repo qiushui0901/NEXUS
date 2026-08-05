@@ -19,6 +19,7 @@ import java.io.IOException;
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class ContentCachingFilter extends OncePerRequestFilter {
 
+    /** 对需要缓存的请求包装 body 后继续过滤链，其余请求原样放行。 */
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
@@ -30,6 +31,7 @@ public class ContentCachingFilter extends OncePerRequestFilter {
         }
     }
 
+    /** 判断是否需缓存：仅 /api/ 前缀下的 JSON 类型 POST/PUT/PATCH 请求。 */
     private boolean shouldCache(HttpServletRequest request) {
         if (!request.getRequestURI().startsWith("/api/")) {
             return false;

@@ -13,7 +13,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Bounded static graph traversal and conservative impact analysis. */
+/**
+ * 有界静态图遍历与保守影响分析服务。
+ * 基于 SQLite 符号图谱从起始符号做入/出方向遍历，区分精确（EXACT/SAME_FILE）与启发式（HEURISTIC）解析结果；
+ * 也可按 commit 差异以变更文件内的符号为起点分析影响面。
+ */
 @Service
 public class CodeIntelligenceService {
     private static final int MAX_DEPTH = 5;
@@ -29,6 +33,16 @@ public class CodeIntelligenceService {
         this.gitDiffService = gitDiffService;
     }
 
+    /**
+     * 从指定符号出发按方向遍历调用图，返回影响分析结果。
+     *
+     * @param projectId 项目 ID，为空或空白时使用默认项目
+     * @param symbol    起始符号名（全限定名或简单名均可）
+     * @param direction "inbound" 为入向（谁调用它），其余值按出向（它调用谁）处理
+     * @param depth     遍历最大深度，钳制在 1-5
+     * @param limit     符号/关系数量上限，钳制在 1-200
+     * @return 影响分析响应；图谱快照缺失或符号不存在时返回 NOT_AVAILABLE
+     */
     public CodeIntelligenceResponse graph(String projectId, String symbol, String direction,
                                           Integer depth, Integer limit) {
         String project = resolveProject(projectId);
@@ -42,10 +56,22 @@ public class CodeIntelligenceService {
         return response(project, commit, roots, traversal, List.of(), List.of());
     }
 
+    /** 分析指定符号的入向影响面（哪些符号依赖它），等价于 direction=inbound 的 {@link #graph}。 */
     public CodeIntelligenceResponse impactSymbol(String projectId, String symbol, Integer depth, Integer limit) {
         return graph(projectId, symbol, "inbound", depth, limit);
     }
 
+    /**
+     * 按 commit 差异分析影响面：取 fromCommit..toCommit 变更文件中的符号作为起点做入向遍历。
+     * 目标 commit 无图谱快照时降级为仅返回文件级变更列表的 NOT_AVAILABLE 响应。
+     *
+     * @param projectId  项目 ID，为空或空白时使用默认项目
+     * @param fromCommit 起始 commit SHA，必填
+     * @param toCommit   目标 commit SHA，必填
+     * @param depth      遍历最大深度，钳制在 1-5
+     * @param limit      符号/关系数量上限，钳制在 1-200
+     * @return 影响分析响应；commit 差异计算失败时抛出 IllegalStateException
+     */
     public CodeIntelligenceResponse impactCommits(String projectId, String fromCommit, String toCommit,
                                                   Integer depth, Integer limit) {
         String project = resolveProject(projectId);
@@ -71,6 +97,10 @@ public class CodeIntelligenceService {
         return response(project, toCommit, roots, traversal, changed, List.of());
     }
 
+    /**
+     * BFS 遍历调用图：EXACT/SAME_FILE 关系命中计入确定符号，HEURISTIC 计入推断符号。
+     * 关系数达到 limit 或深度达到 maxDepth 时截断，并附上最多 50 条未解析调用供分析。
+     */
     private Traversal traverse(String project, String commit, List<CodeSymbol> roots, boolean inbound,
                                int maxDepth, int limit) {
         Map<String, CodeSymbol> certain = new LinkedHashMap<>();
@@ -110,6 +140,7 @@ public class CodeIntelligenceService {
                 store.unresolved(project, commit, Math.min(limit, 50)), truncated);
     }
 
+    /** 组装 AVAILABLE 响应，并为入口点/测试符号生成回归检查建议（最多 20 条）。 */
     private CodeIntelligenceResponse response(String project, String commit, List<CodeSymbol> roots,
                                               Traversal traversal, List<String> changed, List<String> warnings) {
         List<String> suggestions = traversal.certain().stream()
@@ -122,6 +153,7 @@ public class CodeIntelligenceService {
                 warnings, traversal.truncated());
     }
 
+    /** 组装 NOT_AVAILABLE 响应并附带警告信息（如未索引、符号不存在、目标 commit 无快照）。 */
     private CodeIntelligenceResponse unavailable(String project, List<String> changed, String warning) {
         return new CodeIntelligenceResponse("NOT_AVAILABLE", project, null, List.of(), List.of(), List.of(),
                 List.of(), List.of(), changed, List.of(), List.of(warning), false);

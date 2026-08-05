@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
 
+/** 请求鉴权拦截器：API Key 认证、权限校验与项目访问校验。 */
 @Component
 public class ProjectAuthInterceptor implements HandlerInterceptor {
 
@@ -27,6 +28,7 @@ public class ProjectAuthInterceptor implements HandlerInterceptor {
         this.projectIdResolver = projectIdResolver;
     }
 
+    /** 认证用户并校验所需权限与项目访问权，通过后将 UserContext 写入请求属性。 */
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws Exception {
@@ -53,6 +55,7 @@ public class ProjectAuthInterceptor implements HandlerInterceptor {
         return true;
     }
 
+    /** 解析方法或类上的 @RequiresPermission，均未标注时按 HTTP 方法取默认权限。 */
     private Permission resolveRequiredPermission(HttpServletRequest request, Object handler) {
         if (handler instanceof HandlerMethod handlerMethod) {
             RequiresPermission methodAnnotation = handlerMethod.getMethodAnnotation(RequiresPermission.class);
@@ -67,6 +70,7 @@ public class ProjectAuthInterceptor implements HandlerInterceptor {
         return defaultPermission(request);
     }
 
+    /** GET/HEAD 请求默认 PUBLIC_READ，其余默认 WRITE。 */
     private Permission defaultPermission(HttpServletRequest request) {
         String method = request.getMethod();
         if (HttpMethod.GET.matches(method) || HttpMethod.HEAD.matches(method)) {

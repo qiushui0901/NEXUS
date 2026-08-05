@@ -49,7 +49,7 @@ class RetrievalPipelineTest {
                 false, null, null, "requirements", "5.1", null, null, 0));
         when(properties.retrieval()).thenReturn(new RagProperties.Retrieval(
                 50, 50, 40, 20, 10, false, 1_000, 3, 3, 30_000,
-                -1, -1, -1, -1, null, null, null));
+                -1, -1, -1, -1, null, null, null, null, null));
         when(queryRouter.routeWithOutcome("query", null)).thenReturn(RagOutcome.of(
                 RagOutcomeStatus.SUCCESS, new QueryRouting("game", "server", 1.0, "explicit"),
                 "query.route", 1, 1));
@@ -425,7 +425,7 @@ class RetrievalPipelineTest {
     void timesOutOnlyTheSlowBranchAndKeepsAvailableEvidence() throws Exception {
         when(properties.retrieval()).thenReturn(new RagProperties.Retrieval(
                 50, 50, 40, 20, 10, false, 50, 2, 3, 30_000,
-                -1, -1, -1, -1, null, null, null));
+                -1, -1, -1, -1, null, null, null, null, null));
         when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
                 .thenReturn(List.of(chunk("hit", "需求", "h1")));
         when(codeKnowledgeService.search("query", "game", 8)).thenAnswer(invocation -> {

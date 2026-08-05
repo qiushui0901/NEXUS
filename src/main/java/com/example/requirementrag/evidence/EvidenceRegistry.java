@@ -18,7 +18,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Pattern;
 
-/** Request-scoped whitelist of safe requirement and code evidence. */
+/** 请求作用域内的安全证据白名单（需求与代码），生成确定性 evidenceId。 */
 public final class EvidenceRegistry {
 
     private static final int MAX_EXCERPT_CHARS = 360;
@@ -39,6 +39,12 @@ public final class EvidenceRegistry {
         this.codeIds = Collections.unmodifiableMap(new IdentityHashMap<>(codeIds));
     }
 
+    /**
+     * 从检索结果包构建证据注册表：过滤范围外分块，生成确定性 evidenceId 并去重。
+     *
+     * @param bundle 本次检索的完整结果包
+     * @return 不可变的证据注册表
+     */
     public static EvidenceRegistry from(RetrievalBundle bundle) {
         Objects.requireNonNull(bundle, "bundle");
         List<EvidenceRef> references = new ArrayList<>();
@@ -112,6 +118,7 @@ public final class EvidenceRegistry {
         return references;
     }
 
+    /** 按 ID 查找证据引用，不存在时返回空 Optional。 */
     public Optional<EvidenceRef> find(String evidenceId) {
         if (evidenceId == null) return Optional.empty();
         return Optional.ofNullable(byId.get(evidenceId.trim()));
@@ -121,24 +128,29 @@ public final class EvidenceRegistry {
         return find(evidenceId).isPresent();
     }
 
+    /** 返回需求分块在本次检索中生成的 evidenceId（按对象身份精确匹配）。 */
     public Optional<String> evidenceId(ChunkRecord chunk) {
         return Optional.ofNullable(requirementIds.get(chunk));
     }
 
+    /** 返回代码分块在本次检索中生成的 evidenceId（按对象身份精确匹配）。 */
     public Optional<String> evidenceId(CodeChunk chunk) {
         return Optional.ofNullable(codeIds.get(chunk));
     }
 
+    /** 批量返回需求分块的 evidenceId 列表（保持顺序、去重，未命中的跳过）。 */
     public List<String> evidenceIdsForRequirements(List<ChunkRecord> chunks) {
         if (chunks == null) return List.of();
         return chunks.stream().map(requirementIds::get).filter(Objects::nonNull).distinct().toList();
     }
 
+    /** 批量返回代码分块的 evidenceId 列表（保持顺序、去重，未命中的跳过）。 */
     public List<String> evidenceIdsForCode(List<CodeChunk> chunks) {
         if (chunks == null) return List.of();
         return chunks.stream().map(codeIds::get).filter(Objects::nonNull).distinct().toList();
     }
 
+    /** 将需求分块组装为带 evidenceId 标注的提示上下文，总长度受 maxChars 限制。 */
     public String promptRequirementContext(List<ChunkRecord> chunks, int maxChars) {
         StringBuilder builder = new StringBuilder();
         if (chunks == null) return "";
@@ -152,6 +164,7 @@ public final class EvidenceRegistry {
         return builder.toString();
     }
 
+    /** 将代码分块组装为带 evidenceId 标注的提示上下文，总长度受 maxChars 限制。 */
     public String promptCodeContext(List<CodeChunk> chunks, int maxChars) {
         StringBuilder builder = new StringBuilder();
         if (chunks == null) return "";
@@ -168,12 +181,14 @@ public final class EvidenceRegistry {
         return builder.toString();
     }
 
+    /** 追加值但保证 builder 总长度不超出 maxChars。 */
     private static void appendBounded(StringBuilder builder, String value, int maxChars) {
         if (maxChars <= 0 || builder.length() >= maxChars) return;
         int remaining = maxChars - builder.length();
         builder.append(value, 0, Math.min(value.length(), remaining));
     }
 
+    /** 生成命名空间内唯一且确定性的 evidenceId，冲突时追加内容摘要后缀。 */
     private static String uniqueId(String namespace, String rawId, String fingerprint,
                                    Map<String, EvidenceRef> existing) {
         String idPart = normalizedIdPart(rawId);
@@ -188,18 +203,21 @@ public final class EvidenceRegistry {
         return candidate;
     }
 
+    /** 判断两个作用域值是否属于同一范围（任一为空视为匹配）。 */
     private static boolean sameScope(String expected, String actual) {
         String expectedValue = safe(expected).trim();
         String actualValue = safe(actual).trim();
         return expectedValue.isBlank() || actualValue.isBlank() || expectedValue.equals(actualValue);
     }
 
+    /** 规范化原始 ID：仅保留安全字符（字母数字._-）并限长，非法返回空串。 */
     private static String normalizedIdPart(String rawId) {
         String value = safe(rawId).trim();
         if (value.isBlank() || !SAFE_ID.matcher(value).matches()) return "";
         return value.substring(0, Math.min(value.length(), MAX_ID_PART_CHARS));
     }
 
+    /** 计算内容指纹的 SHA-256 摘要（取前 16 字节十六进制）。 */
     private static String digest(String value) {
         try {
             byte[] bytes = MessageDigest.getInstance("SHA-256")
@@ -214,6 +232,7 @@ public final class EvidenceRegistry {
         }
     }
 
+    /** 清理来源路径：统一斜杠、移除相对路径段与控制字符；绝对路径只保留文件名。 */
     private static String safeSource(String rawPath) {
         String value = safe(rawPath).trim().replace('\\', '/');
         if (value.isBlank()) return "";
@@ -228,6 +247,7 @@ public final class EvidenceRegistry {
         return absolute ? safeParts.getLast() : String.join("/", safeParts);
     }
 
+    /** 清洗摘录文本：替换控制字符、压缩空白并限制长度。 */
     private static String boundedExcerpt(String rawText) {
         String value = safe(rawText).replaceAll("[\\p{Cntrl}&&[^\\n\\t]]", " ")
                 .replaceAll("\\s+", " ").trim();
@@ -235,6 +255,7 @@ public final class EvidenceRegistry {
         return value.substring(0, MAX_EXCERPT_CHARS) + "…";
     }
 
+    /** 格式化行号范围，如 L12 或 L12-L34。 */
     private static String lineLocation(int startLine, int endLine) {
         int safeStart = Math.max(1, startLine);
         int safeEnd = Math.max(safeStart, endLine);
@@ -245,6 +266,7 @@ public final class EvidenceRegistry {
         return value > 0 ? value : null;
     }
 
+    /** 返回第一个非空文本，两者皆空返回空串。 */
     private static String firstText(String first, String second) {
         return !safe(first).isBlank() ? safe(first) : safe(second);
     }

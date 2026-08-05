@@ -20,6 +20,12 @@ public final class DevelopmentPlanStreamParser {
         this.objectMapper = objectMapper;
     }
 
+    /**
+     * 接收一段模型增量文本并解析出其中完整 NDJSON 行对应的事件；未凑成整行的内容留在缓冲区。
+     *
+     * @param chunk 模型输出的增量文本片段，可为 null 或空
+     * @return 本次增量解析出的完整事件列表，可能为空
+     */
     public List<DevelopmentPlanStreamEvent> accept(String chunk) {
         if (chunk == null || chunk.isEmpty()) {
             return List.of();
@@ -35,6 +41,11 @@ public final class DevelopmentPlanStreamParser {
         return events;
     }
 
+    /**
+     * 流结束后解析缓冲区中最后一行不完整内容（通常缺结尾换行）。
+     *
+     * @return 缓冲区剩余内容对应的事件，空缓冲区或无有效行时返回空列表
+     */
     public List<DevelopmentPlanStreamEvent> finish() {
         if (buffer.isEmpty()) {
             return List.of();
@@ -44,6 +55,7 @@ public final class DevelopmentPlanStreamParser {
         return parseLine(line).map(List::of).orElseGet(List::of);
     }
 
+    /** 解析单行 NDJSON 为事件；空行、代码围栏、非对象或无 type 字段的行以及格式错误行均忽略。 */
     private java.util.Optional<DevelopmentPlanStreamEvent> parseLine(String rawLine) {
         String line = rawLine == null ? "" : rawLine.trim();
         if (line.isEmpty() || line.startsWith("```")) {

@@ -20,11 +20,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** Transactional project/commit-scoped static symbol graph. */
+/** 事务性、按项目/commit 快照隔离的静态符号图 SQLite 存储：快照、符号与调用关系。 */
 @Component
 public class SQLiteSymbolGraphStore {
     private final String jdbcUrl;
 
+    /** 初始化数据目录与表结构；根路径可用配置 app.rag.code-graph-root-path 或环境变量 CODE_GRAPH_ROOT_PATH 指定。 */
     public SQLiteSymbolGraphStore(
             @Value("${app.rag.code-graph-root-path:${CODE_GRAPH_ROOT_PATH:data/code-graph}}") String rootPath) {
         try {
@@ -38,6 +39,7 @@ public class SQLiteSymbolGraphStore {
         }
     }
 
+    /** 以事务方式替换项目在指定 commit 下的完整快照：先删除旧数据，再写入快照、符号与解析后的调用关系；任一失败则回滚。 */
     public void replaceSnapshot(CodeScanner.ScanResult result) {
         try (Connection connection = open()) {
             connection.setAutoCommit(false);
@@ -58,6 +60,7 @@ public class SQLiteSymbolGraphStore {
         }
     }
 
+    /** 返回项目最近一次索引的 commit SHA；无快照时返回 null。 */
     public String latestCommit(String projectId) {
         String sql = "select commit_sha from code_graph_snapshot where project_id=? order by indexed_at desc limit 1";
         try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -71,6 +74,7 @@ public class SQLiteSymbolGraphStore {
         }
     }
 
+    /** 按全限定名或简单名查找符号，全限定名精确命中排在前面，结果按文件路径与起始行排序。 */
     public List<CodeSymbol> findSymbols(String projectId, String commitSha, String name, int limit) {
         String sql = """
                 select * from code_symbol where project_id=? and commit_sha=?
@@ -93,6 +97,7 @@ public class SQLiteSymbolGraphStore {
         }
     }
 
+    /** 返回指定 commit 下位于变更文件列表中的全部符号（commit 影响分析的起点）。 */
     public List<CodeSymbol> symbolsByFiles(String projectId, String commitSha, List<String> files, int limit) {
         if (files.isEmpty()) return List.of();
         String placeholders = String.join(",", java.util.Collections.nCopies(files.size(), "?"));
@@ -113,6 +118,7 @@ public class SQLiteSymbolGraphStore {
         }
     }
 
+    /** 返回符号的入向（inbound=true，谁调用它）或出向（inbound=false，它调用谁）调用关系。 */
     public List<CodeRelation> relations(String projectId, String commitSha, String symbolId,
                                         boolean inbound, int limit) {
         String column = inbound ? "callee_symbol_id" : "caller_symbol_id";
@@ -134,6 +140,7 @@ public class SQLiteSymbolGraphStore {
         }
     }
 
+    /** 返回指定 commit 下未解析（UNRESOLVED）的调用关系，用于暴露索引盲区。 */
     public List<CodeRelation> unresolved(String projectId, String commitSha, int limit) {
         String sql = """
                 select * from code_relation where project_id=? and commit_sha=? and resolution='UNRESOLVED'
@@ -154,6 +161,7 @@ public class SQLiteSymbolGraphStore {
         }
     }
 
+    /** 按符号 ID 读取符号；不存在时返回 null。 */
     public CodeSymbol symbolById(String projectId, String commitSha, String id) {
         String sql = "select * from code_symbol where project_id=? and commit_sha=? and id=?";
         try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -169,6 +177,11 @@ public class SQLiteSymbolGraphStore {
         }
     }
 
+    /**
+     * 将扫描得到的调用点解析为调用关系，按置信度依次尝试：
+     * 全限定名唯一匹配（EXACT）→ 同文件简单名唯一匹配（SAME_FILE）→ 全库简单名唯一匹配（HEURISTIC）→ 未解析（UNRESOLVED）。
+     * 调用关系 ID 由调用点各字段与解析结果哈希生成，保证稳定去重。
+     */
     private List<CodeRelation> resolve(CodeScanner.ScanResult result) {
         Map<String, List<CodeSymbol>> qualified = new HashMap<>();
         Map<String, List<CodeSymbol>> simple = new HashMap<>();
@@ -204,10 +217,12 @@ public class SQLiteSymbolGraphStore {
         return List.copyOf(relations.values());
     }
 
+    /** 列表恰有一个元素时返回该元素，否则返回 null（名称歧义时不猜测归属）。 */
     private CodeSymbol unique(List<CodeSymbol> symbols) {
         return symbols != null && symbols.size() == 1 ? symbols.getFirst() : null;
     }
 
+    /** 幂等建表与建索引（存在则跳过），失败时抛出 SQLException 由构造器包装。 */
     private void initialize() throws SQLException {
         try (Connection connection = open(); Statement statement = connection.createStatement()) {
             statement.executeUpdate("""
@@ -239,6 +254,7 @@ public class SQLiteSymbolGraphStore {
         return DriverManager.getConnection(jdbcUrl);
     }
 
+    /** 删除项目在指定 commit 下的全部调用关系、符号与快照记录（用于替换前清理）。 */
     private void deleteSnapshot(Connection connection, String project, String commit) throws SQLException {
         for (String table : List.of("code_relation", "code_symbol", "code_graph_snapshot")) {
             try (PreparedStatement statement = connection.prepareStatement(
@@ -250,6 +266,7 @@ public class SQLiteSymbolGraphStore {
         }
     }
 
+    /** 写入快照元数据，languages 为快照中符号语言的去重排序拼接。 */
     private void insertSnapshot(Connection connection, CodeScanner.ScanResult result) throws SQLException {
         String languages = result.symbols().stream().map(CodeSymbol::language).distinct().sorted()
                 .collect(java.util.stream.Collectors.joining(","));
@@ -263,6 +280,7 @@ public class SQLiteSymbolGraphStore {
         }
     }
 
+    /** 批量写入符号。 */
     private void insertSymbols(Connection connection, List<CodeSymbol> symbols) throws SQLException {
         String sql = "insert into code_symbol values(?,?,?,?,?,?,?,?,?,?,?,?)";
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -285,6 +303,7 @@ public class SQLiteSymbolGraphStore {
         }
     }
 
+    /** 批量写入调用关系。 */
     private void insertRelations(Connection connection, List<CodeRelation> relations) throws SQLException {
         String sql = "insert into code_relation values(?,?,?,?,?,?,?,?,?,?)";
         try (PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -327,6 +346,7 @@ public class SQLiteSymbolGraphStore {
                 CodeRelation.Resolution.valueOf(result.getString("resolution")), result.getString("evidence"));
     }
 
+    /** 取简单名：去掉最后的点号/冒号分隔符前缀，便于跨包同名匹配。 */
     private String simpleName(String value) {
         if (value == null) return "";
         int dot = Math.max(value.lastIndexOf('.'), value.lastIndexOf(':'));

@@ -13,6 +13,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class CodeQdrantStoreTest {
 
@@ -127,8 +132,87 @@ class CodeQdrantStoreTest {
 
         assertThat(trace.candidates()).containsExactly(candidate);
         assertThat(trace.ranked()).containsExactly(ranked);
+        assertThat(trace.denseCandidates()).isEmpty();
+        assertThat(trace.sparseCandidates()).isEmpty();
         assertThatThrownBy(() -> trace.candidates().add(ranked))
                 .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void codeSearchTraceDefensivelyCopiesPrefetchStages() {
+        CodeChunk dense = chunk("src/main/java/com/acme/Alpha.java", "alpha");
+        CodeChunk sparse = chunk("src/main/java/com/acme/Beta.java", "beta");
+        java.util.ArrayList<CodeChunk> denseValues = new java.util.ArrayList<>(List.of(dense));
+        java.util.ArrayList<CodeChunk> sparseValues = new java.util.ArrayList<>(List.of(sparse));
+
+        CodeQdrantStore.CodeSearchTrace trace = new CodeQdrantStore.CodeSearchTrace(
+                List.of(), List.of(), denseValues, sparseValues);
+        denseValues.clear();
+        sparseValues.clear();
+
+        assertThat(trace.denseCandidates()).containsExactly(dense);
+        assertThat(trace.sparseCandidates()).containsExactly(sparse);
+    }
+
+    @Test
+    void semanticRerankReordersCandidatesByBgeScoreAndDropsUnknownIds() {
+        CodeChunk first = chunk("src/main/java/com/acme/Alpha.java", "alpha", "id-1");
+        CodeChunk second = chunk("src/main/java/com/acme/Beta.java", "beta", "id-2");
+        CodeChunk third = chunk("src/main/java/com/acme/Gamma.java", "gamma", "id-3");
+        com.example.requirementrag.rerank.BgeReranker bge = mock(com.example.requirementrag.rerank.BgeReranker.class);
+        when(bge.rerank(eq("query"), any(), eq(3)))
+                .thenReturn(List.of(
+                        new com.example.requirementrag.model.ChunkRecord(third.id(), "demo", "abc",
+                                third.filePath(), null, "", "passage", "hash", 1, 2),
+                        new com.example.requirementrag.model.ChunkRecord(second.id(), "demo", "abc",
+                                second.filePath(), null, "", "passage", "hash", 1, 2)));
+        CodeQdrantStore store = storeWith(bge);
+
+        assertThat(store.semanticRerank("query", List.of(first, second, third)))
+                .containsExactly(third, second);
+    }
+
+    @Test
+    void semanticRerankFallsBackToRrfOrderWhenBgeUnavailable() {
+        CodeChunk first = chunk("src/main/java/com/acme/Alpha.java", "alpha");
+        CodeChunk second = chunk("src/main/java/com/acme/Beta.java", "beta");
+        com.example.requirementrag.rerank.BgeReranker bge = mock(com.example.requirementrag.rerank.BgeReranker.class);
+        when(bge.rerank(any(), any(), anyInt()))
+                .thenThrow(new IllegalStateException("endpoint unavailable"));
+        CodeQdrantStore store = storeWith(bge);
+
+        assertThat(store.semanticRerank("query", List.of(first, second)))
+                .containsExactly(first, second);
+    }
+
+    @Test
+    void semanticRerankPassesRetrievalTextAsBgePassage() {
+        CodeChunk chunk = chunk("src/main/java/com/acme/service/impl/NoteServiceImpl.java", "publishNote");
+        com.example.requirementrag.rerank.BgeReranker bge = mock(com.example.requirementrag.rerank.BgeReranker.class);
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.List<com.example.requirementrag.model.ChunkRecord>> captor =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        when(bge.rerank(eq("query"), captor.capture(), anyInt())).thenReturn(List.of());
+        CodeQdrantStore store = storeWith(bge);
+
+        store.semanticRerank("query", List.of(chunk));
+
+        assertThat(captor.getValue().get(0).childText())
+                .startsWith("file path: src/main/java/com/acme/service/impl/NoteServiceImpl.java");
+        assertThat(captor.getValue().get(0).filename()).isEqualTo(chunk.filePath());
+    }
+
+    private CodeQdrantStore storeWith(com.example.requirementrag.rerank.BgeReranker bge) {
+        com.example.requirementrag.config.RagProperties properties =
+                mock(com.example.requirementrag.config.RagProperties.class);
+        when(properties.retrieval()).thenReturn(new com.example.requirementrag.config.RagProperties.Retrieval(
+                50, 50, 40, 20, 10, false, 1_000, 3, 3, 30_000,
+                -1, -1, -1, -1, null, null, null, true, 3));
+        return new CodeQdrantStore(mock(org.springframework.web.client.RestClient.class),
+                mock(org.springframework.ai.embedding.EmbeddingModel.class),
+                mock(com.example.requirementrag.retrieval.EmbeddingBatcher.class),
+                new com.example.requirementrag.retrieval.SparseVectorizer(),
+                properties, bge);
     }
 
     @Test
@@ -175,7 +259,11 @@ class CodeQdrantStoreTest {
     }
 
     private CodeChunk chunk(String path, String symbolName) {
-        return new CodeChunk("id", "demo", "abc", path, "method", symbolName,
+        return chunk(path, symbolName, "id");
+    }
+
+    private CodeChunk chunk(String path, String symbolName, String id) {
+        return new CodeChunk(id, "demo", "abc", path, "method", symbolName,
                 1, 2, "void method() {}", "hash", "java");
     }
 }

@@ -89,6 +89,7 @@ public class MonitorController {
                 metricValues());
     }
 
+    /** 解析项目的知识配置，未指定或解析失败时回退到全局默认配置。 */
     private RagProperties.Knowledge resolveKnowledge(String projectId) {
         if (projectId == null || projectId.isBlank()) {
             return properties.knowledge();
@@ -106,6 +107,7 @@ public class MonitorController {
         return properties.knowledge();
     }
 
+    /** 解析项目的需求 collection，解析失败时回退到全局默认 collection。 */
     private String resolveRequirementCollection(String projectId) {
         if (projectId == null || projectId.isBlank()) {
             return properties.qdrant().collection();
@@ -260,6 +262,7 @@ public class MonitorController {
         return tools;
     }
 
+    /** 统计指定阶段的失败次数。 */
     private double failureCount(String stage) {
         double total = 0D;
         for (Counter counter : meterRegistry.find("rag.stage.failures").tag("stage", stage).counters()) {

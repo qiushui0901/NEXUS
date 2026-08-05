@@ -18,6 +18,7 @@ public class CachedBodyHttpServletRequest extends HttpServletRequestWrapper {
 
     private final byte[] cachedBody;
 
+    /** 读取并缓存请求体的全部字节。 */
     public CachedBodyHttpServletRequest(HttpServletRequest request) throws IOException {
         super(request);
         this.cachedBody = request.getInputStream().readAllBytes();
@@ -27,6 +28,7 @@ public class CachedBodyHttpServletRequest extends HttpServletRequestWrapper {
         return cachedBody;
     }
 
+    /** 返回基于缓存 body 的可重复读取输入流。 */
     @Override
     public ServletInputStream getInputStream() {
         ByteArrayInputStream input = new ByteArrayInputStream(cachedBody);
@@ -53,6 +55,7 @@ public class CachedBodyHttpServletRequest extends HttpServletRequestWrapper {
         };
     }
 
+    /** 返回按 UTF-8 解码缓存 body 的读取器。 */
     @Override
     public BufferedReader getReader() {
         return new BufferedReader(new InputStreamReader(getInputStream(), StandardCharsets.UTF_8));

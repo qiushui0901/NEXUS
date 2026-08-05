@@ -119,6 +119,9 @@ public class DoubtReviewService {
 
     /**
      * 通过共享检索管线加载当前版本文档上下文并生成新存疑。
+     *
+     * @param request 含文档、版本与限定模块的评审请求
+     * @return 规范化并按条数截断后的当前版本存疑批次
      */
     public DoubtBatch reviewCurrentVersion(ReviewRequest request) {
         RetrievalContext context = loadRetrievalContext(request);
@@ -147,6 +150,9 @@ public class DoubtReviewService {
 
     /**
      * 从历史存疑中生成以前版本遗留问题。
+     *
+     * @param request 含文档、版本与限定模块的评审请求
+     * @return 模块名带 [历史版本] 前缀、按条数截断后的历史存疑批次
      */
     public DoubtBatch reviewPriorVersion(ReviewRequest request) {
         String historicalContext = loadHistoricalContext(request.projectId());

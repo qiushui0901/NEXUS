@@ -257,7 +257,12 @@ public final class RetrievalEvaluationMatcher {
             if (!trace.codeTraceAvailable()) {
                 causes.add("CODE_TRACE_UNAVAILABLE");
             } else if (codeRawRank == null) {
-                causes.add("CODE_CANDIDATE_RECALL_MISS");
+                if (containsGoldenCode(trace.codeDenseCandidates(), c.goldCode())
+                        || containsGoldenCode(trace.codeSparseCandidates(), c.goldCode())) {
+                    causes.add("CODE_FUSION_LOSS");
+                } else {
+                    causes.add("CODE_CANDIDATE_RECALL_MISS");
+                }
             } else if (codeRankedRank == null) {
                 causes.add("CODE_RERANK_LOSS");
             } else {
@@ -268,6 +273,20 @@ public final class RetrievalEvaluationMatcher {
             causes.add("UNCLASSIFIED_RETRIEVAL_FAILURE");
         }
         return List.copyOf(causes);
+    }
+
+    private static boolean containsGoldenCode(List<CodeChunk> candidates, List<RetrievalEvaluationCase.GoldCode> goldCode) {
+        for (CodeChunk candidate : candidates) {
+            for (RetrievalEvaluationCase.GoldCode gold : goldCode) {
+                if (gold.projectId().equals(candidate.projectId())
+                        && RetrievalEvaluationDataset.normalizePath(gold.filePath()).equals(
+                        RetrievalEvaluationDataset.normalizePath(candidate.filePath()))
+                        && gold.symbolName().equals(candidate.symbolName())) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static boolean isUnavailableWarning(RagWarning warning) {
@@ -390,7 +409,9 @@ public final class RetrievalEvaluationMatcher {
             List<ChunkRecord> documentRerankedCandidates,
             boolean codeTraceAvailable,
             List<CodeChunk> codeRawCandidates,
-            List<CodeChunk> codeRankedCandidates
+            List<CodeChunk> codeRankedCandidates,
+            List<CodeChunk> codeDenseCandidates,
+            List<CodeChunk> codeSparseCandidates
     ) {
         public EvaluationTrace {
             documentRawCandidates = safeList(documentRawCandidates);
@@ -398,10 +419,26 @@ public final class RetrievalEvaluationMatcher {
             documentRerankedCandidates = safeList(documentRerankedCandidates);
             codeRawCandidates = safeList(codeRawCandidates);
             codeRankedCandidates = safeList(codeRankedCandidates);
+            codeDenseCandidates = safeList(codeDenseCandidates);
+            codeSparseCandidates = safeList(codeSparseCandidates);
         }
 
         public static EvaluationTrace empty() {
-            return new EvaluationTrace(false, List.of(), List.of(), List.of(), false, List.of(), List.of());
+            return new EvaluationTrace(false, List.of(), List.of(), List.of(),
+                    false, List.of(), List.of(), List.of(), List.of());
+        }
+
+        /** Backward-compatible constructor for pre-0.8.3 callers. */
+        public EvaluationTrace(boolean documentTraceAvailable,
+                               List<ChunkRecord> documentRawCandidates,
+                               List<ChunkRecord> documentRerankCandidates,
+                               List<ChunkRecord> documentRerankedCandidates,
+                               boolean codeTraceAvailable,
+                               List<CodeChunk> codeRawCandidates,
+                               List<CodeChunk> codeRankedCandidates) {
+            this(documentTraceAvailable, documentRawCandidates, documentRerankCandidates,
+                    documentRerankedCandidates, codeTraceAvailable, codeRawCandidates, codeRankedCandidates,
+                    List.of(), List.of());
         }
     }
 

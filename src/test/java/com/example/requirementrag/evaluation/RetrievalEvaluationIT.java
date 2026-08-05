@@ -41,6 +41,13 @@ class RetrievalEvaluationIT {
 
     private static final RetrievalEvaluationSettings SETTINGS = RetrievalEvaluationSettings.fromEnvironment();
 
+    @org.springframework.test.context.DynamicPropertySource
+    static void evaluationProperties(org.springframework.test.context.DynamicPropertyRegistry registry) {
+        if (SETTINGS.mode() == RetrievalEvaluationSettings.EvaluationMode.BASELINE_0_7) {
+            registry.add("app.rag.retrieval.code-bge-rerank-enabled", () -> "false");
+        }
+    }
+
     @Autowired
     private RetrievalPipeline retrievalPipeline;
 
@@ -211,7 +218,9 @@ class RetrievalEvaluationIT {
                 safeRerankTrace.reranked(),
                 codeTraceAvailable,
                 codeTrace.candidates(),
-                codeTrace.ranked());
+                codeTrace.ranked(),
+                codeTrace.denseCandidates(),
+                codeTrace.sparseCandidates());
     }
 
     private RetrievalProfile productionProfile(RetrievalEvaluationCase.RetrievalProfile profile) {

@@ -30,6 +30,27 @@ class SparseVectorizerTest {
         assertThat(vectorizer.similarity("", precise)).isZero();
     }
 
+    @Test
+    void codeVariantSplitsCamelCaseIdentifiersSoTermsMatchAcrossQueryAndIndex() {
+        SparseVectorizer vectorizer = new SparseVectorizer();
+        var sync = vectorizer.vectorizeCode("sync");
+        var camel = vectorizer.vectorizeCode("syncRevocation()");
+
+        assertThat(sync.indices()).allMatch(camel.indices()::contains);
+        assertThat(vectorizer.vectorizeCode("syncUserIndex()"))
+                .isEqualTo(vectorizer.vectorizeCode("sync user index"));
+        assertThat(vectorizer.vectorize("syncRevocation()").indices())
+                .doesNotContain(sync.indices().get(0));
+    }
+
+    @Test
+    void codeVariantKeepsDocumentBehaviorUnchanged() {
+        SparseVectorizer vectorizer = new SparseVectorizer();
+        String chinese = "需求文档 版本隔离";
+
+        assertThat(vectorizer.vectorizeCode(chinese)).isEqualTo(vectorizer.vectorize(chinese));
+    }
+
     private static org.assertj.core.data.Offset<Double> within(double value) {
         return org.assertj.core.data.Offset.offset(value);
     }

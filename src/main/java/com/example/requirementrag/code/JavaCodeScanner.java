@@ -62,6 +62,14 @@ public class JavaCodeScanner {
         return new ScanResult(projectId, commitSha, files.size(), chunks);
     }
 
+    /**
+     * 扫描指定 commit 下的部分 Java 文件（增量索引用），文件内容通过 git show 读取。
+     *
+     * @param config            代码配置（含项目 ID、路径过滤与大小限制）
+     * @param commitSha         目标 commit
+     * @param relativeFilePaths 相对于仓库根的文件路径列表
+     * @return 提取出的代码 chunk 列表
+     */
     public List<CodeChunk> scanFiles(RagProperties.Code config, String commitSha, List<String> relativeFilePaths)
             throws IOException {
         Path root = Path.of(config.repositoryPath()).toAbsolutePath().normalize();
@@ -86,6 +94,7 @@ public class JavaCodeScanner {
         return chunks;
     }
 
+    /** 通过 git show 读取指定 commit 下文件内容；git 失败或文件不存在时返回 null。 */
     private String gitShow(Path repoRoot, String commitSha, String relativePath) {
         try {
             Process process = new ProcessBuilder("git", "show", commitSha + ":" + relativePath)
@@ -107,6 +116,7 @@ public class JavaCodeScanner {
         }
     }
 
+    /** 从源码文本中按正则提取类与方法片段并切分为 chunk；未命中任何类型/方法时退化为整个文件级 chunk。 */
     private List<CodeChunk> extractFile(String projectId, String commitSha, String filePath, String text) {
         List<CodeChunk> chunks = new ArrayList<>();
         int[] lineStarts = lineStarts(text);
@@ -141,6 +151,7 @@ public class JavaCodeScanner {
         return chunks;
     }
 
+    /** 将 [startOffset, endOffset) 区间切分为不超过 MAX_CHUNK_CHARS 的 chunk，段间保留 CHUNK_OVERLAP_CHARS 重叠。 */
     private List<CodeChunk> chunks(String projectId, String commitSha, String filePath, String symbolType,
                                    String symbolName, String fullText, int startOffset, int endOffset,
                                    int[] lineStarts) {
@@ -174,6 +185,7 @@ public class JavaCodeScanner {
         return chunks;
     }
 
+    /** 从指定位置起找配对的代码块结束位置，扫描时跳过字符串与字符字面量；未找到闭合大括号时返回全文长度。 */
     private int findBlockEnd(String text, int searchFrom) {
         int open = text.indexOf('{', Math.max(0, searchFrom - 1));
         if (open < 0) {
@@ -217,6 +229,7 @@ public class JavaCodeScanner {
         return text.length();
     }
 
+    /** 计算文本中每一行的起始偏移（首行为 0）。 */
     private int[] lineStarts(String text) {
         List<Integer> starts = new ArrayList<>();
         starts.add(0);
@@ -228,6 +241,7 @@ public class JavaCodeScanner {
         return starts.stream().mapToInt(Integer::intValue).toArray();
     }
 
+    /** 二分查找偏移量所在的 1 起行号。 */
     private int lineOf(int[] lineStarts, int offset) {
         int low = 0;
         int high = lineStarts.length - 1;
@@ -243,6 +257,7 @@ public class JavaCodeScanner {
         return Math.max(1, high + 1);
     }
 
+    /** 按配置的 includes/excludes（相对路径包含匹配）判断文件是否参与扫描。 */
     private boolean include(Path root, Path file, RagProperties.Code config) {
         String relative = "/" + normalize(root.relativize(file).toString());
         if (config.excludes().stream().anyMatch(relative::contains)) {
@@ -251,6 +266,7 @@ public class JavaCodeScanner {
         return config.includes().isEmpty() || config.includes().stream().anyMatch(relative::contains);
     }
 
+    /** 读取仓库当前 HEAD commit SHA，失败时返回 "unknown"。 */
     private String gitCommit(Path root) {
         try {
             Process process = new ProcessBuilder("git", "rev-parse", "HEAD")
@@ -269,6 +285,7 @@ public class JavaCodeScanner {
         }
     }
 
+    /** 排除被方法正则误配的流程控制关键字（如 if/for 等非方法声明）。 */
     private boolean isControlKeyword(String name) {
         return List.of("if", "for", "while", "switch", "catch").contains(name);
     }

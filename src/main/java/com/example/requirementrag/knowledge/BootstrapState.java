@@ -11,6 +11,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 知识库引导进度与状态的线程安全追踪器。
+ * 使用原子类型与并发集合记录全局引导进度（阶段、文件数、分块数、错误信息），
+ * 并维护按 projectId 划分的项目级引导锁，防止同一项目被重复导入。
  */
 @Component
 public class BootstrapState {

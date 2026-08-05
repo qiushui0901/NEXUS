@@ -28,12 +28,24 @@ public class QueryRouter {
         this.properties = properties;
     }
 
-    /** 兼容旧调用方，只返回最终路由。 */
+    /**
+     * 兼容旧调用方，只返回最终路由。
+     *
+     * @param query     用户问题，仅 projectId 缺失时参与 LLM 路由
+     * @param projectId 用户显式指定的项目 ID，可空
+     * @return 最终路由结果
+     */
     public QueryRouting route(String query, String projectId) {
         return routeWithOutcome(query, projectId).data();
     }
 
-    /** 返回路由结果及自动路由回退诊断。 */
+    /**
+     * 返回路由结果及自动路由回退诊断。
+     *
+     * @param query     用户问题，仅 projectId 缺失时参与 LLM 路由
+     * @param projectId 用户显式指定的项目 ID，可空
+     * @return 路由结果；自动路由失败时降级为默认项目并附带诊断码
+     */
     public RagOutcome<QueryRouting> routeWithOutcome(String query, String projectId) {
         long started = System.nanoTime();
         if (hasText(projectId)) {
@@ -130,6 +142,7 @@ public class QueryRouter {
         return Duration.ofNanos(System.nanoTime() - started).toMillis();
     }
 
+    /** LLM 原始路由应答：项目 ID、side 与置信度。 */
     private record LlmRoutingResult(String projectId, String side, double confidence) {
     }
 }

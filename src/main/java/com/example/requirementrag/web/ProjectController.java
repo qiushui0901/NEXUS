@@ -38,6 +38,7 @@ public class ProjectController {
         this.accessGuard = accessGuard;
     }
 
+    /** 列出当前用户有权访问的项目及其统计摘要。对应 GET /api/projects。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @GetMapping
     public List<ProjectSummary> list(HttpServletRequest request) {
@@ -53,6 +54,7 @@ public class ProjectController {
         return value != null && !value.isBlank();
     }
 
+    /** 将项目配置转换为含需求/代码分块统计的摘要。 */
     private ProjectSummary toSummary(RagProperties.ProjectConfig project) {
         long requirementChunks = safeCountRequirements(project);
         long codeChunks = safeCountCode(project);
@@ -67,6 +69,7 @@ public class ProjectController {
                 codeChunks);
     }
 
+    /** 安全统计需求分块数，配置缺失或存储不可用时返回 0。 */
     private long safeCountRequirements(RagProperties.ProjectConfig project) {
         try {
             if (project.knowledge() == null) return 0L;
@@ -82,6 +85,7 @@ public class ProjectController {
         }
     }
 
+    /** 安全统计代码分块数，存储不可用时返回 0。 */
     private long safeCountCode(RagProperties.ProjectConfig project) {
         try {
             String collection = project.codeCollection();
@@ -94,6 +98,7 @@ public class ProjectController {
         }
     }
 
+    /** 项目列表摘要：基本信息与需求/代码分块统计。 */
     public record ProjectSummary(
             String id,
             String name,

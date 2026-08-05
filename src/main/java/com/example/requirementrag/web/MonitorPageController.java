@@ -15,6 +15,7 @@ public class MonitorPageController {
         return "redirect:/home.html";
     }
 
+    /** 监控工作台页面，重定向至静态 monitor.html。对应 GET /monitor。 */
     @GetMapping("/monitor")
     public String monitorPage() {
         return "redirect:/monitor.html";

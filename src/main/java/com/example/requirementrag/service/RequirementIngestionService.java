@@ -50,6 +50,13 @@ public class RequirementIngestionService {
 
     /**
      * 上传 multipart 文件并导入为指定版本的向量分块。
+     *
+     * @param collection 目标 collection，可空（使用默认 collection）
+     * @param file       上传的需求文件，由 Tika 解析为纯文本
+     * @param version    需求版本
+     * @param documentId 文档 ID，空时自动生成 UUID
+     * @return 导入结果（文档 ID、版本与分块数量）
+     * @throws IOException 文件读取或解析失败时抛出
      */
     public IngestResponse ingest(String collection, MultipartFile file, String version, String documentId) throws IOException {
         String id = StringUtils.hasText(documentId) ? documentId : UUID.randomUUID().toString();
@@ -66,6 +73,13 @@ public class RequirementIngestionService {
 
     /**
      * 批量导入知识条目：清洗、分块、去重后替换指定版本的全部分块。
+     *
+     * @param collection 目标 collection，可空（使用默认 collection）
+     * @param documentId 文档 ID
+     * @param version    需求版本
+     * @param entries    知识条目（文件名 + 文本）；为空时抛出异常
+     * @return 导入结果（文档 ID、版本与分块数量）
+     * @throws IllegalArgumentException 没有可导入条目或解析后无有效文本时抛出
      */
     public IngestResponse ingestEntries(String collection, String documentId, String version, List<KnowledgeEntry> entries) {
         if (entries.isEmpty()) {

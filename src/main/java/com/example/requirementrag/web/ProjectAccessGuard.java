@@ -19,6 +19,7 @@ public class ProjectAccessGuard {
         this.authorizationService = authorizationService;
     }
 
+    /** 获取当前请求用户；认证服务关闭时回退为默认管理员，未认证时抛异常。 */
     public UserContext currentUser(HttpServletRequest request) {
         UserContext user = (UserContext) request.getAttribute(UserContext.REQUEST_ATTRIBUTE);
         if (user != null) {
@@ -30,6 +31,7 @@ public class ProjectAccessGuard {
         throw new AccessDeniedException("未认证");
     }
 
+    /** 校验当前用户对指定项目的访问权限，无权访问时抛 AccessDeniedException。 */
     public void requireProjectAccess(HttpServletRequest request, String projectId) {
         authorizationService.requireProjectAccess(currentUser(request), projectId);
     }

@@ -2,10 +2,11 @@ package com.example.requirementrag.wiki;
 
 import java.util.List;
 
-/** Typed contracts shared by Wiki source files, generated artifacts and APIs. */
+/** Wiki 源文件、生成产物与 API 共用的类型化契约。 */
 public final class WikiModels {
     private WikiModels() {}
 
+    /** 功能页面的核验状态。 */
     public enum Status {
         DRAFT,
         REQUIREMENT_VERIFIED,
@@ -18,6 +19,7 @@ public final class WikiModels {
         REJECTED
     }
 
+    /** 一条支撑页面结论的原始证据引用。 */
     public record Evidence(
             String type,
             String title,
@@ -31,6 +33,7 @@ public final class WikiModels {
             String verificationStatus
     ) {}
 
+    /** 页面到其他功能页面的关联。 */
     public record Relation(
             String targetFeatureId,
             String type,
@@ -38,7 +41,7 @@ public final class WikiModels {
             String description
     ) {}
 
-    /** A bounded, reviewable pointer to one requirement entry; never stores the source document itself. */
+    /** 指向单条需求条目的有界、可审阅指针，绝不存储源文档本身。 */
     public record RequirementSource(
             String documentId,
             String entryId,
@@ -49,7 +52,7 @@ public final class WikiModels {
             String verificationStatus
     ) {}
 
-    /** A code location proven to exist at the selected commit. */
+    /** 在所选 commit 上证明存在的代码位置。 */
     public record CodeEntry(
             String role,
             String filePath,
@@ -59,7 +62,7 @@ public final class WikiModels {
             String verificationStatus
     ) {}
 
-    /** Test knowledge keeps suggestions separate from real execution evidence. */
+    /** 测试知识将建议与真实执行证据分开保存。 */
     public record TestKnowledge(
             String executionStatus,
             String executionReference,
@@ -67,6 +70,7 @@ public final class WikiModels {
             List<String> cases
     ) {}
 
+    /** 结构化记录的功能版本变化。 */
     public record VersionChange(
             String changeType,
             String baseVersion,
@@ -74,6 +78,7 @@ public final class WikiModels {
             String summary
     ) {}
 
+    /** 知识质量评估：审阅状态、证据计数与缺失项。 */
     public record KnowledgeQuality(
             String reviewStatus,
             int requirementEvidenceCount,
@@ -82,6 +87,7 @@ public final class WikiModels {
             List<String> missing
     ) {}
 
+    /** 页面源定义，是生成 Wiki 的输入。 */
     public record PageSource(
             String featureId,
             String title,
@@ -107,6 +113,7 @@ public final class WikiModels {
             List<Evidence> evidence
     ) {}
 
+    /** 单个版本 Wiki 的源定义，含页面列表。 */
     public record VersionSource(
             int schemaVersion,
             String projectId,
@@ -119,6 +126,7 @@ public final class WikiModels {
             List<PageSource> pages
     ) {}
 
+    /** 生成后的完整页面，含渲染后的 Markdown 相对路径。 */
     public record Page(
             String projectId,
             String projectName,
@@ -152,6 +160,7 @@ public final class WikiModels {
             String markdownPath
     ) {}
 
+    /** 页面索引摘要，用于版本对比与列表展示。 */
     public record PageSummary(
             String featureId,
             String title,
@@ -163,6 +172,7 @@ public final class WikiModels {
             int evidenceCount
     ) {}
 
+    /** 单个版本发布后的索引，含全部页面摘要。 */
     public record VersionIndex(
             int schemaVersion,
             String projectId,
@@ -175,6 +185,7 @@ public final class WikiModels {
             List<PageSummary> pages
     ) {}
 
+    /** 项目的 Wiki 概览：版本列表与总页数。 */
     public record ProjectSummary(
             String projectId,
             String projectName,
@@ -182,6 +193,7 @@ public final class WikiModels {
             int pageCount
     ) {}
 
+    /** 一次 Wiki 生成的返回结果。 */
     public record GenerationResult(
             String projectId,
             String version,

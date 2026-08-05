@@ -8,7 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.List;
 
-/** Transport-neutral API-key authentication shared by REST and MCP. */
+/** 与传输层无关的 API 密钥认证，REST 与 MCP 共用。 */
 @Service
 public class ApiKeyAuthenticationService {
 
@@ -24,6 +24,12 @@ public class ApiKeyAuthenticationService {
         return properties.enabled();
     }
 
+    /**
+     * 认证 API 密钥：禁用认证时返回默认管理员；密钥缺失或与任一配置用户不匹配时抛 {@link UnauthenticatedException}。
+     *
+     * @param apiKey 请求携带的 API 密钥（原始头值）
+     * @return 匹配到的用户上下文（用户名、角色、可用项目）
+     */
     public UserContext authenticate(String apiKey) {
         if (!properties.enabled()) {
             return UserContext.defaultAdmin();
@@ -40,6 +46,7 @@ public class ApiKeyAuthenticationService {
         throw new UnauthenticatedException();
     }
 
+    /** 常量时间比较，避免时序侧信道泄露密钥信息。 */
     private boolean constantTimeEquals(String left, String right) {
         if (left == null || right == null) {
             return false;

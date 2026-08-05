@@ -30,7 +30,7 @@ class DefaultRequirementRerankerTest {
         RagObservability observability = mock(RagObservability.class);
         when(properties.retrieval()).thenReturn(new RagProperties.Retrieval(
                 50, 50, 40, 20, 10, false, 1_000, 2, 3, 30_000,
-                -1, -1, -1, -1, null, null, null));
+                -1, -1, -1, -1, null, null, null, null, null));
         when(bgeReranker.rerank(any(), any(), anyInt()))
                 .thenThrow(new IllegalStateException("endpoint unavailable"));
         DefaultRequirementReranker reranker = new DefaultRequirementReranker(
@@ -124,7 +124,7 @@ class DefaultRequirementRerankerTest {
     private RagProperties.Retrieval retrieval(Boolean childFirst) {
         return new RagProperties.Retrieval(
                 50, 50, 40, 20, 10, false, 1_000, 2, 3, 30_000,
-                -1, -1, -1, -1, childFirst, null, null);
+                -1, -1, -1, -1, childFirst, null, null, null, null);
     }
 
     private ChunkRecord chunk(String id) {

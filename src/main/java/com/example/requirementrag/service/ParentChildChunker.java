@@ -17,6 +17,9 @@ public class ParentChildChunker {
 
     /**
      * 将文本拆分为父块及其子块列表。
+     *
+     * @param text 原始文本
+     * @return 父块列表，每块包含有序子块；空文本返回空列表
      */
     public List<ParentChunk> split(String text) {
         List<String> parents = splitByBoundary(text, PARENT_SIZE, 0);

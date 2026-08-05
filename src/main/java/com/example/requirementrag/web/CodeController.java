@@ -115,7 +115,7 @@ public class CodeController {
                 request.crossSide());
     }
 
-    /** Traverse the persisted static symbol call graph. */
+    /** 遍历持久化的静态符号调用图。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @PostMapping("/graph/symbols")
     public CodeIntelligenceResponse symbolGraph(@Valid @RequestBody SymbolGraphRequest request,
@@ -125,7 +125,7 @@ public class CodeController {
                 request.depth(), request.limit());
     }
 
-    /** Analyze symbol or commit-range impact with explicit confidence tiers. */
+    /** 分析符号或提交区间的影响范围，并给出显式的置信等级。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @PostMapping("/impact")
     public CodeIntelligenceResponse impact(@RequestBody ImpactAnalysisRequest request,

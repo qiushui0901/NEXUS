@@ -18,8 +18,21 @@ public class SparseVectorizer {
      * 将文本转换为稀疏向量（indices + values），用于 Qdrant 稀疏检索。
      */
     public SparseVector vectorize(String text) {
+        return vectorize(text, false);
+    }
+
+    /**
+     * 代码专用稀疏向量：先拆分 camelCase / snake_case 标识符再做字符级分词，
+     * 使 `syncRevocation` 可被 `sync` / `revocation` 命中。索引与查询必须使用同一变体。
+     */
+    public SparseVector vectorizeCode(String text) {
+        return vectorize(text, true);
+    }
+
+    /** 分词后按哈希去重累加权重，做 L2 归一化并按索引升序输出。 */
+    private SparseVector vectorize(String text, boolean codeAware) {
         Map<Integer, Float> weights = new LinkedHashMap<>();
-        for (String token : tokenize(text)) {
+        for (String token : tokenize(text, codeAware)) {
             int index = token.hashCode() & 0x7fffffff;
             weights.merge(index, 1.0f, Float::sum);
         }
@@ -61,9 +74,12 @@ public class SparseVectorizer {
         return score;
     }
 
-    /** 中英文混合分词：汉字按单字/双字切分，英文按词切分。 */
-    private List<String> tokenize(String text) {
-        String normalized = text.toLowerCase(Locale.ROOT).replaceAll("[^\\p{IsHan}a-z0-9]+", " ");
+    /** 中英文混合分词：汉字按单字/双字切分，英文按词切分；代码模式先拆分标识符。 */
+    private List<String> tokenize(String text, boolean codeAware) {
+        String split = codeAware
+                ? text.replaceAll("([a-z0-9])([A-Z])", "$1 $2").replaceAll("[_$]+", " ")
+                : text;
+        String normalized = split.toLowerCase(Locale.ROOT).replaceAll("[^\\p{IsHan}a-z0-9]+", " ");
         List<String> tokens = new ArrayList<>();
         for (String word : normalized.split("\\s+")) {
             if (word.isBlank()) continue;

@@ -45,12 +45,25 @@ public class QdrantHybridStore {
         this.properties = properties;
     }
 
-    /** 替换指定文档版本的全部分块：先删后批量写入。使用默认 collection。 */
+    /**
+     * 替换指定文档版本的全部分块：先删后批量写入。使用默认 collection。
+     *
+     * @param documentId 文档 ID
+     * @param version    文档版本号
+     * @param chunks     新版本的全部分块
+     */
     public void replaceVersion(String documentId, String version, List<ChunkRecord> chunks) {
         replaceVersion(collection(), documentId, version, chunks);
     }
 
-    /** 替换指定文档版本的全部分块：先删后批量写入。 */
+    /**
+     * 替换指定文档版本的全部分块：先删后批量写入。
+     *
+     * @param collection Qdrant collection 名称
+     * @param documentId 文档 ID
+     * @param version    文档版本号
+     * @param chunks     新版本的全部分块
+     */
     public void replaceVersion(String collection, String documentId, String version, List<ChunkRecord> chunks) {
         ensureCollection(collection);
         List<List<Map<String, Object>>> pointBatches = buildPointBatches(chunks, 64);
@@ -59,6 +72,7 @@ public class QdrantHybridStore {
     }
 
 
+    /** 将分块按指定批量大小分组，供分批次写入。 */
     private List<List<Map<String, Object>>> buildPointBatches(List<ChunkRecord> chunks, int batchSize) {
         List<List<Map<String, Object>>> batches = new ArrayList<>();
         for (int start = 0; start < chunks.size(); start += batchSize) {
@@ -68,6 +82,7 @@ public class QdrantHybridStore {
         return batches;
     }
 
+    /** 逐批 PUT 写入 Qdrant 点，wait=true 等待持久化完成。 */
     private void writePointBatches(String collection, List<List<Map<String, Object>>> batches) {
         for (List<Map<String, Object>> points : batches) {
             client.put().uri("/collections/{collection}/points?wait=true", collection)
@@ -97,7 +112,14 @@ public class QdrantHybridStore {
         return points;
     }
 
-    /** 执行稠密+稀疏 prefetch 与 RRF 融合的混合检索。使用默认 collection。 */
+    /**
+     * 执行稠密+稀疏 prefetch 与 RRF 融合的混合检索。使用默认 collection。
+     *
+     * @param query      查询文本
+     * @param documentId 限定检索的文档 ID
+     * @param version    限定检索的文档版本号
+     * @return 融合排序后的分块列表，无结果时为空列表
+     */
     public List<ChunkRecord> hybridSearch(String query, String documentId, String version) {
         return hybridSearch(collection(), query, documentId, version);
     }
@@ -121,7 +143,15 @@ public class QdrantHybridStore {
         return extractPoints(response);
     }
 
-    /** 执行混合检索并返回带 Qdrant 原生分数的结果。 */
+    /**
+     * 执行混合检索并返回带 Qdrant 原生融合分数的结果。
+     *
+     * @param collection Qdrant collection 名称
+     * @param query      查询文本
+     * @param documentId 限定检索的文档 ID
+     * @param version    限定检索的文档版本号
+     * @return 带分数的分块列表，无结果时为空列表
+     */
     public List<ScoredChunk> hybridSearchWithScores(String collection, String query, String documentId, String version) {
         ensureCollection(collection);
         float[] dense = embeddingBatcher.embedAll(List.of(query)).getFirst();
@@ -148,13 +178,20 @@ public class QdrantHybridStore {
         return list(points).stream().map(this::toScoredRecord).toList();
     }
 
+    /** 将单个 Qdrant 点转换为带分数的记录，缺失 score 时按 0 处理。 */
     private ScoredChunk toScoredRecord(Object raw) {
         Map<String, Object> point = map(raw);
         double score = point.containsKey("score") ? ((Number) point.get("score")).doubleValue() : 0.0;
         return new ScoredChunk(toRecord(raw), score);
     }
 
-    /** 统计指定文档版本的分块数量。使用默认 collection。 */
+    /**
+     * 统计指定文档版本的分块数量。使用默认 collection。
+     *
+     * @param documentId 文档 ID
+     * @param version    文档版本号
+     * @return 匹配该文档版本的点数量
+     */
     public long countVersion(String documentId, String version) {
         return countVersion(collection(), documentId, version);
     }
@@ -171,7 +208,13 @@ public class QdrantHybridStore {
         return ((Number) result.getOrDefault("count", 0)).longValue();
     }
 
-    /** 分页滚动获取指定文档版本的全部 payload。使用默认 collection。 */
+    /**
+     * 分页滚动获取指定文档版本的全部 payload。使用默认 collection。
+     *
+     * @param documentId 文档 ID
+     * @param version    文档版本号
+     * @return 该文档版本的全部分块
+     */
     public List<ChunkRecord> scrollVersion(String documentId, String version) {
         return scrollVersion(collection(), documentId, version);
     }
@@ -198,7 +241,12 @@ public class QdrantHybridStore {
         return result;
     }
 
-    /** 轮询等待 Qdrant 服务就绪，超时则抛出异常。 */
+    /**
+     * 轮询等待 Qdrant 服务就绪，超时则抛出异常。
+     *
+     * @param timeout 最长等待时间
+     * @throws IllegalStateException 超时仍未就绪时抛出，附带最后一次失败原因
+     */
     public void waitUntilReady(Duration timeout) {
         long deadline = System.nanoTime() + timeout.toNanos();
         RuntimeException lastFailure = null;

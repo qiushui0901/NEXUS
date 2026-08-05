@@ -34,12 +34,18 @@ public class CrossProjectSearchService {
         this.properties = properties;
     }
 
+    /** 等待全部项目检索完成的总超时秒数，超时后仅返回已完成的项目结果。 */
+    private static final long SEARCH_TIMEOUT_SECONDS = 30;
+
     /**
      * 在候选项目列表中并行检索需求分块，按相关性合并后返回 topK 条结果。
      * 单个项目检索失败不影响其他项目。
+     *
+     * @param query                检索查询文本
+     * @param candidateProjectIds  候选项目 ID 列表；为空时直接返回空列表
+     * @param topK                 返回的合并结果条数，会被限制在 1-50 之间
+     * @return 按分数降序排列的跨项目检索结果，最多 topK 条
      */
-    private static final long SEARCH_TIMEOUT_SECONDS = 30;
-
     public List<CrossProjectSearchResult> fanOutSearch(String query, List<String> candidateProjectIds, int topK) {
         if (query == null || query.isBlank() || candidateProjectIds == null || candidateProjectIds.isEmpty()) {
             return List.of();
@@ -71,6 +77,7 @@ public class CrossProjectSearchService {
                 .toList();
     }
 
+    /** 在单个项目中执行混合检索，缺失知识配置或检索失败时返回空列表。 */
     private List<CrossProjectSearchResult> searchProject(String query, String projectId, int topK) {
         try {
             RagProperties.ProjectConfig project = projectRegistry.require(projectId);

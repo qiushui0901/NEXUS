@@ -16,7 +16,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
 
-/** Compares requirement parent chunks from reviewable snapshots, with Qdrant payloads as a fallback. */
+/** 基于可审阅快照比对需求父块差异，快照缺失时回退到 Qdrant 载荷。 */
 @Service
 public class RequirementVersionDiffService {
     private static final int EXCERPT_LIMIT = 360;
@@ -32,6 +32,15 @@ public class RequirementVersionDiffService {
         this.snapshots = snapshots;
     }
 
+    /**
+     * 对比两个版本清单之间的需求变化；任一方缺需求引用时返回不可用结果。
+     * 优先物化快照比对；快照缺失时回退从 Qdrant 滚动读取，且过滤删除项。
+     *
+     * @param projectId 项目标识
+     * @param from      起始版本清单
+     * @param to        目标版本清单
+     * @return 含三类计数与明细的需求差异
+     */
     public RequirementDiff compare(String projectId, VersionManifest from, VersionManifest to) {
         if (!hasReference(from) || !hasReference(to)) return RequirementDiff.unavailable();
         List<ChunkRecord> before;
@@ -65,16 +74,19 @@ public class RequirementVersionDiffService {
                 count(changes, ChangeType.REMOVED), changes);
     }
 
+    /** 将快照条目转为 ChunkRecord 列表。 */
     private List<ChunkRecord> chunks(Snapshot snapshot) {
         return snapshot.entries().stream().map(entry -> chunk(snapshot, entry)).toList();
     }
 
+    /** 将快照条目包装为虚拟父块记录，条目自身充当 parent。 */
     private ChunkRecord chunk(Snapshot snapshot, Entry entry) {
         return new ChunkRecord(entry.entryId() + "-child", snapshot.documentId(), snapshot.requirementVersion(),
                 entry.filename(), entry.entryId(), entry.text(), entry.text(), entry.contentHash(),
                 entry.parentOrder(), 0);
     }
 
+    /** 由父块变化生成需求变化明细，附前后哈希与截断摘要。 */
     private RequirementChange change(ChangeType type, ChunkRecord before, ChunkRecord after) {
         ChunkRecord source = after != null ? after : before;
         return new RequirementChange(type, source.filename(), source.parentId(), source.parentOrder(),
@@ -90,6 +102,7 @@ public class RequirementVersionDiffService {
         return hasText(manifest.requirementDocumentId()) && hasText(manifest.requirementVersion());
     }
 
+    /** 将文本压缩为单行，并截断到 360 字符作为摘要。 */
     private String excerpt(String text) {
         String normalized = safe(text).replaceAll("\\s+", " ").trim();
         return normalized.length() <= EXCERPT_LIMIT ? normalized : normalized.substring(0, EXCERPT_LIMIT) + "…";

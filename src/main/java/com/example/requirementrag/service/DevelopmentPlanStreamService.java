@@ -75,7 +75,7 @@ public class DevelopmentPlanStreamService {
         this.citationService = citationService;
     }
 
-    /** Backward-compatible constructor kept for focused unit tests and embedded consumers. */
+    /** 向后兼容构造器，供聚焦单元测试与嵌入式调用方使用。 */
     public DevelopmentPlanStreamService(RagProperties properties, RetrievalPipeline retrievalPipeline,
                                         ChatClient chatClient, ObjectMapper objectMapper,
                                         PlanSectionEvidenceMatcher evidenceMatcher,
@@ -84,7 +84,7 @@ public class DevelopmentPlanStreamService {
                 new EvidenceCitationService());
     }
 
-    /** Backward-compatible constructor kept for focused unit tests and embedded consumers. */
+    /** 向后兼容构造器，供聚焦单元测试与嵌入式调用方使用。 */
     public DevelopmentPlanStreamService(RagProperties properties, ProjectRegistry projectRegistry,
                                         QueryRouter queryRouter, QdrantHybridStore documentStore,
                                         CodeKnowledgeService codeKnowledgeService, ChatClient chatClient,
@@ -95,6 +95,13 @@ public class DevelopmentPlanStreamService {
                 new EvidenceCitationService());
     }
 
+    /**
+     * 开启一个开发方案 SSE 流：检索完成后逐行转发模型的 NDJSON 事件，
+     * 直至收到 completed 事件或发生异常。生成在虚拟线程中异步进行。
+     *
+     * @param request 包含查询、项目、文档与版本信息的请求
+     * @return 已启动的 SSE 发射器，事件通过其推送
+     */
     public SseEmitter stream(DevelopmentPlanRequest request) {
         SseEmitter emitter = new SseEmitter(STREAM_TIMEOUT_MS);
         AtomicBoolean closed = new AtomicBoolean();
@@ -105,6 +112,7 @@ public class DevelopmentPlanStreamService {
         return emitter;
     }
 
+    /** 完整生成流程：检索 → 校验并转发模型事件 → 补充引用与警告 → 结束事件或错误事件。 */
     private void generate(DevelopmentPlanRequest request, SseEmitter emitter, AtomicBoolean closed) {
         long sequence = 0;
         try {
@@ -207,10 +215,18 @@ public class DevelopmentPlanStreamService {
      * 消费模型流。提供方在已输出有效 NDJSON 后异常断流时，保留已生成内容并让上层正常收尾；
      * 若一个有效段落都没有产生，则继续抛出异常。
      */
+    /**
+     * 消费模型流：将每个解析出的事件交给消费者。
+     *
+     * @param content  模型增量文本流
+     * @param consumer 每个有效事件的处理回调
+     * @return 成功转发的事件数量
+     */
     long consumeModelStream(Flux<String> content, Consumer<DevelopmentPlanStreamEvent> consumer) {
         return consumeModelStreamOutcome(content, consumer, System.nanoTime()).data();
     }
 
+    /** 同 {@link #consumeModelStream}，额外返回包含耗时与状态的 RAG 结果。 */
     RagOutcome<Long> consumeModelStreamOutcome(Flux<String> content,
                                                 Consumer<DevelopmentPlanStreamEvent> consumer,
                                                 long started) {
@@ -220,12 +236,17 @@ public class DevelopmentPlanStreamService {
         }, started);
     }
 
+    /** 消费模型流并允许消费者通过返回 false 拒绝单个事件；拒绝的事件不计入成功数。 */
     RagOutcome<Long> consumeValidatedModelStreamOutcome(Flux<String> content,
                                                          Predicate<DevelopmentPlanStreamEvent> consumer,
                                                          long started) {
         return consumeAcceptedModelStreamOutcome(content, consumer, started);
     }
 
+    /**
+     * 消费模型流并统计被接受的事件数；模型流异常中断但已有有效事件时降级返回，
+     * 一个有效事件都没有时抛出异常。
+     */
     private RagOutcome<Long> consumeAcceptedModelStreamOutcome(Flux<String> content,
                                                                 Predicate<DevelopmentPlanStreamEvent> consumer,
                                                                 long started) {
@@ -262,6 +283,7 @@ public class DevelopmentPlanStreamService {
                 durationMs, emitted.get());
     }
 
+    /** 校验事件类型与证据引用：未支持的类型记警告并返回 null，其余事件回写校验后的证据 ID 与支持状态。 */
     DevelopmentPlanStreamEvent validateCitationEvent(DevelopmentPlanStreamEvent event,
                                                        EvidenceCitationService.Session citationSession,
                                                        List<RagWarning> warnings) {
@@ -286,6 +308,7 @@ public class DevelopmentPlanStreamService {
         return new DevelopmentPlanStreamEvent(event.type(), event.sequence(), payload, event.message());
     }
 
+    /** 为 section 事件绑定本次检索命中的真实代码作为检查目标；非 section 事件原样返回。 */
     DevelopmentPlanStreamEvent enrichSectionEvent(DevelopmentPlanStreamEvent event, List<CodeChunk> code) {
         if (event == null || !"section".equals(event.type())) {
             return event;

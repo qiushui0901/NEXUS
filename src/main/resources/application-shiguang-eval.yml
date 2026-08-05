@@ -6,7 +6,7 @@ app:
         group: shiguang
         side: server
         requirement-collection: requirements_shiguang_eval
-        code-collection: code_shiguang_eval
+        code-collection: ${SHIGUANG_CODE_COLLECTION:code_shiguang_eval}
         repository-path: ${SHIGUANG_REPOSITORY_PATH:}
         git-path: qiushui0901/qiushui-shiguang
         include-path-substrings:

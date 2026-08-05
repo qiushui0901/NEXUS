@@ -11,13 +11,24 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-/** Shared, deterministic parent-chunk comparison used by drafts and formal version reports. */
+/** 由草稿与正式版本报告共用的、确定性的父需求块比对逻辑。 */
 public final class RequirementChunkDiff {
     private RequirementChunkDiff() {}
 
+    /** 需求变化类型：新增、修改、删除。 */
     public enum Type { ADDED, MODIFIED, REMOVED }
+    /** 单个父需求块的前后变化记录，before/after 按类型可能为 null。 */
     public record ParentChange(Type type, ChunkRecord before, ChunkRecord after) {}
 
+    /**
+     * 比对两个版本的需求块，产出新增、修改、删除三类变化。
+     * 先按稳定的 parentId 配对；ID 在重新导入时变更后，回退到“文件名 + parentOrder”的位置配对；
+     * 配对成功的块再比较内容哈希判定是否修改。
+     *
+     * @param beforeChunks 旧版本的需求块
+     * @param afterChunks  新版本的需求块
+     * @return 变化列表，顺序确定（先按配对表，后按旧列表剩余项）
+     */
     public static List<ParentChange> compare(List<ChunkRecord> beforeChunks, List<ChunkRecord> afterChunks) {
         List<ChunkRecord> before = deduplicate(beforeChunks);
         List<ChunkRecord> after = deduplicate(afterChunks);
@@ -64,10 +75,22 @@ public final class RequirementChunkDiff {
         return List.copyOf(changes);
     }
 
+    /**
+     * 按 parentId（或位置键）去重，同一键只保留第一个块。
+     *
+     * @param chunks 需求块列表
+     * @return 去重后的不可变列表
+     */
     public static List<ChunkRecord> deduplicate(List<ChunkRecord> chunks) {
         return List.copyOf(parentMap(chunks).values());
     }
 
+    /**
+     * 计算需求块内容哈希：优先使用块自带的 contentHash，否则对 parentText 计算 SHA-256。
+     *
+     * @param chunk 需求块
+     * @return 十六进制内容哈希
+     */
     public static String hash(ChunkRecord chunk) {
         if (chunk != null && hasText(chunk.contentHash())) return chunk.contentHash().trim();
         try {

@@ -1,6 +1,6 @@
 package com.example.requirementrag.security;
 
-/** Raised when a request does not provide a configured API key. */
+/** 请求未提供已配置的 API 密钥时抛出的异常。 */
 public class UnauthenticatedException extends RuntimeException {
 
     public UnauthenticatedException() {

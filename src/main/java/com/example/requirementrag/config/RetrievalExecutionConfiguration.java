@@ -8,9 +8,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-/** Bounded executor for independent retrieval branches. */
+/**
+ * 检索执行配置：为相互独立的检索分支提供有界线程池。
+ */
 @Configuration
 public class RetrievalExecutionConfiguration {
+    /**
+     * 注册名为 retrievalExecutor 的有界线程池：固定线程数、有界等待队列，
+     * 队列满时由调用线程执行任务（CallerRunsPolicy）形成背压。
+     */
     @Bean(name = "retrievalExecutor", destroyMethod = "shutdown")
     ExecutorService retrievalExecutor(RagProperties properties) {
         int threads = properties.retrieval().resolvedParallelism();

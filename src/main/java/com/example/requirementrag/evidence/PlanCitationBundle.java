@@ -2,7 +2,7 @@ package com.example.requirementrag.evidence;
 
 import java.util.List;
 
-/** Additive citation metadata for the legacy development-plan response fields. */
+/** 为旧版开发方案响应字段补充的引用元数据（增量、不影响原有字段）。 */
 public record PlanCitationBundle(
         CitedText summary,
         List<CitedText> productUnderstanding,
@@ -30,6 +30,7 @@ public record PlanCitationBundle(
         quality = quality == null ? CitationQuality.empty() : quality;
     }
 
+    /** 构造无任何引用数据的空捆绑。 */
     public static PlanCitationBundle empty() {
         return new PlanCitationBundle(CitedText.unsupported(""), List.of(), List.of(),
                 CitedText.unsupported(""), List.of(), List.of(), List.of(), List.of(), List.of(),

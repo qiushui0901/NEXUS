@@ -25,7 +25,7 @@ import java.util.Set;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
 
-/** Persists small, reviewable version manifests independently from Qdrant. */
+/** 独立于 Qdrant 持久化小巧、可审阅的版本清单。 */
 @Service
 public class VersionManifestService {
     private static final Pattern COMMIT = Pattern.compile("[0-9a-fA-F]{7,64}");
@@ -38,6 +38,12 @@ public class VersionManifestService {
         this.root = Path.of(properties.rootPath()).toAbsolutePath().normalize();
     }
 
+    /**
+     * 校验并规范化清单各字段后原子落盘；文件已存在时保留原 createdAt。
+     *
+     * @param input 待保存清单
+     * @return 规范化后的清单
+     */
     public VersionManifest save(VersionManifest input) {
         if (input == null) throw new IllegalArgumentException("版本档案不能为空");
         String projectId = VersionPathPolicy.identifier(input.projectId(), "projectId");
@@ -65,6 +71,13 @@ public class VersionManifestService {
         return manifest;
     }
 
+    /**
+     * 按项目与版本读取清单。
+     *
+     * @param projectId 项目标识
+     * @param version   版本号
+     * @return 清单，文件不存在时为空
+     */
     public Optional<VersionManifest> find(String projectId, String version) {
         Path file = manifestPath(
                 VersionPathPolicy.identifier(projectId, "projectId"),
@@ -72,6 +85,13 @@ public class VersionManifestService {
         return Files.isRegularFile(file) ? Optional.of(read(file)) : Optional.empty();
     }
 
+    /**
+     * 按项目与版本读取清单，不存在时返回 404。
+     *
+     * @param projectId 项目标识
+     * @param version   版本号
+     * @return 清单
+     */
     public VersionManifest get(String projectId, String version) {
         Path file = manifestPath(
                 VersionPathPolicy.identifier(projectId, "projectId"),
@@ -82,6 +102,12 @@ public class VersionManifestService {
         return read(file);
     }
 
+    /**
+     * 列出项目下全部清单，按版本号降序排序。
+     *
+     * @param projectId 项目标识
+     * @return 清单列表
+     */
     public List<VersionManifest> list(String projectId) {
         String safeProject = VersionPathPolicy.identifier(projectId, "projectId");
         Path projectRoot = VersionPathPolicy.resolveBelow(root, safeProject);
@@ -112,6 +138,7 @@ public class VersionManifestService {
         }
     }
 
+    /** 先写临时文件再原子替换目标文件，失败时清理临时文件。 */
     private void writeAtomically(Path file, VersionManifest manifest) {
         try {
             Files.createDirectories(file.getParent());
@@ -131,6 +158,7 @@ public class VersionManifestService {
         }
     }
 
+    /** 校验测试统计非负且不超总数，去重并规范化测试用例。 */
     private TestSnapshot validateSnapshot(TestSnapshot snapshot) {
         if (snapshot == null) return null;
         if (snapshot.total() < 0 || snapshot.passed() < 0 || snapshot.failed() < 0 || snapshot.skipped() < 0) {
@@ -157,6 +185,7 @@ public class VersionManifestService {
         return hasText(value) ? VersionPathPolicy.identifier(value, field) : null;
     }
 
+    /** 校验并规范化 Git commit SHA（7-64 位十六进制），统一小写；空值返回 null。 */
     private String commit(String value, String field) {
         if (!hasText(value)) return null;
         String normalized = value.trim();
@@ -180,6 +209,7 @@ public class VersionManifestService {
         return normalized;
     }
 
+    /** 语义化版本号比较器：逐段按整数比较，非数字段按字典序兜底。 */
     static Comparator<String> versionComparator() {
         return (left, right) -> {
             String[] a = left.split("\\.");

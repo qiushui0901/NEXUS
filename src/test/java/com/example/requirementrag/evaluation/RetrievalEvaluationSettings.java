@@ -69,7 +69,8 @@ record RetrievalEvaluationSettings(
         BASELINE_0_7("0.7-baseline"),
         RERANK_0_8("0.8-rerank"),
         QUALITY_0_8_1("0.8.1-quality"),
-        DOCUMENT_V2_0_8_2("0.8.2-document-v2");
+        DOCUMENT_V2_0_8_2("0.8.2-document-v2"),
+        CODE_V3_0_8_3("0.8.3-code-v3");
 
         private final String id;
 
@@ -88,9 +89,10 @@ record RetrievalEvaluationSettings(
             if (BASELINE_0_7.id.equalsIgnoreCase(value.trim())) return BASELINE_0_7;
             if (QUALITY_0_8_1.id.equalsIgnoreCase(value.trim())) return QUALITY_0_8_1;
             if (DOCUMENT_V2_0_8_2.id.equalsIgnoreCase(value.trim())) return DOCUMENT_V2_0_8_2;
+            if (CODE_V3_0_8_3.id.equalsIgnoreCase(value.trim())) return CODE_V3_0_8_3;
             throw new IllegalArgumentException(
                     MODE_ENV + " must be 0.7-baseline, 0.8-rerank, 0.8.1-quality, "
-                            + "or 0.8.2-document-v2");
+                            + "0.8.2-document-v2, or 0.8.3-code-v3");
         }
     }
 }

@@ -16,7 +16,10 @@ public record CodeChunk(
         String contentHash,
         String language
 ) {
-    /** Backward-compatible constructor for pre-0.7 callers and stored payloads. */
+    /**
+     * 兼容旧构造器：供 0.7 版本之前的调用方及已存储载荷使用，
+     * 未指定语言时按文件路径推断 {@link com.example.requirementrag.code.CodeLanguage}。
+     */
     public CodeChunk(String id, String projectId, String commitSha, String filePath,
                      String symbolType, String symbolName, int startLine, int endLine,
                      String text, String contentHash) {

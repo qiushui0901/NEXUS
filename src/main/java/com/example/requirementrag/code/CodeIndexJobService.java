@@ -77,6 +77,7 @@ public class CodeIndexJobService {
                 : CodeIndexJobStatus.idle(resolvedProjectId, existingChunkCount(resolvedProjectId));
     }
 
+    /** 读取项目已有代码 chunk 数用于任务状态展示；读取失败时按 0 处理。 */
     private int existingChunkCount(String projectId) {
         try {
             return Math.toIntExact(codeKnowledgeService.count(projectId));
@@ -87,6 +88,7 @@ public class CodeIndexJobService {
         }
     }
 
+    /** 后台执行完整索引：成功写入 completed 状态，任何异常写入 failed 状态并记录错误日志。 */
     private void executeIndex(String projectId, String startedAt) {
         try {
             log.info("Starting background code index for project {}", projectId);
@@ -102,6 +104,7 @@ public class CodeIndexJobService {
         }
     }
 
+    /** 将异常映射为面向用户的失败信息：嵌入服务不可用、仓库读取失败、其他异常分别对应不同提示。 */
     private String publicFailureMessage(Exception exception) {
         if (exception instanceof EmbeddingUnavailableException) {
             return exception.getMessage();

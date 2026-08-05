@@ -2,7 +2,7 @@ package com.example.requirementrag.evidence;
 
 import java.util.List;
 
-/** Citation projection for an existing plan section, associated by stable response index. */
+/** 按稳定响应索引关联的既有计划章节的引用投影。 */
 public record PlanSectionCitation(
         int sectionIndex,
         String title,

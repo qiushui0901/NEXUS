@@ -1,6 +1,7 @@
 package com.example.requirementrag.code;
 
 import com.example.requirementrag.config.RagProperties;
+import com.example.requirementrag.model.CodeChunk;
 import org.junit.jupiter.api.Test;
 
 import java.nio.file.Files;
@@ -50,5 +51,35 @@ class MultiLanguageCodeScannerTest {
                 .contains("Hero", "train", "save");
         assertThat(result.calls()).extracting(CodeCall::targetName).contains("save");
         assertThat(result.diagnostics()).noneMatch(diagnostic -> diagnostic.code().equals("PARSE_FAILED"));
+    }
+
+    @Test
+    void prependsAdjacentDocCommentToSymbolChunkText() throws Exception {
+        Path root = Files.createTempDirectory("nexus-doccomment-");
+        Files.writeString(root.resolve("Hero.java"), """
+                package demo;
+                class Hero {
+                    /**
+                     * 同步撤回：五分钟后生效。
+                     */
+                    void syncRevocation() {}
+                    void plain() {}
+                }
+                """);
+
+        MultiLanguageCodeScanner scanner = new MultiLanguageCodeScanner(new CodeLanguageRegistry());
+        CodeScanner.ScanResult result = scanner.scan(new RagProperties.Code(
+                "demo", root.toString(), "code", List.of(), List.of(), 1_000_000));
+
+        CodeChunk documented = result.chunks().stream()
+                .filter(chunk -> "syncRevocation".equals(chunk.symbolName()))
+                .findFirst().orElseThrow();
+        assertThat(documented.text()).startsWith("/**")
+                .contains("同步撤回：五分钟后生效。")
+                .contains("void syncRevocation() {}");
+        CodeChunk plain = result.chunks().stream()
+                .filter(chunk -> "plain".equals(chunk.symbolName()))
+                .findFirst().orElseThrow();
+        assertThat(plain.text()).doesNotContain("同步撤回");
     }
 }

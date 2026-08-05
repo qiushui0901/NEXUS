@@ -17,7 +17,8 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * 从 ZIP 包中加载 HTML 知识条目，过滤噪声文件并提取正文。
+ * 从 ZIP 包中加载 HTML 知识条目：按目标版本文件夹过滤候选文件，
+ * 去除标签提取正文并经预处理器清洗；单文件解析上限 512KB，过滤系统噪声文件。
  */
 @Component
 public class ZipHtmlKnowledgeLoader {

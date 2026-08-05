@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-/** Browse and publish versioned product, code and test knowledge. */
+/** 版本化产品、代码与测试知识库的浏览与发布接口。 */
 @RestController
 @RequestMapping("/api/wiki")
 public class WikiController {
@@ -35,6 +35,7 @@ public class WikiController {
         this.accessGuard = accessGuard;
     }
 
+    /** 列出当前用户有权访问的 Wiki 项目。对应 GET /api/wiki/projects。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @GetMapping("/projects")
     public List<ProjectSummary> projects(HttpServletRequest request) {
@@ -44,6 +45,7 @@ public class WikiController {
                 .toList();
     }
 
+    /** 列出指定项目的全部 Wiki 版本。对应 GET /api/wiki/versions。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @GetMapping("/versions")
     public List<VersionIndex> versions(@RequestParam String projectId, HttpServletRequest request) {
@@ -51,6 +53,7 @@ public class WikiController {
         return repository.listVersions(projectId);
     }
 
+    /** 获取指定项目版本的知识索引。对应 GET /api/wiki/index。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @GetMapping("/index")
     public VersionIndex index(@RequestParam String projectId, @RequestParam String version,
@@ -59,6 +62,7 @@ public class WikiController {
         return repository.getIndex(projectId, version);
     }
 
+    /** 获取指定版本下功能特性的页面内容。对应 GET /api/wiki/page。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @GetMapping("/page")
     public Page page(@RequestParam String projectId, @RequestParam String version,
@@ -67,6 +71,7 @@ public class WikiController {
         return repository.getPage(projectId, version, featureId);
     }
 
+    /** 生成指定项目版本的 Wiki 知识。对应 POST /api/wiki/generate。 */
     @RequiresPermission(Permission.WRITE)
     @PostMapping("/generate")
     public GenerationResult generate(@RequestParam String projectId, @RequestParam String version,
@@ -75,6 +80,7 @@ public class WikiController {
         return generationService.generate(projectId, version);
     }
 
+    /** 校验项目存在且当前用户有访问权。 */
     private void requireAccess(String projectId, HttpServletRequest request) {
         projectRegistry.require(projectId);
         accessGuard.requireProjectAccess(request, projectId);

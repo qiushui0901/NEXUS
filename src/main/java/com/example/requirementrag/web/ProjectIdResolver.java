@@ -21,6 +21,7 @@ public class ProjectIdResolver {
         this.projectRegistry = projectRegistry;
     }
 
+    /** 从 query 参数或缓存的 JSON body 解析 projectId，解析不到时返回 null。 */
     public String resolve(HttpServletRequest request) {
         String fromQuery = request.getParameter("projectId");
         if (hasText(fromQuery)) {
@@ -42,6 +43,7 @@ public class ProjectIdResolver {
         return hasText(defaultId) ? defaultId : null;
     }
 
+    /** 从 JSON body 中读取 projectId，body 为空或解析失败时返回 null。 */
     private String extractFromJson(byte[] body) {
         if (body == null || body.length == 0) {
             return null;

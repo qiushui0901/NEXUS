@@ -15,7 +15,11 @@ import tools.jackson.databind.json.JsonMapper;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Authenticated resource-template facade for published Wiki feature pages. */
+/**
+ * 已发布 Wiki 特性页的资源模板门面：对 MCP 客户端暴露受认证、按版本作用域的
+ * Wiki 资源（{@code nexus://wiki/{projectId}/{version}/{featureId}}），
+ * 输出前经 {@link McpResponsePolicy} 做证据元数据边界约束，并以 JSON 序列化返回。
+ */
 @Component
 @ConditionalOnProperty(prefix = "app.mcp", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class NexusMcpResources {
@@ -32,6 +36,19 @@ public class NexusMcpResources {
         this.jsonMapper = jsonMapper;
     }
 
+    /**
+     * 读取指定项目/版本下的 Wiki 特性页：认证 → 权限校验 → 项目解析 → 读取页面，
+     * 各文本字段经 {@code policy} 截断（规则/步骤/验收条件各限 20 条、证据限 40 条），
+     * 序列化为 JSON 字符串返回。
+     *
+     * @param context   MCP 同步请求上下文（取认证用户）
+     * @param projectId 项目 ID，可为 null（走默认项目）
+     * @param version   发布的 Wiki 版本
+     * @param featureId 稳定的 Wiki 特性 ID
+     * @return 序列化后的页面 JSON
+     * @throws com.example.requirementrag.security.UnauthenticatedException 未认证时抛出
+     * @throws IllegalStateException 序列化失败时抛出
+     */
     @McpResource(
             name = "nexus_wiki_feature",
             title = "NEXUS Wiki feature page",
@@ -63,6 +80,7 @@ public class NexusMcpResources {
         }
     }
 
+    /** 从传输上下文取回认证用户；上下文缺失或类型不符时按未认证处理。 */
     private UserContext authenticatedUser(McpSyncRequestContext context) {
         if (context != null && context.transportContext() != null) {
             Object value = context.transportContext().get(McpTransportConfiguration.USER_CONTEXT_KEY);

@@ -5,11 +5,24 @@ import org.springframework.ai.mcp.annotation.McpPrompt;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
-/** Reusable, scope-safe workflows for MCP clients such as Codex and Cursor. */
+/**
+ * 面向 MCP 客户端（如 Codex、Cursor）的可复用、作用域安全的提示词模板：
+ * 每个提示词都强制限定 projectId/version 等作用域，并规定按序调用对应工具、
+ * 以工具返回的 evidenceId 作为引用，禁止跨作用域或派生文本替代原始证据。
+ */
 @Component
 @ConditionalOnProperty(prefix = "app.mcp", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class NexusMcpPrompts {
 
+    /**
+     * 生成「实现某需求」提示词：指导先检索需求证据，再生成开发计划，
+     * 并对相关符号做代码图遍历与影响分析，所有结论必须引用证据 ID。
+     *
+     * @param requirement 要实现的需求描述
+     * @param projectId   NEXUS 项目 ID
+     * @param version     需求版本
+     * @return 拼接好的提示词文本
+     */
     @McpPrompt(name = "nexus_implement_requirement", title = "实现某需求",
             description = "基于版本化需求证据、代码检索和影响分析生成可执行开发方案。")
     public String implementRequirement(
@@ -26,6 +39,16 @@ public class NexusMcpPrompts {
                 """.formatted(requirement, projectId, version);
     }
 
+    /**
+     * 生成「评审某需求」提示词：检索指定版本需求并生成存疑清单；
+     * 跨需求/代码/测试/Wiki 比较时要求整理为同一 factKey 的结构化 claims，禁止自由文本猜测。
+     *
+     * @param requirement 评审主题或模块
+     * @param projectId   NEXUS 项目 ID
+     * @param documentId  需求文档 ID
+     * @param version     需求版本
+     * @return 拼接好的提示词文本
+     */
     @McpPrompt(name = "nexus_review_requirement", title = "评审某需求",
             description = "检索指定版本需求并生成存疑和结构化冲突检查步骤。")
     public String reviewRequirement(
@@ -42,6 +65,15 @@ public class NexusMcpPrompts {
                 """.formatted(requirement, projectId, documentId, version);
     }
 
+    /**
+     * 生成「评估改动影响」提示词：用代码图、影响分析与版本差异评估变更，
+     * 并用需求检索核对受影响行为的原始需求，区分确定/推断关系与不可用数据。
+     *
+     * @param change    符号或改动说明
+     * @param projectId NEXUS 项目 ID
+     * @param version   目标业务版本
+     * @return 拼接好的提示词文本
+     */
     @McpPrompt(name = "nexus_assess_change_impact", title = "评估改动影响",
             description = "用代码图、提交差异和版本知识评估变更影响。")
     public String assessChangeImpact(

@@ -36,7 +36,13 @@ public final class PlanSectionEvidenceMatcher {
         this.objectMapper = objectMapper;
     }
 
-    /** 返回复制并增强后的 section payload，不修改模型解析得到的原节点。 */
+    /**
+     * 返回复制并增强后的 section payload，不修改模型解析得到的原节点。
+     *
+     * @param payload 模型的 section 事件负载，可 null 或非对象
+     * @param code    本次检索命中的代码块；为空时仅返回深拷贝结果
+     * @return 增加 inspectTargets 字段的新 payload 节点
+     */
     public ObjectNode enrich(JsonNode payload, List<CodeChunk> code) {
         ObjectNode enriched = payload != null && payload.isObject()
                 ? ((ObjectNode) payload).deepCopy()
@@ -151,11 +157,13 @@ public final class PlanSectionEvidenceMatcher {
         return value == null ? "" : value;
     }
 
+    /** 领域概念及其中英文关键词，用于环节文本与代码文本的语义关联。 */
     private record Concept(String label, List<String> terms) {
         boolean matches(String text) {
             return terms.stream().anyMatch(text::contains);
         }
     }
 
+    /** 代码块及其与环节文本的匹配分数。 */
     private record ScoredChunk(CodeChunk chunk, int score) { }
 }

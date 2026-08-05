@@ -22,6 +22,8 @@ import java.util.zip.ZipFile;
 
 /**
  * Excel（XLSX）知识加载器，直接解析 OOXML 结构读取工作表数据。
+ * 不依赖 POI 等第三方库：从 ZIP 包内读取 workbook.xml、共享字符串表与工作表 XML，
+ * 加载当前版本对应的“存疑”工作表，将每一行转为知识条目。
  */
 @Component
 public class ExcelKnowledgeLoader {

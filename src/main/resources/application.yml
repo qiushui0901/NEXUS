@@ -134,6 +134,8 @@ app:
       result-cache-max-entries: ${RETRIEVAL_CACHE_MAX_ENTRIES:1000}
       embedding-cache-ttl-seconds: ${EMBEDDING_CACHE_TTL_SECONDS:900}
       embedding-cache-max-entries: ${EMBEDDING_CACHE_MAX_ENTRIES:10000}
+      code-bge-rerank-enabled: ${CODE_BGE_RERANK_ENABLED:true}
+      code-candidate-multiplier: ${CODE_CANDIDATE_MULTIPLIER:3}
     knowledge:
       bootstrap-enabled: ${KNOWLEDGE_BOOTSTRAP_ENABLED:false}
       zip-path: ${KNOWLEDGE_ZIP_PATH:}

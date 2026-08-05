@@ -21,7 +21,7 @@ import java.util.Objects;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** Executes the configured BGE then optional LLM requirement rerank policy. */
+/** 执行配置的 BGE 重排，若启用则继续 LLM 重排的需求证据重排策略。 */
 @Service
 public class DefaultRequirementReranker implements RequirementReranker {
     private static final String BGE_STAGE = "bge.rerank";
@@ -41,6 +41,17 @@ public class DefaultRequirementReranker implements RequirementReranker {
         this.observability = observability;
     }
 
+    /**
+     * 依次执行 BGE 重排与（可选的）LLM 重排，最后截取 limit 条。
+     * 单候选且开启 child-first 时跳过 BGE；各阶段失败均降级回退为原始顺序并记录警告与诊断。
+     *
+     * @param query      检索查询文本
+     * @param documentId 文档 ID（用于可观测性上报）
+     * @param version    文档版本号（用于可观测性上报）
+     * @param candidates 待重排的候选分块
+     * @param limit      最终返回的最大分块数
+     * @return 重排后的结果；有警告时为 DEGRADED，候选为空时为 NO_RESULTS
+     */
     @Override
     public RagOutcome<List<ChunkRecord>> rerank(String query, String documentId, String version,
                                                 List<ChunkRecord> candidates, int limit) {
@@ -77,6 +88,7 @@ public class DefaultRequirementReranker implements RequirementReranker {
                 result, warnings, diagnostics);
     }
 
+    /** 调用 LLM 对候选段落排序：返回的 ID 顺序即为结果；LLM 输出为空时保留候选原序。 */
     private List<ChunkRecord> llmRerank(String query, List<ChunkRecord> candidates) {
         Map<String, ChunkRecord> byId = candidates.stream().collect(Collectors.toMap(
                 this::stableId, Function.identity(), (left, right) -> left, LinkedHashMap::new));
@@ -96,6 +108,7 @@ public class DefaultRequirementReranker implements RequirementReranker {
         return ordered.isEmpty() ? candidates : ordered;
     }
 
+    /** 执行单个重排阶段：成功时记录 SUCCESS 诊断，异常时降级回退并记录警告与 DEGRADED 诊断。 */
     private List<ChunkRecord> stage(String stage, String warningCode, String warningMessage,
                                     String documentId, String version, List<ChunkRecord> fallback,
                                     java.util.function.Supplier<List<ChunkRecord>> action,
@@ -118,6 +131,7 @@ public class DefaultRequirementReranker implements RequirementReranker {
         }
     }
 
+    /** 生成 LLM 重排用的稳定 ID：优先 parentId，缺失时用 filename + parentOrder 拼接。 */
     private String stableId(ChunkRecord chunk) {
         return chunk.parentId() == null || chunk.parentId().isBlank()
                 ? chunk.filename() + ':' + chunk.parentOrder() : chunk.parentId();

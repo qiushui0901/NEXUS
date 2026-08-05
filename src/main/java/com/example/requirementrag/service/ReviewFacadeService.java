@@ -29,6 +29,9 @@ public class ReviewFacadeService {
     /**
      * 执行完整评审：当前版本新问题 + 历史版本遗留存疑。
      * 当前版本必须基于 Qdrant 向量库检索上下文生成。
+     *
+     * @param request 含文档、版本与限定模块的评审请求
+     * @return 当前版本与历史版本存疑合并后的批次（历史存疑在后）
      */
     public DoubtBatch review(ReviewRequest request) {
         DoubtBatch current = doubtReviewService.reviewCurrentVersion(request);

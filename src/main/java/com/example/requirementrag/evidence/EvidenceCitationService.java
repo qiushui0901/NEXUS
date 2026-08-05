@@ -10,14 +10,16 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Validates model citations against the current retrieval whitelist. */
+/** 对照当前检索白名单校验模型引用，并累计声明支持度统计。 */
 @Service
 public class EvidenceCitationService {
 
+    /** 打开一次针对指定证据注册表的引用校验会话。 */
     public Session open(EvidenceRegistry registry) {
         return new Session(registry);
     }
 
+    /** 单次请求的引用校验会话：累计声明计数、支持状态与警告。 */
     public static final class Session {
         private static final String STAGE = "evidence.validate";
         private static final int MAX_REFERENCES_PER_CLAIM = 8;
@@ -33,6 +35,13 @@ public class EvidenceCitationService {
             this.registry = registry;
         }
 
+        /**
+         * 校验一条结论的引用并累计支持度统计（仅非空文本计入）。
+         *
+         * @param text                结论文本
+         * @param requestedEvidenceIds 模型请求引用的证据 ID 列表
+         * @return 校验后的结论，含过滤后的证据 ID 与支持状态
+         */
         public CitedText cite(String text, List<String> requestedEvidenceIds) {
             Validation validation = validate(requestedEvidenceIds);
             if (text != null && !text.isBlank()) {
@@ -46,6 +55,7 @@ public class EvidenceCitationService {
             return new CitedText(text, validation.evidenceIds(), validation.status());
         }
 
+        /** 按稳定响应索引生成计划章节的引用投影。 */
         public PlanSectionCitation citeSection(int index, String title, List<String> requestedEvidenceIds) {
             CitedText citation = cite(title, requestedEvidenceIds);
             return new PlanSectionCitation(index, title, citation.evidenceIds(), citation.supportStatus());
@@ -55,6 +65,7 @@ public class EvidenceCitationService {
             return List.copyOf(warnings.values());
         }
 
+        /** 汇总引用质量：全部支持为 VERIFIED，部分支持需复核，无任何支持为证据不足。 */
         public CitationQuality quality() {
             double coverage = totalClaims == 0
                     ? 0.0
@@ -71,6 +82,7 @@ public class EvidenceCitationService {
                     coverage, status);
         }
 
+        /** 是否存在需关注的引用问题（部分/不受支持或存在警告）。 */
         public boolean hasIssues() {
             return partialClaims > 0 || unsupportedClaims > 0 || !warnings.isEmpty();
         }
@@ -79,6 +91,7 @@ public class EvidenceCitationService {
             return registry.references();
         }
 
+        /** 白名单校验：过滤不在注册表中的引用、截断超量引用，并生成相应警告。 */
         private Validation validate(List<String> requestedEvidenceIds) {
             List<String> requested = normalize(requestedEvidenceIds);
             if (requested.isEmpty()) {
@@ -122,6 +135,7 @@ public class EvidenceCitationService {
             warnings.putIfAbsent(code + "|" + message, new RagWarning(STAGE, code, message, 0));
         }
 
+        /** 内部校验结果：过滤后的证据 ID 与支持状态。 */
         private record Validation(List<String> evidenceIds, EvidenceSupportStatus status) {
         }
     }

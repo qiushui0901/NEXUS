@@ -26,7 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-/** Aggregates requirement, code, test and Wiki changes for two recorded versions. */
+/** 汇总两个已记录版本的需求、代码、测试与 Wiki 变化。 */
 @Service
 public class VersionComparisonService {
     private final VersionManifestResolver manifests;
@@ -44,11 +44,21 @@ public class VersionComparisonService {
         this.wikiRepository = wikiRepository;
     }
 
-    /** Compares published Wiki versions through the same resolved manifest chain as formal versions. */
+    /** 通过与正式版本相同的已解析清单链，比较已发布的 Wiki 版本。 */
     public VersionComparisonReport compareWikiVersions(String projectId, String fromVersion, String toVersion) {
         return compare(projectId, fromVersion, toVersion);
     }
 
+    /**
+     * 对比两个版本的全部维度：需求、代码、测试与 Wiki。
+     * 缺失或异常的维度以警告形式上报，并返回该维度的不可用结果。
+     *
+     * @param projectId   项目标识
+     * @param fromVersion 起始版本
+     * @param toVersion   目标版本
+     * @return 聚合对比报告
+     * @throws IllegalArgumentException 两版本相同时
+     */
     public VersionComparisonReport compare(String projectId, String fromVersion, String toVersion) {
         String project = VersionPathPolicy.identifier(projectId, "projectId");
         String fromId = VersionPathPolicy.identifier(fromVersion, "fromVersion");
@@ -76,6 +86,7 @@ public class VersionComparisonService {
                 requirements, code, tests, wiki, warnings);
     }
 
+    /** 基于代码 commit 执行 git diff；commit 引用不完整或执行失败时记警告并返回不可用结果。 */
     private GitDiffResult compareCode(String project, VersionManifest from, VersionManifest to,
                                       List<RagWarning> warnings) {
         String fromCommit = from.codeCommit();
@@ -93,6 +104,7 @@ public class VersionComparisonService {
         }
     }
 
+    /** 按 caseId 匹配新旧测试快照，生成新增/修改/删除变化与各统计差值。 */
     private TestDiff compareTests(TestSnapshot before, TestSnapshot after, List<RagWarning> warnings) {
         if (before == null || after == null) {
             warnings.add(warning("version.tests", "TEST_SNAPSHOT_MISSING", "测试快照不完整，未执行测试差异分析"));
@@ -120,6 +132,7 @@ public class VersionComparisonService {
                 after.failed() - before.failed(), after.skipped() - before.skipped(), changes);
     }
 
+    /** 按清单上的 wikiVersion（缺省回退版本号）读取两个版本的 Wiki 索引并求差，缺失或异常时记警告。 */
     private WikiDiff compareWiki(String project, VersionManifest from, VersionManifest to, List<RagWarning> warnings) {
         String beforeVersion = hasText(from.wikiVersion()) ? from.wikiVersion() : from.version();
         String afterVersion = hasText(to.wikiVersion()) ? to.wikiVersion() : to.version();
@@ -137,6 +150,7 @@ public class VersionComparisonService {
         }
     }
 
+    /** 按 featureId 匹配新旧页面摘要，生成页面变化（含状态、摘要变更与证据数差值）。 */
     private WikiDiff wikiChanges(VersionIndex before, VersionIndex after) {
         Map<String, PageSummary> oldPages = pages(before.pages());
         Map<String, PageSummary> newPages = pages(after.pages());

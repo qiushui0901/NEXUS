@@ -20,7 +20,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
-/** Provides a bounded, failure-tolerant snapshot for the platform home page. */
+/** 为平台首页提供有界、可容忍失败的系统状态快照。 */
 @RestController
 @RequestMapping("/api/runtime")
 public class RuntimeStatusController {
@@ -50,6 +50,7 @@ public class RuntimeStatusController {
         this.bgeClient = client(properties.bge().baseUrl());
     }
 
+    /** 汇总 Qdrant/Ollama/BGE 服务与当前用户各项目状态，返回整体运行状态。对应 GET /api/runtime/status。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @GetMapping("/status")
     public RuntimeSnapshot status(HttpServletRequest request) {
@@ -67,6 +68,7 @@ public class RuntimeStatusController {
         return new RuntimeSnapshot(state, coreReady, List.of(qdrant, ollama, bge), projects);
     }
 
+    /** 汇总单个项目的需求/代码分块数、Wiki 版本数与仓库可用性，附带警告列表。 */
     private ProjectCheck projectStatus(RagProperties.ProjectConfig project) {
         List<String> warnings = new ArrayList<>();
         long requirements = countRequirements(project, warnings);
@@ -87,6 +89,7 @@ public class RuntimeStatusController {
                 repositoryAvailable, List.copyOf(warnings));
     }
 
+    /** 统计项目需求分块数，失败时记录警告并返回 0。 */
     private long countRequirements(RagProperties.ProjectConfig project, List<String> warnings) {
         try {
             if (project.knowledge() == null) return 0;
@@ -98,6 +101,7 @@ public class RuntimeStatusController {
         }
     }
 
+    /** 统计项目代码分块数，失败时记录警告并返回 0。 */
     private long countCode(RagProperties.ProjectConfig project, List<String> warnings) {
         try {
             return codeStore.countProject(project.codeCollection(), project.id());
@@ -107,6 +111,7 @@ public class RuntimeStatusController {
         }
     }
 
+    /** 探测服务健康：可达返回「已连接」，不可达按是否必选返回相应提示消息。 */
     private ServiceCheck probe(RestClient client, String path, boolean required, String message) {
         try {
             client.get().uri(path).retrieve().toBodilessEntity();
@@ -116,12 +121,14 @@ public class RuntimeStatusController {
         }
     }
 
+    /** 根据探测路径返回服务显示名（Qdrant/Ollama/BGE Reranker）。 */
     private String serviceName(String path) {
         if ("/collections".equals(path)) return "Qdrant";
         if ("/api/tags".equals(path)) return "Ollama";
         return "BGE Reranker";
     }
 
+    /** 构建带 1s 连接超时、2s 读超时的健康检查客户端。 */
     private RestClient client(String baseUrl) {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(1_000);
@@ -129,9 +136,12 @@ public class RuntimeStatusController {
         return RestClient.builder().baseUrl(baseUrl).requestFactory(factory).build();
     }
 
+    /** 平台首页运行状态快照：整体状态、核心服务与各项目检查结果。 */
     public record RuntimeSnapshot(String state, boolean coreReady, List<ServiceCheck> services,
                                   List<ProjectCheck> projects) {}
+    /** 单个外部服务的可用性检查结果。 */
     public record ServiceCheck(String name, boolean available, boolean required, String message) {}
+    /** 单个项目的运行检查结果：分块统计、Wiki 版本数、仓库可用性与警告。 */
     public record ProjectCheck(String projectId, String projectName, String version,
                                String requirementCollection, String codeCollection,
                                long requirementChunks, long codeChunks, int wikiVersions,

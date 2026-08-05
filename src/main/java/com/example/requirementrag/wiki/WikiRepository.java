@@ -20,7 +20,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Stream;
 
-/** Reads published Wiki artifacts without depending on Qdrant or model services. */
+/** 读取已发布的 Wiki 产物，不依赖 Qdrant 或模型服务。 */
 @Repository
 public class WikiRepository {
     private final ObjectMapper objectMapper;
@@ -36,6 +36,11 @@ public class WikiRepository {
         this.pageCache = new BoundedTtlCache<>(ttl, properties.cacheMaxEntries());
     }
 
+    /**
+     * 列出所有发布过 Wiki 的项目概览，版本按版本号降序。
+     *
+     * @return 项目概览列表
+     */
     public List<ProjectSummary> listProjects() {
         if (!Files.isDirectory(root)) return List.of();
         List<ProjectSummary> projects = new ArrayList<>();
@@ -55,6 +60,12 @@ public class WikiRepository {
         }
     }
 
+    /**
+     * 列出项目全部已发布版本的索引，按版本号降序。
+     *
+     * @param projectId 项目标识
+     * @return 版本索引列表
+     */
     public List<VersionIndex> listVersions(String projectId) {
         Path projectPath = WikiPathPolicy.resolveBelow(root, projectId);
         if (!Files.isDirectory(projectPath)) return List.of();
@@ -70,6 +81,13 @@ public class WikiRepository {
         }
     }
 
+    /**
+     * 读取指定版本的索引（带 TTL 缓存），版本不存在时返回 404。
+     *
+     * @param projectId 项目标识
+     * @param version   版本号
+     * @return 版本索引
+     */
     public VersionIndex getIndex(String projectId, String version) {
         IndexKey key = new IndexKey(projectId, version);
         Optional<VersionIndex> cached = indexCache.get(key);
@@ -80,12 +98,20 @@ public class WikiRepository {
         return value;
     }
 
-    /** Returns an index when published, without using exceptions for optional comparison sources. */
+    /** 索引已发布时返回它，不用异常表达可选比对来源的缺失。 */
     public Optional<VersionIndex> findIndex(String projectId, String version) {
         Path file = WikiPathPolicy.resolveBelow(root, projectId, version).resolve("index.json");
         return Files.isRegularFile(file) ? Optional.of(getIndex(projectId, version)) : Optional.empty();
     }
 
+    /**
+     * 读取指定版本的页面（带 TTL 缓存），页面不存在时返回 404。
+     *
+     * @param projectId 项目标识
+     * @param version   版本号
+     * @param featureId 功能标识
+     * @return 页面模型
+     */
     public Page getPage(String projectId, String version, String featureId) {
         PageKey key = new PageKey(projectId, version, featureId);
         Optional<Page> cached = pageCache.get(key);
@@ -97,7 +123,7 @@ public class WikiRepository {
         return value;
     }
 
-    /** Invalidates only the atomically replaced project/version after publication. */
+    /** 发布原子替换后，仅失效该 项目/版本 的缓存。 */
     public void invalidate(String projectId, String version) {
         indexCache.invalidate(new IndexKey(projectId, version));
         pageCache.invalidateWhere(key -> key.projectId().equals(projectId) && key.version().equals(version));
@@ -111,6 +137,7 @@ public class WikiRepository {
         return WikiPathPolicy.resolveBelow(root, projectId, version).resolve("index.json");
     }
 
+    /** 语义化版本号比较器：逐段按整数比较，非数字段按字典序兜底。 */
     private Comparator<String> versionComparator() {
         return (left, right) -> {
             String[] leftParts = left.split("\\.");
@@ -135,6 +162,7 @@ public class WikiRepository {
         }
     }
 
+    /** 读取项目目录下各版本子目录中的 index.json。 */
     private List<VersionIndex> readIndexes(Path projectPath) {
         try (Stream<Path> paths = Files.list(projectPath)) {
             List<VersionIndex> result = new ArrayList<>();
@@ -150,6 +178,7 @@ public class WikiRepository {
         }
     }
 
+    /** 读取 JSON 文件为指定类型：文件缺失返回 404，解析失败返回 500。 */
     private <T> T read(Path file, Class<T> type, String notFoundMessage) {
         if (!Files.isRegularFile(file)) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, notFoundMessage);

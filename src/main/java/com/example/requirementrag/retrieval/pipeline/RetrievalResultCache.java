@@ -9,7 +9,10 @@ import org.springframework.stereotype.Component;
 import java.time.Duration;
 import java.util.Optional;
 
-/** Scope-safe cache for stable unified retrieval outcomes. */
+/**
+ * 按检索范围隔离的结果缓存：缓存键包含 query、项目、文档版本、profile、limit
+ * 与检索配置指纹，配置变更后旧缓存自动失效。
+ */
 @Component
 public class RetrievalResultCache {
     private final BoundedTtlCache<Key, RagOutcome<RetrievalBundle>> cache;
@@ -29,16 +32,19 @@ public class RetrievalResultCache {
         this.configurationFingerprint = configurationFingerprint;
     }
 
+    /** 按检索范围取缓存结果。 */
     public Optional<RagOutcome<RetrievalBundle>> get(RetrievalRequest request, String projectId,
                                                       String documentId, String version, int limit) {
         return cache.get(key(request, projectId, documentId, version, limit));
     }
 
+    /** 按检索范围写入缓存结果。 */
     public void put(RetrievalRequest request, String projectId, String documentId, String version, int limit,
                     RagOutcome<RetrievalBundle> outcome) {
         cache.put(key(request, projectId, documentId, version, limit), outcome);
     }
 
+    /** 构建缓存键：query 去除首尾空白，并纳入配置指纹保证配置变更即失效。 */
     private Key key(RetrievalRequest request, String projectId, String documentId, String version, int limit) {
         return new Key(request.query().strip(), projectId, documentId, version, request.profile(), limit,
                 request.includeVersionCorpus(), configurationFingerprint);

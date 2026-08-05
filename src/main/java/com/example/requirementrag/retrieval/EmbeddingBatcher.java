@@ -44,7 +44,12 @@ public class EmbeddingBatcher {
         this.modelFingerprint = embeddingModel.getClass().getName();
     }
 
-    /** 为全部文本生成与输入顺序一致的向量。 */
+    /**
+     * 为全部文本生成向量，按 32 条一批分批调用嵌入服务。
+     *
+     * @param texts 待嵌入的文本列表；为 null 或空时返回空列表
+     * @return 与输入顺序一致的向量列表（向量为缓存的克隆副本）
+     */
     public List<float[]> embedAll(List<String> texts) {
         if (texts == null || texts.isEmpty()) {
             return List.of();
@@ -57,6 +62,10 @@ public class EmbeddingBatcher {
         return List.copyOf(vectors);
     }
 
+    /**
+     * 按批嵌入文本：先读缓存，未命中的文本通过 inFlight 合并并发请求（同一文本只调用一次模型），
+     * 全部完成后按原始下标组装结果并写回缓存。
+     */
     private List<float[]> embedCachedBatch(List<String> texts, int absoluteStart) {
         List<float[]> result = new ArrayList<>(java.util.Collections.nCopies(texts.size(), null));
         List<PendingEmbedding> pending = new ArrayList<>();
@@ -118,6 +127,11 @@ public class EmbeddingBatcher {
         return modelFingerprint + '\u0000' + (text == null ? "" : text);
     }
 
+    /**
+     * 调用嵌入模型生成向量；校验返回数量。失败时若为单条文本则抛出
+     * {@link EmbeddingUnavailableException}（含字符数与排查提示），否则二分拆批重试，
+     * 以定位导致失败的文本并避免整体失败。
+     */
     private List<float[]> embedBatch(List<String> texts, int absoluteStart) {
         try {
             List<float[]> vectors = embeddingModel.embed(texts);
