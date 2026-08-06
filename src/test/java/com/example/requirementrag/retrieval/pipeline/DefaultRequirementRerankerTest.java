@@ -61,6 +61,31 @@ class DefaultRequirementRerankerTest {
 
 
     @Test
+    void prunesBgeInputToResolvedTopKByRrfOrder() {
+        BgeReranker bgeReranker = mock(BgeReranker.class);
+        RagProperties properties = mock(RagProperties.class);
+        RagObservability observability = mock(RagObservability.class);
+        when(properties.retrieval()).thenReturn(retrieval(false));
+        DefaultRequirementReranker reranker = new DefaultRequirementReranker(
+                bgeReranker, mock(ChatClient.class), properties, observability);
+        java.util.ArrayList<ChunkRecord> candidates = new java.util.ArrayList<>();
+        for (int i = 0; i < 25; i++) {
+            candidates.add(chunk("chunk-" + i));
+        }
+
+        reranker.rerank("query", "requirements", "5.1", candidates, 10);
+
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<List<ChunkRecord>> captor =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        verify(bgeReranker).rerank(eq("query"), captor.capture(), eq(20));
+        assertThat(captor.getValue()).hasSize(20);
+        assertThat(captor.getValue().get(0).id()).isEqualTo("chunk-0");
+        assertThat(captor.getValue().get(19).id()).isEqualTo("chunk-19");
+    }
+
+
+    @Test
     void skipsBgeForSingletonOnlyWhenChildFirstQualityModeIsEnabled() {
         BgeReranker bgeReranker = mock(BgeReranker.class);
         RagProperties properties = mock(RagProperties.class);

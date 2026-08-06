@@ -41,7 +41,7 @@ class DevelopmentPlanSseDegradationTest {
         RagProperties properties = mock(RagProperties.class);
         when(properties.knowledge()).thenReturn(new RagProperties.Knowledge(
                 false, null, null, "requirements", "5.1", null, null, 0));
-        when(properties.llm()).thenReturn(new RagProperties.Llm("generation-model", "reranker", "router"));
+        when(properties.llm()).thenReturn(new RagProperties.Llm("generation-model", "reranker", "router", null, null));
         ProjectRegistry projectRegistry = mock(ProjectRegistry.class);
         when(projectRegistry.resolveRequirementCollection("game")).thenReturn("requirements_game");
         QueryRouter queryRouter = mock(QueryRouter.class);

@@ -93,7 +93,7 @@ class DevelopmentPlanServiceTest {
         when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
                 .thenReturn(List.of(documentChunk()));
         when(codeKnowledgeService.search("query", "game", 8)).thenReturn(List.of());
-        when(properties.llm()).thenReturn(new RagProperties.Llm("generation-model", "reranker", "router"));
+        when(properties.llm()).thenReturn(new RagProperties.Llm("generation-model", "reranker", "router", null, null));
         ChatClient nullResultChatClient = mock(ChatClient.class, RETURNS_DEEP_STUBS);
         DevelopmentPlanService nullResultService = new DevelopmentPlanService(properties, projectRegistry, queryRouter,
                 documentStore, codeKnowledgeService, nullResultChatClient, observability);
@@ -132,7 +132,7 @@ class DevelopmentPlanServiceTest {
         when(documentStore.hybridSearch("requirements_game", "query", "requirements", "5.1"))
                 .thenReturn(List.of(stale));
         when(codeKnowledgeService.search("query", "game", 8)).thenReturn(List.of());
-        when(properties.llm()).thenReturn(new RagProperties.Llm("generation-model", "reranker", "router"));
+        when(properties.llm()).thenReturn(new RagProperties.Llm("generation-model", "reranker", "router", null, null));
         ChatClient nullResultChatClient = mock(ChatClient.class, RETURNS_DEEP_STUBS);
         DevelopmentPlanService checkedService = new DevelopmentPlanService(properties, projectRegistry, queryRouter,
                 documentStore, codeKnowledgeService, nullResultChatClient, observability);

@@ -60,7 +60,7 @@ class EmbeddingBatcherTest {
         assertThatThrownBy(() -> new EmbeddingBatcher(model).embedAll(List.of("ok", "bad", "ok2")))
                 .isInstanceOf(EmbeddingUnavailableException.class)
                 .hasMessageContaining("第 2 个文本")
-                .hasMessageContaining("Ollama");
+                .hasMessageContaining("嵌入服务与模型可用");
     }
 
     @Test

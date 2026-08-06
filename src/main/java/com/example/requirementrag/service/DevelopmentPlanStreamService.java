@@ -154,7 +154,7 @@ public class DevelopmentPlanStreamService {
                 Flux<String> content = chatClient.prompt()
                         .system(streamSystemPrompt())
                         .user(streamUserPrompt(request.query(), documents, code, registry))
-                        .options(GenerationChatOptions.forModel(properties.llm().generationModel()))
+                        .options(GenerationChatOptions.forModel(properties.llm().resolvedDevelopmentPlanModel()))
                         .stream()
                         .content();
                 generationOutcome = consumeValidatedModelStreamOutcome(content, parsed -> {

@@ -145,7 +145,7 @@ public class EmbeddingBatcher {
                 String text = texts.getFirst();
                 throw new EmbeddingUnavailableException(
                         "第 " + (absoluteStart + 1) + " 个文本无法生成向量（字符数 "
-                                + (text == null ? 0 : text.length()) + "），请确认 Ollama 与嵌入模型可用",
+                                + (text == null ? 0 : text.length()) + "），请确认嵌入服务与模型可用",
                         exception);
             }
             int middle = texts.size() / 2;

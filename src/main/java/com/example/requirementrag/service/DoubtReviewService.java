@@ -5,7 +5,6 @@ import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.model.RequirementDoubt;
 import com.example.requirementrag.model.ReviewRequest;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.openai.OpenAiChatOptions;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.model.RagOutcome;
 import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
@@ -139,9 +138,7 @@ public class DoubtReviewService {
                                 context.latestContext(),
                                 context.retrievedContext(),
                                 count))
-                        .options(OpenAiChatOptions.builder()
-                                .model(properties.llm().generationModel())
-                                .temperature(0.1))
+                        .options(GenerationChatOptions.forModel(properties.llm().resolvedDoubtReviewModel()))
                         .call()
                         .entity(DoubtBatch.class, spec -> spec.validateSchema()));
 
@@ -166,9 +163,7 @@ public class DoubtReviewService {
                                 Objects.toString(request.module(), "全部"),
                                 historicalContext,
                                 count))
-                        .options(OpenAiChatOptions.builder()
-                                .model(properties.llm().generationModel())
-                                .temperature(0.1))
+                        .options(GenerationChatOptions.forModel(properties.llm().resolvedDoubtReviewModel()))
                         .call()
                         .entity(DoubtBatch.class, spec -> spec.validateSchema()));
 

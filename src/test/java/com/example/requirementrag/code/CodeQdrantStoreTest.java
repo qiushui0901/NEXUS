@@ -202,6 +202,26 @@ class CodeQdrantStoreTest {
         assertThat(captor.getValue().get(0).filename()).isEqualTo(chunk.filePath());
     }
 
+    @Test
+    void semanticRerankPrunesInputToBgeTopKBeforeScoring() {
+        java.util.ArrayList<CodeChunk> candidates = new java.util.ArrayList<>();
+        for (int i = 0; i < 30; i++) {
+            candidates.add(chunk("src/main/java/com/acme/Alpha.java", "alpha" + i, "id-" + i));
+        }
+        com.example.requirementrag.rerank.BgeReranker bge = mock(com.example.requirementrag.rerank.BgeReranker.class);
+        @SuppressWarnings("unchecked")
+        org.mockito.ArgumentCaptor<java.util.List<com.example.requirementrag.model.ChunkRecord>> captor =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        when(bge.rerank(eq("query"), captor.capture(), eq(20))).thenReturn(List.of());
+        CodeQdrantStore store = storeWith(bge);
+
+        store.semanticRerank("query", candidates);
+
+        assertThat(captor.getValue()).hasSize(20);
+        assertThat(captor.getValue().get(0).id()).isEqualTo("id-0");
+        assertThat(captor.getValue().get(19).id()).isEqualTo("id-19");
+    }
+
     private CodeQdrantStore storeWith(com.example.requirementrag.rerank.BgeReranker bge) {
         com.example.requirementrag.config.RagProperties properties =
                 mock(com.example.requirementrag.config.RagProperties.class);

@@ -12,10 +12,10 @@ import org.springframework.context.annotation.Primary;
 @Configuration
 public class EmbeddingConfiguration {
 
-    /** 将 Ollama 嵌入模型设为主 EmbeddingModel。 */
+    /** 将 OpenAI 兼容 API 嵌入模型设为主 EmbeddingModel。 */
     @Bean
     @Primary
-    EmbeddingModel primaryEmbeddingModel(@Qualifier("ollamaEmbeddingModel") EmbeddingModel ollamaEmbeddingModel) {
-        return ollamaEmbeddingModel;
+    EmbeddingModel primaryEmbeddingModel(@Qualifier("openAiEmbeddingModel") EmbeddingModel openAiEmbeddingModel) {
+        return openAiEmbeddingModel;
     }
 }

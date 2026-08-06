@@ -8,8 +8,8 @@ import com.example.requirementrag.model.RagStageDiagnostic;
 import com.example.requirementrag.model.RagWarning;
 import com.example.requirementrag.observability.RagObservability;
 import com.example.requirementrag.rerank.BgeReranker;
+import com.example.requirementrag.service.GenerationChatOptions;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -71,10 +71,11 @@ public class DefaultRequirementReranker implements RequirementReranker {
             observability.outcome(BGE_SINGLETON_SKIP_STAGE, documentId, version,
                     RagOutcomeStatus.SUCCESS, 0, null, null);
         } else {
+            int bgeTopK = Math.min(retrieval == null ? limit : retrieval.resolvedBgeTopK(), source.size());
+            List<ChunkRecord> bgeInput = source.size() <= bgeTopK ? source : source.subList(0, bgeTopK);
             bge = stage(BGE_STAGE, "BGE_RERANK_UNAVAILABLE", "BGE 重排暂时不可用",
-                    documentId, version, source,
-                    () -> bgeReranker.rerank(query, source,
-                            Math.min(retrieval == null ? limit : retrieval.resolvedBgeTopK(), source.size())),
+                    documentId, version, bgeInput,
+                    () -> bgeReranker.rerank(query, bgeInput, bgeTopK),
                     warnings, diagnostics);
         }
         List<ChunkRecord> result = bge;
@@ -100,8 +101,7 @@ public class DefaultRequirementReranker implements RequirementReranker {
                         只能返回提供的 ID，不得改写或创建 ID。删除无关、重复和纯目录内容。
                         """)
                 .user("检索目标：" + query + "\n候选段落：\n" + passages)
-                .options(OpenAiChatOptions.builder()
-                        .model(properties.llm().rerankerModel()).temperature(0.0))
+                .options(GenerationChatOptions.forModel(properties.llm().rerankerModel()))
                 .call().entity(RankedIds.class);
         if (ranked == null || ranked.ids() == null || ranked.ids().isEmpty()) return candidates;
         List<ChunkRecord> ordered = ranked.ids().stream().map(byId::get).filter(Objects::nonNull).distinct().toList();
