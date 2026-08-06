@@ -3,8 +3,8 @@ package com.example.requirementrag.evaluation;
 import com.example.requirementrag.service.ParentChildChunker;
 import com.example.requirementrag.service.TextPreprocessor;
 import org.junit.jupiter.api.Test;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -50,7 +50,7 @@ class RetrievalEvaluationV2CorpusTest {
         Map<String, List<ParentChildChunker.ParentChunk>> corpus = loadCorpus(corpusFilenames);
         for (RetrievalEvaluationCase evaluationCase : cases) {
             assertEquals(1, evaluationCase.goldDocuments().size(), evaluationCase.id());
-            RetrievalEvaluationCase.GoldDocument gold = evaluationCase.goldDocuments().getFirst();
+            RetrievalEvaluationCase.GoldDocument gold = evaluationCase.goldDocuments().get(0);
             List<ParentChildChunker.ParentChunk> parents = corpus.get(gold.filename());
             assertTrue(gold.parentOrder() < parents.size(), evaluationCase.id());
             ParentChildChunker.ParentChunk parent = parents.get(gold.parentOrder());

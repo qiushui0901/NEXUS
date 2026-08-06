@@ -2,8 +2,8 @@ package com.example.requirementrag.service;
 
 import com.example.requirementrag.model.CodeChunk;
 import org.junit.jupiter.api.Test;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.List;
 import java.util.Set;
@@ -62,7 +62,7 @@ class PlanSectionEvidenceMatcherTest {
         assertThat(enriched.path("inspectTargets").size()).isEqualTo(2);
         assertThat(enriched.path("inspectTargets").get(0).path("matchType").asText()).isEqualTo("recommended");
         Set<String> inputIds = Set.of("one", "two", "three");
-        assertThat(enriched.path("inspectTargets").valueStream()
+        assertThat(java.util.stream.StreamSupport.stream(enriched.path("inspectTargets").spliterator(), false)
                 .map(item -> item.path("id").asText()).toList()).allMatch(inputIds::contains);
     }
 

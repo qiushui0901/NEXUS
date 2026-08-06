@@ -10,8 +10,8 @@ import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
 import com.example.requirementrag.model.CodeChunk;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Flux;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -36,7 +36,7 @@ class DevelopmentPlanStreamServiceTest {
         long emitted = service.consumeModelStream(chunks, events::add);
 
         assertEquals(1, emitted);
-        assertEquals("summary", events.getFirst().type());
+        assertEquals("summary", events.get(0).type());
     }
 
     @Test
@@ -48,7 +48,7 @@ class DevelopmentPlanStreamServiceTest {
         var outcome = service.consumeModelStreamOutcome(chunks, ignored -> { }, System.nanoTime());
 
         assertEquals(com.example.requirementrag.model.RagOutcomeStatus.DEGRADED, outcome.status());
-        assertEquals("STREAM_PARTIAL_RESULT", outcome.warnings().getFirst().code());
+        assertEquals("STREAM_PARTIAL_RESULT", outcome.warnings().get(0).code());
         assertEquals(1L, outcome.data());
     }
 
@@ -126,7 +126,7 @@ class DevelopmentPlanStreamServiceTest {
         DevelopmentPlanStreamEvent validated = service.validateCitationEvent(
                 new DevelopmentPlanStreamEvent("summary", 1, payload, "生成摘要"), session, warnings);
 
-        assertThat(validated.payload().path("evidenceIds").valueStream().map(node -> node.asText()).toList())
+        assertThat(java.util.stream.StreamSupport.stream(validated.payload().path("evidenceIds").spliterator(), false).map(node -> node.asText()).toList())
                 .containsExactly("requirement:req-1");
         assertEquals("PARTIAL", validated.payload().path("supportStatus").asText());
         assertThat(session.warnings()).extracting(RagWarning::code).containsExactly("INVALID_EVIDENCE_REFERENCE");

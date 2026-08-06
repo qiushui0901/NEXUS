@@ -11,7 +11,7 @@ class ParentChildChunkerTest {
         String text = "规则。".repeat(1_000);
         var chunks = new ParentChildChunker().split(text);
         assertThat(chunks).hasSizeGreaterThan(1);
-        assertThat(chunks.getFirst().children()).hasSizeGreaterThan(1);
-        assertThat(chunks.getFirst().children()).allMatch(child -> child.length() <= ParentChildChunker.CHILD_SIZE + 1);
+        assertThat(chunks.get(0).children()).hasSizeGreaterThan(1);
+        assertThat(chunks.get(0).children()).allMatch(child -> child.length() <= ParentChildChunker.CHILD_SIZE + 1);
     }
 }

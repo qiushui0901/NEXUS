@@ -2,7 +2,7 @@ package com.example.requirementrag.web;
 
 import com.example.requirementrag.code.IncrementalCodeIndexService;
 import com.example.requirementrag.config.ProjectRegistry;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

@@ -117,7 +117,7 @@ class RetrievalPipelineTest {
 
         assertThat(outcome.status()).isEqualTo(RagOutcomeStatus.DEGRADED);
         assertThat(outcome.warnings()).extracting("code").containsExactly("DOCUMENT_RETRIEVAL_UNAVAILABLE");
-        assertThat(outcome.warnings().getFirst().message()).doesNotContain("qdrant");
+        assertThat(outcome.warnings().get(0).message()).doesNotContain("qdrant");
     }
 
     @Test
@@ -177,7 +177,7 @@ class RetrievalPipelineTest {
         assertThat(outcome.status()).isEqualTo(RagOutcomeStatus.DEGRADED);
         assertThat(outcome.data().requirementCorpus()).containsExactly(corpus);
         assertThat(outcome.warnings()).extracting("code").contains("DOCUMENT_RETRIEVAL_UNAVAILABLE");
-        assertThat(outcome.warnings().getFirst().message()).doesNotContain("endpoint");
+        assertThat(outcome.warnings().get(0).message()).doesNotContain("endpoint");
     }
 
     @Test

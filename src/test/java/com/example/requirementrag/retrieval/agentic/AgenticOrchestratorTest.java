@@ -82,7 +82,7 @@ class AgenticOrchestratorTest {
         verify(strategy, times(2)).execute(REQUEST);
         assertEquals(RagOutcomeStatus.SUCCESS, outcome.status());
         assertEquals(1, outcome.data().requirementEvidence().size());
-        assertEquals("h1", outcome.data().requirementEvidence().getFirst().id());
+        assertEquals("h1", outcome.data().requirementEvidence().get(0).id());
     }
 
     @Test

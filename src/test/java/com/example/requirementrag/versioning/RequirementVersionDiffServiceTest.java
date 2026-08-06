@@ -10,7 +10,7 @@ import com.example.requirementrag.versioning.VersionModels.ManifestStatus;
 import com.example.requirementrag.versioning.VersionModels.VersionManifest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.nio.file.Files;
 import java.nio.file.Path;

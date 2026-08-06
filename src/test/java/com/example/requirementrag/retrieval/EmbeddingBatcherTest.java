@@ -84,8 +84,8 @@ class EmbeddingBatcherTest {
             Future<List<float[]>> second = executor.submit(() -> batcher.embedAll(List.of("same query")));
 
             release.countDown();
-            assertThat(first.get(2, TimeUnit.SECONDS).getFirst()[0]).isEqualTo(42.0f);
-            assertThat(second.get(2, TimeUnit.SECONDS).getFirst()[0]).isEqualTo(42.0f);
+            assertThat(first.get(2, TimeUnit.SECONDS).get(0)[0]).isEqualTo(42.0f);
+            assertThat(second.get(2, TimeUnit.SECONDS).get(0)[0]).isEqualTo(42.0f);
             assertThat(modelCalls).hasValue(1);
         } finally {
             release.countDown();
@@ -101,10 +101,10 @@ class EmbeddingBatcherTest {
                 new BoundedTtlCache<>(Duration.ofMinutes(1), 10));
 
         List<float[]> first = batcher.embedAll(List.of("same query"));
-        first.getFirst()[0] = 99.0f;
+        first.get(0)[0] = 99.0f;
         List<float[]> second = batcher.embedAll(List.of("same query"));
 
-        assertThat(second.getFirst()[0]).isEqualTo(7.0f);
+        assertThat(second.get(0)[0]).isEqualTo(7.0f);
         verify(model, times(1)).embed(anyList());
     }
 }

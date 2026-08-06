@@ -72,7 +72,7 @@ class DevelopmentPlanServiceTest {
         var response = service.plan("query", null, null, null, 8);
 
         assertEquals(RagOutcomeStatus.DEGRADED, response.status());
-        assertEquals("DOCUMENT_RETRIEVAL_UNAVAILABLE", response.warnings().getFirst().code());
+        assertEquals("DOCUMENT_RETRIEVAL_UNAVAILABLE", response.warnings().get(0).code());
     }
 
     @Test
@@ -85,7 +85,7 @@ class DevelopmentPlanServiceTest {
         RagUnavailableException failure = assertThrows(RagUnavailableException.class,
                 () -> service.plan("query", null, null, null, 8));
 
-        assertEquals("CODE_RETRIEVAL_UNAVAILABLE", failure.warnings().getFirst().code());
+        assertEquals("CODE_RETRIEVAL_UNAVAILABLE", failure.warnings().get(0).code());
     }
 
     @Test
@@ -101,10 +101,10 @@ class DevelopmentPlanServiceTest {
         var response = nullResultService.plan("query", null, null, null, 8);
 
         assertEquals(RagOutcomeStatus.DEGRADED, response.status());
-        assertEquals("PLAN_GENERATION_FALLBACK", response.warnings().getFirst().code());
-        assertEquals("模型未返回有效方案，已使用规则化方案", response.warnings().getFirst().message());
+        assertEquals("PLAN_GENERATION_FALLBACK", response.warnings().get(0).code());
+        assertEquals("模型未返回有效方案，已使用规则化方案", response.warnings().get(0).message());
         assertEquals(1, response.citations().references().size());
-        assertEquals("requirement:doc-1", response.citations().references().getFirst().evidenceId());
+        assertEquals("requirement:doc-1", response.citations().references().get(0).evidenceId());
         assertEquals(EvidenceSupportStatus.UNSUPPORTED, response.citations().summary().supportStatus());
         assertEquals(CitationQualityStatus.INSUFFICIENT_EVIDENCE, response.citations().quality().status());
         assertEquals(0.0, response.citations().quality().coverageRate());
@@ -120,8 +120,8 @@ class DevelopmentPlanServiceTest {
         var response = service.plan("query", null, null, null, 8);
 
         assertEquals(RagOutcomeStatus.DEGRADED, response.status());
-        assertEquals("PLAN_GENERATION_FALLBACK", response.warnings().getFirst().code());
-        assertEquals("模型生成失败，已使用规则化方案", response.warnings().getFirst().message());
+        assertEquals("PLAN_GENERATION_FALLBACK", response.warnings().get(0).code());
+        assertEquals("模型生成失败，已使用规则化方案", response.warnings().get(0).message());
     }
 
 
@@ -140,7 +140,7 @@ class DevelopmentPlanServiceTest {
         var response = checkedService.plan("query", null, null, null, 8);
 
         assertEquals(ReportStatus.BLOCKED, response.conflictReport().status());
-        assertEquals("VERSION_CONTAMINATION", response.conflictReport().conflicts().getFirst().type().name());
+        assertEquals("VERSION_CONTAMINATION", response.conflictReport().conflicts().get(0).type().name());
     }
 
     private ChunkRecord documentChunk() {

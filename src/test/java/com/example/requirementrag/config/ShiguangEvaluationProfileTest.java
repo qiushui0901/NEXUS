@@ -28,7 +28,7 @@ class ShiguangEvaluationProfileTest {
         RagProperties properties = Binder.get(environment)
                 .bind("app.rag", RagProperties.class)
                 .get();
-        RagProperties.ProjectConfig project = properties.projects().getFirst();
+        RagProperties.ProjectConfig project = properties.projects().get(0);
 
         assertEquals("shiguang-eval", project.id());
         assertEquals("/authorized/qiushui-shiguang", project.repositoryPath());

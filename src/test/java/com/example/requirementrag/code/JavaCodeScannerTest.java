@@ -64,7 +64,7 @@ class JavaCodeScannerTest {
                 .filter(chunk -> chunk.symbolName().equals("LargeHeroService"))
                 .toList();
         assertThat(classChunks).hasSize(1);
-        assertThat(classChunks.getFirst().text().length()).isLessThanOrEqualTo(JavaCodeScanner.TYPE_CONTEXT_CHARS);
+        assertThat(classChunks.get(0).text().length()).isLessThanOrEqualTo(JavaCodeScanner.TYPE_CONTEXT_CHARS);
 
         List<com.example.requirementrag.model.CodeChunk> methodChunks = result.chunks().stream()
                 .filter(chunk -> chunk.symbolName().equals("rebuildHero"))

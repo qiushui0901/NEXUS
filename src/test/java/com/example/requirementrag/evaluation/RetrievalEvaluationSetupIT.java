@@ -13,7 +13,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -168,7 +168,7 @@ class RetrievalEvaluationSetupIT {
 
     private String fixtureDigest(List<FixtureContent> fixtures) throws Exception {
         if (fixtures.size() == 1) {
-            return sha256(fixtures.getFirst().bytes());
+            return sha256(fixtures.get(0).bytes());
         }
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         for (FixtureContent fixture : fixtures) {

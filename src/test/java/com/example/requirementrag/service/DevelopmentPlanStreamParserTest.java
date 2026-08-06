@@ -3,7 +3,7 @@ package com.example.requirementrag.service;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.example.requirementrag.model.DevelopmentPlanStreamEvent;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 

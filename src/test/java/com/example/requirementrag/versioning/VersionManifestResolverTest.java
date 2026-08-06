@@ -29,9 +29,9 @@ class VersionManifestResolverTest {
         List<VersionManifest> result = new VersionManifestResolver(manifests, wiki, snapshots).list("game");
 
         assertThat(result).extracting(VersionManifest::version).containsExactly("5.1", "5.0.2");
-        assertThat(result.getFirst().baseVersion()).isEqualTo("5.0.2");
-        assertThat(result.getFirst().requirementDocumentId()).isEqualTo("requirements");
-        assertThat(result.getFirst().requirementVersion()).isEqualTo("5.1");
+        assertThat(result.get(0).baseVersion()).isEqualTo("5.0.2");
+        assertThat(result.get(0).requirementDocumentId()).isEqualTo("requirements");
+        assertThat(result.get(0).requirementVersion()).isEqualTo("5.1");
         assertThat(result.get(1).requirementVersion()).isEqualTo("5.0");
     }
 
