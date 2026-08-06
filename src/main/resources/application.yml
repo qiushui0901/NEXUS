@@ -25,15 +25,15 @@ spring:
         options:
           model: ${OPENAI_CHAT_MODEL:claude-sonnet-4.6}
       embedding:
-        enabled: false
+        enabled: true
         options:
-          model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+          model: ${OPENAI_EMBEDDING_MODEL:text-embedding-v4}
     ollama:
       base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
       chat:
         enabled: false
       embedding:
-        enabled: true
+        enabled: false
         options:
           model: ${OLLAMA_EMBEDDING_MODEL:bge-m3}
 
@@ -117,7 +117,9 @@ app:
       read-timeout-ms: ${BGE_RERANK_READ_TIMEOUT_MS:10000}
     llm:
       generation-model: ${GENERATION_MODEL:claude-sonnet-4.6}
-      reranker-model: ${LLM_RERANK_MODEL:claude-haiku-4-5-20251001}
+      development-plan-model: ${DEVELOPMENT_PLAN_MODEL:gpt-5.6-sol}
+      doubt-review-model: ${DOUBT_REVIEW_MODEL:glm-5.2}
+      reranker-model: ${LLM_RERANK_MODEL:claude-sonnet-5}
       routing-model: ${LLM_ROUTING_MODEL:}
     retrieval:
       dense-top-k: 50
@@ -134,7 +136,7 @@ app:
       result-cache-max-entries: ${RETRIEVAL_CACHE_MAX_ENTRIES:1000}
       embedding-cache-ttl-seconds: ${EMBEDDING_CACHE_TTL_SECONDS:900}
       embedding-cache-max-entries: ${EMBEDDING_CACHE_MAX_ENTRIES:10000}
-      code-bge-rerank-enabled: ${CODE_BGE_RERANK_ENABLED:true}
+      code-bge-rerank-enabled: ${CODE_BGE_RERANK_ENABLED:false}
       code-candidate-multiplier: ${CODE_CANDIDATE_MULTIPLIER:3}
     knowledge:
       bootstrap-enabled: ${KNOWLEDGE_BOOTSTRAP_ENABLED:false}

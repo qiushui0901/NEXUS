@@ -10,14 +10,22 @@ app:
         repository-path: ${SHIGUANG_REPOSITORY_PATH:}
         git-path: qiushui0901/qiushui-shiguang
         include-path-substrings:
+          - /shiguang-agent/
           - /shiguang-auth/
-          - /shiguang-note/
+          - /shiguang-benchmark/
           - /shiguang-comment/
-          - /shiguang-user-relation/
-          - /shiguang-search/
+          - /shiguang-count/
+          - /shiguang-data-align/
+          - /shiguang-distributed-id-generator/
+          - /shiguang-framework/
+          - /shiguang-gateway/
+          - /shiguang-kv/
+          - /shiguang-note/
           - /shiguang-oss/
           - /shiguang-recommend/
-          - /shiguang-agent/
+          - /shiguang-search/
+          - /shiguang-user/
+          - /shiguang-user-relation/
         exclude-path-substrings:
           - /target/
           - /.git/
