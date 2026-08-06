@@ -23,8 +23,7 @@ import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import io.modelcontextprotocol.common.McpTransportContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.mcp.annotation.context.McpSyncRequestContext;
-import tools.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import java.util.List;
 import java.util.Map;
@@ -68,24 +67,24 @@ class NexusMcpToolsTest {
         when(retrievalPipeline.execute(any())).thenReturn(new RagOutcome<>(
                 RagOutcomeStatus.SUCCESS, bundle, List.of(), List.of()));
 
-        McpToolResponse<List<McpResponsePolicy.RequirementHit>> response = tools.searchRequirements(
-                context(UserRole.READONLY), "query", "project-a", "requirements", "5.1", 10);
+        context(UserRole.READONLY);
+        McpToolResponse<List<McpResponsePolicy.RequirementHit>> response =
+                tools.nexus_search_requirements("query", "project-a", "requirements", "5.1", 10);
 
         assertEquals("project-a", response.resolved().projectId());
         assertEquals("5.1", response.resolved().version());
         assertEquals(1, response.data().size());
-        assertTrue(response.data().getFirst().evidenceId().startsWith("requirement:"));
+        assertTrue(response.data().get(0).evidenceId().startsWith("requirement:"));
         assertEquals(1, response.evidence().size());
-        assertTrue(response.evidence().getFirst().toString().contains("requirement:"));
-        assertTrue(response.evidence().getFirst().toString().contains("chunkId=null"));
+        assertTrue(response.evidence().get(0).toString().contains("requirement:"));
+        assertTrue(response.evidence().get(0).toString().contains("chunkId=null"));
     }
 
     @Test
     void developmentPlanKeepsExistingOperatePermission() {
-        McpSyncRequestContext viewer = context(UserRole.READONLY);
+        context(UserRole.READONLY);
 
-        assertThrows(AccessDeniedException.class, () -> tools.developmentPlan(
-                viewer, "query", "project-a", null, null, 10));
+        assertThrows(AccessDeniedException.class, () -> { context(UserRole.READONLY); tools.nexus_development_plan("query", "project-a", null, null, 10); });
     }
 
     @Test
@@ -95,29 +94,25 @@ class NexusMcpToolsTest {
                         List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                         List.of("No code graph snapshot; run code index first"), false));
 
-        McpToolResponse<CodeIntelligenceResponse> response = tools.codeGraph(
-                context(UserRole.READONLY), "missing", "project-a", null, 2, 50);
+        context(UserRole.READONLY);
+        McpToolResponse<CodeIntelligenceResponse> response =
+                tools.nexus_code_graph("missing", "project-a", null, 2, 50);
 
         assertTrue(response.quality().toString().contains("NOT_AVAILABLE"));
         assertEquals(1, response.warnings().size());
-        assertEquals("CODE_GRAPH_DEGRADED", response.warnings().getFirst().code());
+        assertEquals("CODE_GRAPH_DEGRADED", response.warnings().get(0).code());
     }
 
     @Test
     void impactAnalysisRequiresExactlyOneSelectorMode() {
-        McpSyncRequestContext context = context(UserRole.READONLY);
+        context(UserRole.READONLY);
 
-        assertThrows(IllegalArgumentException.class, () -> tools.impactAnalysis(
-                context, "project-a", null, null, null, 2, 50));
-        assertThrows(IllegalArgumentException.class, () -> tools.impactAnalysis(
-                context, "project-a", "save", "aaaaaaa", "bbbbbbb", 2, 50));
+        assertThrows(IllegalArgumentException.class, () -> tools.nexus_impact_analysis("project-a", null, null, null, 2, 50));
+        assertThrows(IllegalArgumentException.class, () -> tools.nexus_impact_analysis("project-a", "save", "aaaaaaa", "bbbbbbb", 2, 50));
     }
 
-    private McpSyncRequestContext context(UserRole role) {
-        McpSyncRequestContext context = mock(McpSyncRequestContext.class);
+    private void context(UserRole role) {
         UserContext user = new UserContext("actor", role, List.of("project-a"));
-        when(context.transportContext()).thenReturn(McpTransportContext.create(
-                Map.of(McpTransportConfiguration.USER_CONTEXT_KEY, user)));
-        return context;
+        McpUserContextHolder.set(user);
     }
 }

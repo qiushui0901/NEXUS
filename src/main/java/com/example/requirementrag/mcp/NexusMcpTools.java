@@ -27,9 +27,8 @@ import com.example.requirementrag.versioning.VersionComparisonService;
 import com.example.requirementrag.versioning.VersionModels.VersionComparisonReport;
 import com.example.requirementrag.wiki.WikiModels;
 import com.example.requirementrag.wiki.WikiRepository;
-import org.springframework.ai.mcp.annotation.McpTool;
-import org.springframework.ai.mcp.annotation.McpToolParam;
-import org.springframework.ai.mcp.annotation.context.McpSyncRequestContext;
+import org.springframework.ai.tool.annotation.Tool;
+import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
@@ -104,7 +103,6 @@ public class NexusMcpTools {
      * 检索版本作用域下的需求证据，返回带稳定证据 ID 的命中列表。
      * 结果条数收敛到 [1,20]，证据条目受限，且标记需求正文是否被截断。
      *
-     * @param context    MCP 同步请求上下文
      * @param query      自然语言需求查询
      * @param projectId  项目 ID，null 时走默认项目
      * @param documentId 需求文档 ID，可为 null
@@ -112,20 +110,15 @@ public class NexusMcpTools {
      * @param limit      最大命中条数，1-20
      * @return 需求命中列表 + 证据 + 状态/截断标记
      */
-    @McpTool(
-            name = "nexus_search_requirements",
-            description = "Search version-scoped requirement evidence. Returns stable requirement evidence IDs.",
-            annotations = @McpTool.McpAnnotations(
-                    readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false))
-    public McpToolResponse<List<McpResponsePolicy.RequirementHit>> searchRequirements(
-            McpSyncRequestContext context,
-            @McpToolParam(description = "Natural-language requirement query") String query,
-            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+    @Tool(description = "Search version-scoped requirement evidence. Returns stable requirement evidence IDs.")
+    public McpToolResponse<List<McpResponsePolicy.RequirementHit>> nexus_search_requirements(
+            @ToolParam(description = "Natural-language requirement query") String query,
+            @ToolParam(description = "Project ID; defaults to the configured project", required = false)
             String projectId,
-            @McpToolParam(description = "Requirement document ID", required = false) String documentId,
-            @McpToolParam(description = "Requirement version", required = false) String version,
-            @McpToolParam(description = "Maximum hits, 1-20", required = false) Integer limit) {
-        return invocations.invoke("nexus_search_requirements", context, projectId, version, Permission.PUBLIC_READ,
+            @ToolParam(description = "Requirement document ID", required = false) String documentId,
+            @ToolParam(description = "Requirement version", required = false) String version,
+            @ToolParam(description = "Maximum hits, 1-20", required = false) Integer limit) {
+        return invocations.invoke("nexus_search_requirements", projectId, version, Permission.PUBLIC_READ,
                 effectiveProject -> {
                     int resolvedLimit = policy.limit(limit);
                     RagOutcome<RetrievalBundle> outcome = dependency(() -> retrievalPipeline.execute(new RetrievalRequest(
@@ -151,24 +144,18 @@ public class NexusMcpTools {
     /**
      * 检索仓库代码，返回带稳定代码证据 ID 的截断摘录列表。
      *
-     * @param context   MCP 同步请求上下文
      * @param query     自然语言代码查询
      * @param projectId 项目 ID，null 时走默认项目
      * @param limit     最大命中条数，1-20
      * @return 代码命中列表 + 证据 + 截断标记
      */
-    @McpTool(
-            name = "nexus_search_code",
-            description = "Search repository code and return bounded excerpts with stable code evidence IDs.",
-            annotations = @McpTool.McpAnnotations(
-                    readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false))
-    public McpToolResponse<List<McpResponsePolicy.CodeHit>> searchCode(
-            McpSyncRequestContext context,
-            @McpToolParam(description = "Natural-language code query") String query,
-            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+    @Tool(description = "Search repository code and return bounded excerpts with stable code evidence IDs.")
+    public McpToolResponse<List<McpResponsePolicy.CodeHit>> nexus_search_code(
+            @ToolParam(description = "Natural-language code query") String query,
+            @ToolParam(description = "Project ID; defaults to the configured project", required = false)
             String projectId,
-            @McpToolParam(description = "Maximum hits, 1-20", required = false) Integer limit) {
-        return invocations.invoke("nexus_search_code", context, projectId, null, Permission.PUBLIC_READ,
+            @ToolParam(description = "Maximum hits, 1-20", required = false) Integer limit) {
+        return invocations.invoke("nexus_search_code", projectId, null, Permission.PUBLIC_READ,
                 effectiveProject -> {
                     int resolvedLimit = policy.limit(limit);
                     List<CodeChunk> chunks = dependency(() -> codeKnowledgeService.search(policy.required(query, "query"), effectiveProject, resolvedLimit));
@@ -191,26 +178,20 @@ public class NexusMcpTools {
      * 从仓库相对路径读取一段受长度限制的源码摘录。
      * 路径会校验为仓库相对路径，结束行收敛到起始行后的 200 行内。
      *
-     * @param context    MCP 同步请求上下文
      * @param filePath   仓库相对源码路径
      * @param projectId  项目 ID，null 时走默认项目
      * @param startLine  起始行（从 1 计），可为 null
      * @param endLine    结束行，上限 200 行，可为 null
      * @return 源码摘录 + 证据 + 截断标记
      */
-    @McpTool(
-            name = "nexus_get_source",
-            description = "Read a bounded source excerpt from a repository-relative path.",
-            annotations = @McpTool.McpAnnotations(
-                    readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false))
-    public McpToolResponse<SourceSnippet> getSource(
-            McpSyncRequestContext context,
-            @McpToolParam(description = "Repository-relative source path") String filePath,
-            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+    @Tool(description = "Read a bounded source excerpt from a repository-relative path.")
+    public McpToolResponse<SourceSnippet> nexus_get_source(
+            @ToolParam(description = "Repository-relative source path") String filePath,
+            @ToolParam(description = "Project ID; defaults to the configured project", required = false)
             String projectId,
-            @McpToolParam(description = "First line, one-based", required = false) Integer startLine,
-            @McpToolParam(description = "Last line, capped to 200 lines", required = false) Integer endLine) {
-        return invocations.invoke("nexus_get_source", context, projectId, null, Permission.PUBLIC_READ,
+            @ToolParam(description = "First line, one-based", required = false) Integer startLine,
+            @ToolParam(description = "Last line, capped to 200 lines", required = false) Integer endLine) {
+        return invocations.invoke("nexus_get_source", projectId, null, Permission.PUBLIC_READ,
                 effectiveProject -> {
                     String safePath = policy.relativePath(policy.required(filePath, "filePath"));
                     int safeEnd = policy.endLine(startLine, endLine);
@@ -232,7 +213,6 @@ public class NexusMcpTools {
     /**
      * 为需求与代码范围生成带证据引用的开发计划（需 OPERATE 权限）。
      *
-     * @param context    MCP 同步请求上下文
      * @param query      开发任务或需求查询
      * @param projectId  项目 ID，null 时走默认项目
      * @param documentId 需求文档 ID，可为 null
@@ -240,20 +220,15 @@ public class NexusMcpTools {
      * @param limit      最大证据命中条数，1-20
      * @return 开发计划数据 + 证据引用 + 质量信息 + 截断标记
      */
-    @McpTool(
-            name = "nexus_development_plan",
-            description = "Generate an evidence-cited development plan for a requirement and code scope.",
-            annotations = @McpTool.McpAnnotations(
-                    readOnlyHint = true, destructiveHint = false, idempotentHint = false, openWorldHint = false))
-    public McpToolResponse<Map<String, Object>> developmentPlan(
-            McpSyncRequestContext context,
-            @McpToolParam(description = "Development task or requirement query") String query,
-            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+    @Tool(description = "Generate an evidence-cited development plan for a requirement and code scope.")
+    public McpToolResponse<Map<String, Object>> nexus_development_plan(
+            @ToolParam(description = "Development task or requirement query") String query,
+            @ToolParam(description = "Project ID; defaults to the configured project", required = false)
             String projectId,
-            @McpToolParam(description = "Requirement document ID", required = false) String documentId,
-            @McpToolParam(description = "Requirement version", required = false) String version,
-            @McpToolParam(description = "Maximum evidence hits, 1-20", required = false) Integer limit) {
-        return invocations.invoke("nexus_development_plan", context, projectId, version, Permission.OPERATE,
+            @ToolParam(description = "Requirement document ID", required = false) String documentId,
+            @ToolParam(description = "Requirement version", required = false) String version,
+            @ToolParam(description = "Maximum evidence hits, 1-20", required = false) Integer limit) {
+        return invocations.invoke("nexus_development_plan", projectId, version, Permission.OPERATE,
                 effectiveProject -> {
                     DevelopmentPlanResponse plan = dependency(() -> developmentPlanService.plan(policy.required(query, "query"), documentId, version,
                             effectiveProject, policy.limit(limit)));
@@ -269,24 +244,18 @@ public class NexusMcpTools {
     /**
      * 读取一篇已发布、按版本作用的 NEXUS Wiki 页面。
      *
-     * @param context    MCP 同步请求上下文
      * @param version    已发布的 Wiki 版本
      * @param featureId  稳定的 Wiki 特性 ID
      * @param projectId  项目 ID，null 时走默认项目
      * @return 页面数据 + 受限证据列表 + 截断标记
      */
-    @McpTool(
-            name = "nexus_wiki_page",
-            description = "Read a published, versioned NEXUS Wiki page.",
-            annotations = @McpTool.McpAnnotations(
-                    readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false))
-    public McpToolResponse<Map<String, Object>> wikiPage(
-            McpSyncRequestContext context,
-            @McpToolParam(description = "Published Wiki version") String version,
-            @McpToolParam(description = "Stable Wiki feature ID") String featureId,
-            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+    @Tool(description = "Read a published, versioned NEXUS Wiki page.")
+    public McpToolResponse<Map<String, Object>> nexus_wiki_page(
+            @ToolParam(description = "Published Wiki version") String version,
+            @ToolParam(description = "Stable Wiki feature ID") String featureId,
+            @ToolParam(description = "Project ID; defaults to the configured project", required = false)
             String projectId) {
-        return invocations.invoke("nexus_wiki_page", context, projectId, version, Permission.PUBLIC_READ,
+        return invocations.invoke("nexus_wiki_page", projectId, version, Permission.PUBLIC_READ,
                 effectiveProject -> {
                     WikiModels.Page page = dependency(() -> wikiRepository.getPage(effectiveProject, policy.required(version, "version"),
                             policy.required(featureId, "featureId")));
@@ -303,24 +272,18 @@ public class NexusMcpTools {
      * 比较两个版本之间的需求、代码、测试与 Wiki 知识差异；
      * 起止版本必填且必须不同。
      *
-     * @param context      MCP 同步请求上下文
      * @param fromVersion  基准版本
      * @param toVersion    目标版本
      * @param projectId    项目 ID，null 时走默认项目
      * @return 四类差异数据 + 起止版本信息 + 截断标记
      */
-    @McpTool(
-            name = "nexus_version_diff",
-            description = "Compare requirement, code, test, and Wiki knowledge between two versions.",
-            annotations = @McpTool.McpAnnotations(
-                    readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false))
-    public McpToolResponse<Map<String, Object>> versionDiff(
-            McpSyncRequestContext context,
-            @McpToolParam(description = "Base version") String fromVersion,
-            @McpToolParam(description = "Target version") String toVersion,
-            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+    @Tool(description = "Compare requirement, code, test, and Wiki knowledge between two versions.")
+    public McpToolResponse<Map<String, Object>> nexus_version_diff(
+            @ToolParam(description = "Base version") String fromVersion,
+            @ToolParam(description = "Target version") String toVersion,
+            @ToolParam(description = "Project ID; defaults to the configured project", required = false)
             String projectId) {
-        return invocations.invoke("nexus_version_diff", context, projectId, toVersion, Permission.PUBLIC_READ,
+        return invocations.invoke("nexus_version_diff", projectId, toVersion, Permission.PUBLIC_READ,
                 effectiveProject -> {
                     String safeFrom = policy.required(fromVersion, "fromVersion");
                     String safeTo = policy.required(toVersion, "toVersion");
@@ -337,7 +300,6 @@ public class NexusMcpTools {
     /**
      * 遍历最新项目/提交作用域下的静态符号调用图。
      *
-     * @param context   MCP 同步请求上下文
      * @param symbol    限定名或简单符号名
      * @param projectId 项目 ID，null 时走默认项目
      * @param direction inbound 或 outbound，可为 null
@@ -345,20 +307,15 @@ public class NexusMcpTools {
      * @param limit     最大图关系数，1-200，可为 null
      * @return 代码图数据 + 可用性/警告 + 截断标记
      */
-    @McpTool(
-            name = "nexus_code_graph",
-            description = "Traverse the latest project/commit-scoped static symbol call graph.",
-            annotations = @McpTool.McpAnnotations(
-                    readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false))
-    public McpToolResponse<CodeIntelligenceResponse> codeGraph(
-            McpSyncRequestContext context,
-            @McpToolParam(description = "Qualified or simple symbol name") String symbol,
-            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+    @Tool(description = "Traverse the latest project/commit-scoped static symbol call graph.")
+    public McpToolResponse<CodeIntelligenceResponse> nexus_code_graph(
+            @ToolParam(description = "Qualified or simple symbol name") String symbol,
+            @ToolParam(description = "Project ID; defaults to the configured project", required = false)
             String projectId,
-            @McpToolParam(description = "inbound or outbound", required = false) String direction,
-            @McpToolParam(description = "Traversal depth, 1-5", required = false) Integer depth,
-            @McpToolParam(description = "Maximum graph relations, 1-200", required = false) Integer limit) {
-        return invocations.invoke("nexus_code_graph", context, projectId, null, Permission.PUBLIC_READ,
+            @ToolParam(description = "inbound or outbound", required = false) String direction,
+            @ToolParam(description = "Traversal depth, 1-5", required = false) Integer depth,
+            @ToolParam(description = "Maximum graph relations, 1-200", required = false) Integer limit) {
+        return invocations.invoke("nexus_code_graph", projectId, null, Permission.PUBLIC_READ,
                 effectiveProject -> {
                     CodeIntelligenceResponse data = codeIntelligenceService.graph(
                             effectiveProject, symbol, direction, depth, limit);
@@ -371,7 +328,6 @@ public class NexusMcpTools {
      * 分析单个符号或 Git 提交区间（fromCommit+toCommit）的入向影响；
      * 两种模式必须恰好选择一种。
      *
-     * @param context     MCP 同步请求上下文
      * @param projectId   项目 ID，null 时走默认项目
      * @param symbol      符号选择器，与提交模式互斥
      * @param fromCommit  基准 Git 提交，可为 null
@@ -380,21 +336,16 @@ public class NexusMcpTools {
      * @param limit       最大图关系数，1-200，可为 null
      * @return 影响分析数据 + 可用性/警告 + 截断标记
      */
-    @McpTool(
-            name = "nexus_impact_analysis",
-            description = "Analyze inbound impact for one symbol or a Git commit range.",
-            annotations = @McpTool.McpAnnotations(
-                    readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false))
-    public McpToolResponse<CodeIntelligenceResponse> impactAnalysis(
-            McpSyncRequestContext context,
-            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+    @Tool(description = "Analyze inbound impact for one symbol or a Git commit range.")
+    public McpToolResponse<CodeIntelligenceResponse> nexus_impact_analysis(
+            @ToolParam(description = "Project ID; defaults to the configured project", required = false)
             String projectId,
-            @McpToolParam(description = "Symbol selector; exclusive with commits", required = false) String symbol,
-            @McpToolParam(description = "Base Git commit", required = false) String fromCommit,
-            @McpToolParam(description = "Target Git commit", required = false) String toCommit,
-            @McpToolParam(description = "Traversal depth, 1-5", required = false) Integer depth,
-            @McpToolParam(description = "Maximum graph relations, 1-200", required = false) Integer limit) {
-        return invocations.invoke("nexus_impact_analysis", context, projectId, toCommit, Permission.PUBLIC_READ,
+            @ToolParam(description = "Symbol selector; exclusive with commits", required = false) String symbol,
+            @ToolParam(description = "Base Git commit", required = false) String fromCommit,
+            @ToolParam(description = "Target Git commit", required = false) String toCommit,
+            @ToolParam(description = "Traversal depth, 1-5", required = false) Integer depth,
+            @ToolParam(description = "Maximum graph relations, 1-200", required = false) Integer limit) {
+        return invocations.invoke("nexus_impact_analysis", projectId, toCommit, Permission.PUBLIC_READ,
                 effectiveProject -> {
                     boolean bySymbol = symbol != null && !symbol.isBlank();
                     boolean byCommits = fromCommit != null && !fromCommit.isBlank()
@@ -424,26 +375,20 @@ public class NexusMcpTools {
     /**
      * 基于版本作用域证据生成受长度限制的需求存疑清单（需 OPERATE 权限）。
      *
-     * @param context    MCP 同步请求上下文
      * @param documentId 需求文档 ID
      * @param version    需求版本
      * @param module     可选模块过滤
      * @param projectId  项目 ID，null 时走默认项目
      * @return 存疑命中列表（限 50 条）+ 条数 + 截断标记
      */
-    @McpTool(
-            name = "nexus_review_doubts",
-            description = "Generate a bounded requirement doubt list from version-scoped evidence.",
-            annotations = @McpTool.McpAnnotations(
-                    readOnlyHint = true, destructiveHint = false, idempotentHint = false, openWorldHint = false))
-    public McpToolResponse<List<McpResponsePolicy.DoubtHit>> reviewDoubts(
-            McpSyncRequestContext context,
-            @McpToolParam(description = "Requirement document ID") String documentId,
-            @McpToolParam(description = "Requirement version") String version,
-            @McpToolParam(description = "Optional module filter", required = false) String module,
-            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+    @Tool(description = "Generate a bounded requirement doubt list from version-scoped evidence.")
+    public McpToolResponse<List<McpResponsePolicy.DoubtHit>> nexus_review_doubts(
+            @ToolParam(description = "Requirement document ID") String documentId,
+            @ToolParam(description = "Requirement version") String version,
+            @ToolParam(description = "Optional module filter", required = false) String module,
+            @ToolParam(description = "Project ID; defaults to the configured project", required = false)
             String projectId) {
-        return invocations.invoke("nexus_review_doubts", context, projectId, version, Permission.OPERATE,
+        return invocations.invoke("nexus_review_doubts", projectId, version, Permission.OPERATE,
                 effectiveProject -> {
                     DoubtBatch raw = reviewFacadeService.review(
                             new ReviewRequest(documentId, version, module, effectiveProject));
@@ -457,24 +402,18 @@ public class NexusMcpTools {
     /**
      * 对结构化需求/代码/测试/Wiki claims 做确定性冲突检查（需 OPERATE 权限）。
      *
-     * @param context   MCP 同步请求上下文
      * @param version   所有 claims 必须归属的业务版本
      * @param claims    待比较的结构化证据 claims
      * @param projectId 项目 ID，null 时走默认项目
      * @return 冲突报告 + 状态/冲突数 + 规范化警告 + 截断标记
      */
-    @McpTool(
-            name = "nexus_conflict_check",
-            description = "Deterministically check structured requirement, code, test, and Wiki claims for conflicts.",
-            annotations = @McpTool.McpAnnotations(
-                    readOnlyHint = true, destructiveHint = false, idempotentHint = true, openWorldHint = false))
-    public McpToolResponse<KnowledgeConflictReport> conflictCheck(
-            McpSyncRequestContext context,
-            @McpToolParam(description = "Business version that all claims must belong to") String version,
-            @McpToolParam(description = "Structured evidence-backed claims to compare") List<KnowledgeClaim> claims,
-            @McpToolParam(description = "Project ID; defaults to the configured project", required = false)
+    @Tool(description = "Deterministically check structured requirement, code, test, and Wiki claims for conflicts.")
+    public McpToolResponse<KnowledgeConflictReport> nexus_conflict_check(
+            @ToolParam(description = "Business version that all claims must belong to") String version,
+            @ToolParam(description = "Structured evidence-backed claims to compare") List<KnowledgeClaim> claims,
+            @ToolParam(description = "Project ID; defaults to the configured project", required = false)
             String projectId) {
-        return invocations.invoke("nexus_conflict_check", context, projectId, version, Permission.OPERATE,
+        return invocations.invoke("nexus_conflict_check", projectId, version, Permission.OPERATE,
                 effectiveProject -> {
                     KnowledgeConflictReport report = knowledgeConflictService.analyze(
                             effectiveProject, version, claims);

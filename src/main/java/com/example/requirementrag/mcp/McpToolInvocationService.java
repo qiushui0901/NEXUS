@@ -49,10 +49,9 @@ public class McpToolInvocationService {
      * @return 受约束后的工具响应（成功或降级）
      * @throws com.example.requirementrag.security.UnauthenticatedException 未认证或未携带用户上下文时抛出
      */
-    public <T> McpToolResponse<T> invoke(String tool, org.springframework.ai.mcp.annotation.context.McpSyncRequestContext request,
-                                         String requestedProjectId, String version, Permission permission,
+    public <T> McpToolResponse<T> invoke(String tool, String requestedProjectId, String version, Permission permission,
                                          Function<String, McpToolResponse<T>> action) {
-        UserContext user = authenticatedUser(request);
+        UserContext user = McpUserContextHolder.get();
         authorizationService.requirePermission(user, permission);
         String projectId = authorizationService.requireProjectAccess(user, requestedProjectId);
         Timer.Sample sample = Timer.start(meterRegistry);
@@ -93,19 +92,6 @@ public class McpToolInvocationService {
     }
 
     /** 从 MCP 传输上下文取回认证用户；请求/上下文缺失或类型不符时按未认证处理。 */
-    private UserContext authenticatedUser(
-            org.springframework.ai.mcp.annotation.context.McpSyncRequestContext request) {
-        if (request == null || request.transportContext() == null) {
-            throw new UnauthenticatedException();
-        }
-        Object value = request.transportContext().get(McpTransportConfiguration.USER_CONTEXT_KEY);
-        if (value instanceof UserContext user) {
-            return user;
-        }
-        throw new UnauthenticatedException();
-    }
-
-    /** 以 INFO 级别输出一次工具调用的审计日志。 */
     private void record(String tool, UserContext user, String projectId, String version,
                         String status, long durationMs, int warningCount) {
         log.info("MCP tool={} actor={} role={} project={} version={} durationMs={} status={} warningCount={}",

@@ -27,10 +27,9 @@ import io.modelcontextprotocol.common.McpTransportContext;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
-import org.springframework.ai.mcp.annotation.context.McpSyncRequestContext;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
-import tools.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import java.util.List;
 import java.util.Map;
@@ -68,6 +67,8 @@ class NexusMcpV06ContractTest {
     private NexusMcpTools tools;
 
     private void setUp() {
+        McpUserContextHolder.set(new UserContext("actor", UserRole.DEVELOPER, List.of(PROJECT)));
+
         retrieval = mock(RetrievalPipeline.class);
         code = mock(CodeKnowledgeService.class);
         plans = mock(DevelopmentPlanService.class);
@@ -91,7 +92,8 @@ class NexusMcpV06ContractTest {
     @EnumSource(Tool.class)
     void authenticationContract(Tool tool) {
         setUp();
-        assertThrows(UnauthenticatedException.class, () -> invoke(tool, null));
+        McpUserContextHolder.clear();
+        assertThrows(UnauthenticatedException.class, () -> invoke(tool));
         verifyNoInteractions(retrieval, code, plans, wiki, versions);
     }
 
@@ -99,7 +101,10 @@ class NexusMcpV06ContractTest {
     @EnumSource(Tool.class)
     void projectAllowListContract(Tool tool) {
         setUp();
-        assertThrows(AccessDeniedException.class, () -> invoke(tool, context(UserRole.DEVELOPER, "other-project")));
+        assertThrows(AccessDeniedException.class, () -> {
+            McpUserContextHolder.set(new UserContext("actor", UserRole.DEVELOPER, List.of("other-project")));
+            invoke(tool);
+        });
         verifyNoInteractions(retrieval, code, plans, wiki, versions);
     }
 
@@ -109,10 +114,10 @@ class NexusMcpV06ContractTest {
         setUp();
         failDependency(tool, new IllegalStateException("private dependency detail at http://qdrant.internal:6333"));
 
-        McpToolResponse<?> response = invoke(tool, context(UserRole.DEVELOPER, PROJECT));
+        McpToolResponse<?> response = invoke(tool);
 
         assertNull(response.data());
-        assertEquals("NEXUS_" + toolName(tool) + "_UNAVAILABLE", response.warnings().getFirst().code());
+        assertEquals("NEXUS_" + toolName(tool) + "_UNAVAILABLE", response.warnings().get(0).code());
         assertFalse(response.truncated());
         String serialized = JSON.writeValueAsString(response);
         assertFalse(serialized.contains("private dependency detail"));
@@ -137,7 +142,7 @@ class NexusMcpV06ContractTest {
         setUp();
         stubSingleFieldTruncation(tool);
 
-        McpToolResponse<?> response = invoke(tool, context(UserRole.DEVELOPER, PROJECT));
+        McpToolResponse<?> response = invoke(tool);
 
         assertTrue(response.truncated());
         assertSingleFieldWasBounded(tool, response);
@@ -149,14 +154,14 @@ class NexusMcpV06ContractTest {
         setUp();
         stubSuccess(tool);
 
-        assertDoesNotThrow(() -> invoke(tool, context(UserRole.READONLY, PROJECT)));
+        assertDoesNotThrow(() -> invoke(tool));
         verifyDependencyCalled(tool);
     }
 
     @Test
     void developmentPlanRequiresOperate() {
         setUp();
-        assertThrows(AccessDeniedException.class, () -> invoke(Tool.PLAN, context(UserRole.READONLY, PROJECT)));
+        assertThrows(AccessDeniedException.class, () -> { context(UserRole.READONLY, PROJECT); invoke(Tool.PLAN); });
         verifyNoInteractions(retrieval, code, plans, wiki, versions);
     }
 
@@ -165,7 +170,7 @@ class NexusMcpV06ContractTest {
         setUp();
         stubSuccess(Tool.PLAN);
 
-        assertDoesNotThrow(() -> invoke(Tool.PLAN, context(UserRole.DEVELOPER, PROJECT)));
+        assertDoesNotThrow(() -> { context(UserRole.DEVELOPER, PROJECT); invoke(Tool.PLAN); });
         verify(plans).plan(any(), any(), any(), eq(PROJECT), anyInt());
     }
 
@@ -175,7 +180,7 @@ class NexusMcpV06ContractTest {
         setUp();
         failDependency(tool, new IllegalArgumentException("caller bug"));
 
-        assertThrows(IllegalArgumentException.class, () -> invoke(tool, context(UserRole.DEVELOPER, PROJECT)));
+        assertThrows(IllegalArgumentException.class, () -> invoke(tool));
     }
 
     @Test
@@ -184,7 +189,7 @@ class NexusMcpV06ContractTest {
         when(wiki.getPage(any(), any(), any())).thenThrow(new ResponseStatusException(HttpStatus.NOT_FOUND, "not found"));
 
         ResponseStatusException exception = assertThrows(ResponseStatusException.class,
-                () -> invoke(Tool.WIKI, context(UserRole.DEVELOPER, PROJECT)));
+                () -> { context(UserRole.DEVELOPER, PROJECT); invoke(Tool.WIKI); });
         assertEquals(HttpStatus.NOT_FOUND, exception.getStatusCode());
     }
 
@@ -194,59 +199,60 @@ class NexusMcpV06ContractTest {
         when(wiki.getPage(any(), any(), any())).thenThrow(new ResponseStatusException(
                 HttpStatus.INTERNAL_SERVER_ERROR, "private wiki storage detail"));
 
-        McpToolResponse<?> response = invoke(Tool.WIKI, context(UserRole.DEVELOPER, PROJECT));
+        context(UserRole.DEVELOPER, PROJECT);
+        McpToolResponse<?> response = invoke(Tool.WIKI);
         assertNull(response.data());
-        assertEquals("NEXUS_WIKI_PAGE_UNAVAILABLE", response.warnings().getFirst().code());
-        assertFalse(JSON.writeValueAsString(response).contains("private wiki storage detail"));
+        assertEquals("NEXUS_WIKI_PAGE_UNAVAILABLE", response.warnings().get(0).code());
+        assertDoesNotThrow(() -> { try { assertFalse(JSON.writeValueAsString(response).contains("private wiki storage detail")); } catch (com.fasterxml.jackson.core.JsonProcessingException e) { throw new RuntimeException(e); } });
     }
 
     @Test
     void sourceRangeValidationAndCapContract() throws Exception {
         setUp();
-        McpSyncRequestContext context = context(UserRole.DEVELOPER, PROJECT);
-        assertThrows(IllegalArgumentException.class, () -> tools.getSource(context, "src/Main.java", PROJECT, 0, 1));
-        assertThrows(IllegalArgumentException.class, () -> tools.getSource(context, "src/Main.java", PROJECT, 3, 2));
+        context(UserRole.DEVELOPER, PROJECT);
+        assertThrows(IllegalArgumentException.class, () -> tools.nexus_get_source("src/Main.java", PROJECT, 0, 1));
+        assertThrows(IllegalArgumentException.class, () -> tools.nexus_get_source("src/Main.java", PROJECT, 3, 2));
 
         when(code.source(eq(PROJECT), eq("src/Main.java"), eq(1), eq(200)))
                 .thenReturn(new SourceSnippet("src/Main.java", 1, 200, "line\n".repeat(600)));
-        McpToolResponse<SourceSnippet> response = tools.getSource(context, "src/Main.java", PROJECT, 1, 500);
+        McpToolResponse<SourceSnippet> response = tools.nexus_get_source("src/Main.java", PROJECT, 1, 500);
         assertTrue(response.truncated());
         assertEquals(200, response.data().endLine());
         assertTrue(response.data().text().length() <= 2_001);
     }
 
     private void invalid(Tool tool) {
-        McpSyncRequestContext context = context(UserRole.DEVELOPER, PROJECT);
+        context(UserRole.DEVELOPER, PROJECT);
         switch (tool) {
-            case REQUIREMENTS -> tools.searchRequirements(context, " ", PROJECT, null, null, 10);
-            case CODE -> tools.searchCode(context, " ", PROJECT, 10);
-            case SOURCE -> tools.getSource(context, "../secret", PROJECT, 1, 2);
-            case PLAN -> tools.developmentPlan(context, " ", PROJECT, null, null, 10);
-            case WIKI -> tools.wikiPage(context, " ", "feature", PROJECT);
-            case DIFF -> tools.versionDiff(context, "5.1", "5.1", PROJECT);
+            case REQUIREMENTS -> tools.nexus_search_requirements(" ", PROJECT, null, null, 10);
+            case CODE -> tools.nexus_search_code(" ", PROJECT, 10);
+            case SOURCE -> tools.nexus_get_source("../secret", PROJECT, 1, 2);
+            case PLAN -> tools.nexus_development_plan(" ", PROJECT, null, null, 10);
+            case WIKI -> tools.nexus_wiki_page(" ", "feature", PROJECT);
+            case DIFF -> tools.nexus_version_diff("5.1", "5.1", PROJECT);
         }
     }
 
-    private McpToolResponse<?> invoke(Tool tool, McpSyncRequestContext context) {
+    private McpToolResponse<?> invoke(Tool tool) {
         return switch (tool) {
-            case REQUIREMENTS -> tools.searchRequirements(context, "query", PROJECT, "doc-a", "5.1", 10);
-            case CODE -> tools.searchCode(context, "query", PROJECT, 10);
-            case SOURCE -> tools.getSource(context, "src/Main.java", PROJECT, 1, 2);
-            case PLAN -> tools.developmentPlan(context, "query", PROJECT, "doc-a", "5.1", 10);
-            case WIKI -> tools.wikiPage(context, "5.1", "feature-a", PROJECT);
-            case DIFF -> tools.versionDiff(context, "5.0", "5.1", PROJECT);
+            case REQUIREMENTS -> tools.nexus_search_requirements("query", PROJECT, "doc-a", "5.1", 10);
+            case CODE -> tools.nexus_search_code("query", PROJECT, 10);
+            case SOURCE -> tools.nexus_get_source("src/Main.java", PROJECT, 1, 2);
+            case PLAN -> tools.nexus_development_plan("query", PROJECT, "doc-a", "5.1", 10);
+            case WIKI -> tools.nexus_wiki_page("5.1", "feature-a", PROJECT);
+            case DIFF -> tools.nexus_version_diff("5.0", "5.1", PROJECT);
         };
     }
 
     private McpToolResponse<?> invokeForTruncation(Tool tool) {
-        McpSyncRequestContext context = context(UserRole.DEVELOPER, PROJECT);
+        context(UserRole.DEVELOPER, PROJECT);
         return switch (tool) {
-            case REQUIREMENTS -> tools.searchRequirements(context, "query", PROJECT, "doc-a", "5.1", 20);
-            case CODE -> tools.searchCode(context, "query", PROJECT, 20);
-            case SOURCE -> tools.getSource(context, "src/Main.java", PROJECT, 1, 500);
-            case PLAN -> tools.developmentPlan(context, "query", PROJECT, "doc-a", "5.1", 20);
-            case WIKI -> tools.wikiPage(context, "5.1", "feature-a", PROJECT);
-            case DIFF -> tools.versionDiff(context, "5.0", "5.1", PROJECT);
+            case REQUIREMENTS -> tools.nexus_search_requirements("query", PROJECT, "doc-a", "5.1", 20);
+            case CODE -> tools.nexus_search_code("query", PROJECT, 20);
+            case SOURCE -> tools.nexus_get_source("src/Main.java", PROJECT, 1, 500);
+            case PLAN -> tools.nexus_development_plan("query", PROJECT, "doc-a", "5.1", 20);
+            case WIKI -> tools.nexus_wiki_page("5.1", "feature-a", PROJECT);
+            case DIFF -> tools.nexus_version_diff("5.0", "5.1", PROJECT);
         };
     }
 
@@ -283,15 +289,15 @@ class NexusMcpV06ContractTest {
     private void assertSingleFieldWasBounded(Tool tool, McpToolResponse<?> response) {
         switch (tool) {
             case REQUIREMENTS -> assertTrue(((McpResponsePolicy.RequirementHit)
-                    ((List<?>) response.data()).getFirst()).excerpt().length() <= 2_001);
+                    ((List<?>) response.data()).get(0)).excerpt().length() <= 2_001);
             case CODE -> assertTrue(((McpResponsePolicy.CodeHit)
-                    ((List<?>) response.data()).getFirst()).excerpt().length() <= 2_001);
+                    ((List<?>) response.data()).get(0)).excerpt().length() <= 2_001);
             case SOURCE -> assertTrue(((SourceSnippet) response.data()).text().length() <= 2_001);
             case PLAN -> assertTrue(((String) ((Map<?, ?>) response.data()).get("summary")).length() <= 2_001);
             case WIKI -> assertEquals(20, ((List<?>) ((Map<?, ?>) response.data()).get("productRules")).size());
             case DIFF -> {
                 Map<?, ?> requirements = (Map<?, ?>) ((Map<?, ?>) response.data()).get("requirements");
-                Map<?, ?> change = (Map<?, ?>) ((List<?>) requirements.get("changes")).getFirst();
+                Map<?, ?> change = (Map<?, ?>) ((List<?>) requirements.get("changes")).get(0);
                 assertTrue(((String) change.get("beforeExcerpt")).length() <= 2_001);
             }
         }
@@ -470,10 +476,7 @@ class NexusMcpV06ContractTest {
         };
     }
 
-    private McpSyncRequestContext context(UserRole role, String... projects) {
-        McpSyncRequestContext context = mock(McpSyncRequestContext.class);
-        when(context.transportContext()).thenReturn(McpTransportContext.create(Map.of(
-                McpTransportConfiguration.USER_CONTEXT_KEY, new UserContext("actor", role, List.of(projects)))));
-        return context;
+        private void context(UserRole role, String... projects) {
+        McpUserContextHolder.set(new UserContext("actor", role, List.of(projects)));
     }
 }

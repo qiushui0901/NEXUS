@@ -3,7 +3,7 @@ package com.example.requirementrag.mcp;
 import com.example.requirementrag.evidence.EvidenceRef;
 import com.example.requirementrag.model.SourceSnippet;
 import org.junit.jupiter.api.Test;
-import tools.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import java.util.Collections;
 import java.util.List;
@@ -95,6 +95,6 @@ class McpResponsePolicyTest {
 
         assertEquals(null, bounded.data());
         assertTrue(bounded.truncated());
-        assertEquals("MCP_RESPONSE_TRUNCATED", bounded.warnings().getFirst().code());
+        assertEquals("MCP_RESPONSE_TRUNCATED", bounded.warnings().get(0).code());
     }
 }

@@ -48,7 +48,7 @@ class McpHttpIntegrationTest {
                 {"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}
                 """, "mcp-test-key", sessionId);
         assertEquals(200, tools.statusCode());
-        assertTrue(tools.body().contains("nexus_search_requirements"));
+                assertTrue(tools.body().contains("nexus_search_requirements"));
         assertTrue(tools.body().contains("nexus_search_code"));
         assertTrue(tools.body().contains("nexus_get_source"));
         assertTrue(tools.body().contains("nexus_development_plan"));
