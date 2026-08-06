@@ -56,7 +56,7 @@ class CodeSemanticAnnotatorCircuitBreakerTest {
 
         List<CodeChunk> annotated = annotator.annotate(chunks);
 
-        assertThat(attempts).hasValue(5);
+        assertThat(attempts).hasValue(6);
         assertThat(annotated).allSatisfy(chunk -> assertThat(chunk.businessDescCn()).isNotBlank());
     }
 
