@@ -131,6 +131,27 @@ class AgenticOrchestratorTest {
                 .filter(warning -> warning.code().equals("ORCHESTRATION_INSUFFICIENT_EVIDENCE")).count());
     }
 
+
+    @Test
+    void selectsCodeStrategyOnFirstHopThenFallsBackToHybrid() {
+        RetrievalRequest codeRequest = new RetrievalRequest("这个功能怎么实现",
+                RetrievalProfile.DEVELOPMENT_PLAN, "game", "requirements", "5.1", 8);
+        RetrievalStrategy code = mock(RetrievalStrategy.class);
+        when(code.name()).thenReturn("code");
+        when(code.execute(codeRequest)).thenReturn(success("code", 0, 0));
+        RetrievalStrategy hybrid = mock(RetrievalStrategy.class);
+        when(hybrid.name()).thenReturn("hybrid");
+        when(hybrid.execute(codeRequest)).thenReturn(success("hybrid", 1, 0));
+        AgenticOrchestrator orchestrator = new AgenticOrchestrator(
+                List.of(hybrid, code), new EvidenceReflector());
+
+        RagOutcome<RetrievalBundle> outcome = orchestrator.execute(codeRequest);
+
+        verify(code, times(1)).execute(codeRequest);
+        verify(hybrid, times(1)).execute(codeRequest);
+        assertEquals(RagOutcomeStatus.SUCCESS, outcome.status());
+    }
+
     @Test
     void rejectsEmptyStrategyList() {
         assertThrows(IllegalArgumentException.class,

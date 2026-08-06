@@ -35,19 +35,27 @@ public class AgenticOrchestrator {
 
     private final List<RetrievalStrategy> strategies;
     private final EvidenceReflector reflector;
+    private final RetrievalStrategySelector selector;
     private final int maxHops;
 
     @Autowired
     public AgenticOrchestrator(List<RetrievalStrategy> strategies, EvidenceReflector reflector) {
-        this(strategies, reflector, DEFAULT_MAX_HOPS);
+        this(strategies, reflector, new RetrievalStrategySelector.RuleBasedRetrievalStrategySelector(),
+                DEFAULT_MAX_HOPS);
     }
 
     public AgenticOrchestrator(List<RetrievalStrategy> strategies, EvidenceReflector reflector, int maxHops) {
+        this(strategies, reflector, new RetrievalStrategySelector.RuleBasedRetrievalStrategySelector(), maxHops);
+    }
+
+    public AgenticOrchestrator(List<RetrievalStrategy> strategies, EvidenceReflector reflector,
+                               RetrievalStrategySelector selector, int maxHops) {
         if (strategies == null || strategies.isEmpty()) {
             throw new IllegalArgumentException("at least one retrieval strategy required");
         }
         this.strategies = List.copyOf(strategies);
         this.reflector = reflector;
+        this.selector = selector;
         this.maxHops = Math.max(1, maxHops);
     }
 
@@ -61,7 +69,10 @@ public class AgenticOrchestrator {
         StrategyResult merged = null;
         List<RagWarning> orchestrationWarnings = new ArrayList<>();
         for (int hop = 0; hop < maxHops; hop++) {
-            RetrievalStrategy strategy = strategies.get(Math.min(hop, strategies.size() - 1));
+            RetrievalStrategy defaultStrategy = strategies.get(Math.min(hop, strategies.size() - 1));
+            RetrievalStrategy strategy = hop == 0
+                    ? selector.select(strategies, request).orElseGet(() -> strategies.get(0))
+                    : RetrievalStrategySelector.byName(strategies, "hybrid").orElseGet(() -> defaultStrategy);
             StrategyResult current = strategy.execute(request);
             if (merged != null) {
                 current = merge(merged, current);

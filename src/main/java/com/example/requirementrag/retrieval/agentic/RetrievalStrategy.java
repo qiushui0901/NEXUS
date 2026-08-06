@@ -9,6 +9,11 @@ import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
  */
 public interface RetrievalStrategy {
 
+    /** 策略名（供选择器按名查找），默认取类简单名。 */
+    default String name() {
+        return getClass().getSimpleName();
+    }
+
     /**
      * 执行一次检索。
      *
