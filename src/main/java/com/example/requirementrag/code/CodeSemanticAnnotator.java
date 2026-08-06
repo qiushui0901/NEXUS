@@ -24,7 +24,7 @@ import java.util.Map;
 public class CodeSemanticAnnotator {
 
     private static final Logger log = LoggerFactory.getLogger(CodeSemanticAnnotator.class);
-    private static final int BATCH_SIZE = 25;
+    private static final int BATCH_SIZE = 10;
     private static final int MAX_CONSECUTIVE_LLM_FAILURES = 3;
     private static final int TEXT_PREVIEW_CHARS = 500;
 

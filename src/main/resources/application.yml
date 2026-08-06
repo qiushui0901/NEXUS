@@ -22,6 +22,9 @@ spring:
       api-key: ${OPENAI_API_KEY}
       base-url: ${OPENAI_BASE_URL:http://ai-gateway.momo.com}
       chat:
+        timeout:
+          connect: ${OPENAI_CONNECT_TIMEOUT:10s}
+          read: ${OPENAI_READ_TIMEOUT:300s}
         options:
           model: ${OPENAI_CHAT_MODEL:claude-sonnet-4.6}
       embedding:
@@ -121,6 +124,7 @@ app:
       doubt-review-model: ${DOUBT_REVIEW_MODEL:glm-5.2}
       reranker-model: ${LLM_RERANK_MODEL:claude-sonnet-5}
       routing-model: ${LLM_ROUTING_MODEL:}
+      annotation-model: ${ANNOTATION_MODEL:claude-opus-5}
     retrieval:
       dense-top-k: 50
       sparse-top-k: 50
