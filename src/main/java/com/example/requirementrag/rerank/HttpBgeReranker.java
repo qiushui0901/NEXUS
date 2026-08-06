@@ -6,7 +6,7 @@ import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.web.client.RestClient;
-import tools.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -53,7 +53,7 @@ public class HttpBgeReranker implements BgeReranker {
             requestBody = jsonMapper.writeValueAsBytes(new RerankRequest(
                     query, candidates.stream().map(this::requestPassage).toList(), true));
         }
-        catch (RuntimeException exception) {
+        catch (com.fasterxml.jackson.core.JsonProcessingException | RuntimeException exception) {
             throw new IllegalStateException("Unable to serialize BGE rerank request", exception);
         }
         List<Map<String, Object>> response = request.contentLength(requestBody.length).body(requestBody)

@@ -8,7 +8,7 @@ import com.example.requirementrag.wiki.WikiModels.VersionIndex;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.server.ResponseStatusException;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -49,8 +49,8 @@ public class WikiRepository {
                 List<VersionIndex> versions = readIndexes(projectPath);
                 if (versions.isEmpty()) continue;
                 projects.add(new ProjectSummary(
-                        versions.getFirst().projectId(),
-                        versions.getFirst().projectName(),
+                        versions.get(0).projectId(),
+                        versions.get(0).projectName(),
                         versions.stream().map(VersionIndex::version).sorted(versionComparator().reversed()).toList(),
                         versions.stream().mapToInt(index -> index.pages().size()).sum()));
             }

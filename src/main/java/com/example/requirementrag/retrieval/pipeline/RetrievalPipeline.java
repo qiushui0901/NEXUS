@@ -215,7 +215,7 @@ public class RetrievalPipeline {
         if (!childFirstRerank || candidates.size() <= 1) {
             return candidates;
         }
-        String firstParent = requirementKey(candidates.getFirst());
+        String firstParent = requirementKey(candidates.get(0));
         boolean singleParent = candidates.stream().allMatch(candidate -> requirementKey(candidate).equals(firstParent));
         return singleParent ? selectParentRepresentatives(query, candidates, true) : candidates;
     }
@@ -238,7 +238,7 @@ public class RetrievalPipeline {
         }
         List<ChunkRecord> representatives = new ArrayList<>(childrenByParent.size());
         for (List<ChunkRecord> siblings : childrenByParent.values()) {
-            ChunkRecord representative = siblings.getFirst();
+            ChunkRecord representative = siblings.get(0);
             double bestScore = sparseVectorizer.similarity(query, representative.childText());
             for (int index = 1; index < siblings.size(); index++) {
                 ChunkRecord candidate = siblings.get(index);
@@ -357,7 +357,7 @@ public class RetrievalPipeline {
     /** 将结果中的各阶段诊断逐条上报可观测性，附带首个警告代码（如有）。 */
     private void recordOutcome(RagOutcome<?> outcome, String documentId, String version) {
         for (RagStageDiagnostic diagnostic : outcome.stageDiagnostics()) {
-            String warningCode = outcome.warnings().isEmpty() ? null : outcome.warnings().getFirst().code();
+            String warningCode = outcome.warnings().isEmpty() ? null : outcome.warnings().get(0).code();
             observability.outcome(diagnostic.stage(), documentId, version, diagnostic.status(),
                     diagnostic.durationMs(), warningCode, null);
         }

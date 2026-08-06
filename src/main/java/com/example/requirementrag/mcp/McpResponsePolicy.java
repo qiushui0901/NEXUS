@@ -8,7 +8,7 @@ import com.example.requirementrag.model.RagWarning;
 import com.example.requirementrag.model.RequirementDoubt;
 import com.example.requirementrag.wiki.WikiModels;
 import org.springframework.stereotype.Component;
-import tools.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -245,7 +245,7 @@ public class McpResponsePolicy {
                 return response;
             }
         }
-        catch (RuntimeException exception) {
+        catch (com.fasterxml.jackson.core.JsonProcessingException | RuntimeException exception) {
             throw new IllegalStateException("MCP response serialization failed");
         }
         List<RagWarning> warnings = new ArrayList<>(response.warnings());

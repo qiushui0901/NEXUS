@@ -101,7 +101,7 @@ public class DefaultRequirementReranker implements RequirementReranker {
                         只能返回提供的 ID，不得改写或创建 ID。删除无关、重复和纯目录内容。
                         """)
                 .user("检索目标：" + query + "\n候选段落：\n" + passages)
-                .options(GenerationChatOptions.forModel(properties.llm().rerankerModel()))
+                .options(GenerationChatOptions.forModel(properties.llm().rerankerModel()).build())
                 .call().entity(RankedIds.class);
         if (ranked == null || ranked.ids() == null || ranked.ids().isEmpty()) return candidates;
         List<ChunkRecord> ordered = ranked.ids().stream().map(byId::get).filter(Objects::nonNull).distinct().toList();

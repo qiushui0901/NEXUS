@@ -266,7 +266,7 @@ public class DevelopmentPlanService {
                             """.formatted(query,
                             registry.promptRequirementContext(documents, MAX_DOCUMENT_CONTEXT_CHARS),
                             registry.promptCodeContext(code, MAX_CODE_CONTEXT_CHARS)))
-                    .options(GenerationChatOptions.forModel(properties.llm().resolvedDevelopmentPlanModel()))
+                    .options(GenerationChatOptions.forModel(properties.llm().resolvedDevelopmentPlanModel()).build())
                     .call()
                     .entity(PlanDraft.class);
             if (draft == null) {
@@ -298,7 +298,7 @@ public class DevelopmentPlanService {
 
     private void recordOutcome(RagOutcome<?> outcome, String documentId, String version) {
         for (RagStageDiagnostic diagnostic : outcome.stageDiagnostics()) {
-            String warningCode = outcome.warnings().isEmpty() ? null : outcome.warnings().getFirst().code();
+            String warningCode = outcome.warnings().isEmpty() ? null : outcome.warnings().get(0).code();
             observability.outcome(diagnostic.stage(), documentId, version, diagnostic.status(),
                     diagnostic.durationMs(), warningCode, null);
         }
@@ -359,7 +359,7 @@ public class DevelopmentPlanService {
                     "代码检索没有返回证据，不能可靠判断复用入口。", List.of());
         }
         List<CodeChunk> references = code.stream().limit(6).toList();
-        CodeChunk first = references.getFirst();
+        CodeChunk first = references.get(0);
         String name = hasText(first.symbolName()) ? first.symbolName() : first.filePath();
         return new DevelopmentPlanResponse.SimilarModule(name,
                 "这些代码命中与“" + query + "”最接近，应先确认真实调用关系，再决定复用或新增。", references);

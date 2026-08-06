@@ -89,7 +89,7 @@ public class QueryRouter {
                         如果不确定，confidence 应较低。
                         """)
                 .user("可用项目列表：\n" + formatProjects() + "\n\n用户问题：" + query)
-                .options(GenerationChatOptions.forModel(properties.llm().resolvedRoutingModel()))
+                .options(GenerationChatOptions.forModel(properties.llm().resolvedRoutingModel()).build())
                 .call()
                 .entity(LlmRoutingResult.class);
         if (result == null || !hasText(result.projectId())) {

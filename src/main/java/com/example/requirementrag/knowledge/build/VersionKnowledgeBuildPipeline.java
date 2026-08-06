@@ -32,7 +32,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -470,7 +470,7 @@ public class VersionKnowledgeBuildPipeline {
     private record Candidate(String filename, String changeType, List<VersionedChunk> evidence) {
         /** 候选主文本：取首条证据的父文本，无证据时退回文件名。 */
         private String primaryText() {
-            return evidence.isEmpty() ? filename : evidence.getFirst().chunk().parentText();
+            return evidence.isEmpty() ? filename : evidence.get(0).chunk().parentText();
         }
     }
 

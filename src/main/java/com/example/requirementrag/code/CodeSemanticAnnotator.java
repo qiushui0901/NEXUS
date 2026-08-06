@@ -7,8 +7,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -234,7 +234,7 @@ public class CodeSemanticAnnotator {
         String response = chatClient.prompt()
                 .system(SYSTEM_PROMPT)
                 .user(buildUserPrompt(batch))
-                .options(GenerationChatOptions.forModel(resolveModel()))
+                .options(GenerationChatOptions.forModel(resolveModel()).build())
                 .call()
                 .content();
         List<SemanticAnnotation> annotations = parseAnnotations(response, batch.size());

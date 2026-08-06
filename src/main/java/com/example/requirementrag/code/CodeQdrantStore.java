@@ -14,8 +14,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
-import tools.jackson.core.type.TypeReference;
-import tools.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -126,7 +126,7 @@ public class CodeQdrantStore {
      */
     public CodeSearchTrace hybridSearchTrace(String collection, String query, String projectId, int limit) {
         ensureCollection(collection);
-        float[] dense = embeddingBatcher.embedAll(List.of(query)).getFirst();
+        float[] dense = embeddingBatcher.embedAll(List.of(query)).get(0);
         float[] desc = descVector(collection, query);
         SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorizeCode(query);
         int candidateLimit = Math.max(limit * resolvedCandidateMultiplier(), MIN_CANDIDATE_LIMIT);
@@ -144,7 +144,7 @@ public class CodeQdrantStore {
     /** 生产路径：仅执行一次 fused 查询，不收集 prefetch 归因列表。 */
     private List<CodeChunk> fusedSearch(String collection, String query, String projectId, int limit) {
         ensureCollection(collection);
-        float[] dense = embeddingBatcher.embedAll(List.of(query)).getFirst();
+        float[] dense = embeddingBatcher.embedAll(List.of(query)).get(0);
         float[] desc = descVector(collection, query);
         SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorizeCode(query);
         int candidateLimit = Math.max(limit * resolvedCandidateMultiplier(), MIN_CANDIDATE_LIMIT);
@@ -162,7 +162,7 @@ public class CodeQdrantStore {
         }
         String descQuery = properties.retrieval() != null && properties.retrieval().resolvedCodeQueryExpansionEnabled()
                 ? expandQuery(query) : query;
-        return embeddingBatcher.embedAll(List.of(descQuery)).getFirst();
+        return embeddingBatcher.embedAll(List.of(descQuery)).get(0);
     }
 
     /** 执行 dense+desc+sparse 三预取 + RRF 融合查询，返回候选代码 chunk。desc 路仅在 collection 支持时启用。 */

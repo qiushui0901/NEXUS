@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
-import tools.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 
 /**
  * AI 与外部服务 Bean 配置：ChatClient、Qdrant 客户端、BGE 重排器。
@@ -27,10 +27,25 @@ public class AiConfiguration {
         return ChatClient.builder(chatModel).build();
     }
 
+    /** Boot 3.x 自动配置只提供 ObjectMapper，补充 JsonMapper bean 供重排器序列化使用。 */
+    @Bean
+    JsonMapper jsonMapper() {
+        return new JsonMapper();
+    }
+
+    /** 显式注册 NEXUS MCP 工具（Spring AI 1.x 不自动扫描 @Tool，且避免与自动发现重复）。 */
+    @Bean
+    org.springframework.ai.tool.ToolCallbackProvider nexusMcpToolCallbacks(
+            @org.springframework.context.annotation.Lazy com.example.requirementrag.mcp.NexusMcpTools tools) {
+        return org.springframework.ai.tool.method.MethodToolCallbackProvider.builder()
+                .toolObjects(tools)
+                .build();
+    }
+
     /** 配置 Qdrant REST 客户端，设置连接与读取超时。 */
     @Bean
-    RestClient qdrantRestClient(RestClient.Builder builder, RagProperties properties) {
-        return builder
+    RestClient qdrantRestClient(RagProperties properties) {
+        return RestClient.builder()
                 .baseUrl(properties.qdrant().baseUrl())
                 .requestFactory(qdrantRequestFactory())
                 .build();
@@ -38,8 +53,7 @@ public class AiConfiguration {
 
     /** 注册有界连接/读取超时的 BGE 重排器；统一管线负责结构化降级。 */
     @Bean
-    BgeReranker bgeReranker(RestClient.Builder builder, RagProperties properties, JsonMapper jsonMapper) {
-        RestClient client = builder
+    BgeReranker bgeReranker(RestClient.Builder builder, RagProperties properties, JsonMapper jsonMapper) {        RestClient client = builder
                 .baseUrl(properties.bge().baseUrl())
                 .requestFactory(bgeRequestFactory(properties.bge()))
                 .build();

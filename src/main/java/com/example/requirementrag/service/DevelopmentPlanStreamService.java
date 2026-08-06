@@ -20,9 +20,9 @@ import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
 import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
 import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
 import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
-import tools.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -108,7 +108,9 @@ public class DevelopmentPlanStreamService {
         emitter.onTimeout(() -> close(emitter, closed));
         emitter.onCompletion(() -> closed.set(true));
         emitter.onError(error -> closed.set(true));
-        Thread.startVirtualThread(() -> generate(request, emitter, closed));
+        Thread thread = new Thread(() -> generate(request, emitter, closed), "nexus-plan-stream");
+        thread.setDaemon(true);
+        thread.start();
         return emitter;
     }
 
@@ -154,7 +156,7 @@ public class DevelopmentPlanStreamService {
                 Flux<String> content = chatClient.prompt()
                         .system(streamSystemPrompt())
                         .user(streamUserPrompt(request.query(), documents, code, registry))
-                        .options(GenerationChatOptions.forModel(properties.llm().resolvedDevelopmentPlanModel()))
+                        .options(GenerationChatOptions.forModel(properties.llm().resolvedDevelopmentPlanModel()).build())
                         .stream()
                         .content();
                 generationOutcome = consumeValidatedModelStreamOutcome(content, parsed -> {
@@ -296,7 +298,8 @@ public class DevelopmentPlanStreamService {
                 ? ((ObjectNode) event.payload()).deepCopy()
                 : objectMapper.createObjectNode();
         List<String> requested = payload.path("evidenceIds").isArray()
-                ? payload.path("evidenceIds").valueStream().map(JsonNode::asText).toList()
+                ? java.util.stream.StreamSupport.stream(
+                        payload.path("evidenceIds").spliterator(), false).map(JsonNode::asText).toList()
                 : List.of();
         String text = "section".equals(event.type())
                 ? payload.path("title").asText("")
@@ -324,7 +327,7 @@ public class DevelopmentPlanStreamService {
 
     private void recordOutcome(RagOutcome<?> outcome, String documentId, String version) {
         for (RagStageDiagnostic diagnostic : outcome.stageDiagnostics()) {
-            String warningCode = outcome.warnings().isEmpty() ? null : outcome.warnings().getFirst().code();
+            String warningCode = outcome.warnings().isEmpty() ? null : outcome.warnings().get(0).code();
             observability.outcome(diagnostic.stage(), documentId, version, diagnostic.status(),
                     diagnostic.durationMs(), warningCode, null);
         }

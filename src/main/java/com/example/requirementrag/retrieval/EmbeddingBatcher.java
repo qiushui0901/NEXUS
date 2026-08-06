@@ -91,7 +91,7 @@ public class EmbeddingBatcher {
         if (!owners.isEmpty()) {
             try {
                 List<float[]> embedded = embedBatch(owners.stream().map(PendingEmbedding::text).toList(),
-                        absoluteStart + owners.getFirst().resultIndex());
+                        absoluteStart + owners.get(0).resultIndex());
                 for (int index = 0; index < owners.size(); index++) {
                     PendingEmbedding owner = owners.get(index);
                     float[] vector = embedded.get(index);
@@ -142,7 +142,7 @@ public class EmbeddingBatcher {
         }
         catch (RuntimeException exception) {
             if (texts.size() == 1) {
-                String text = texts.getFirst();
+                String text = texts.get(0);
                 throw new EmbeddingUnavailableException(
                         "第 " + (absoluteStart + 1) + " 个文本无法生成向量（字符数 "
                                 + (text == null ? 0 : text.length()) + "），请确认嵌入服务与模型可用",

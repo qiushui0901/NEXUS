@@ -1,12 +1,14 @@
 package com.example.requirementrag.web;
 
 import com.example.requirementrag.config.ProjectRegistry;
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+
+import java.io.IOException;
 
 /** 从 query 参数或 JSON body 解析 projectId。 */
 @Component
@@ -55,7 +57,7 @@ public class ProjectIdResolver {
                 return hasText(projectId) ? projectId.trim() : null;
             }
         }
-        catch (RuntimeException exception) {
+        catch (IOException | RuntimeException exception) {
             log.warn("Unable to parse projectId from the cached JSON request body; request content is omitted",
                     exception);
             return null;
