@@ -19,9 +19,13 @@ import tools.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +56,8 @@ public class CodeQdrantStore {
     private final RagProperties properties;
     private final BgeReranker bgeReranker;
     private final Set<String> initializedCollections = ConcurrentHashMap.newKeySet();
+    private final Set<String> descDenseChecked = ConcurrentHashMap.newKeySet();
+    private final Set<String> descDenseCollections = ConcurrentHashMap.newKeySet();
 
     /** 注入 Qdrant 客户端、嵌入模型、稀疏向量化器与配置。 */
     public CodeQdrantStore(RestClient qdrantRestClient, EmbeddingModel embeddingModel,
@@ -121,10 +127,11 @@ public class CodeQdrantStore {
     public CodeSearchTrace hybridSearchTrace(String collection, String query, String projectId, int limit) {
         ensureCollection(collection);
         float[] dense = embeddingBatcher.embedAll(List.of(query)).getFirst();
+        float[] desc = descVector(collection, query);
         SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorizeCode(query);
         int candidateLimit = Math.max(limit * resolvedCandidateMultiplier(), MIN_CANDIDATE_LIMIT);
         int prefetchLimit = candidateLimit * CANDIDATE_MULTIPLIER;
-        List<CodeChunk> candidates = fusedCandidates(collection, dense, sparse, projectId,
+        List<CodeChunk> candidates = fusedCandidates(collection, dense, desc, sparse, projectId,
                 candidateLimit, prefetchLimit);
         List<CodeChunk> rerankInput = codeBgeRerankEnabled() ? semanticRerank(query, candidates) : candidates;
         List<CodeChunk> ranked = rerankCandidates(query, rerankInput, limit,
@@ -138,24 +145,39 @@ public class CodeQdrantStore {
     private List<CodeChunk> fusedSearch(String collection, String query, String projectId, int limit) {
         ensureCollection(collection);
         float[] dense = embeddingBatcher.embedAll(List.of(query)).getFirst();
+        float[] desc = descVector(collection, query);
         SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorizeCode(query);
         int candidateLimit = Math.max(limit * resolvedCandidateMultiplier(), MIN_CANDIDATE_LIMIT);
-        List<CodeChunk> candidates = fusedCandidates(collection, dense, sparse, projectId,
+        List<CodeChunk> candidates = fusedCandidates(collection, dense, desc, sparse, projectId,
                 candidateLimit, candidateLimit * CANDIDATE_MULTIPLIER);
         List<CodeChunk> rerankInput = codeBgeRerankEnabled() ? semanticRerank(query, candidates) : candidates;
         return rerankCandidates(query, rerankInput, limit,
                 properties.retrieval().resolvedCodeQueryExpansionEnabled());
     }
 
-    /** 执行 dense+sparse 双预取 + RRF 融合查询，返回候选代码 chunk。 */
-    private List<CodeChunk> fusedCandidates(String collection, float[] dense,
+    /** 业务语义检索向量：意图别名增强后的查询文本嵌入；collection 不支持 desc_dense 时返回 null。 */
+    private float[] descVector(String collection, String query) {
+        if (!supportsDescDense(collection)) {
+            return null;
+        }
+        String descQuery = properties.retrieval() != null && properties.retrieval().resolvedCodeQueryExpansionEnabled()
+                ? expandQuery(query) : query;
+        return embeddingBatcher.embedAll(List.of(descQuery)).getFirst();
+    }
+
+    /** 执行 dense+desc+sparse 三预取 + RRF 融合查询，返回候选代码 chunk。desc 路仅在 collection 支持时启用。 */
+    private List<CodeChunk> fusedCandidates(String collection, float[] dense, float[] desc,
                                             SparseVectorizer.SparseVector sparse, String projectId,
                                             int candidateLimit, int prefetchLimit) {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("prefetch", List.of(
-                Map.of("query", dense, "using", "dense", "limit", prefetchLimit, "filter", filter(projectId)),
-                Map.of("query", Map.of("indices", sparse.indices(), "values", sparse.values()),
-                        "using", "sparse", "limit", prefetchLimit, "filter", filter(projectId))));
+        List<Map<String, Object>> prefetches = new ArrayList<>();
+        prefetches.add(Map.of("query", dense, "using", "dense", "limit", prefetchLimit, "filter", filter(projectId)));
+        if (desc != null && supportsDescDense(collection)) {
+            prefetches.add(Map.of("query", desc, "using", "desc_dense", "limit", prefetchLimit, "filter", filter(projectId)));
+        }
+        prefetches.add(Map.of("query", Map.of("indices", sparse.indices(), "values", sparse.values()),
+                "using", "sparse", "limit", prefetchLimit, "filter", filter(projectId)));
+        body.put("prefetch", prefetches);
         body.put("query", Map.of("fusion", "rrf"));
         body.put("limit", candidateLimit);
         body.put("with_payload", true);
@@ -166,6 +188,30 @@ public class CodeQdrantStore {
                 .retrieve()
                 .body(new ParameterizedTypeReference<>() {}));
         return extractPoints(response);
+    }
+
+    /** 判断 collection 是否带 desc_dense 命名空间（每个 collection 只探测一次，失败视为不支持）。 */
+    private boolean supportsDescDense(String collection) {
+        if (descDenseChecked.contains(collection)) {
+            return descDenseCollections.contains(collection);
+        }
+        boolean supported = false;
+        try {
+            Map<String, Object> info = client.get().uri("/collections/{collection}", collection).retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+            Map<String, Object> result = map(info == null ? null : info.get("result"));
+            Map<String, Object> config = map(result.get("config"));
+            Map<String, Object> params = map(config.get("params"));
+            Map<String, Object> vectors = map(params.get("vectors"));
+            supported = vectors.containsKey("desc_dense");
+        } catch (RuntimeException exception) {
+            LOGGER.warn("Unable to inspect collection {} for desc_dense: {}", collection, exception.getMessage());
+        }
+        descDenseChecked.add(collection);
+        if (supported) {
+            descDenseCollections.add(collection);
+        }
+        return supported;
     }
 
     /** 仅用于离线评测归因：单独查询 dense / sparse 预取结果，不参与生产检索路径。 */
@@ -205,14 +251,15 @@ public class CodeQdrantStore {
                 : properties.retrieval().resolvedCodeCandidateMultiplier();
     }
 
-    /** BGE 语义重排 RRF 候选；服务不可用时回退原始 RRF 顺序并记录警告。 */
+    /** BGE 语义重排 RRF 候选；先按 RRF 名次剪到 bgeTopK 再计分（CPU 计分成本 ~1s/文本），服务不可用时回退原始顺序。 */
     List<CodeChunk> semanticRerank(String query, List<CodeChunk> candidates) {
         if (candidates.isEmpty() || bgeReranker == null) {
             return candidates;
         }
         try {
-            List<ChunkRecord> adapted = candidates.stream().map(CodeQdrantStore::toRerankCandidate).toList();
-            int topK = Math.min(properties.retrieval().resolvedBgeTopK(), adapted.size());
+            int topK = Math.min(properties.retrieval().resolvedBgeTopK(), candidates.size());
+            List<CodeChunk> pruned = candidates.size() <= topK ? candidates : candidates.subList(0, topK);
+            List<ChunkRecord> adapted = pruned.stream().map(CodeQdrantStore::toRerankCandidate).toList();
             List<ChunkRecord> reranked = bgeReranker.rerank(query, adapted, topK);
             Map<String, CodeChunk> byId = new LinkedHashMap<>();
             for (CodeChunk candidate : candidates) {
@@ -275,32 +322,184 @@ public class CodeQdrantStore {
         }
     }
 
-    /** 为每个 chunk 计算 dense 嵌入与 sparse 向量，组装成 Qdrant 点（含完整 payload 元数据）。 */
+    /** 为每个 chunk 计算 dense/desc/sparse 向量，组装成 Qdrant 点（含完整 payload 元数据）。 */
     private List<Map<String, Object>> buildPoints(List<CodeChunk> chunks) {
         List<String> retrievalTexts = chunks.stream().map(CodeQdrantStore::retrievalText).toList();
         List<String> denseRetrievalTexts = chunks.stream().map(CodeQdrantStore::denseRetrievalText).toList();
         List<float[]> denseVectors = embeddingBatcher.embedAll(denseRetrievalTexts);
+        List<String> descTexts = chunks.stream().map(this::descSearchText).toList();
+        List<float[]> descVectors = embeddingBatcher.embedAll(descTexts);
         List<Map<String, Object>> points = new ArrayList<>(chunks.size());
         for (int index = 0; index < chunks.size(); index++) {
             CodeChunk chunk = chunks.get(index);
             SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorizeCode(retrievalTexts.get(index));
+            Map<String, Object> vectors = new LinkedHashMap<>();
+            vectors.put("dense", denseVectors.get(index));
+            if (descVectors != null && index < descVectors.size()) {
+                vectors.put("desc_dense", descVectors.get(index));
+            }
+            vectors.put("sparse", Map.of("indices", sparse.indices(), "values", sparse.values()));
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("projectId", chunk.projectId());
+            payload.put("commitSha", chunk.commitSha());
+            payload.put("filePath", chunk.filePath());
+            payload.put("symbolType", chunk.symbolType());
+            payload.put("symbolName", chunk.symbolName());
+            payload.put("language", chunk.language());
+            payload.put("startLine", chunk.startLine());
+            payload.put("endLine", chunk.endLine());
+            payload.put("text", chunk.text());
+            payload.put("contentHash", chunk.contentHash());
+            payload.put("className", chunk.className());
+            payload.put("module", chunk.module());
+            payload.put("layer", chunk.layer());
+            payload.put("businessDescCn", chunk.businessDescCn());
+            payload.put("businessDescEn", chunk.businessDescEn());
+            payload.put("keywords", chunk.keywords());
+            payload.put("userQuestions", chunk.userQuestions());
+            payload.put("synonyms", chunk.synonyms());
             points.add(Map.of(
                     "id", chunk.id(),
-                    "vector", Map.of("dense", denseVectors.get(index),
-                            "sparse", Map.of("indices", sparse.indices(), "values", sparse.values())),
-                    "payload", Map.of(
-                            "projectId", chunk.projectId(),
-                            "commitSha", chunk.commitSha(),
-                            "filePath", chunk.filePath(),
-                            "symbolType", chunk.symbolType(),
-                            "symbolName", chunk.symbolName(),
-                            "language", chunk.language(),
-                            "startLine", chunk.startLine(),
-                            "endLine", chunk.endLine(),
-                            "text", chunk.text(),
-                            "contentHash", chunk.contentHash())));
+                    "vector", vectors,
+                    "payload", payload));
         }
         return points;
+    }
+
+    /**
+     * 业务语义向量的输入文本：类名、方法名、模块、业务描述（中/英）、关键词、同义词、用户问题。
+     * 不含源码——让 embedding 专注编码自然语言语义。
+     */
+    private String descSearchText(CodeChunk chunk) {
+        StringBuilder sb = new StringBuilder();
+        String className = safeText(chunk.className());
+        if (!className.isBlank()) {
+            sb.append('[').append(className).append("] ");
+        }
+        sb.append(safeText(chunk.symbolName())).append(" (").append(safeText(chunk.symbolType())).append(")\n");
+        if (!safeText(chunk.module()).isBlank()) {
+            sb.append("模块: ").append(chunk.module()).append('\n');
+        }
+        if (!safeText(chunk.businessDescCn()).isBlank()) {
+            sb.append(chunk.businessDescCn()).append('\n');
+        }
+        if (!safeText(chunk.businessDescEn()).isBlank()) {
+            sb.append(chunk.businessDescEn()).append('\n');
+        }
+        if (!chunk.keywords().isEmpty()) {
+            sb.append(String.join(" ", chunk.keywords())).append('\n');
+        }
+        if (!chunk.synonyms().isEmpty()) {
+            sb.append(String.join(" ", chunk.synonyms())).append('\n');
+        }
+        if (!chunk.userQuestions().isEmpty()) {
+            sb.append(String.join(" ", chunk.userQuestions())).append('\n');
+        }
+        return sb.toString();
+    }
+
+    /** 标注缓存条目：LLM 生成的语义元数据，供重索引时跳过未变更代码。 */
+    public record AnnotationEntry(String businessDescCn, String businessDescEn,
+                                   List<String> keywords, List<String> userQuestions,
+                                   List<String> synonyms) {
+        public AnnotationEntry {
+            keywords = keywords == null ? List.of() : List.copyOf(keywords);
+            userQuestions = userQuestions == null ? List.of() : List.copyOf(userQuestions);
+            synonyms = synonyms == null ? List.of() : List.copyOf(synonyms);
+        }
+    }
+
+    /** 计算源码文本的 SHA-256 摘要，作为标注缓存的键。 */
+    static String sourceHash(String text) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest((text == null ? "" : text).getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 不可用", exception);
+        }
+    }
+
+    /**
+     * 从 Qdrant 加载已有标注数据构建缓存。
+     * key = sourceHash(text)，即源码内容的 SHA-256 摘要。
+     * 用于重索引时跳过未变更代码的 LLM 标注。
+     */
+    public Map<String, AnnotationEntry> fetchAnnotationCache(String collection, String projectId) {
+        try {
+            client.get().uri("/collections/{collection}", collection).retrieve().toBodilessEntity();
+        } catch (RuntimeException exception) {
+            LOGGER.info("Collection {} 不存在，跳过标注缓存加载", collection);
+            return Map.of();
+        }
+
+        Map<String, AnnotationEntry> cache = new HashMap<>();
+        Object offset = null;
+        int page = 0;
+
+        while (true) {
+            page++;
+            Map<String, Object> body = new LinkedHashMap<>();
+            body.put("filter", filter(projectId));
+            body.put("limit", 100);
+            body.put("with_payload", Map.of("include",
+                    List.of("text", "businessDescCn", "businessDescEn", "keywords",
+                            "userQuestions", "synonyms")));
+            if (offset != null) {
+                body.put("offset", offset);
+            }
+
+            Map<String, Object> response;
+            try {
+                response = client.post()
+                        .uri("/collections/{collection}/points/scroll", collection)
+                        .contentType(MediaType.APPLICATION_JSON).body(body).retrieve()
+                        .body(new ParameterizedTypeReference<>() {});
+            } catch (RuntimeException exception) {
+                LOGGER.info("读取标注缓存失败，使用空缓存: {}", exception.getMessage());
+                return Map.of();
+            }
+            if (response == null) break;
+            Map<String, Object> result = map(response.get("result"));
+            List<Object> points = list(result.get("points"));
+
+            for (Object p : points) {
+                Map<String, Object> point = map(p);
+                Map<String, Object> payload = map(point.get("payload"));
+                String text = string(payload, "text");
+                String descCn = string(payload, "businessDescCn");
+                if (!text.isBlank() && !descCn.isBlank()) {
+                    cache.putIfAbsent(sourceHash(text), new AnnotationEntry(
+                            descCn, string(payload, "businessDescEn"),
+                            stringList(payload, "keywords"),
+                            stringList(payload, "userQuestions"),
+                            stringList(payload, "synonyms")));
+                }
+            }
+
+            offset = result.get("next_page_offset");
+            if (offset == null || points.isEmpty()) break;
+            if (page % 20 == 0) {
+                LOGGER.info("加载标注缓存: {} 页, {} 条", page, cache.size());
+            }
+        }
+        LOGGER.info("标注缓存加载完成: {} 条记录", cache.size());
+        return cache;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> stringList(Map<String, Object> payload, String key) {
+        Object value = payload == null ? null : payload.get(key);
+        if (!(value instanceof List<?> items)) {
+            return List.of();
+        }
+        List<String> result = new ArrayList<>();
+        for (Object item : items) {
+            if (item != null) {
+                result.add(String.valueOf(item));
+            }
+        }
+        return result;
     }
 
     /**
@@ -581,7 +780,9 @@ public class CodeQdrantStore {
                 }
                 catch (HttpClientErrorException.NotFound exception) {
                     Map<String, Object> body = Map.of(
-                            "vectors", Map.of("dense", Map.of("size", embeddingModel.dimensions(), "distance", "Cosine")),
+                            "vectors", Map.of(
+                                    "dense", Map.of("size", embeddingModel.dimensions(), "distance", "Cosine"),
+                                    "desc_dense", Map.of("size", embeddingModel.dimensions(), "distance", "Cosine")),
                             "sparse_vectors", Map.of("sparse", Map.of("modifier", "idf")));
                     client.put().uri("/collections/{collection}", collection).contentType(MediaType.APPLICATION_JSON)
                             .body(body).retrieve().toBodilessEntity();

@@ -37,30 +37,34 @@ public class CodeKnowledgeService {
     private final CodeScanner scanner;
     private final CodeQdrantStore store;
     private final SQLiteSymbolGraphStore graphStore;
+    private final CodeSemanticAnnotator annotator;
 
     @Autowired
     public CodeKnowledgeService(RagProperties properties, ProjectRegistry projectRegistry,
                                 CodeScanner scanner, CodeQdrantStore store,
-                                SQLiteSymbolGraphStore graphStore) {
+                                SQLiteSymbolGraphStore graphStore,
+                                CodeSemanticAnnotator annotator) {
         this.properties = properties;
         this.projectRegistry = projectRegistry;
         this.scanner = scanner;
         this.store = store;
         this.graphStore = graphStore;
+        this.annotator = annotator;
     }
 
     /** Compatibility constructor for pre-0.7 unit callers. */
     CodeKnowledgeService(RagProperties properties, ProjectRegistry projectRegistry,
                          JavaCodeScanner scanner, CodeQdrantStore store) {
-        this(properties, projectRegistry, legacy(scanner), store, null);
+        this(properties, projectRegistry, legacy(scanner), store, null, null);
     }
 
     /** 扫描默认配置仓库并替换写入 Qdrant。 */
     public CodeIndexResponse index() throws IOException {
         CodeScanner.ScanResult result = scanner.scan(properties.code());
-        store.replaceProject(result.projectId(), result.chunks());
+        List<CodeChunk> annotated = annotateChunks(properties.code().projectId(), result.chunks());
+        store.replaceProject(result.projectId(), annotated);
         if (graphStore != null) graphStore.replaceSnapshot(result);
-        return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(), result.chunks().size());
+        return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(), annotated.size());
     }
 
     /** 扫描指定项目仓库并替换写入 Qdrant。 */
@@ -68,9 +72,25 @@ public class CodeKnowledgeService {
         RagProperties.ProjectConfig project = projectRegistry.require(projectId);
         CodeScanner.ScanResult result = scanner.scan(project.toCodeConfig());
         String collection = projectRegistry.resolveCodeCollection(projectId);
-        store.replaceProject(collection, result.projectId(), result.chunks());
+        List<CodeChunk> annotated = annotateChunks(projectId, result.chunks());
+        store.replaceProject(collection, result.projectId(), annotated);
         if (graphStore != null) graphStore.replaceSnapshot(result);
-        return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(), result.chunks().size());
+        return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(), annotated.size());
+    }
+
+    /** 代码块语义标注：先加载既有标注缓存，再分层标注（LLM + 静态），annotator 不可用时不阻断索引。 */
+    private List<CodeChunk> annotateChunks(String projectId, List<CodeChunk> chunks) {
+        if (annotator == null || chunks == null || chunks.isEmpty()) {
+            return chunks == null ? List.of() : chunks;
+        }
+        try {
+            String collection = projectRegistry.resolveCodeCollection(projectId);
+            Map<String, CodeQdrantStore.AnnotationEntry> cache = store.fetchAnnotationCache(collection, projectId);
+            return annotator.annotateWithCache(chunks, cache);
+        } catch (RuntimeException exception) {
+            log.warn("代码语义标注跳过（回退为未标注索引）: {}", exception.getMessage());
+            return chunks;
+        }
     }
 
     /** 语义搜索代码 chunk。 */

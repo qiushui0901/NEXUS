@@ -102,10 +102,39 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
     }
 
     /** LLM 生成、重排与路由模型名称配置。 */
-    public record Llm(String generationModel, String rerankerModel, String routingModel) {
+    public record Llm(String generationModel, String rerankerModel, String routingModel,
+                      String developmentPlanModel, String doubtReviewModel, String annotationModel) {
+        @ConstructorBinding
+        public Llm {
+        }
+
+        /** 兼容构造器：未配置代码语义标注模型。 */
+        public Llm(String generationModel, String rerankerModel, String routingModel,
+                   String developmentPlanModel, String doubtReviewModel) {
+            this(generationModel, rerankerModel, routingModel, developmentPlanModel, doubtReviewModel, null);
+        }
+
+        /** 开发方案生成模型名，未配置时回退到生成模型名。 */
+        public String resolvedDevelopmentPlanModel() {
+            return (developmentPlanModel != null && !developmentPlanModel.isBlank())
+                    ? developmentPlanModel : generationModel;
+        }
+
+        /** 存疑评审生成模型名，未配置时回退到生成模型名。 */
+        public String resolvedDoubtReviewModel() {
+            return (doubtReviewModel != null && !doubtReviewModel.isBlank())
+                    ? doubtReviewModel : generationModel;
+        }
+
         /** 路由模型名，未配置时回退到重排模型名。 */
         public String resolvedRoutingModel() {
             return (routingModel != null && !routingModel.isBlank()) ? routingModel : rerankerModel;
+        }
+
+        /** 代码语义标注模型名，未配置时回退到生成模型名。 */
+        public String resolvedAnnotationModel() {
+            return (annotationModel != null && !annotationModel.isBlank())
+                    ? annotationModel : generationModel;
         }
     }
 
@@ -199,9 +228,9 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
             return codeQueryExpansionEnabled == null || codeQueryExpansionEnabled;
         }
 
-        /** 代码候选池同样经过 BGE 语义重排；显式 false 保持 RRF + 确定性结构重排。 */
+        /** 代码候选池是否经过 BGE 语义重排。CPU 部署默认关闭（单次多候选重排可达数分钟，超出分支超时）；GPU 部署显式开启。 */
         public boolean resolvedCodeBgeRerankEnabled() {
-            return codeBgeRerankEnabled == null || codeBgeRerankEnabled;
+            return codeBgeRerankEnabled != null && codeBgeRerankEnabled;
         }
 
         /** 代码 RRF 候选池 = limit * 倍率（下限 50）；调大提升召回但增加重排成本。 */
