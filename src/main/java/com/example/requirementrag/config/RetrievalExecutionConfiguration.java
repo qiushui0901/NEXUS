@@ -5,8 +5,10 @@ import org.springframework.context.annotation.Configuration;
 
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * 检索执行配置：为相互独立的检索分支提供有界线程池。
@@ -20,9 +22,15 @@ public class RetrievalExecutionConfiguration {
     @Bean(name = "retrievalExecutor", destroyMethod = "shutdown")
     ExecutorService retrievalExecutor(RagProperties properties) {
         int threads = properties.retrieval().resolvedParallelism();
+        AtomicInteger sequence = new AtomicInteger();
+        ThreadFactory factory = runnable -> {
+            Thread thread = new Thread(runnable, "nexus-retrieval-" + sequence.incrementAndGet());
+            thread.setDaemon(true);
+            return thread;
+        };
         return new ThreadPoolExecutor(threads, threads, 30, TimeUnit.SECONDS,
                 new ArrayBlockingQueue<>(threads * 16),
-                Thread.ofPlatform().name("nexus-retrieval-", 0).factory(),
+                factory,
                 new ThreadPoolExecutor.CallerRunsPolicy());
     }
 }

@@ -33,7 +33,11 @@ public class CodeIndexJobService {
     @Autowired
     public CodeIndexJobService(CodeKnowledgeService codeKnowledgeService, ProjectRegistry projectRegistry) {
         this(codeKnowledgeService, projectRegistry,
-                command -> Thread.ofVirtual().name("nexus-code-index").start(command));
+                command -> {
+                    Thread thread = new Thread(command, "nexus-code-index");
+                    thread.setDaemon(true);
+                    thread.start();
+                });
     }
 
     CodeIndexJobService(CodeKnowledgeService codeKnowledgeService,

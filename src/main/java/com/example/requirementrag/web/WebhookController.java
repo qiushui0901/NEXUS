@@ -3,7 +3,7 @@ package com.example.requirementrag.web;
 import com.example.requirementrag.code.IncrementalCodeIndexService;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.model.GitLabPushEvent;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -57,7 +57,10 @@ public class WebhookController {
         }
         String projectId = projectRegistry.resolveProjectIdByGitPath(event.project().pathWithNamespace())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "未知 Git 项目"));
-        Thread.startVirtualThread(() -> incrementalCodeIndexService.index(projectId, event.before(), event.after()));
+        Thread thread = new Thread(() -> incrementalCodeIndexService.index(projectId, event.before(), event.after()),
+                "nexus-webhook-index");
+        thread.setDaemon(true);
+        thread.start();
         return Map.of("status", "accepted", "projectId", projectId);
     }
 

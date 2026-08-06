@@ -219,7 +219,7 @@ public class SQLiteSymbolGraphStore {
 
     /** 列表恰有一个元素时返回该元素，否则返回 null（名称歧义时不猜测归属）。 */
     private CodeSymbol unique(List<CodeSymbol> symbols) {
-        return symbols != null && symbols.size() == 1 ? symbols.getFirst() : null;
+        return symbols != null && symbols.size() == 1 ? symbols.get(0) : null;
     }
 
     /** 幂等建表与建索引（存在则跳过），失败时抛出 SQLException 由构造器包装。 */

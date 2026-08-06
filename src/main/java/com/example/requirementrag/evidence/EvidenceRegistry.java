@@ -244,7 +244,7 @@ public final class EvidenceRegistry {
             safeParts.add(part.replaceAll("[\\p{Cntrl}]", ""));
         }
         if (safeParts.isEmpty()) return "";
-        return absolute ? safeParts.getLast() : String.join("/", safeParts);
+        return absolute ? safeParts.get(safeParts.size() - 1) : String.join("/", safeParts);
     }
 
     /** 清洗摘录文本：替换控制字符、压缩空白并限制长度。 */

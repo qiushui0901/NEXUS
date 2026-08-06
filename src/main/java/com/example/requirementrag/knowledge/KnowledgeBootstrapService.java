@@ -55,15 +55,19 @@ public class KnowledgeBootstrapService {
         if (bootstrapState.running()) {
             return;
         }
-        Thread.startVirtualThread(this::bootstrapAll);
+        Thread thread = new Thread(this::bootstrapAll, "nexus-bootstrap");
+        thread.setDaemon(true);
+        thread.start();
     }
 
-    /** 在虚拟线程中异步启动指定项目的引导。 */
+    /** 在后台线程中异步启动指定项目的引导。 */
     public void bootstrapAsync(String projectId) {
         if (bootstrapState.running(projectId)) {
             return;
         }
-        Thread.startVirtualThread(() -> bootstrap(projectId));
+        Thread thread = new Thread(() -> bootstrap(projectId), "nexus-bootstrap-" + projectId);
+        thread.setDaemon(true);
+        thread.start();
     }
 
     /** 引导所有已配置且启用 bootstrap 的项目。 */

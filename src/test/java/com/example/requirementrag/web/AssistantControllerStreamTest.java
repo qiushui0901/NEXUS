@@ -27,7 +27,7 @@ class AssistantControllerStreamTest {
         ProjectAccessGuard accessGuard = mock(ProjectAccessGuard.class);
         when(streamService.stream(any())).thenAnswer(invocation -> {
             SseEmitter emitter = new SseEmitter(5_000L);
-            Thread.startVirtualThread(() -> {
+            Thread thread = new Thread(() -> {
                 try {
                     emitter.send(SseEmitter.event().name("started").data("{\"type\":\"started\"}"));
                     emitter.complete();
@@ -36,6 +36,8 @@ class AssistantControllerStreamTest {
                     emitter.completeWithError(exception);
                 }
             });
+            thread.setDaemon(true);
+            thread.start();
             return emitter;
         });
 

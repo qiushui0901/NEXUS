@@ -9,7 +9,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.web.server.ResponseStatusException;
-import tools.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -53,10 +53,10 @@ class KnowledgeDraftLifecycleServiceTest {
         assertThat(initialized.status()).isEqualTo(DraftStatus.DRAFT);
         assertThat(initialized.revision()).isZero();
         assertThat(initialized.history()).hasSize(1);
-        assertThat(initialized.history().getFirst().actor()).isEqualTo("alice");
+        assertThat(initialized.history().get(0).actor()).isEqualTo("alice");
         assertThat(reviewing.status()).isEqualTo(DraftStatus.IN_REVIEW);
         assertThat(reviewing.revision()).isEqualTo(1);
-        assertThat(reviewing.history().getLast().comment()).isEqualTo("请评审");
+        assertThat(reviewing.history().get(reviewing.history().size() - 1).comment()).isEqualTo("请评审");
         assertThat(service.get("game", "6.0", "build-1")).isEqualTo(reviewing);
         assertThat(service.list("game", "6.0")).containsExactly(reviewing);
         assertThat(drafts.resolve("game/6.0/build-1/review.json")).isRegularFile();
