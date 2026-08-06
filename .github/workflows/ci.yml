@@ -27,7 +27,7 @@ jobs:
 
   dependency-vulnerability-scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,6 +38,13 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+
+      - name: Cache NVD database
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/dependency-check-data
+          key: dependency-check-data-${{ hashFiles('pom.xml') }}
+          restore-keys: dependency-check-data-
 
       - name: OWASP dependency vulnerability gate
         env:

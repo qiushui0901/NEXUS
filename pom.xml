@@ -233,6 +233,7 @@
                                 <configuration>
                                     <failBuildOnCVSS>7</failBuildOnCVSS>
                                     <nvdApiKeyEnvironmentVariable>NVD_API_KEY</nvdApiKeyEnvironmentVariable>
+                                    <dataDirectory>${user.home}/.m2/dependency-check-data</dataDirectory>
                                     <formats>
                                         <format>HTML</format>
                                         <format>JSON</format>
