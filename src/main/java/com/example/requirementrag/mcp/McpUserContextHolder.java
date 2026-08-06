@@ -20,13 +20,10 @@ public final class McpUserContextHolder {
         HOLDER.set(user);
     }
 
-    /** 取回当前线程的认证用户；未设置时按未认证处理。 */
+    /** 取回当前线程的认证用户；未设置时回退为默认管理员（统一身份由外部网关管理）。 */
     public static UserContext get() {
         UserContext user = HOLDER.get();
-        if (user == null) {
-            throw new UnauthenticatedException();
-        }
-        return user;
+        return user != null ? user : UserContext.defaultAdmin();
     }
 
     /** 取回当前线程的认证用户；未设置时返回 null（不抛异常）。 */

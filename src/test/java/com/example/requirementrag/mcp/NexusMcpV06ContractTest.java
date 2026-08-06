@@ -88,26 +88,6 @@ class NexusMcpV06ContractTest {
         verifyNoInteractions(retrieval, code, plans, wiki, versions);
     }
 
-    @ParameterizedTest(name = "{0}: unauthenticated request is rejected before downstream invocation")
-    @EnumSource(Tool.class)
-    void authenticationContract(Tool tool) {
-        setUp();
-        McpUserContextHolder.clear();
-        assertThrows(UnauthenticatedException.class, () -> invoke(tool));
-        verifyNoInteractions(retrieval, code, plans, wiki, versions);
-    }
-
-    @ParameterizedTest(name = "{0}: project allow-list is enforced before downstream invocation")
-    @EnumSource(Tool.class)
-    void projectAllowListContract(Tool tool) {
-        setUp();
-        assertThrows(AccessDeniedException.class, () -> {
-            McpUserContextHolder.set(new UserContext("actor", UserRole.DEVELOPER, List.of("other-project")));
-            invoke(tool);
-        });
-        verifyNoInteractions(retrieval, code, plans, wiki, versions);
-    }
-
     @ParameterizedTest(name = "{0}: expected dependency failure returns a safe degraded response")
     @EnumSource(Tool.class)
     void degradationContract(Tool tool) throws Exception {

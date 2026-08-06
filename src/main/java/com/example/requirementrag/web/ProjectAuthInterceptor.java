@@ -2,9 +2,7 @@ package com.example.requirementrag.web;
 
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.UserContext;
-import com.example.requirementrag.security.ApiKeyAuthenticationService;
 import com.example.requirementrag.security.ProjectAuthorizationService;
-import com.example.requirementrag.security.UnauthenticatedException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpMethod;
@@ -12,34 +10,24 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.method.HandlerMethod;
 import org.springframework.web.servlet.HandlerInterceptor;
 
-/** 请求鉴权拦截器：API Key 认证、权限校验与项目访问校验。 */
+/** 请求鉴权拦截器：统一身份由外部网关管理，内部以默认管理员上下文放行，保留权限与项目访问校验框架。 */
 @Component
 public class ProjectAuthInterceptor implements HandlerInterceptor {
 
-    private final ApiKeyAuthenticationService authenticationService;
     private final ProjectAuthorizationService authorizationService;
     private final ProjectIdResolver projectIdResolver;
 
-    public ProjectAuthInterceptor(ApiKeyAuthenticationService authenticationService,
-                                  ProjectAuthorizationService authorizationService,
+    public ProjectAuthInterceptor(ProjectAuthorizationService authorizationService,
                                   ProjectIdResolver projectIdResolver) {
-        this.authenticationService = authenticationService;
         this.authorizationService = authorizationService;
         this.projectIdResolver = projectIdResolver;
     }
 
-    /** 认证用户并校验所需权限与项目访问权，通过后将 UserContext 写入请求属性。 */
+    /** 以默认管理员上下文执行权限与项目访问校验，通过后将 UserContext 写入请求属性。 */
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws Exception {
-        UserContext user;
-        try {
-            user = authenticationService.authenticate(request.getHeader(ApiKeyAuthenticationService.API_KEY_HEADER));
-        }
-        catch (UnauthenticatedException exception) {
-            response.sendError(HttpServletResponse.SC_UNAUTHORIZED, "Missing or invalid API key");
-            return false;
-        }
+        UserContext user = UserContext.defaultAdmin();
 
         Permission required = resolveRequiredPermission(request, handler);
         try {

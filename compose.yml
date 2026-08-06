@@ -15,10 +15,6 @@ services:
       WIKI_DRAFT_PATH: /data/wiki-drafts
       VERSION_MANIFEST_ROOT_PATH: /data/version-manifests
       REQUIREMENT_SNAPSHOT_ROOT_PATH: /data/requirement-snapshots
-      AUTH_ENABLED: "true"
-      AUTH_USER_1_NAME: ${AUTH_USER_1_NAME:-admin}
-      AUTH_USER_1_KEY: ${AUTH_USER_1_KEY:?AUTH_USER_1_KEY must be set}
-      AUTH_USER_1_ROLE: ${AUTH_USER_1_ROLE:-SUPER_ADMIN}
       MCP_ENABLED: "true"
       OPENAI_API_KEY: ${OPENAI_API_KEY:-not-configured}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-http://host.docker.internal:8088}

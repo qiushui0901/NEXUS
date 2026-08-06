@@ -1,10 +1,6 @@
 package com.example.requirementrag.web;
 
-import com.example.requirementrag.config.AuthProperties;
-import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.UserContext;
-import com.example.requirementrag.model.UserRole;
-import com.example.requirementrag.security.ApiKeyAuthenticationService;
 import com.example.requirementrag.security.ProjectAuthorizationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,7 +12,6 @@ import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.web.method.HandlerMethod;
 
 import java.lang.reflect.Method;
-import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -34,20 +29,16 @@ class ProjectAuthInterceptorTest {
 
     @BeforeEach
     void setUp() {
-        AuthProperties auth = new AuthProperties(true, List.of(
-                new AuthProperties.AuthUser("dev", "dev-key", UserRole.DEVELOPER, List.of("project-a")),
-                new AuthProperties.AuthUser("viewer", "ro-key", UserRole.READONLY, List.of("project-a"))));
         interceptor = new ProjectAuthInterceptor(
-                new ApiKeyAuthenticationService(auth),
                 new ProjectAuthorizationService(projectRegistry),
                 projectIdResolver);
     }
 
     @Test
-    void developerCanAccessReadEndpointWithBodyProjectId() throws Exception {
-        MockHttpServletRequest request = jsonPost("/api/code/search", "dev-key");
+    void defaultAdminAllowedForAnyProject() throws Exception {
+        MockHttpServletRequest request = jsonPost("/api/code/search");
         MockHttpServletResponse response = new MockHttpServletResponse();
-        when(projectIdResolver.resolveForAccess(request)).thenReturn("project-a");
+        when(projectIdResolver.resolveForAccess(request)).thenReturn("any-project");
 
         boolean allowed = interceptor.preHandle(request, response, handler(CodeController.class, "search"));
 
@@ -56,54 +47,30 @@ class ProjectAuthInterceptorTest {
     }
 
     @Test
-    void developerDeniedForUnauthorizedDefaultProject() throws Exception {
-        MockHttpServletRequest request = jsonPost("/api/code/search", "dev-key");
+    void writeEndpointAllowedForDefaultAdmin() throws Exception {
+        MockHttpServletRequest request = jsonPost("/api/code/index");
         MockHttpServletResponse response = new MockHttpServletResponse();
-        when(projectIdResolver.resolveForAccess(request)).thenReturn("project-b");
-
-        boolean allowed = interceptor.preHandle(request, response, handler(CodeController.class, "search"));
-
-        assertFalse(allowed);
-        assertEquals(403, response.getStatus());
-    }
-
-    @Test
-    void developerDeniedForUnauthorizedProjectInBody() throws Exception {
-        MockHttpServletRequest request = jsonPost("/api/code/search", "dev-key");
-        MockHttpServletResponse response = new MockHttpServletResponse();
-        when(projectIdResolver.resolveForAccess(request)).thenReturn("project-b");
-
-        boolean allowed = interceptor.preHandle(request, response, handler(CodeController.class, "search"));
-
-        assertFalse(allowed);
-        assertEquals(403, response.getStatus());
-    }
-
-    @Test
-    void readonlyDeniedForWriteEndpoint() throws Exception {
-        MockHttpServletRequest request = jsonPost("/api/code/index", "ro-key");
-        MockHttpServletResponse response = new MockHttpServletResponse();
+        when(projectIdResolver.resolveForAccess(request)).thenReturn("project-a");
 
         boolean allowed = interceptor.preHandle(request, response, handler(CodeController.class, "index"));
 
-        assertFalse(allowed);
-        assertEquals(403, response.getStatus());
+        assertTrue(allowed);
     }
 
     @Test
-    void developerDeniedForWriteEndpoint() throws Exception {
-        MockHttpServletRequest request = jsonPost("/api/code/index", "dev-key");
+    void projectAccessAlwaysGrantedForDefaultAdmin() throws Exception {
+        MockHttpServletRequest request = jsonPost("/api/code/search");
         MockHttpServletResponse response = new MockHttpServletResponse();
+        when(projectIdResolver.resolveForAccess(request)).thenReturn("unlisted-project");
 
-        boolean allowed = interceptor.preHandle(request, response, handler(CodeController.class, "index"));
+        boolean allowed = interceptor.preHandle(request, response, handler(CodeController.class, "search"));
 
-        assertFalse(allowed);
-        assertEquals(403, response.getStatus());
+        assertTrue(allowed);
+        assertFalse(response.getStatus() == 403);
     }
 
-    private MockHttpServletRequest jsonPost(String uri, String apiKey) {
+    private MockHttpServletRequest jsonPost(String uri) {
         MockHttpServletRequest request = new MockHttpServletRequest("POST", uri);
-        request.addHeader("X-API-Key", apiKey);
         request.setContentType("application/json");
         return request;
     }
@@ -117,9 +84,5 @@ class ProjectAuthInterceptorTest {
             default -> throw new IllegalArgumentException(methodName);
         };
         return new HandlerMethod(new Object(), method);
-    }
-
-    private static void assertEquals(int expected, int actual) {
-        org.junit.jupiter.api.Assertions.assertEquals(expected, actual);
     }
 }

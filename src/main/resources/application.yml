@@ -169,18 +169,7 @@ app:
       current-version-questions: ${REVIEW_CURRENT_VERSION_QUESTIONS:12}
       prior-version-questions: ${REVIEW_PRIOR_VERSION_QUESTIONS:3}
     auth:
-      enabled: ${AUTH_ENABLED:true}
-      users:
-        - username: ${AUTH_USER_1_NAME:admin}
-          api-key: ${AUTH_USER_1_KEY:}
-          role: ${AUTH_USER_1_ROLE:SUPER_ADMIN}
-          projects:
-            - "*"
-        # - username: ${AUTH_USER_2_NAME:developer}
-        #   api-key: ${AUTH_USER_2_KEY:}
-        #   role: ${AUTH_USER_2_ROLE:DEVELOPER}
-        #   projects:
-        #     - ${AUTH_USER_2_PROJECT:default-project}
+      enabled: false
 
     # 多项目注册表。为空时自动基于上方 knowledge/code 构造默认项目。
     # 每个项目独立 collection，互不干扰。

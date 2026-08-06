@@ -15,12 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "logging.structured.format.console=",
         "management.tracing.sampling.probability=0",
-        "app.rag.knowledge.bootstrap-enabled=false",
-        "app.rag.auth.enabled=true",
-        "app.rag.auth.users[0].username=mcp-test",
-        "app.rag.auth.users[0].api-key=mcp-test-key",
-        "app.rag.auth.users[0].role=DEVELOPER",
-        "app.rag.auth.users[0].projects[0]=*"
+        "app.rag.knowledge.bootstrap-enabled=false"
 })
 class McpHttpIntegrationTest {
 
@@ -30,11 +25,8 @@ class McpHttpIntegrationTest {
     private final HttpClient client = HttpClient.newHttpClient();
 
     @Test
-    void requiresApiKeyAndDiscoversTenToolsPromptsAndWikiResourceTemplate() throws Exception {
-        HttpResponse<String> unauthorized = post(initialize(), null, null);
-        assertEquals(401, unauthorized.statusCode());
-
-        HttpResponse<String> initialized = post(initialize(), "mcp-test-key", null);
+    void discoversTenToolsPromptsAndWikiResourceTemplate() throws Exception {
+        HttpResponse<String> initialized = post(initialize(), null, null);
         assertEquals(200, initialized.statusCode());
         assertTrue(initialized.body().contains("\"protocolVersion\""));
         String sessionId = initialized.headers().firstValue("mcp-session-id").orElseThrow();
