@@ -4,8 +4,8 @@
 
 NEXUS 把分散的产品文档、Git 仓库与测试信号，整理成按**项目 + 版本**组织的知识服务。团队浏览同一套 Wiki；编码 Agent 通过 **MCP** 调用同一批事实，拿到带稳定编号的引用，而不是无法核对的模型空话。
 
-> 当前版本：`0.8.0-SNAPSHOT`  
-> 技术栈：Java 21 · Spring Boot 4.1 · Spring AI 2.0 · Qdrant · Tree-sitter
+> 当前版本：`0.8.3-SNAPSHOT`  
+> 技术栈：Java 17 · Spring Boot 3.4 · Spring AI 1.1.2（Alibaba 基线）· Qdrant · Tree-sitter
 
 ---
 
@@ -57,14 +57,12 @@ NEXUS 把分散的产品文档、Git 仓库与测试信号，整理成按**项�
 ## 快速开始
 
 ```bash
-cp .env.example .env          # 填写 Token 与服务地址
-./tools/start-bge-reranker.sh # 首次创建 Python 3.11 环境并下载 Transformers reranker
+cp .env.example .env          # 填写网关 Token 与服务地址（OpenAI 兼容）
 ./scripts/nexus.sh start      # 本地 Qdrant + 应用（详见用户指南）
 ```
 
-Ollama 的 `bge-m3` 只负责 Embedding。BGE 重排由独立的 Python/Transformers 服务提供，
-默认使用 `BAAI/bge-reranker-v2-m3` 并监听 `127.0.0.1:8081/rerank`。首次启动会下载模型；
-服务就绪后可运行 `python3 tools/check-bge-reranker.py` 验证健康状态与 NEXUS 响应契约。
+Embedding 与 LLM 统一走 OpenAI 兼容网关（`text-embedding-v4` + 按任务路由的生成/重排模型），
+不依赖本地模型服务。启动前确认 `.env` 中的 `OPENAI_BASE_URL` / `OPENAI_API_KEY` 可达。
 
 启动后访问：
 
@@ -102,7 +100,7 @@ Compose 共享部署、MCP 客户端、索引与 API 说明见下方文档，不
 | 存储 | Qdrant（向量）、SQLite（符号图）、文件型 Wiki / 档案 / 草稿 |
 | 检索 | `RetrievalPipeline`：路由、混合检索、限流、告警 |
 | 知识 | Wiki 生成、版本对比、草稿生命周期、冲突分析 |
-| 访问 | REST + SSE + MCP；API Key、角色、项目白名单 |
+| 访问 | REST + SSE + MCP；身份与权限由外部统一网关管理 |
 
 **代码模型（重要）：** 开发在本机仓库编辑（例如 multipow 工作区）。NEXUS 保留**服务端索引副本**，用于检索、源码摘录与影响分析。面向代码的 MCP 工具为**只读**，不替代本地 Git。
 
@@ -110,9 +108,9 @@ Compose 共享部署、MCP 客户端、索引与 API 说明见下方文档，不
 
 ## 技术栈
 
-- **运行时：** Java 21、Spring Boot 4.1、Spring AI 2.0  
-- **检索：** Qdrant dense + sparse、可选 BGE 重排、Ollama Embedding、OpenAI 兼容 Chat  
-- **代码：** Tree-sitter 多语言解析、SQLite 调用图  
+- **运行时：** Java 17、Spring Boot 3.4、Spring AI 1.1.2（Spring AI Alibaba 基线）  
+- **检索：** Qdrant dense + desc_dense 双向量 + sparse、LLM 重排（BGE 分差可跳过）、OpenAI 兼容网关（嵌入 + 生成）  
+- **代码：** Tree-sitter 多语言解析、SQLite 调用图、LLM 语义标注  
 - **交付：** Maven、Docker / Compose、Actuator、Prometheus、OpenTelemetry  
 
 ---
@@ -127,7 +125,7 @@ NEXUS 仍在活跃开发（`0.8.x`）。证据检索、版本化 Wiki、MCP 与�
 
 ## 参与贡献
 
-1. 使用 JDK 21，提交前运行 `./mvnw -B verify`。  
+1. 使用 JDK 17，提交前运行 `./mvnw -B verify`。  
 2. 优先小而聚焦的变更；遵守现有证据与版本隔离约定。  
 3. 不要提交 `.env`、Qdrant 存储、向量或私有业务文档。  
 4. 改动检索或版本知识时，先读 [`.trellis/spec/backend/retrieval-and-version-knowledge.md`](.trellis/spec/backend/retrieval-and-version-knowledge.md)。
