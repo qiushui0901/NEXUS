@@ -57,7 +57,9 @@ public class QdrantHybridStore {
     }
 
     /**
-     * 替换指定文档版本的全部分块：先删后批量写入。
+     * 替换指定文档版本的全部分块：先写入新点（幂等 upsert）、校验可读后，
+     * 再删除仅存在于旧版本的过期点。任一步失败时保留旧点，不执行清理，
+     * 避免删除成功后写入失败导致线上版本变空或半成品。
      *
      * @param collection Qdrant collection 名称
      * @param documentId 文档 ID
@@ -66,9 +68,75 @@ public class QdrantHybridStore {
      */
     public void replaceVersion(String collection, String documentId, String version, List<ChunkRecord> chunks) {
         ensureCollection(collection);
+        if (chunks == null || chunks.isEmpty()) {
+            deleteVersion(collection, documentId, version);
+            return;
+        }
         List<List<Map<String, Object>>> pointBatches = buildPointBatches(chunks, 64);
-        deleteVersion(collection, documentId, version);
+        java.util.Set<String> oldIds = collectPointIds(collection, documentId, version);
         writePointBatches(collection, pointBatches);
+        java.util.Set<String> newIds = new java.util.LinkedHashSet<>();
+        for (ChunkRecord chunk : chunks) {
+            newIds.add(chunk.id());
+        }
+        verifyVersion(collection, documentId, version, newIds);
+        java.util.Set<String> staleIds = new java.util.HashSet<>(oldIds);
+        staleIds.removeAll(newIds);
+        if (!staleIds.isEmpty()) {
+            deletePoints(collection, staleIds);
+        }
+    }
+
+    /** 滚动读取指定文档版本的全部 point ID。 */
+    private java.util.Set<String> collectPointIds(String collection, String documentId, String version) {
+        java.util.Set<String> ids = new java.util.LinkedHashSet<>();
+        Object offset = null;
+        do {
+            Map<String, Object> request = new LinkedHashMap<>();
+            request.put("filter", filter(documentId, version));
+            request.put("limit", 256);
+            request.put("with_payload", false);
+            if (offset != null) request.put("offset", offset);
+            Map<String, Object> response = client.post().uri("/collections/{collection}/points/scroll", collection)
+                    .contentType(MediaType.APPLICATION_JSON).body(request).retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+            Map<String, Object> result = map(response == null ? null : response.get("result"));
+            for (Object point : list(result.get("points"))) {
+                Map<String, Object> p = map(point);
+                Object id = p.get("id");
+                if (id != null) ids.add(String.valueOf(id));
+            }
+            offset = result.get("next_page_offset");
+            if (offset == null) break;
+        } while (true);
+        return ids;
+    }
+
+    /** 校验新写入的 point ID 全部可读且数量一致；不一致时抛异常（旧点保留）。 */
+    private void verifyVersion(String collection, String documentId, String version, java.util.Set<String> newIds) {
+        Map<String, Object> request = new LinkedHashMap<>();
+        request.put("filter", Map.of("must", java.util.List.of(
+                Map.of("key", "documentId", "match", Map.of("value", documentId)),
+                Map.of("key", "version", "match", Map.of("value", version)),
+                Map.of("key", "$point_id", "match", Map.of("any", new java.util.ArrayList<>(newIds))))));
+        request.put("limit", Math.max(256, newIds.size()));
+        request.put("with_payload", false);
+        Map<String, Object> response = client.post().uri("/collections/{collection}/points/scroll", collection)
+                .contentType(MediaType.APPLICATION_JSON).body(request).retrieve()
+                .body(new ParameterizedTypeReference<>() {});
+        Map<String, Object> result = map(response == null ? null : response.get("result"));
+        int verified = list(result.get("points")).size();
+        if (verified != newIds.size()) {
+            throw new IllegalStateException("索引写入校验失败: 期望 " + newIds.size() + " 个 point, 实际可读 " + verified);
+        }
+    }
+
+    /** 按 point ID 批量删除（wait=true）。 */
+    private void deletePoints(String collection, java.util.Set<String> ids) {
+        client.post().uri("/collections/{collection}/points/delete?wait=true", collection)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("points", new java.util.ArrayList<>(ids)))
+                .retrieve().toBodilessEntity();
     }
 
 

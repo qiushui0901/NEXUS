@@ -1,6 +1,6 @@
 package com.example.requirementrag.web;
 
-import com.example.requirementrag.code.IncrementalCodeIndexService;
+import com.example.requirementrag.code.CodeIndexJobService;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +20,7 @@ import java.util.Optional;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 @ExtendWith(MockitoExtension.class)
@@ -31,14 +32,14 @@ class WebhookControllerTest {
     private ProjectRegistry projectRegistry;
 
     @Mock
-    private IncrementalCodeIndexService incrementalCodeIndexService;
+    private CodeIndexJobService codeIndexJobService;
 
     private WebhookController controller;
 
     @BeforeEach
     void setUp() {
         controller = new WebhookController(
-                projectRegistry, incrementalCodeIndexService, new ObjectMapper(), SECRET);
+                projectRegistry, codeIndexJobService, new ObjectMapper(), SECRET);
     }
 
     @Test
@@ -54,6 +55,7 @@ class WebhookControllerTest {
 
         assertEquals("accepted", response.get("status"));
         assertEquals("fengshen-server", response.get("projectId"));
+        verify(codeIndexJobService).start("fengshen-server");
     }
 
     @Test

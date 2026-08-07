@@ -1,6 +1,6 @@
 package com.example.requirementrag.web;
 
-import com.example.requirementrag.code.IncrementalCodeIndexService;
+import com.example.requirementrag.code.CodeIndexJobService;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.model.GitLabPushEvent;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -23,28 +23,30 @@ import java.util.HexFormat;
 import java.util.Map;
 
 /**
- * Git webhook 接口：接收 GitLab push 事件并触发增量代码索引。
+ * Git webhook 接口：接收 GitLab push 事件并提交后台代码索引任务。
+ * 任务统一走 {@link CodeIndexJobService}（同项目同时只运行一个索引任务），
+ * 不再自行创建线程。
  */
 @RestController
 @RequestMapping("/api/webhooks")
 public class WebhookController {
 
     private final ProjectRegistry projectRegistry;
-    private final IncrementalCodeIndexService incrementalCodeIndexService;
+    private final CodeIndexJobService codeIndexJobService;
     private final ObjectMapper objectMapper;
     private final String webhookSecret;
 
     public WebhookController(ProjectRegistry projectRegistry,
-                             IncrementalCodeIndexService incrementalCodeIndexService,
+                             CodeIndexJobService codeIndexJobService,
                              ObjectMapper objectMapper,
                              @Value("${webhook.secret:}") String webhookSecret) {
         this.projectRegistry = projectRegistry;
-        this.incrementalCodeIndexService = incrementalCodeIndexService;
+        this.codeIndexJobService = codeIndexJobService;
         this.objectMapper = objectMapper;
         this.webhookSecret = webhookSecret;
     }
 
-    /** 接收 GitLab push 事件：校验 HMAC 签名后按 Git 路径解析项目并异步触发增量代码索引。对应 POST /api/webhooks/gitlab。 */
+    /** 接收 GitLab push 事件：校验 HMAC 签名后按 Git 路径解析项目并提交后台代码索引任务。对应 POST /api/webhooks/gitlab。 */
     @PostMapping("/gitlab")
     @ResponseStatus(HttpStatus.ACCEPTED)
     public Map<String, String> gitlabPush(
@@ -57,10 +59,7 @@ public class WebhookController {
         }
         String projectId = projectRegistry.resolveProjectIdByGitPath(event.project().pathWithNamespace())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "未知 Git 项目"));
-        Thread thread = new Thread(() -> incrementalCodeIndexService.index(projectId, event.before(), event.after()),
-                "nexus-webhook-index");
-        thread.setDaemon(true);
-        thread.start();
+        codeIndexJobService.start(projectId);
         return Map.of("status", "accepted", "projectId", projectId);
     }
 
