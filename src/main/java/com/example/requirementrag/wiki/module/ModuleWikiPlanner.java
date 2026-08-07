@@ -23,6 +23,7 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 /** 将 ModuleFactBundle 编译为带声明级证据的模块页面源；只使用事实包，不自由扫描仓库。 */
 @Component
@@ -73,51 +74,57 @@ public class ModuleWikiPlanner {
     private List<Claim> claims(ModuleFactBundle bundle, List<Evidence> evidence, List<String> missing) {
         List<Claim> claims = new ArrayList<>();
         String module = bundle.moduleId();
-        List<String> allIds = evidenceIds(bundle);
+        List<String> codeIds = evidenceIds(bundle, "CODE");
+        List<String> entryIds = evidenceIds(bundle, "CODE", "ROUTE");
+        List<String> flowIds = evidenceIds(bundle, "CODE_GRAPH");
+        List<String> dependencyIds = evidenceIds(bundle, "DEPENDENCY");
+        List<String> dataConfigIds = evidenceIds(bundle, "DATA", "CONFIG");
+        List<String> testIds = evidenceIds(bundle, "TEST_SYMBOL");
+        List<String> diagnosticIds = evidenceIds(bundle, "DIAGNOSTIC");
         claims.add(new Claim(module + "-responsibility", "responsibility",
                 "模块 " + module + " 的职责边界由 " + bundle.publicSymbols().size() + " 个公开符号构成，"
                         + "需人工审核后确认业务语义",
                 bundle.publicSymbols().isEmpty() ? ClaimSupport.UNSUPPORTED : ClaimSupport.PARTIAL,
-                prefix(allIds, Math.min(allIds.size(), 10))));
+                prefix(codeIds, 10)));
         claims.add(new Claim(module + "-entry", "entry",
                 "对外入口共 " + bundle.entryPoints().size() + " 个（HTTP/消息/定时任务）",
                 bundle.entryPoints().isEmpty() ? ClaimSupport.UNSUPPORTED : ClaimSupport.FULL,
-                prefix(allIds, Math.min(allIds.size(), 10))));
+                prefix(entryIds, 10)));
         claims.add(new Claim(module + "-flow", "flow",
                 "核心流程为模块内符号间的有序调用链，共 " + bundle.coreFlows().size() + " 条边",
                 bundle.coreFlows().isEmpty() ? ClaimSupport.UNSUPPORTED : ClaimSupport.PARTIAL,
-                prefix(allIds, Math.min(allIds.size(), 10))));
+                prefix(flowIds, 10)));
         claims.add(new Claim(module + "-dependencies", "dependencies",
                 "模块调用 " + bundle.callees().size() + " 个外部符号，被 " + bundle.callers().size()
                         + " 个外部符号调用",
                 bundle.callers().isEmpty() && bundle.callees().isEmpty() ? ClaimSupport.UNSUPPORTED
                         : ClaimSupport.INFERRED,
-                List.of()));
+                prefix(dependencyIds, 10)));
         claims.add(new Claim(module + "-data-config", "data",
                 "数据与消息对象 " + bundle.dataObjects().size() + " 个，配置来源 "
                         + bundle.configuration().size() + " 个",
                 bundle.dataObjects().isEmpty() && bundle.configuration().isEmpty()
                         ? ClaimSupport.UNSUPPORTED : ClaimSupport.INFERRED,
-                List.of()));
+                prefix(dataConfigIds, 10)));
         claims.add(new Claim(module + "-tests", "tests",
                 "识别到 " + bundle.tests().size() + " 个测试符号；真实执行结果待关联",
                 bundle.tests().isEmpty() ? ClaimSupport.UNSUPPORTED : ClaimSupport.INFERRED,
-                List.of()));
+                prefix(testIds, 10)));
         if (!bundle.diagnostics().isEmpty()) {
             claims.add(new Claim(module + "-gaps", "gaps",
                     "存在 " + bundle.diagnostics().size() + " 条知识缺口（未解析调用等），发布前需处理或确认",
-                    ClaimSupport.INFERRED, List.of()));
+                    ClaimSupport.INFERRED, prefix(diagnosticIds, 10)));
         }
         return List.copyOf(claims);
     }
 
-    /** 全部模块证据 ID（test 符号不注册证据，因此用 evidence 列表推导）。 */
-    private List<String> evidenceIds(ModuleFactBundle bundle) {
-        List<String> ids = new ArrayList<>();
-        for (int index = 0; index < bundle.evidence().size(); index++) {
-            ids.add(bundle.evidence().get(index).evidenceId());
-        }
-        return List.copyOf(ids);
+    /** 按事实类型选择证据，避免 Claims 共享无关的前 N 条代码证据。 */
+    private List<String> evidenceIds(ModuleFactBundle bundle, String... types) {
+        Set<String> accepted = Set.of(types);
+        return bundle.evidence().stream()
+                .filter(item -> accepted.contains(item.type()))
+                .map(ModuleEvidence::evidenceId)
+                .toList();
     }
 
     private List<String> prefix(List<String> ids, int count) {
@@ -128,7 +135,7 @@ public class ModuleWikiPlanner {
     private List<Evidence> toEvidence(ModuleFactBundle bundle) {
         List<Evidence> result = new ArrayList<>();
         for (ModuleEvidence item : bundle.evidence()) {
-            result.add(new Evidence("CODE", item.symbol(), bundle.projectId(), item.version(),
+            result.add(new Evidence(item.type(), item.symbol(), bundle.projectId(), item.version(),
                     "lines=" + item.startLine() + '-' + item.endLine(),
                     item.symbol() + " @ " + item.source(), item.commitSha(), item.source(),
                     item.symbol(), "PENDING_REVIEW"));

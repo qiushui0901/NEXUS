@@ -55,6 +55,7 @@ public class ModuleFactExtractor {
         String commit = graphStore.latestCommit(projectId);
         String resolvedPath = normalize(modulePath);
         String moduleId = moduleIdOf(resolvedPath);
+        Path repository = repositoryRoot(project);
         List<ModuleDiagnostic> diagnostics = new ArrayList<>();
         if (commit == null) {
             diagnostics.add(new ModuleDiagnostic("NO_GRAPH_SNAPSHOT",
@@ -62,8 +63,9 @@ public class ModuleFactExtractor {
         }
 
         List<Path> files = moduleFiles(project, resolvedPath, diagnostics);
+        List<String> relativeFiles = relativeFiles(repository, files);
         List<CodeSymbol> symbols = commit == null ? List.of()
-                : graphStore.symbolsByFiles(projectId, commit, relativeFiles(files), MAX_SYMBOLS);
+                : graphStore.symbolsByFiles(projectId, commit, relativeFiles, MAX_SYMBOLS);
 
         List<CodeSymbol> entryPoints = symbols.stream().filter(CodeSymbol::entryPoint).limit(30).toList();
         List<CodeSymbol> tests = symbols.stream().filter(CodeSymbol::testSymbol).limit(30).toList();
@@ -81,12 +83,13 @@ public class ModuleFactExtractor {
         List<String> callees = commit == null ? List.of()
                 : moduleExternal(projectId, commit, symbols, false);
         if (commit != null) {
-            unresolvedInModule(projectId, commit, files, diagnostics);
+            unresolvedInModule(projectId, commit, relativeFiles, diagnostics);
         }
 
-        List<ModuleEvidence> evidence = registerEvidence(projectId, version, commit, moduleId, symbols);
+        List<ModuleEvidence> evidence = registerEvidence(projectId, version, commit, moduleId, symbols,
+                callers, callees, coreFlows, routes, dataObjects, configuration, tests, diagnostics);
         return new ModuleFactBundle(projectId, commit, moduleId, titleOf(moduleId),
-                resolvedPath, relativeFiles(files), packages, publicSymbols, entryPoints,
+                resolvedPath, relativeFiles, packages, publicSymbols, entryPoints,
                 callers, callees, coreFlows, routes, dataObjects, configuration, tests,
                 evidence, List.copyOf(diagnostics));
     }
@@ -135,27 +138,70 @@ public class ModuleFactExtractor {
         return List.copyOf(flows);
     }
 
-    /** 将模块内符号注册为稳定证据：ID 形如 code:{moduleId}:{n}，供 Claim 引用。 */
+    /** 将模块事实按页面证据顺序注册为稳定 ID，供各类 Claim 精确引用。 */
     private List<ModuleEvidence> registerEvidence(String projectId, String version, String commit,
-                                                  String moduleId, List<CodeSymbol> symbols) {
+                                                  String moduleId, List<CodeSymbol> symbols,
+                                                  List<String> callers, List<String> callees,
+                                                  List<ModuleFlowStep> flows, List<String> routes,
+                                                  List<String> dataObjects, List<String> configuration,
+                                                  List<CodeSymbol> tests, List<ModuleDiagnostic> diagnostics) {
         List<ModuleEvidence> evidence = new ArrayList<>();
-        for (int index = 0; index < symbols.size(); index++) {
-            CodeSymbol symbol = symbols.get(index);
+        for (CodeSymbol symbol : symbols) {
             if (symbol.testSymbol()) continue;
-            evidence.add(new ModuleEvidence(
-                    "code:" + moduleId + ":" + index,
-                    "CODE",
-                    projectId,
-                    version,
-                    commit == null ? "" : commit,
-                    symbol.filePath(),
-                    symbol.qualifiedName(),
-                    symbol.startLine(),
-                    symbol.endLine(),
-                    symbol.id()
-            ));
+            addEvidence(evidence, "code", moduleId, "CODE", projectId, version, commit,
+                    symbol.filePath(), symbol.qualifiedName(), symbol.startLine(), symbol.endLine(), symbol.id());
+        }
+        for (ModuleFlowStep flow : flows) {
+            addEvidence(evidence, "code-graph", moduleId, "CODE_GRAPH", projectId, version, commit,
+                    flow.filePath(), flow.caller() + " -> " + flow.callee(), flow.line(), flow.line(),
+                    flow.resolution().name());
+        }
+        for (String dependency : concat(callers, callees)) {
+            addEvidence(evidence, "dependency", moduleId, "DEPENDENCY", projectId, version, commit,
+                    dependency, dependency, 0, 0, dependency);
+        }
+        for (String route : routes) {
+            addEvidence(evidence, "route", moduleId, "ROUTE", projectId, version, commit,
+                    route, route, 0, 0, route);
+        }
+        for (String dataObject : dataObjects) {
+            addEvidence(evidence, "data", moduleId, "DATA", projectId, version, commit,
+                    dataObject, dataObject, 0, 0, dataObject);
+        }
+        for (String config : configuration) {
+            addEvidence(evidence, "config", moduleId, "CONFIG", projectId, version, commit,
+                    config, config, 0, 0, config);
+        }
+        for (CodeSymbol test : tests) {
+            addEvidence(evidence, "test", moduleId, "TEST_SYMBOL", projectId, version, commit,
+                    test.filePath(), test.qualifiedName(), test.startLine(), test.endLine(), test.id());
+        }
+        for (ModuleDiagnostic diagnostic : diagnostics) {
+            addEvidence(evidence, "diagnostic", moduleId, "DIAGNOSTIC", projectId, version, commit,
+                    diagnostic.source(), diagnostic.code(), 0, 0, diagnostic.message());
         }
         return List.copyOf(evidence);
+    }
+
+    private void addEvidence(List<ModuleEvidence> evidence, String namespace, String moduleId, String type,
+                             String projectId, String version, String commit, String source, String symbol,
+                             int startLine, int endLine, String fingerprint) {
+        int index = evidence.size();
+        evidence.add(new ModuleEvidence(namespace + ":" + moduleId + ":" + index, type, projectId, version,
+                commit == null ? "" : commit, source, symbol, startLine, endLine, sha256(fingerprint)));
+    }
+
+    private List<String> concat(List<String> first, List<String> second) {
+        return Stream.concat(first.stream(), second.stream()).distinct().toList();
+    }
+
+    private String sha256(String value) {
+        try {
+            return java.util.HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256")
+                    .digest((value == null ? "" : value).getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 unavailable", exception);
+        }
     }
 
     /** 收集模块目录内带 HTTP/消息/定时注解的文件与注解位置，作为对外入口线索。 */
@@ -221,9 +267,9 @@ public class ModuleFactExtractor {
     }
 
     /** 汇总模块内未解析调用关系为诊断。 */
-    private void unresolvedInModule(String projectId, String commit, List<Path> files,
+    private void unresolvedInModule(String projectId, String commit, List<String> files,
                                     List<ModuleDiagnostic> diagnostics) {
-        Set<String> relative = new LinkedHashSet<>(relativeFiles(files));
+        Set<String> relative = new LinkedHashSet<>(files);
         for (CodeRelation relation : graphStore.unresolved(projectId, commit, 200)) {
             if (relation.filePath() != null && relative.contains(normalize(relation.filePath()))) {
                 diagnostics.add(new ModuleDiagnostic("UNRESOLVED_DYNAMIC_CALL",
@@ -268,9 +314,9 @@ public class ModuleFactExtractor {
 
 
     /** 仓库相对路径列表（用于符号图按文件查询）。 */
-    private List<String> relativeFiles(List<Path> files) {
+    private List<String> relativeFiles(Path repository, List<Path> files) {
         return files.stream()
-                .map(path -> normalize(path.toString()))
+                .map(path -> normalize(repository.relativize(path).toString()))
                 .filter(path -> isSourceFile(path))
                 .limit(MAX_FILES)
                 .toList();

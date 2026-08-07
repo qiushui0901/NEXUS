@@ -17,8 +17,9 @@ import java.util.regex.Pattern;
 @Component
 public class ModuleClaimQualityGate {
 
-    /** 证据 ID 形如 code:{moduleId}:{n}，n 为页面 evidence 列表下标。 */
-    private static final Pattern EVIDENCE_INDEX = Pattern.compile("^code:[A-Za-z0-9._-]+:(\\d+)$");
+    /** 模块证据 ID 的最后一段是页面 evidence 列表下标，namespace 表示事实类型。 */
+    private static final Pattern EVIDENCE_INDEX = Pattern.compile(
+            "^[a-z][a-z0-9-]*:[A-Za-z0-9._-]+:(\\d+)$");
     private static final Pattern LEGACY_EVIDENCE_INDEX = Pattern.compile("^(requirement|code):(\\d+)$");
 
     /**
@@ -37,6 +38,9 @@ public class ModuleClaimQualityGate {
             for (Claim claim : list(page.claims())) {
                 if (claim.support() == ClaimSupport.FULL && list(claim.evidenceIds()).isEmpty()) {
                     throw new IllegalArgumentException("FULL Claim 缺少证据引用: " + claim.claimId());
+                }
+                if (claim.support() != ClaimSupport.UNSUPPORTED && list(claim.evidenceIds()).isEmpty()) {
+                    throw new IllegalArgumentException("受支持 Claim 缺少证据引用: " + claim.claimId());
                 }
                 for (String evidenceId : list(claim.evidenceIds())) {
                     Integer index = evidenceIndex(evidenceId);

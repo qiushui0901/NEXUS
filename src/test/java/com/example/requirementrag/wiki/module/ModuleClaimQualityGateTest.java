@@ -24,7 +24,9 @@ class ModuleClaimQualityGateTest {
                         true, false)),
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
                 List.of(new ModuleFactModels.ModuleEvidence("code:auth:0", "CODE", "game", "5.1", "abc123",
-                        "src/auth/AuthService.java", "com.game.auth.AuthService", 1, 50, "s1")),
+                        "src/auth/AuthService.java", "com.game.auth.AuthService", 1, 50, "s1"),
+                        new ModuleFactModels.ModuleEvidence("diagnostic:auth:1", "DIAGNOSTIC", "game", "5.1",
+                                "abc123", "src/auth/AuthService.java:30", "UNRESOLVED_DYNAMIC_CALL", 0, 0, "d1")),
                 List.of(new ModuleFactModels.ModuleDiagnostic("UNRESOLVED_DYNAMIC_CALL",
                         "调用目标无法静态解析", "src/auth/AuthService.java:30")));
     }
@@ -66,6 +68,29 @@ class ModuleClaimQualityGateTest {
         assertThatThrownBy(() -> gate.validate("game", "5.1", List.of(broken)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("FULL Claim 缺少证据引用");
+    }
+
+    @Test
+    void rejectsInferredClaimWithoutEvidenceId() {
+        var bundle = bundle();
+        WikiModels.PageSource page = new ModuleWikiPlanner().plan(bundle, "5.1", null, "abc123");
+        WikiModels.PageSource broken = new WikiModels.PageSource(page.featureId(), page.title(), page.category(),
+                page.introducedVersion(), page.status(), page.aliases(), page.summary(), page.requirementSources(),
+                page.productRules(), page.processSteps(), page.codeEntries(), page.codeSymbols(),
+                page.dataImpacts(), page.boundaryConditions(), page.acceptanceCriteria(), page.testPoints(),
+                page.testKnowledge(), page.versionChange(), page.quality(), page.risks(), page.relations(),
+                page.evidence(), page.pageType(),
+                List.of(new WikiModels.Claim("broken-inferred", "dependencies", "无证据的推断声明",
+                        WikiModels.ClaimSupport.INFERRED, List.of())));
+        assertThatThrownBy(() -> gate.validate("game", "5.1", List.of(broken)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("受支持 Claim 缺少证据引用");
+    }
+
+    @Test
+    void resolvesTypedEvidenceNamespaceToPageIndex() {
+        assertThat(ModuleClaimQualityGate.evidenceIndex("code-graph:auth:2")).isEqualTo(2);
+        assertThat(ModuleClaimQualityGate.evidenceIndex("test:auth:7")).isEqualTo(7);
     }
 
     @Test
