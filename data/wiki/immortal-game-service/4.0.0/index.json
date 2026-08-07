@@ -18,7 +18,8 @@
       "aliases": [
         "V4.0.0 code"
       ],
-      "evidenceCount": 25
+      "evidenceCount": 25,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-4.0.0-module-immortal-game-service-api",
@@ -30,7 +31,8 @@
       "aliases": [
         "immortal-game-service-api"
       ],
-      "evidenceCount": 25
+      "evidenceCount": 25,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-4.0.0-overview",
@@ -42,7 +44,8 @@
       "aliases": [
         "V4.0.0"
       ],
-      "evidenceCount": 2
+      "evidenceCount": 2,
+      "pageType": "FEATURE"
     }
   ]
 }

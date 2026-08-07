@@ -18,7 +18,8 @@
       "aliases": [
         "V5.1 code"
       ],
-      "evidenceCount": 25
+      "evidenceCount": 25,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-5.1-module-immortal-game-service-api",
@@ -30,7 +31,8 @@
       "aliases": [
         "immortal-game-service-api"
       ],
-      "evidenceCount": 13
+      "evidenceCount": 13,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-5.1-module-immortal-game-service-impl",
@@ -42,7 +44,8 @@
       "aliases": [
         "immortal-game-service-impl"
       ],
-      "evidenceCount": 25
+      "evidenceCount": 25,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-5.1-module-pom.xml",
@@ -54,7 +57,8 @@
       "aliases": [
         "pom.xml"
       ],
-      "evidenceCount": 2
+      "evidenceCount": 2,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "grow-fund",
@@ -67,7 +71,8 @@
         "成长基金活动",
         "Grow Fund"
       ],
-      "evidenceCount": 3
+      "evidenceCount": 3,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "grow-discount",
@@ -81,7 +86,8 @@
         "成长礼包",
         "Grow Discount"
       ],
-      "evidenceCount": 1
+      "evidenceCount": 1,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-5.1-overview",
@@ -94,7 +100,8 @@
         "V5.1",
         "5.1增量"
       ],
-      "evidenceCount": 2
+      "evidenceCount": 2,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "grow-feature-boundary",
@@ -107,7 +114,8 @@
         "成长类功能对比",
         "成长基金与成长特价"
       ],
-      "evidenceCount": 1
+      "evidenceCount": 1,
+      "pageType": "FEATURE"
     }
   ]
 }

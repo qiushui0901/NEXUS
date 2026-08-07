@@ -63,5 +63,7 @@
       "verificationStatus": "VERIFIED"
     }
   ],
-  "markdownPath": "pages/version-4.1.3-overview.md"
+  "markdownPath": "pages/version-4.1.3-overview.md",
+  "pageType": "FEATURE",
+  "claims": []
 }

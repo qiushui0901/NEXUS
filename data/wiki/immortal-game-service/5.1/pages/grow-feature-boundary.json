@@ -63,5 +63,7 @@
       "verificationStatus": "VERIFIED"
     }
   ],
-  "markdownPath": "pages/grow-feature-boundary.md"
+  "markdownPath": "pages/grow-feature-boundary.md",
+  "pageType": "FEATURE",
+  "claims": []
 }

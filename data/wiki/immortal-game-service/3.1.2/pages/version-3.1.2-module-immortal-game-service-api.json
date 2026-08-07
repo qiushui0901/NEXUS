@@ -450,5 +450,7 @@
       "verificationStatus": "VERIFIED"
     }
   ],
-  "markdownPath": "pages/version-3.1.2-module-immortal-game-service-api.md"
+  "markdownPath": "pages/version-3.1.2-module-immortal-game-service-api.md",
+  "pageType": "FEATURE",
+  "claims": []
 }

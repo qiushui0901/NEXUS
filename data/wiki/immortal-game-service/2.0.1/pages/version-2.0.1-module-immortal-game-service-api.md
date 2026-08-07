@@ -2,6 +2,7 @@
 featureId: "version-2.0.1-module-immortal-game-service-api"
 projectId: "immortal-game-service"
 version: "2.0.1"
+pageType: FEATURE
 status: CODE_VERIFIED
 codeCommit: "1bd890070584c9c62d204248c591901b669592b3"
 generatedAt: "2026-07-24T00:00:00+08:00"

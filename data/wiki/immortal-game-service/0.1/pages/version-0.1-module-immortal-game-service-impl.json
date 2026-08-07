@@ -112,5 +112,7 @@
       "verificationStatus": "VERIFIED"
     }
   ],
-  "markdownPath": "pages/version-0.1-module-immortal-game-service-impl.md"
+  "markdownPath": "pages/version-0.1-module-immortal-game-service-impl.md",
+  "pageType": "FEATURE",
+  "claims": []
 }

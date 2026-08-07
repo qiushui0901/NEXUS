@@ -2,6 +2,7 @@
 featureId: "version-2.4.1-code-structure"
 projectId: "immortal-game-service"
 version: "2.4.1"
+pageType: FEATURE
 status: CODE_VERIFIED
 codeCommit: "015985d7a52d6b57f42d2e2e0c310536588663d5"
 generatedAt: "2026-07-24T00:00:00+08:00"

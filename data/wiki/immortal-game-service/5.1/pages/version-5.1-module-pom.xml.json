@@ -55,5 +55,7 @@
       "verificationStatus": "VERIFIED"
     }
   ],
-  "markdownPath": "pages/version-5.1-module-pom.xml.md"
+  "markdownPath": "pages/version-5.1-module-pom.xml.md",
+  "pageType": "FEATURE",
+  "claims": []
 }

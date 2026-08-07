@@ -66,5 +66,7 @@
       "verificationStatus": "VERIFIED"
     }
   ],
-  "markdownPath": "pages/grow-discount.md"
+  "markdownPath": "pages/grow-discount.md",
+  "pageType": "FEATURE",
+  "claims": []
 }

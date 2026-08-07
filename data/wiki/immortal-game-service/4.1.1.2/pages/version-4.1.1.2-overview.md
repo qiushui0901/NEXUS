@@ -2,6 +2,7 @@
 featureId: "version-4.1.1.2-overview"
 projectId: "immortal-game-service"
 version: "4.1.1.2"
+pageType: FEATURE
 status: CODE_VERIFIED
 codeCommit: "71dd44c474f9c640a413b1498a6b4f0e890409ec"
 generatedAt: "2026-07-24T00:00:00+08:00"

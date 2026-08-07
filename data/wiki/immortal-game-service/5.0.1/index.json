@@ -18,7 +18,8 @@
       "aliases": [
         "V5.0.1 code"
       ],
-      "evidenceCount": 19
+      "evidenceCount": 19,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-5.0.1-module-immortal-game-service-impl",
@@ -30,7 +31,8 @@
       "aliases": [
         "immortal-game-service-impl"
       ],
-      "evidenceCount": 19
+      "evidenceCount": 19,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-5.0.1-overview",
@@ -42,7 +44,8 @@
       "aliases": [
         "V5.0.1"
       ],
-      "evidenceCount": 2
+      "evidenceCount": 2,
+      "pageType": "FEATURE"
     }
   ]
 }

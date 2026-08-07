@@ -454,5 +454,7 @@
       "verificationStatus": "VERIFIED"
     }
   ],
-  "markdownPath": "pages/version-3.0.0-code-structure.md"
+  "markdownPath": "pages/version-3.0.0-code-structure.md",
+  "pageType": "FEATURE",
+  "claims": []
 }

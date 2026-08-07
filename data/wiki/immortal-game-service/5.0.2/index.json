@@ -18,7 +18,8 @@
       "aliases": [
         "V5.0.2 code"
       ],
-      "evidenceCount": 25
+      "evidenceCount": 25,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-5.0.2-module-immortal-game-service-api",
@@ -30,7 +31,8 @@
       "aliases": [
         "immortal-game-service-api"
       ],
-      "evidenceCount": 2
+      "evidenceCount": 2,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-5.0.2-module-immortal-game-service-impl",
@@ -42,7 +44,8 @@
       "aliases": [
         "immortal-game-service-impl"
       ],
-      "evidenceCount": 24
+      "evidenceCount": 24,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "grow-discount",
@@ -56,7 +59,8 @@
         "成长礼包",
         "Grow Discount"
       ],
-      "evidenceCount": 2
+      "evidenceCount": 2,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-5.0.2-overview",
@@ -69,7 +73,8 @@
         "V5.0.2",
         "5.0.2基线"
       ],
-      "evidenceCount": 2
+      "evidenceCount": 2,
+      "pageType": "FEATURE"
     }
   ]
 }

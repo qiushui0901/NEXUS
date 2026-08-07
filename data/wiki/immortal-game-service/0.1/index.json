@@ -18,7 +18,8 @@
       "aliases": [
         "V0.1 code"
       ],
-      "evidenceCount": 25
+      "evidenceCount": 25,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-0.1-module-immortal-game-service-api",
@@ -30,7 +31,8 @@
       "aliases": [
         "immortal-game-service-api"
       ],
-      "evidenceCount": 25
+      "evidenceCount": 25,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-0.1-module-immortal-game-service-impl",
@@ -42,7 +44,8 @@
       "aliases": [
         "immortal-game-service-impl"
       ],
-      "evidenceCount": 6
+      "evidenceCount": 6,
+      "pageType": "FEATURE"
     },
     {
       "featureId": "version-0.1-overview",
@@ -54,7 +57,8 @@
       "aliases": [
         "V0.1"
       ],
-      "evidenceCount": 2
+      "evidenceCount": 2,
+      "pageType": "FEATURE"
     }
   ]
 }

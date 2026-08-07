@@ -93,5 +93,7 @@
       "verificationStatus": "PENDING_REVIEW"
     }
   ],
-  "markdownPath": "pages/grow-fund.md"
+  "markdownPath": "pages/grow-fund.md",
+  "pageType": "FEATURE",
+  "claims": []
 }
