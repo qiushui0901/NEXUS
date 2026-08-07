@@ -18,6 +18,7 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -31,7 +32,7 @@ class DefaultRequirementRerankerTest {
         when(properties.retrieval()).thenReturn(new RagProperties.Retrieval(
                 50, 50, 40, 20, 10, false, 1_000, 2, 3, 30_000,
                 -1, -1, -1, -1, null, null, null, null, null));
-        when(bgeReranker.rerank(any(), any(), anyInt()))
+        when(bgeReranker.rerankScored(any(), any(), anyInt()))
                 .thenThrow(new IllegalStateException("endpoint unavailable"));
         DefaultRequirementReranker reranker = new DefaultRequirementReranker(
                 bgeReranker, mock(ChatClient.class), properties, observability);
@@ -78,7 +79,7 @@ class DefaultRequirementRerankerTest {
         @SuppressWarnings("unchecked")
         org.mockito.ArgumentCaptor<List<ChunkRecord>> captor =
                 org.mockito.ArgumentCaptor.forClass(java.util.List.class);
-        verify(bgeReranker).rerank(eq("query"), captor.capture(), eq(20));
+        verify(bgeReranker).rerankScored(eq("query"), captor.capture(), eq(20));
         assertThat(captor.getValue()).hasSize(20);
         assertThat(captor.getValue().get(0).id()).isEqualTo("chunk-0");
         assertThat(captor.getValue().get(19).id()).isEqualTo("chunk-19");
@@ -105,7 +106,7 @@ class DefaultRequirementRerankerTest {
             assertThat(diagnostic.status()).isEqualTo(RagOutcomeStatus.SUCCESS);
             assertThat(diagnostic.itemCount()).isEqualTo(1);
         });
-        verify(bgeReranker, never()).rerank(any(), any(), anyInt());
+        verify(bgeReranker, never()).rerankScored(any(), any(), anyInt());
         verify(observability).outcome(
                 "bge.rerank.singleton_skip", "requirements", "5.1",
                 RagOutcomeStatus.SUCCESS, 0, null, null);
@@ -117,7 +118,8 @@ class DefaultRequirementRerankerTest {
         RagProperties properties = mock(RagProperties.class);
         when(properties.retrieval()).thenReturn(retrieval(false));
         ChunkRecord only = chunk("only");
-        when(bgeReranker.rerank(any(), any(), anyInt())).thenReturn(List.of(only));
+        when(bgeReranker.rerankScored(any(), any(), anyInt()))
+                .thenReturn(List.of(new com.example.requirementrag.model.ScoredChunk(only, 1.0)));
         DefaultRequirementReranker reranker = new DefaultRequirementReranker(
                 bgeReranker, mock(ChatClient.class), properties, mock(RagObservability.class));
 
@@ -126,7 +128,59 @@ class DefaultRequirementRerankerTest {
 
         assertThat(outcome.stageDiagnostics()).singleElement().satisfies(diagnostic ->
                 assertThat(diagnostic.stage()).isEqualTo("bge.rerank"));
-        verify(bgeReranker).rerank("query", List.of(only), 1);
+        verify(bgeReranker).rerankScored("query", List.of(only), 1);
+    }
+
+    @Test
+    void skipsLlmRerankWhenBgeTopGapExceedsThreshold() {
+        BgeReranker bgeReranker = mock(BgeReranker.class);
+        RagProperties properties = mock(RagProperties.class);
+        when(properties.retrieval()).thenReturn(new RagProperties.Retrieval(
+                50, 50, 40, 20, 10, true, 1_000, 3, 3, 30_000,
+                -1, -1, -1, -1, null, null, null, null, null, 0.5));
+        ChunkRecord top = chunk("top");
+        ChunkRecord second = chunk("second");
+        when(bgeReranker.rerankScored(any(), any(), anyInt())).thenReturn(List.of(
+                new com.example.requirementrag.model.ScoredChunk(top, 0.9),
+                new com.example.requirementrag.model.ScoredChunk(second, 0.2)));
+        ChatClient chatClient = mock(ChatClient.class);
+        DefaultRequirementReranker reranker = new DefaultRequirementReranker(
+                bgeReranker, chatClient, properties, mock(RagObservability.class));
+
+        RagOutcome<List<ChunkRecord>> outcome = reranker.rerank(
+                "query", "requirements", "5.1", List.of(top, second), 10);
+
+        assertThat(outcome.status()).isEqualTo(RagOutcomeStatus.SUCCESS);
+        assertThat(outcome.data()).containsExactly(top, second);
+        verify(chatClient, never()).prompt();
+    }
+
+    @Test
+    void runsLlmRerankWhenBgeTopGapBelowThreshold() {
+        BgeReranker bgeReranker = mock(BgeReranker.class);
+        RagProperties properties = mock(RagProperties.class);
+        when(properties.retrieval()).thenReturn(new RagProperties.Retrieval(
+                50, 50, 40, 20, 10, true, 1_000, 3, 3, 30_000,
+                -1, -1, -1, -1, null, null, null, null, null, 0.5));
+        when(properties.llm()).thenReturn(new RagProperties.Llm("g", "r", null, null, null));
+        ChunkRecord top = chunk("top");
+        ChunkRecord second = chunk("second");
+        when(bgeReranker.rerankScored(any(), any(), anyInt())).thenReturn(List.of(
+                new com.example.requirementrag.model.ScoredChunk(top, 0.6),
+                new com.example.requirementrag.model.ScoredChunk(second, 0.5)));
+        ChatClient chatClient = mock(ChatClient.class);
+        ChatClient.ChatClientRequestSpec spec = mock(ChatClient.ChatClientRequestSpec.class);
+        when(chatClient.prompt()).thenReturn(spec);
+        when(spec.system(any(String.class))).thenReturn(spec);
+        when(spec.user(any(String.class))).thenReturn(spec);
+        when(spec.options(any())).thenReturn(spec);
+        when(spec.call()).thenReturn(mock(ChatClient.CallResponseSpec.class));
+        DefaultRequirementReranker reranker = new DefaultRequirementReranker(
+                bgeReranker, chatClient, properties, mock(RagObservability.class));
+
+        reranker.rerank("query", "requirements", "5.1", List.of(top, second), 10);
+
+        verify(chatClient, times(1)).prompt();
     }
 
     @Test
@@ -134,7 +188,8 @@ class DefaultRequirementRerankerTest {
         BgeReranker bgeReranker = mock(BgeReranker.class);
         RagProperties properties = mock(RagProperties.class);
         ChunkRecord only = chunk("only");
-        when(bgeReranker.rerank(any(), any(), anyInt())).thenReturn(List.of(only));
+        when(bgeReranker.rerankScored(any(), any(), anyInt()))
+                .thenReturn(List.of(new com.example.requirementrag.model.ScoredChunk(only, 1.0)));
         DefaultRequirementReranker reranker = new DefaultRequirementReranker(
                 bgeReranker, mock(ChatClient.class), properties, mock(RagObservability.class));
 
@@ -143,7 +198,7 @@ class DefaultRequirementRerankerTest {
 
         assertThat(outcome.status()).isEqualTo(RagOutcomeStatus.SUCCESS);
         assertThat(outcome.data()).containsExactly(only);
-        verify(bgeReranker).rerank("query", List.of(only), 1);
+        verify(bgeReranker).rerankScored("query", List.of(only), 1);
     }
 
     private RagProperties.Retrieval retrieval(Boolean childFirst) {

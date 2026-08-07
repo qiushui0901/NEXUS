@@ -35,4 +35,18 @@ public class ResilientBgeReranker implements BgeReranker {
             return candidates.stream().limit(topK).toList();
         }
     }
+
+    /** 委托带分数重排；失败时返回空列表（调用方禁用依赖分数的规则）。 */
+    @Override
+    public List<com.example.requirementrag.model.ScoredChunk> rerankScored(
+            String query, List<ChunkRecord> candidates, int topK) {
+        try {
+            return delegate.rerankScored(query, candidates, topK);
+        }
+        catch (RuntimeException exception) {
+            log.atWarn().setCause(exception).addKeyValue("event", "bge_rerank_scored_fallback")
+                    .log("BGE scored rerank unavailable, disabling score-gap rules");
+            return List.of();
+        }
+    }
 }

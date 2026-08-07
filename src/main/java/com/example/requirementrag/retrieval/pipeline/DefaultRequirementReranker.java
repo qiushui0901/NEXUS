@@ -63,9 +63,9 @@ public class DefaultRequirementReranker implements RequirementReranker {
         List<RagStageDiagnostic> diagnostics = new ArrayList<>();
         RagProperties.Retrieval retrieval = properties.retrieval();
         boolean childFirstRerank = retrieval != null && retrieval.resolvedChildFirstRerankEnabled();
-        List<ChunkRecord> bge;
+        List<com.example.requirementrag.model.ScoredChunk> bgeScored;
         if (childFirstRerank && source.size() == 1) {
-            bge = source;
+            bgeScored = List.of(new com.example.requirementrag.model.ScoredChunk(source.get(0), 1.0));
             diagnostics.add(new RagStageDiagnostic(
                     BGE_SINGLETON_SKIP_STAGE, RagOutcomeStatus.SUCCESS, 0, source.size()));
             observability.outcome(BGE_SINGLETON_SKIP_STAGE, documentId, version,
@@ -73,20 +73,38 @@ public class DefaultRequirementReranker implements RequirementReranker {
         } else {
             int bgeTopK = Math.min(retrieval == null ? limit : retrieval.resolvedBgeTopK(), source.size());
             List<ChunkRecord> bgeInput = source.size() <= bgeTopK ? source : source.subList(0, bgeTopK);
-            bge = stage(BGE_STAGE, "BGE_RERANK_UNAVAILABLE", "BGE 重排暂时不可用",
-                    documentId, version, bgeInput,
-                    () -> bgeReranker.rerank(query, bgeInput, bgeTopK),
+            bgeScored = stage(BGE_STAGE, "BGE_RERANK_UNAVAILABLE", "BGE 重排暂时不可用",
+                    documentId, version, unscored(bgeInput, bgeTopK),
+                    () -> bgeReranker.rerankScored(query, bgeInput, bgeTopK),
                     warnings, diagnostics);
         }
+        List<ChunkRecord> bge = bgeScored.stream().map(com.example.requirementrag.model.ScoredChunk::record).toList();
         List<ChunkRecord> result = bge;
         if (retrieval != null && retrieval.llmRerankEnabled()) {
-            result = stage(LLM_STAGE, "LLM_RERANK_UNAVAILABLE", "LLM 重排暂时不可用",
-                    documentId, version, bge, () -> llmRerank(query, bge),
-                    warnings, diagnostics);
+            double skipGap = retrieval.resolvedLlmRerankSkipGap();
+            if (skipGap > 0 && topGapExceeds(bgeScored, skipGap)) {
+                diagnostics.add(new RagStageDiagnostic(LLM_STAGE, RagOutcomeStatus.SUCCESS, 0, bge.size()));
+                observability.outcome(LLM_STAGE, documentId, version, RagOutcomeStatus.SUCCESS, 0, null, null);
+            } else {
+                result = stage(LLM_STAGE, "LLM_RERANK_UNAVAILABLE", "LLM 重排暂时不可用",
+                        documentId, version, bge, () -> llmRerank(query, bge),
+                        warnings, diagnostics);
+            }
         }
         result = result.stream().limit(limit).toList();
         return new RagOutcome<>(warnings.isEmpty() ? RagOutcomeStatus.SUCCESS : RagOutcomeStatus.DEGRADED,
                 result, warnings, diagnostics);
+    }
+
+    /** BGE 失败时的回退：保持输入顺序截取 topK，分数记 0（分差规则自然不触发）。 */
+    private List<com.example.requirementrag.model.ScoredChunk> unscored(List<ChunkRecord> input, int topK) {
+        return input.stream().limit(topK)
+                .map(chunk -> new com.example.requirementrag.model.ScoredChunk(chunk, 0.0)).toList();
+    }
+
+    /** BGE top1 与后续候选分差达到阈值时跳过 LLM 重排；候选不足两个时返回 false。 */
+    private boolean topGapExceeds(List<com.example.requirementrag.model.ScoredChunk> scored, double skipGap) {
+        return scored.size() >= 2 && scored.get(0).score() - scored.get(1).score() >= skipGap;
     }
 
     /** 调用 LLM 对候选段落排序：返回的 ID 顺序即为结果；LLM 输出为空时保留候选原序。 */
@@ -109,14 +127,14 @@ public class DefaultRequirementReranker implements RequirementReranker {
     }
 
     /** 执行单个重排阶段：成功时记录 SUCCESS 诊断，异常时降级回退并记录警告与 DEGRADED 诊断。 */
-    private List<ChunkRecord> stage(String stage, String warningCode, String warningMessage,
-                                    String documentId, String version, List<ChunkRecord> fallback,
-                                    java.util.function.Supplier<List<ChunkRecord>> action,
-                                    List<RagWarning> warnings, List<RagStageDiagnostic> diagnostics) {
+    private <T> List<T> stage(String stage, String warningCode, String warningMessage,
+                              String documentId, String version, List<T> fallback,
+                              java.util.function.Supplier<List<T>> action,
+                              List<RagWarning> warnings, List<RagStageDiagnostic> diagnostics) {
         long started = System.nanoTime();
         try {
-            List<ChunkRecord> value = action.get();
-            List<ChunkRecord> result = value == null || value.isEmpty() ? fallback : List.copyOf(value);
+            List<T> value = action.get();
+            List<T> result = value == null || value.isEmpty() ? fallback : List.copyOf(value);
             long duration = elapsedMillis(started);
             diagnostics.add(new RagStageDiagnostic(stage, RagOutcomeStatus.SUCCESS, duration, result.size()));
             observability.outcome(stage, documentId, version, RagOutcomeStatus.SUCCESS, duration, null, null);

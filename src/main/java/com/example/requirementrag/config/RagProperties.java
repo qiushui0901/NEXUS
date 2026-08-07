@@ -158,11 +158,37 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
             Boolean enrichedBgePassageEnabled,
             Boolean codeQueryExpansionEnabled,
             Boolean codeBgeRerankEnabled,
-            Integer codeCandidateMultiplier
+            Integer codeCandidateMultiplier,
+            Double llmRerankSkipGap
     ) {
+        @ConstructorBinding
+        public Retrieval {
+        }
+
+        /** 兼容构造器：未配置 LLM 重排跳过阈值。 */
+        public Retrieval(int denseTopK, int sparseTopK, int hybridTopK, int bgeTopK, int llmTopK,
+                         boolean llmRerankEnabled, long branchTimeoutMs, int parallelism,
+                         int circuitBreakerFailureThreshold, long circuitBreakerOpenMs,
+                         long resultCacheTtlSeconds, int resultCacheMaxEntries,
+                         long embeddingCacheTtlSeconds, int embeddingCacheMaxEntries,
+                         Boolean childFirstRerankEnabled, Boolean enrichedBgePassageEnabled,
+                         Boolean codeQueryExpansionEnabled, Boolean codeBgeRerankEnabled,
+                         Integer codeCandidateMultiplier) {
+            this(denseTopK, sparseTopK, hybridTopK, bgeTopK, llmTopK, llmRerankEnabled, branchTimeoutMs,
+                    parallelism, circuitBreakerFailureThreshold, circuitBreakerOpenMs,
+                    resultCacheTtlSeconds, resultCacheMaxEntries, embeddingCacheTtlSeconds,
+                    embeddingCacheMaxEntries, childFirstRerankEnabled, enrichedBgePassageEnabled,
+                    codeQueryExpansionEnabled, codeBgeRerankEnabled, codeCandidateMultiplier, null);
+        }
+
         /** BGE 重排候选数，未配置或 ≤0 时默认 20。 */
         public int resolvedBgeTopK() {
             return bgeTopK <= 0 ? 20 : bgeTopK;
+        }
+
+        /** LLM 重排跳过阈值：BGE top1 与后续候选分差达到该值时跳过 LLM 重排；≤0 表示不启用。 */
+        public double resolvedLlmRerankSkipGap() {
+            return llmRerankSkipGap == null ? 0 : llmRerankSkipGap;
         }
 
         /** LLM 重排候选数，未配置或 ≤0 时默认 10。 */
@@ -246,7 +272,8 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
                     + ":" + resolvedEnrichedBgePassageEnabled()
                     + ":" + resolvedCodeQueryExpansionEnabled()
                     + ":" + resolvedCodeBgeRerankEnabled()
-                    + ":" + resolvedCodeCandidateMultiplier();
+                    + ":" + resolvedCodeCandidateMultiplier()
+                    + ":" + resolvedLlmRerankSkipGap();
         }
     }
 

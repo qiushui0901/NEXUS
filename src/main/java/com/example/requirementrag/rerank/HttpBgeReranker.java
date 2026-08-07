@@ -2,6 +2,7 @@ package com.example.requirementrag.rerank;
 
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.model.ChunkRecord;
+import com.example.requirementrag.model.ScoredChunk;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -43,6 +44,13 @@ public class HttpBgeReranker implements BgeReranker {
     /** 调用 BGE API 对候选子块文本重排，按分数降序返回 topK。 */
     @Override
     public List<ChunkRecord> rerank(String query, List<ChunkRecord> candidates, int topK) {
+        return rerankScored(query, candidates, topK).stream()
+                .map(ScoredChunk::record).toList();
+    }
+
+    /** 调用 BGE API 对候选子块文本重排，返回带相关性分数的 topK 结果。 */
+    @Override
+    public List<ScoredChunk> rerankScored(String query, List<ChunkRecord> candidates, int topK) {
         if (candidates.isEmpty()) return List.of();
         RestClient.RequestBodySpec request = client.post().uri(properties.path()).contentType(MediaType.APPLICATION_JSON);
         if (properties.apiKey() != null && !properties.apiKey().isBlank()) {
@@ -65,7 +73,8 @@ public class HttpBgeReranker implements BgeReranker {
             double score = ((Number) item.getOrDefault("score", item.getOrDefault("relevance_score", 0))).doubleValue();
             if (index >= 0 && index < candidates.size()) scored.add(new Scored(candidates.get(index), score));
         }
-        return scored.stream().sorted(Comparator.comparingDouble(Scored::score).reversed()).limit(topK).map(Scored::chunk).toList();
+        return scored.stream().sorted(Comparator.comparingDouble(Scored::score).reversed()).limit(topK)
+                .map(s -> new ScoredChunk(s.chunk(), s.score())).toList();
     }
 
 

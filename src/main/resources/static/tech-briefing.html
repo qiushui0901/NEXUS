@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="NEXUS 0.8.3 技术选型与差异化优势演示">
+  <title>NEXUS · 技术选型与优势</title>
+  <style>
+    :root {
+      --ink: #18241f;
+      --muted: #62716a;
+      --paper: #f4f7f5;
+      --surface: #ffffff;
+      --line: #cfd9d4;
+      --green: #08785d;
+      --green-soft: #d8eee7;
+      --blue: #1b63a6;
+      --blue-soft: #dcebf8;
+      --amber: #b26512;
+      --amber-soft: #f7e7d1;
+      --red: #a84339;
+      --shadow: 0 18px 55px rgba(29, 51, 42, .10);
+      --slide-pad: clamp(28px, 5vw, 76px);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; scroll-snap-type: y mandatory; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: "Avenir Next", Avenir, "PingFang SC", "Microsoft YaHei", sans-serif;
+      letter-spacing: 0;
+    }
+    button, a { font: inherit; }
+    button:focus-visible, a:focus-visible { outline: 3px solid var(--blue); outline-offset: 3px; }
+    .deck { min-height: 100vh; }
+    .slide {
+      position: relative;
+      min-height: 100svh;
+      padding: var(--slide-pad);
+      scroll-snap-align: start;
+      overflow: hidden;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+    .slide:nth-child(even) { background: var(--paper); }
+    .slide-inner { width: min(1380px, 100%); min-height: calc(100svh - 2 * var(--slide-pad)); margin: 0 auto; display: flex; flex-direction: column; }
+    .kicker, .utility { color: var(--green); font: 700 12px/1.2 "SFMono-Regular", Consolas, monospace; text-transform: uppercase; }
+    .kicker { margin-bottom: 18px; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 { max-width: 1040px; margin-bottom: 28px; font: 700 clamp(48px, 7.2vw, 104px)/.98 Georgia, "Songti SC", serif; }
+    h2 { max-width: 1000px; margin-bottom: 20px; font: 700 clamp(36px, 4.8vw, 70px)/1.06 Georgia, "Songti SC", serif; }
+    h3 { margin-bottom: 10px; font-size: clamp(18px, 1.6vw, 24px); line-height: 1.25; }
+    .lead { max-width: 950px; color: var(--muted); font-size: clamp(18px, 2vw, 28px); line-height: 1.55; }
+    .strong { color: var(--ink); font-weight: 700; }
+    .mono { font-family: "SFMono-Regular", Consolas, monospace; }
+    .slide-no { position: absolute; top: var(--slide-pad); right: var(--slide-pad); color: var(--muted); font: 600 12px/1 monospace; }
+    .footnote { margin-top: auto; padding-top: 24px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+
+    .cover { color: #f3f8f5; background: #112a21 !important; }
+    .cover .slide-inner { justify-content: center; }
+    .cover .kicker { color: #77d7b7; }
+    .cover h1 { max-width: 1160px; }
+    .cover .lead { max-width: 860px; color: #bfd0c8; }
+    .cover-line { width: min(900px, 80vw); height: 2px; margin: 44px 0; background: linear-gradient(90deg, #77d7b7 0 24%, #50a8df 24% 52%, #edb363 52% 76%, #fff 76%); }
+    .cover-meta { display: flex; flex-wrap: wrap; gap: 18px 34px; color: #a9beb5; font: 600 12px/1.4 monospace; }
+    .cover .slide-no { color: #86a198; }
+
+    .thesis-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, .74fr); gap: clamp(32px, 6vw, 90px); align-items: end; flex: 1; }
+    .not-chat { border-left: 5px solid var(--green); padding: 22px 0 22px 26px; font-size: clamp(22px, 3vw, 42px); line-height: 1.25; }
+    .not-chat s { color: #85938d; text-decoration-color: var(--red); text-decoration-thickness: 3px; }
+    .thesis-list { display: grid; gap: 0; border-top: 1px solid var(--line); }
+    .thesis-item { display: grid; grid-template-columns: 42px 1fr; gap: 14px; padding: 20px 0; border-bottom: 1px solid var(--line); }
+    .thesis-item b { color: var(--green); font-family: monospace; }
+    .thesis-item span { color: var(--muted); line-height: 1.55; }
+
+    .architecture { display: grid; grid-template-columns: 1fr 68px 1.15fr 68px .9fr; align-items: stretch; gap: 10px; margin-top: 34px; flex: 1; }
+    .arch-column { display: flex; flex-direction: column; gap: 12px; }
+    .arch-label { margin-bottom: 2px; color: var(--muted); font: 700 11px/1.2 monospace; text-transform: uppercase; }
+    .arch-block { flex: 1; min-height: 82px; padding: 18px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+    .arch-block.primary { border-color: #76b6a2; background: var(--green-soft); }
+    .arch-block.blue { border-color: #8db9df; background: var(--blue-soft); }
+    .arch-block.amber { border-color: #dfb982; background: var(--amber-soft); }
+    .arch-block p { margin: 8px 0 0; color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .arch-arrow { display: grid; place-items: center; color: var(--green); font-size: 34px; }
+
+    .choice-table { margin-top: 28px; border-top: 2px solid var(--ink); }
+    .choice-row { display: grid; grid-template-columns: minmax(170px, .75fr) minmax(210px, 1fr) minmax(280px, 1.8fr); gap: 22px; padding: 17px 0; border-bottom: 1px solid var(--line); align-items: start; }
+    .choice-row.header { color: var(--muted); font: 700 11px/1.2 monospace; text-transform: uppercase; }
+    .choice-row p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+    .choice-row .selection { color: var(--blue); font-weight: 700; }
+
+    .flow { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; margin-top: 38px; }
+    .flow-step { position: relative; min-height: 170px; padding: 22px 18px; border-top: 4px solid var(--green); background: var(--green-soft); }
+    .flow-step:nth-child(2), .flow-step:nth-child(4) { border-color: var(--blue); background: var(--blue-soft); }
+    .flow-step:nth-child(5) { border-color: var(--amber); background: var(--amber-soft); }
+    .flow-step:not(:last-child)::after { content: ""; position: absolute; z-index: 2; top: 50%; right: -18px; width: 24px; height: 2px; background: var(--ink); }
+    .flow-step .utility { color: var(--muted); }
+    .flow-step p { margin: 18px 0 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+    .reliability-strip { display: grid; grid-template-columns: repeat(4, 1fr); margin-top: 22px; border: 1px solid var(--line); }
+    .reliability-strip div { padding: 18px; border-right: 1px solid var(--line); }
+    .reliability-strip div:last-child { border-right: 0; }
+    .reliability-strip strong { display: block; color: var(--green); font-size: 22px; }
+    .reliability-strip span { color: var(--muted); font-size: 12px; }
+
+    .evidence-stage { display: grid; grid-template-columns: 1fr .92fr; gap: clamp(28px, 5vw, 72px); align-items: center; flex: 1; }
+    .evidence-chain { position: relative; padding-left: 42px; }
+    .evidence-chain::before { content: ""; position: absolute; left: 11px; top: 12px; bottom: 12px; width: 2px; background: var(--green); }
+    .evidence-node { position: relative; margin: 0 0 25px; padding: 18px 20px; border: 1px solid var(--line); background: var(--surface); }
+    .evidence-node::before { content: ""; position: absolute; left: -37px; top: 24px; width: 14px; height: 14px; border: 3px solid var(--surface); background: var(--green); }
+    .evidence-node p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+    .evidence-output { padding: clamp(28px, 4vw, 52px); color: #eff7f3; background: #183d31; box-shadow: var(--shadow); }
+    .evidence-output blockquote { margin: 26px 0; font: 600 clamp(22px, 2.5vw, 34px)/1.45 Georgia, "Songti SC", serif; }
+    .citation { display: flex; gap: 9px; flex-wrap: wrap; }
+    .citation span { padding: 6px 9px; border: 1px solid #709789; color: #bde5d6; font: 600 11px/1 monospace; }
+
+    .compare-wrap { overflow-x: auto; margin-top: 26px; }
+    .compare { min-width: 980px; border-collapse: collapse; width: 100%; font-size: 13px; }
+    .compare th, .compare td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: center; }
+    .compare th:first-child, .compare td:first-child { text-align: left; font-weight: 700; }
+    .compare thead th { color: var(--muted); font: 700 11px/1.2 monospace; text-transform: uppercase; }
+    .compare .nexus { background: var(--green-soft); color: #075e49; font-weight: 800; }
+    .dot-yes, .dot-part, .dot-no { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+    .dot-yes { background: var(--green); }
+    .dot-part { background: var(--amber); }
+    .dot-no { border: 1px solid #9ba7a1; background: transparent; }
+    .legend { display: flex; gap: 20px; margin-top: 16px; color: var(--muted); font-size: 12px; }
+    .legend span { display: inline-flex; align-items: center; gap: 7px; }
+
+    .advantage-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 28px; }
+    .advantage { min-height: 200px; padding: 26px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+    .advantage .index { margin-bottom: 26px; color: var(--green); font: 700 12px monospace; }
+    .advantage p { color: var(--muted); line-height: 1.65; }
+    .advantage strong { color: var(--ink); }
+
+    .strategy { display: grid; grid-template-columns: .8fr 1.2fr; gap: clamp(34px, 6vw, 90px); align-items: center; flex: 1; }
+    .strategy-line { border-left: 3px solid var(--line); padding-left: 32px; }
+    .strategy-step { position: relative; padding: 12px 0 28px; }
+    .strategy-step::before { content: ""; position: absolute; left: -40px; top: 17px; width: 13px; height: 13px; background: var(--surface); border: 3px solid var(--green); }
+    .strategy-step p { margin: 7px 0 0; color: var(--muted); line-height: 1.55; }
+    .positioning { padding: 34px; border: 1px solid var(--line); background: var(--green-soft); }
+    .positioning .formula { margin: 24px 0; font: 700 clamp(24px, 3vw, 42px)/1.35 Georgia, "Songti SC", serif; }
+    .positioning p { color: #3e5d52; line-height: 1.65; }
+
+    .controls { position: fixed; z-index: 20; right: 18px; bottom: 18px; display: flex; align-items: center; gap: 8px; padding: 7px; border: 1px solid #b7c5be; border-radius: 6px; background: rgba(255, 255, 255, .94); box-shadow: var(--shadow); }
+    .controls button, .controls a { display: grid; place-items: center; width: 38px; height: 38px; border: 0; border-radius: 4px; color: var(--ink); background: transparent; cursor: pointer; text-decoration: none; }
+    .controls button:hover, .controls a:hover { background: var(--green-soft); }
+    .progress { min-width: 58px; color: var(--muted); text-align: center; font: 600 11px monospace; }
+    .toc { position: fixed; z-index: 30; inset: 0; display: none; place-items: center; padding: 24px; background: rgba(17, 42, 33, .84); }
+    .toc.open { display: grid; }
+    .toc-panel { width: min(720px, 100%); max-height: 82vh; overflow: auto; padding: 30px; background: var(--surface); box-shadow: var(--shadow); }
+    .toc-panel header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .toc-panel h2 { margin: 0; font-size: 34px; }
+    .toc-panel button { border: 0; background: transparent; font-size: 26px; cursor: pointer; }
+    .toc-list { display: grid; gap: 0; }
+    .toc-list a { display: grid; grid-template-columns: 32px 1fr; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line); color: var(--ink); text-decoration: none; }
+    .toc-list a span:first-child { color: var(--green); font-family: monospace; }
+    .speaker-note { display: none; }
+
+    @media (max-width: 900px) {
+      html { scroll-snap-type: none; }
+      .slide { min-height: auto; }
+      .slide-inner { min-height: auto; }
+      .thesis-grid, .evidence-stage, .strategy { grid-template-columns: 1fr; }
+      .architecture { grid-template-columns: 1fr; }
+      .arch-arrow { transform: rotate(90deg); min-height: 42px; }
+      .flow { grid-template-columns: 1fr; }
+      .flow-step { min-height: 130px; }
+      .flow-step:not(:last-child)::after { top: auto; bottom: -18px; right: 50%; width: 2px; height: 24px; }
+      .reliability-strip, .advantage-grid { grid-template-columns: 1fr; }
+      .reliability-strip div { border-right: 0; border-bottom: 1px solid var(--line); }
+      .choice-row { grid-template-columns: 1fr; gap: 6px; }
+      .choice-row.header { display: none; }
+      .slide-no { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+    @media print {
+      @page { size: landscape; margin: 0; }
+      body { background: #fff; }
+      .slide { min-height: 100vh; height: 100vh; break-after: page; }
+      .controls, .toc { display: none !important; }
+    }
+  </style>
+</head>
+<body>
+<main class="deck" id="deck">
+  <section class="slide cover" data-title="技术选型与差异化优势">
+    <span class="slide-no">01 / 08</span>
+    <div class="slide-inner">
+      <div class="kicker">NEXUS 0.8.3 · TECHNICAL BRIEFING</div>
+      <h1>从“模型会回答”<br>到“结论有证据”</h1>
+      <div class="cover-line" aria-hidden="true"></div>
+      <p class="lead">一套面向研发 Agent 的版本化需求、代码、测试与 Wiki 证据平台。</p>
+      <div class="cover-meta"><span>JAVA 17</span><span>SPRING BOOT 3.4.9</span><span>SPRING AI 1.1.2</span><span>QDRANT + SQLITE</span><span>MCP STREAMABLE HTTP</span></div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="我们解决的不是聊天问题">
+    <span class="slide-no">02 / 08</span>
+    <div class="slide-inner">
+      <div class="kicker">01 · PRODUCT THESIS</div>
+      <div class="thesis-grid">
+        <div>
+          <h2>我们解决的不是<br>“聊天问题”</h2>
+          <div class="not-chat"><s>再造一个 AI IDE</s><br><span class="strong">建立研发事实的证据底座</span></div>
+        </div>
+        <div class="thesis-list">
+          <div class="thesis-item"><b>01</b><span><strong>版本边界</strong><br>每条需求、代码和 Wiki 结论都有项目、版本或 commit。</span></div>
+          <div class="thesis-item"><b>02</b><span><strong>证据边界</strong><br>模型只能引用当前检索白名单中的稳定证据 ID。</span></div>
+          <div class="thesis-item"><b>03</b><span><strong>不确定性可见</strong><br>无结果、降级、冲突与静态分析置信度不会被包装成确定答案。</span></div>
+          <div class="thesis-item"><b>04</b><span><strong>Agent 可调用</strong><br>通过 MCP 把内部研发知识交给 Copilot、Cursor、Claude Code 等客户端。</span></div>
+        </div>
+      </div>
+      <p class="footnote">定位：证据服务，而非通用模型、通用 IDE 或项目管理系统。</p>
+    </div>
+  </section>
+
+  <section class="slide" data-title="总体架构">
+    <span class="slide-no">03 / 08</span>
+    <div class="slide-inner">
+      <div class="kicker">02 · ARCHITECTURE</div>
+      <h2>双知识引擎，统一证据出口</h2>
+      <p class="lead">语义检索、静态结构与版本事实采用不同存储，各做自己擅长的事。</p>
+      <div class="architecture">
+        <div class="arch-column">
+          <div class="arch-label">Knowledge inputs</div>
+          <div class="arch-block primary"><h3>需求知识</h3><p>Tika / ZIP HTML / Excel → 清洗 → Parent/Child 分块 → 内容哈希</p></div>
+          <div class="arch-block blue"><h3>代码知识</h3><p>Tree-sitter 多语言 AST → Chunk / Symbol / Call → Git commit 快照</p></div>
+          <div class="arch-block amber"><h3>版本事实</h3><p>需求快照、Git diff、测试快照、Wiki 索引与草稿生命周期</p></div>
+        </div>
+        <div class="arch-arrow" aria-hidden="true">→</div>
+        <div class="arch-column">
+          <div class="arch-label">Reasoning plane</div>
+          <div class="arch-block primary"><h3>Qdrant 混合检索</h3><p>需求：dense + sparse；代码：dense + desc_dense + sparse，RRF 融合</p></div>
+          <div class="arch-block blue"><h3>SQLite 符号图</h3><p>项目 / commit 隔离，EXACT / SAME_FILE / HEURISTIC / UNRESOLVED</p></div>
+          <div class="arch-block"><h3>Agentic 编排</h3><p>需求单线、代码单线、混合策略；最多两跳，证据不足才补检</p></div>
+          <div class="arch-block amber"><h3>证据与版本治理</h3><p>引用校验、冲突检测、四维版本对比、Wiki 审核发布与回滚</p></div>
+        </div>
+        <div class="arch-arrow" aria-hidden="true">→</div>
+        <div class="arch-column">
+          <div class="arch-label">Delivery</div>
+          <div class="arch-block primary"><h3>MCP</h3><p>10 个研发知识工具、Resources 与 Prompts，受控响应边界</p></div>
+          <div class="arch-block blue"><h3>REST + SSE</h3><p>索引、检索、影响分析、版本对比与真实流式开发方案</p></div>
+          <div class="arch-block amber"><h3>独立 Wiki</h3><p>已发布知识不依赖模型与 Qdrant，外部 AI 故障时仍可阅读</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="技术选型">
+    <span class="slide-no">04 / 08</span>
+    <div class="slide-inner">
+      <div class="kicker">03 · TECHNOLOGY CHOICES</div>
+      <h2>选型围绕边界，不围绕热度</h2>
+      <p class="lead">每个组件承担一种明确的数据语义，避免用一个数据库或一个模型包办所有问题。</p>
+      <div class="choice-table">
+        <div class="choice-row header"><span>问题</span><span>选择</span><span>为什么</span></div>
+        <div class="choice-row"><strong>企业 Java 服务</strong><span class="selection">Java 17 + Spring Boot 3.4.9</span><p>稳定运行时、成熟 Web/Validation/Actuator 体系；JDK 与内部平台基线一致。</p></div>
+        <div class="choice-row"><strong>模型接入</strong><span class="selection">Spring AI 1.1.2 + OpenAI Compatible</span><p>生成、嵌入和工具协议解耦；模型按任务路由，不绑定单一供应商。</p></div>
+        <div class="choice-row"><strong>语义召回</strong><span class="selection">Qdrant named vectors + sparse</span><p>同一 point 同时承载原始语义、业务描述和关键词信号，原生过滤项目与版本。</p></div>
+        <div class="choice-row"><strong>代码结构</strong><span class="selection">Tree-sitter + SQLite</span><p>Tree-sitter 统一多语言抽取；SQLite 用事务保存可审计的 commit 级调用图，无需引入图数据库。</p></div>
+        <div class="choice-row"><strong>文档解析</strong><span class="selection">Apache Tika + 专用 ZIP/XLSX Loader</span><p>通用格式交给成熟解析器，业务结构保留专用规则，避免统一成失真的纯文本。</p></div>
+        <div class="choice-row"><strong>Agent 接入</strong><span class="selection">MCP Streamable HTTP</span><p>不自建 IDE；把内部证据开放给现有 Agent 客户端，复用开发者已有工作流。</p></div>
+        <div class="choice-row"><strong>前端交付</strong><span class="selection">静态 HTML + Vue WebJar</span><p>管理与浏览页面随单个 JAR 发布，无 Node 构建链；当前规模下维护成本最低。</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="检索与可靠性">
+    <span class="slide-no">05 / 08</span>
+    <div class="slide-inner">
+      <div class="kicker">04 · RETRIEVAL & RELIABILITY</div>
+      <h2>不是一次向量查询，而是一条可诊断管线</h2>
+      <div class="flow" aria-label="检索流程">
+        <div class="flow-step"><div class="utility">Route</div><h3>意图与画像</h3><p>需求评审、代码定位或混合开发问题，选择最小检索策略。</p></div>
+        <div class="flow-step"><div class="utility">Recall</div><h3>多路并行召回</h3><p>需求 dense/sparse，代码正文/业务描述/sparse，受控线程池并发。</p></div>
+        <div class="flow-step"><div class="utility">Rank</div><h3>融合与重排</h3><p>RRF 合并多路排名，LLM 重排可配置，保留混合顺序兜底。</p></div>
+        <div class="flow-step"><div class="utility">Reflect</div><h3>证据反思</h3><p>检查命中阈值、唯一父块和双侧覆盖；不足时最多补检一次。</p></div>
+        <div class="flow-step"><div class="utility">Deliver</div><h3>结构化交付</h3><p>返回证据、质量、阶段诊断与稳定 warning code。</p></div>
+      </div>
+      <div class="reliability-strip">
+        <div><strong>32</strong><span>Embedding 批大小；失败自动二分定位</span></div>
+        <div><strong>2 / 5s</strong><span>Qdrant 连接 / 读取超时</span></div>
+        <div><strong>2 hops</strong><span>Agentic 最大跳数，拒绝无界循环</span></div>
+        <div><strong>CI gate</strong><span>冻结黄金命中默认回归，不依赖外部服务</span></div>
+      </div>
+      <p class="footnote">0.8.3 已落地：安全需求索引替换、代码 collection + Alias 原子发布、Webhook 任务合并、有界跨项目检索。</p>
+    </div>
+  </section>
+
+  <section class="slide" data-title="证据优先">
+    <span class="slide-no">06 / 08</span>
+    <div class="slide-inner">
+      <div class="kicker">05 · EVIDENCE FIRST</div>
+      <div class="evidence-stage">
+        <div>
+          <h2>优势不在“更敢回答”<br>而在“知道依据在哪”</h2>
+          <div class="evidence-chain">
+            <div class="evidence-node"><h3>需求事实</h3><p>documentId + version + parent/child hash</p></div>
+            <div class="evidence-node"><h3>代码事实</h3><p>projectId + commit + file + symbol + line</p></div>
+            <div class="evidence-node"><h3>结构事实</h3><p>调用边带解析级别，歧义不冒充精确关系</p></div>
+            <div class="evidence-node"><h3>发布事实</h3><p>Wiki 草稿经审核状态机进入正式版本</p></div>
+          </div>
+        </div>
+        <div class="evidence-output">
+          <div class="utility" style="color:#8fe0c4">ANSWER CONTRACT</div>
+          <blockquote>“修改鉴权撤销逻辑时，应同步检查缓存失效入口与回归用例。”</blockquote>
+          <div class="citation"><span>requirement:3</span><span>code:1</span><span>code-graph:7</span></div>
+          <p style="margin:28px 0 0;color:#b8d0c7;line-height:1.7">非法引用会被过滤；证据不足返回降级和缺口，不让模型用流畅语言掩盖不确定性。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="竞品对比">
+    <span class="slide-no">07 / 08</span>
+    <div class="slide-inner">
+      <div class="kicker">06 · MARKET POSITION</div>
+      <h2>我们不替代 Copilot，<br>我们给 Agent 提供内部事实</h2>
+      <div class="compare-wrap">
+        <table class="compare">
+          <thead><tr><th>能力维度</th><th class="nexus">NEXUS</th><th>Sourcegraph</th><th>GitHub Copilot</th><th>Atlassian Rovo</th><th>DeepWiki / Devin</th><th>Glean</th></tr></thead>
+          <tbody>
+            <tr><td>跨仓代码理解</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td></tr>
+            <tr><td>符号图与影响分析</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-no"></i></td></tr>
+            <tr><td>企业文档 / 需求搜索</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td></tr>
+            <tr><td>需求版本快照与差异</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td></tr>
+            <tr><td>需求 + 代码 + 测试 + Wiki 对比</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td></tr>
+            <tr><td>证据白名单与稳定 ID</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td></tr>
+            <tr><td>自主修改代码 / 提交 PR</td><td class="nexus"><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td></tr>
+            <tr><td>MCP / Agent 工具接入</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td></tr>
+            <tr><td>私有部署与模型可替换</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="legend"><span><i class="dot-yes"></i>核心能力</span><span><i class="dot-part"></i>具备或可通过集成覆盖</span><span><i class="dot-no"></i>非核心定位</span></div>
+      <p class="footnote">比较基于公开产品定位，强调能力重心而非采购结论；云产品能力会持续变化。NEXUS 的“无自主改码”是产品边界：执行交给现有 Agent。</p>
+    </div>
+  </section>
+
+  <section class="slide" data-title="我们的优势与下一步">
+    <span class="slide-no">08 / 08</span>
+    <div class="slide-inner">
+      <div class="kicker">07 · ADVANTAGE & STRATEGY</div>
+      <div class="strategy">
+        <div>
+          <h2>优势来自组合，<br>壁垒来自数据契约</h2>
+          <div class="positioning">
+            <div class="utility">POSITIONING</div>
+            <div class="formula">研发 Agent 的<br>版本化证据基础设施</div>
+            <p>上接 Copilot、Cursor、Claude Code、TRAE 等 Agent；下接内部需求、代码、测试、Wiki 与版本事实。</p>
+          </div>
+        </div>
+        <div class="strategy-line">
+          <div class="strategy-step"><h3>01 · 先做深证据链</h3><p>强化需求 → 代码 → 调用影响 → 测试的显式关联，而不是增加聊天入口。</p></div>
+          <div class="strategy-step"><h3>02 · 再做质量闭环</h3><p>固定黄金集、污染率、引用合法率和 P95；模型与参数变更必须过门禁。</p></div>
+          <div class="strategy-step"><h3>03 · 保持可替换</h3><p>模型供应商、Embedding、Agent 客户端和存储实现均不成为业务事实的唯一宿主。</p></div>
+          <div class="strategy-step"><h3>04 · 不扩张执行面</h3><p>不自建 AI IDE，不与成熟 Agent 争夺代码执行；通过 MCP 放大已有知识资产。</p></div>
+        </div>
+      </div>
+      <p class="footnote">一句话总结：通用 Agent 负责“做事”，NEXUS 负责告诉它“基于哪个版本、哪些证据、影响到哪里”。</p>
+    </div>
+  </section>
+</main>
+
+<nav class="controls" aria-label="演示控制">
+  <button type="button" id="tocButton" title="目录" aria-label="打开目录">☰</button>
+  <button type="button" id="prevButton" title="上一页" aria-label="上一页">←</button>
+  <span class="progress" id="progress">1 / 8</span>
+  <button type="button" id="nextButton" title="下一页" aria-label="下一页">→</button>
+  <a href="/" title="返回首页" aria-label="返回首页">⌂</a>
+</nav>
+
+<div class="toc" id="toc" role="dialog" aria-modal="true" aria-labelledby="tocTitle">
+  <div class="toc-panel">
+    <header><h2 id="tocTitle">演示目录</h2><button type="button" id="tocClose" aria-label="关闭目录">×</button></header>
+    <div class="toc-list" id="tocList"></div>
+  </div>
+</div>
+
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  const progress = document.getElementById('progress');
+  const toc = document.getElementById('toc');
+  const tocList = document.getElementById('tocList');
+  let current = 0;
+
+  slides.forEach((slide, index) => {
+    slide.id = `slide-${index + 1}`;
+    const link = document.createElement('a');
+    link.href = `#${slide.id}`;
+    link.innerHTML = `<span>${String(index + 1).padStart(2, '0')}</span><span>${slide.dataset.title}</span>`;
+    link.addEventListener('click', () => toc.classList.remove('open'));
+    tocList.appendChild(link);
+  });
+
+  function go(index) {
+    current = Math.max(0, Math.min(slides.length - 1, index));
+    slides[current].scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    update();
+  }
+
+  function update() {
+    progress.textContent = `${current + 1} / ${slides.length}`;
+    document.getElementById('prevButton').disabled = current === 0;
+    document.getElementById('nextButton').disabled = current === slides.length - 1;
+  }
+
+  const observer = new IntersectionObserver(entries => {
+    const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+    if (!visible) return;
+    current = slides.indexOf(visible.target);
+    update();
+  }, { threshold: [.45, .7] });
+  slides.forEach(slide => observer.observe(slide));
+
+  document.getElementById('prevButton').addEventListener('click', () => go(current - 1));
+  document.getElementById('nextButton').addEventListener('click', () => go(current + 1));
+  document.getElementById('tocButton').addEventListener('click', () => toc.classList.add('open'));
+  document.getElementById('tocClose').addEventListener('click', () => toc.classList.remove('open'));
+  toc.addEventListener('click', event => { if (event.target === toc) toc.classList.remove('open'); });
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') toc.classList.remove('open');
+    if (['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(event.key)) { event.preventDefault(); go(current + 1); }
+    if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(event.key)) { event.preventDefault(); go(current - 1); }
+    if (event.key === 'Home') { event.preventDefault(); go(0); }
+    if (event.key === 'End') { event.preventDefault(); go(slides.length - 1); }
+  });
+  update();
+</script>
+</body>
+</html>

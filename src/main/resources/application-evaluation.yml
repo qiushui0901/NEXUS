@@ -1,0 +1,18 @@
+# 评测档位：固定语料与参数、关闭非确定性缓存影响，配合确定性检索质量门禁使用。
+# 启用：SPRING_PROFILES_ACTIVE=evaluation
+app:
+  rag:
+    retrieval:
+      dense-top-k: 50
+      sparse-top-k: 50
+      hybrid-top-k: 40
+      bge-top-k: 20
+      llm-top-k: 10
+      llm-rerank-enabled: false
+      result-cache-ttl-seconds: -1
+      result-cache-max-entries: -1
+      embedding-cache-ttl-seconds: 3600
+      embedding-cache-max-entries: 512
+      code-bge-rerank-enabled: false
+    knowledge:
+      bootstrap-enabled: false

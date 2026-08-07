@@ -1,0 +1,24 @@
+# 生产档位：显式外部服务地址、持久化路径与观测配置。
+# 启用：SPRING_PROFILES_ACTIVE=production
+# 所有值必须通过环境变量显式提供，不提供默认的外部地址。
+spring:
+  ai:
+    openai:
+      base-url: ${OPENAI_BASE_URL:}
+      api-key: ${OPENAI_API_KEY:}
+
+app:
+  rag:
+    qdrant:
+      base-url: ${QDRANT_URL:}
+    code:
+      repository-path: ${CODE_REPOSITORY_PATH:}
+    knowledge:
+      zip-path: ${KNOWLEDGE_ZIP_PATH:}
+    wiki:
+      root-path: ${WIKI_ROOT_PATH:/data/wiki}
+      source-path: ${WIKI_SOURCE_PATH:/data/wiki-sources}
+      draft-path: ${WIKI_DRAFT_PATH:/data/wiki-drafts}
+    versioning:
+      root-path: ${VERSION_MANIFEST_ROOT_PATH:/data/version-manifests}
+      requirement-snapshot-root-path: ${REQUIREMENT_SNAPSHOT_ROOT_PATH:/data/requirement-snapshots}

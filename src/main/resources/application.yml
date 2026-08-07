@@ -135,6 +135,7 @@ app:
       bge-top-k: 20
       llm-top-k: 10
       llm-rerank-enabled: ${LLM_RERANK_ENABLED:true}
+      llm-rerank-skip-gap: ${LLM_RERANK_SKIP_GAP:0}
       branch-timeout-ms: ${RETRIEVAL_BRANCH_TIMEOUT_MS:5000}
       parallelism: ${RETRIEVAL_PARALLELISM:6}
       circuit-breaker-failure-threshold: ${RETRIEVAL_CIRCUIT_FAILURE_THRESHOLD:3}
