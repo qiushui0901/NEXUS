@@ -16,7 +16,7 @@ import com.example.requirementrag.model.RagWarning;
 import com.example.requirementrag.model.SourceSnippet;
 import com.example.requirementrag.model.CodeIntelligenceResponse;
 import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
-import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
+import com.example.requirementrag.retrieval.agentic.AgenticOrchestrator;
 import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
 import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
 import com.example.requirementrag.service.DevelopmentPlanService;
@@ -49,7 +49,7 @@ import java.util.Map;
 @ConditionalOnProperty(prefix = "app.mcp", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class NexusMcpTools {
 
-    private final RetrievalPipeline retrievalPipeline;
+    private final AgenticOrchestrator agenticOrchestrator;
     private final CodeKnowledgeService codeKnowledgeService;
     private final DevelopmentPlanService developmentPlanService;
     private final WikiRepository wikiRepository;
@@ -61,14 +61,14 @@ public class NexusMcpTools {
     private final KnowledgeConflictService knowledgeConflictService;
 
     @Autowired
-    public NexusMcpTools(RetrievalPipeline retrievalPipeline, CodeKnowledgeService codeKnowledgeService,
+    public NexusMcpTools(AgenticOrchestrator agenticOrchestrator, CodeKnowledgeService codeKnowledgeService,
                          DevelopmentPlanService developmentPlanService, WikiRepository wikiRepository,
                          VersionComparisonService versionComparisonService, McpResponsePolicy policy,
                          McpToolInvocationService invocations,
                          CodeIntelligenceService codeIntelligenceService,
                          ReviewFacadeService reviewFacadeService,
                          KnowledgeConflictService knowledgeConflictService) {
-        this.retrievalPipeline = retrievalPipeline;
+        this.agenticOrchestrator = agenticOrchestrator;
         this.codeKnowledgeService = codeKnowledgeService;
         this.developmentPlanService = developmentPlanService;
         this.wikiRepository = wikiRepository;
@@ -81,21 +81,21 @@ public class NexusMcpTools {
     }
 
     /** 为未提供代码图/评审/冲突服务的旧版调用方（0.7 之前）保留的兼容构造器。 */
-    NexusMcpTools(RetrievalPipeline retrievalPipeline, CodeKnowledgeService codeKnowledgeService,
+    NexusMcpTools(AgenticOrchestrator agenticOrchestrator, CodeKnowledgeService codeKnowledgeService,
                   DevelopmentPlanService developmentPlanService, WikiRepository wikiRepository,
                   VersionComparisonService versionComparisonService, McpResponsePolicy policy,
                   McpToolInvocationService invocations) {
-        this(retrievalPipeline, codeKnowledgeService, developmentPlanService, wikiRepository,
+        this(agenticOrchestrator, codeKnowledgeService, developmentPlanService, wikiRepository,
                 versionComparisonService, policy, invocations, null, null, null);
     }
 
     /** 为提供代码图与评审服务但尚未接入冲突服务的 0.7 调用方保留的兼容构造器。 */
-    NexusMcpTools(RetrievalPipeline retrievalPipeline, CodeKnowledgeService codeKnowledgeService,
+    NexusMcpTools(AgenticOrchestrator agenticOrchestrator, CodeKnowledgeService codeKnowledgeService,
                   DevelopmentPlanService developmentPlanService, WikiRepository wikiRepository,
                   VersionComparisonService versionComparisonService, McpResponsePolicy policy,
                   McpToolInvocationService invocations, CodeIntelligenceService codeIntelligenceService,
                   ReviewFacadeService reviewFacadeService) {
-        this(retrievalPipeline, codeKnowledgeService, developmentPlanService, wikiRepository,
+        this(agenticOrchestrator, codeKnowledgeService, developmentPlanService, wikiRepository,
                 versionComparisonService, policy, invocations, codeIntelligenceService, reviewFacadeService, null);
     }
 
@@ -121,7 +121,7 @@ public class NexusMcpTools {
         return invocations.invoke("nexus_search_requirements", projectId, version, Permission.PUBLIC_READ,
                 effectiveProject -> {
                     int resolvedLimit = policy.limit(limit);
-                    RagOutcome<RetrievalBundle> outcome = dependency(() -> retrievalPipeline.execute(new RetrievalRequest(
+                    RagOutcome<RetrievalBundle> outcome = dependency(() -> agenticOrchestrator.execute(new RetrievalRequest(
                             policy.required(query, "query"), RetrievalProfile.REQUIREMENT_REVIEW, effectiveProject, documentId, version,
                             resolvedLimit)));
                     RetrievalBundle bundle = outcome.data();

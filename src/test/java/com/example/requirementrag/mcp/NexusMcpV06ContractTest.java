@@ -12,7 +12,7 @@ import com.example.requirementrag.model.SourceSnippet;
 import com.example.requirementrag.model.UserContext;
 import com.example.requirementrag.model.UserRole;
 import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
-import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
+import com.example.requirementrag.retrieval.agentic.AgenticOrchestrator;
 import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
 import com.example.requirementrag.security.ProjectAuthorizationService;
 import com.example.requirementrag.security.UnauthenticatedException;
@@ -59,7 +59,7 @@ class NexusMcpV06ContractTest {
     private static final String PROJECT = "project-a";
     private static final JsonMapper JSON = JsonMapper.builder().build();
 
-    private RetrievalPipeline retrieval;
+    private AgenticOrchestrator retrieval;
     private CodeKnowledgeService code;
     private DevelopmentPlanService plans;
     private WikiRepository wiki;
@@ -69,7 +69,7 @@ class NexusMcpV06ContractTest {
     private void setUp() {
         McpUserContextHolder.set(new UserContext("actor", UserRole.DEVELOPER, List.of(PROJECT)));
 
-        retrieval = mock(RetrievalPipeline.class);
+        retrieval = mock(AgenticOrchestrator.class);
         code = mock(CodeKnowledgeService.class);
         plans = mock(DevelopmentPlanService.class);
         wiki = mock(WikiRepository.class);

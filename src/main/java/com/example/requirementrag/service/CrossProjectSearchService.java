@@ -7,12 +7,14 @@ import com.example.requirementrag.model.ScoredChunk;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -26,12 +28,15 @@ public class CrossProjectSearchService {
     private final ProjectRegistry projectRegistry;
     private final QdrantHybridStore store;
     private final RagProperties properties;
+    private final Executor retrievalExecutor;
 
     public CrossProjectSearchService(ProjectRegistry projectRegistry, QdrantHybridStore store,
-                                     RagProperties properties) {
+                                     RagProperties properties,
+                                     @Qualifier("retrievalExecutor") Executor retrievalExecutor) {
         this.projectRegistry = projectRegistry;
         this.store = store;
         this.properties = properties;
+        this.retrievalExecutor = retrievalExecutor;
     }
 
     /** 等待全部项目检索完成的总超时秒数，超时后仅返回已完成的项目结果。 */
@@ -52,7 +57,8 @@ public class CrossProjectSearchService {
         }
         int resolvedTopK = Math.min(Math.max(topK, 1), 50);
         List<CompletableFuture<List<CrossProjectSearchResult>>> futures = candidateProjectIds.stream()
-                .map(projectId -> CompletableFuture.supplyAsync(() -> searchProject(query, projectId, resolvedTopK)))
+                .map(projectId -> CompletableFuture.supplyAsync(
+                        () -> searchProject(query, projectId, resolvedTopK), retrievalExecutor))
                 .toList();
         CompletableFuture<Void> allDone = CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new));
         try {
@@ -63,8 +69,9 @@ public class CrossProjectSearchService {
             log.warn("Cross-project search was interrupted; returning only completed project results", exception);
         }
         catch (TimeoutException exception) {
-            log.warn("Cross-project search exceeded {} seconds; returning only completed project results",
+            log.warn("Cross-project search exceeded {} seconds; cancelling unfinished project searches",
                     SEARCH_TIMEOUT_SECONDS, exception);
+            futures.forEach(future -> future.cancel(true));
         }
         catch (ExecutionException exception) {
             log.warn("At least one cross-project search failed; returning successful project results", exception);

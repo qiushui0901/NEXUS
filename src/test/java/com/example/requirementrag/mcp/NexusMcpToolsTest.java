@@ -11,7 +11,7 @@ import com.example.requirementrag.model.RagOutcomeStatus;
 import com.example.requirementrag.model.UserContext;
 import com.example.requirementrag.model.UserRole;
 import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
-import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
+import com.example.requirementrag.retrieval.agentic.AgenticOrchestrator;
 import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
 import com.example.requirementrag.security.ProjectAuthorizationService;
 import com.example.requirementrag.service.DevelopmentPlanService;
@@ -37,14 +37,14 @@ import static org.mockito.Mockito.when;
 
 class NexusMcpToolsTest {
 
-    private RetrievalPipeline retrievalPipeline;
+    private AgenticOrchestrator orchestrator;
     private DevelopmentPlanService developmentPlanService;
     private CodeIntelligenceService codeIntelligenceService;
     private NexusMcpTools tools;
 
     @BeforeEach
     void setUp() {
-        retrievalPipeline = mock(RetrievalPipeline.class);
+        orchestrator = mock(AgenticOrchestrator.class);
         developmentPlanService = mock(DevelopmentPlanService.class);
         codeIntelligenceService = mock(CodeIntelligenceService.class);
         ProjectAuthorizationService authorization = new ProjectAuthorizationService(mock(ProjectRegistry.class));
@@ -53,7 +53,7 @@ class NexusMcpToolsTest {
                 JsonMapper.builder().build());
         McpToolInvocationService invocations = new McpToolInvocationService(
                 authorization, new SimpleMeterRegistry(), policy);
-        tools = new NexusMcpTools(retrievalPipeline, mock(CodeKnowledgeService.class),
+        tools = new NexusMcpTools(orchestrator, mock(CodeKnowledgeService.class),
                 developmentPlanService, mock(WikiRepository.class), mock(VersionComparisonService.class),
                 policy, invocations, codeIntelligenceService, mock(ReviewFacadeService.class));
     }
@@ -64,7 +64,7 @@ class NexusMcpToolsTest {
                 "parent-1", "Requirement text", "child", "hash", 1, 0);
         RetrievalBundle bundle = new RetrievalBundle("query", RetrievalProfile.REQUIREMENT_REVIEW,
                 "project-a", "requirements", "5.1", List.of(chunk), List.of());
-        when(retrievalPipeline.execute(any())).thenReturn(new RagOutcome<>(
+        when(orchestrator.execute(any())).thenReturn(new RagOutcome<>(
                 RagOutcomeStatus.SUCCESS, bundle, List.of(), List.of()));
 
         context(UserRole.READONLY);
