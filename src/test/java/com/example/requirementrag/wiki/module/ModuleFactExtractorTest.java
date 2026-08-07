@@ -20,6 +20,7 @@ import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class ModuleFactExtractorTest {
@@ -77,10 +78,14 @@ class ModuleFactExtractorTest {
         assertThat(bundle.coreFlows()).hasSize(1);
         assertThat(bundle.routes()).anyMatch(route -> route.contains("@RestController"));
         assertThat(bundle.configuration()).contains("application.yml");
-        assertThat(bundle.evidence()).isNotEmpty();
-        assertThat(bundle.evidence().get(0).evidenceId()).startsWith("code:auth:");
-        assertThat(bundle.sourceRoots()).contains(temp.resolve("src/main/java/com/game/auth/AuthService.java")
-                .toAbsolutePath().normalize().toString());
+        assertThat(bundle.evidence()).extracting(ModuleFactModels.ModuleEvidence::type)
+                .contains("CODE", "CODE_GRAPH", "ROUTE", "CONFIG");
+        assertThat(bundle.evidence()).extracting(ModuleFactModels.ModuleEvidence::evidenceId)
+                .containsExactly("code:auth:0", "code:auth:1", "code-graph:auth:2", "route:auth:3",
+                        "config:auth:4");
+        assertThat(bundle.sourceRoots()).containsExactly("src/main/java/com/game/auth/AuthService.java");
+        verify(graphStore).symbolsByFiles("game", "abc123",
+                List.of("src/main/java/com/game/auth/AuthService.java"), 800);
     }
 
     @Test
