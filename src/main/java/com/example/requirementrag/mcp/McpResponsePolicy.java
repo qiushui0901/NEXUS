@@ -173,6 +173,26 @@ public class McpResponsePolicy {
     }
 
     /**
+     * 把声明级证据转换为对外可见结果：文本截断、证据 ID 受限。
+     *
+     * @param claim 原始声明
+     * @return 脱敏/截断后的声明
+     */
+    public WikiClaim wikiClaim(WikiModels.Claim claim) {
+        return new WikiClaim(safe(claim.claimId()), bounded(claim.section()), bounded(claim.text()),
+                safe(claim.support() == null ? null : claim.support().name()),
+                claim.evidenceIds() == null ? List.of() : claim.evidenceIds().stream().limit(20).toList());
+    }
+
+    /** 把索引摘要转换为对外可见条目。 */
+    public WikiIndexEntry wikiIndexEntry(WikiModels.PageSummary summary, boolean stale) {
+        return new WikiIndexEntry(safe(summary.featureId()), bounded(summary.title()),
+                summary.pageType() == null ? "FEATURE" : summary.pageType().name(),
+                bounded(summary.summary()), safe(summary.status() == null ? null : summary.status().name()),
+                summary.evidenceCount(), stale);
+    }
+
+    /**
      * 把需求存疑条目转换为对外可见结果：文本字段截断、来源位置脱敏。
      *
      * @param doubt 原始需求存疑条目
@@ -350,6 +370,16 @@ public class McpResponsePolicy {
     /** Wiki 代码条目的对外表示。 */
     public record WikiCodeEntry(String role, String filePath, String symbol, String commit, String changeType,
                                 String verificationStatus) {
+    }
+
+    /** 声明级证据的对外表示。 */
+    public record WikiClaim(String claimId, String section, String text, String support,
+                            List<String> evidenceIds) {
+    }
+
+    /** Wiki 索引条目的对外表示：页面标识、类型、摘要、状态与新鲜度。 */
+    public record WikiIndexEntry(String featureId, String title, String pageType, String summary,
+                                 String status, int evidenceCount, boolean stale) {
     }
 
     /** 需求存疑条目的对外表示。 */

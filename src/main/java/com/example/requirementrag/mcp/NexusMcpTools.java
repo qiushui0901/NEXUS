@@ -27,6 +27,7 @@ import com.example.requirementrag.versioning.VersionComparisonService;
 import com.example.requirementrag.versioning.VersionModels.VersionComparisonReport;
 import com.example.requirementrag.wiki.WikiModels;
 import com.example.requirementrag.wiki.WikiRepository;
+import com.example.requirementrag.wiki.WikiStalenessService;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -38,6 +39,7 @@ import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 面向既有 NEXUS 领域服务的只读 MCP 工具门面：
@@ -59,6 +61,7 @@ public class NexusMcpTools {
     private final CodeIntelligenceService codeIntelligenceService;
     private final ReviewFacadeService reviewFacadeService;
     private final KnowledgeConflictService knowledgeConflictService;
+    private final WikiStalenessService wikiStalenessService;
 
     @Autowired
     public NexusMcpTools(AgenticOrchestrator agenticOrchestrator, CodeKnowledgeService codeKnowledgeService,
@@ -67,7 +70,8 @@ public class NexusMcpTools {
                          McpToolInvocationService invocations,
                          CodeIntelligenceService codeIntelligenceService,
                          ReviewFacadeService reviewFacadeService,
-                         KnowledgeConflictService knowledgeConflictService) {
+                         KnowledgeConflictService knowledgeConflictService,
+                         WikiStalenessService wikiStalenessService) {
         this.agenticOrchestrator = agenticOrchestrator;
         this.codeKnowledgeService = codeKnowledgeService;
         this.developmentPlanService = developmentPlanService;
@@ -78,6 +82,7 @@ public class NexusMcpTools {
         this.codeIntelligenceService = codeIntelligenceService;
         this.reviewFacadeService = reviewFacadeService;
         this.knowledgeConflictService = knowledgeConflictService;
+        this.wikiStalenessService = wikiStalenessService;
     }
 
     /** 为未提供代码图/评审/冲突服务的旧版调用方（0.7 之前）保留的兼容构造器。 */
@@ -86,7 +91,7 @@ public class NexusMcpTools {
                   VersionComparisonService versionComparisonService, McpResponsePolicy policy,
                   McpToolInvocationService invocations) {
         this(agenticOrchestrator, codeKnowledgeService, developmentPlanService, wikiRepository,
-                versionComparisonService, policy, invocations, null, null, null);
+                versionComparisonService, policy, invocations, null, null, null, null);
     }
 
     /** 为提供代码图与评审服务但尚未接入冲突服务的 0.7 调用方保留的兼容构造器。 */
@@ -96,7 +101,8 @@ public class NexusMcpTools {
                   McpToolInvocationService invocations, CodeIntelligenceService codeIntelligenceService,
                   ReviewFacadeService reviewFacadeService) {
         this(agenticOrchestrator, codeKnowledgeService, developmentPlanService, wikiRepository,
-                versionComparisonService, policy, invocations, codeIntelligenceService, reviewFacadeService, null);
+                versionComparisonService, policy, invocations, codeIntelligenceService, reviewFacadeService,
+                null, null);
     }
 
     /**
@@ -249,7 +255,7 @@ public class NexusMcpTools {
      * @param projectId  项目 ID，null 时走默认项目
      * @return 页面数据 + 受限证据列表 + 截断标记
      */
-    @Tool(description = "Read a published, versioned NEXUS Wiki page.")
+    @Tool(description = "Read a published, versioned NEXUS Wiki page. Includes claims, page type and staleness.")
     public McpToolResponse<Map<String, Object>> nexus_wiki_page(
             @ToolParam(description = "Published Wiki version") String version,
             @ToolParam(description = "Stable Wiki feature ID") String featureId,
@@ -265,6 +271,47 @@ public class NexusMcpTools {
                             .toList();
                     return new McpToolResponse<>(scope(effectiveProject, page.version(), null), wikiData(page),
                             evidence, page.quality(), List.of(), wikiTruncated(page));
+                });
+    }
+
+    /**
+     * 列出 Wiki 页面索引摘要，可按页面类型、状态与新鲜度过滤；
+     * Agent 先读索引选择模块/功能页，再按 featureId 读取页面。
+     *
+     * @param projectId 项目 ID，null 时走默认项目
+     * @param version   已发布的 Wiki 版本
+     * @param pageType  页面类型（OVERVIEW/MODULE/FEATURE/...），可为 null
+     * @param stale     只返回过期页面（true）或新鲜页面（false），null 时不过滤
+     * @param limit     最大条目数，1-100
+     * @return 索引摘要条目列表 + 证据 + 截断标记
+     */
+    @Tool(description = "List NEXUS Wiki index summaries filtered by page type, status or freshness.")
+    public McpToolResponse<List<McpResponsePolicy.WikiIndexEntry>> nexus_wiki_index(
+            @ToolParam(description = "Project ID; defaults to the configured project", required = false)
+            String projectId,
+            @ToolParam(description = "Published Wiki version") String version,
+            @ToolParam(description = "Page type filter: OVERVIEW/MODULE/FEATURE/API/DATA/VERSION",
+                    required = false) String pageType,
+            @ToolParam(description = "Filter by staleness: true or false", required = false) Boolean stale,
+            @ToolParam(description = "Maximum entries, 1-100", required = false) Integer limit) {
+        return invocations.invoke("nexus_wiki_index", projectId, version, Permission.PUBLIC_READ,
+                effectiveProject -> {
+                    var index = wikiRepository.getIndex(effectiveProject, policy.required(version, "version"));
+                    Set<String> stalePages = new java.util.HashSet<>();
+                    if (wikiStalenessService != null) {
+                        stalePages.addAll(wikiStalenessService.staleness(effectiveProject, index.version())
+                                .pages().stream().map(WikiStalenessService.StalePage::featureId).toList());
+                    }
+                    int resolvedLimit = Math.min(Math.max(limit == null ? 50 : limit, 1), 100);
+                    List<McpResponsePolicy.WikiIndexEntry> entries = index.pages().stream()
+                            .filter(summary -> pageType == null || pageType.isBlank()
+                                    || pageType.equalsIgnoreCase(String.valueOf(summary.pageType())))
+                            .filter(summary -> stale == null
+                                    || stale.booleanValue() == stalePages.contains(summary.featureId()))
+                            .limit(resolvedLimit)
+                            .map(summary -> policy.wikiIndexEntry(summary, stalePages.contains(summary.featureId())))
+                            .toList();                    return new McpToolResponse<>(scope(effectiveProject, index.version(), null), entries,
+                            List.of(), null, List.of(), index.pages().size() > resolvedLimit);
                 });
     }
 
@@ -598,6 +645,7 @@ public class NexusMcpTools {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("featureId", page.featureId());
         data.put("title", policy.bounded(page.title()));
+        data.put("pageType", page.pageType() == null ? "FEATURE" : page.pageType().name());
         data.put("status", page.status());
         data.put("summary", policy.bounded(page.summary()));
         data.put("productRules", bounded(page.productRules()));
@@ -609,6 +657,19 @@ public class NexusMcpTools {
         data.put("risks", bounded(page.risks()));
         data.put("codeEntries", page.codeEntries().stream().limit(20).map(policy::wikiCodeEntry).toList());
         data.put("relations", page.relations().stream().limit(20).toList());
+        data.put("claims", page.claims().stream().limit(20).map(policy::wikiClaim).toList());
+        data.put("gaps", page.quality() == null ? List.of() : bounded(page.quality().missing()));
+        if (wikiStalenessService != null) {
+            try {
+                var report = wikiStalenessService.staleness(page.projectId(), page.version());
+                boolean stale = report.pages().stream().anyMatch(item -> item.featureId().equals(page.featureId()));
+                data.put("stale", stale);
+                data.put("currentCodeCommit", report.currentCodeCommit());
+            } catch (RuntimeException exception) {
+                data.put("stale", false);
+                data.put("stalenessError", policy.bounded(exception.getMessage()));
+            }
+        }
         return Map.copyOf(data);
     }
 

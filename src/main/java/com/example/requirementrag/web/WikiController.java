@@ -9,6 +9,10 @@ import com.example.requirementrag.wiki.WikiModels.Page;
 import com.example.requirementrag.wiki.WikiModels.ProjectSummary;
 import com.example.requirementrag.wiki.WikiModels.VersionIndex;
 import com.example.requirementrag.wiki.WikiRepository;
+import com.example.requirementrag.wiki.WikiStalenessService;
+import com.example.requirementrag.wiki.module.ModuleFactModels.ModuleBuildRequest;
+import com.example.requirementrag.wiki.module.ModuleKnowledgeBuildService;
+import com.example.requirementrag.wiki.module.ModuleStaleRebuildService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -24,13 +28,21 @@ import java.util.List;
 public class WikiController {
     private final WikiRepository repository;
     private final WikiGenerationService generationService;
+    private final WikiStalenessService stalenessService;
+    private final ModuleKnowledgeBuildService moduleBuildService;
+    private final ModuleStaleRebuildService moduleRebuildService;
     private final ProjectRegistry projectRegistry;
     private final ProjectAccessGuard accessGuard;
 
     public WikiController(WikiRepository repository, WikiGenerationService generationService,
-                          ProjectRegistry projectRegistry, ProjectAccessGuard accessGuard) {
+                          WikiStalenessService stalenessService, ModuleKnowledgeBuildService moduleBuildService,
+                          ModuleStaleRebuildService moduleRebuildService, ProjectRegistry projectRegistry,
+                          ProjectAccessGuard accessGuard) {
         this.repository = repository;
         this.generationService = generationService;
+        this.stalenessService = stalenessService;
+        this.moduleBuildService = moduleBuildService;
+        this.moduleRebuildService = moduleRebuildService;
         this.projectRegistry = projectRegistry;
         this.accessGuard = accessGuard;
     }
@@ -69,6 +81,41 @@ public class WikiController {
                      @RequestParam String featureId, HttpServletRequest request) {
         requireAccess(projectId, request);
         return repository.getPage(projectId, version, featureId);
+    }
+
+    /** 检测指定版本 Wiki 的过期页面（代码 commit / 需求哈希）。对应 GET /api/wiki/staleness。 */
+    @RequiresPermission(Permission.PUBLIC_READ)
+    @GetMapping("/staleness")
+    public WikiStalenessService.StaleReport staleness(@RequestParam String projectId, @RequestParam String version,
+                                                      HttpServletRequest request) {
+        requireAccess(projectId, request);
+        return stalenessService.staleness(projectId, version);
+    }
+
+    /** 构建单个模块的知识草稿（抽取事实 → 规划页面 → 质量门 → 保存草稿）。对应 POST /api/wiki/modules/build。 */
+    @RequiresPermission(Permission.WRITE)
+    @PostMapping("/modules/build")
+    public Object moduleBuild(@RequestParam String projectId, @RequestParam String version,
+                              @RequestParam String modulePath,
+                              @RequestParam(required = false) String codeCommit,
+                              HttpServletRequest request) {
+        requireAccess(projectId, request);
+        return moduleBuildService.build(new ModuleBuildRequest(projectId, version, modulePath, codeCommit,
+                accessGuard.currentUser(request).username()));
+    }
+
+    /** 从已发布模块页重建草稿并输出 Claim 级差异。对应 POST /api/wiki/modules/rebuild。 */
+    @RequiresPermission(Permission.WRITE)
+    @PostMapping("/modules/rebuild")
+    public ModuleStaleRebuildService.RebuildResult moduleRebuild(@RequestParam String projectId,
+                                                                 @RequestParam String version,
+                                                                 @RequestParam String modulePath,
+                                                                 @RequestParam String featureId,
+                                                                 @RequestParam(required = false) String codeCommit,
+                                                                 HttpServletRequest request) {
+        requireAccess(projectId, request);
+        return moduleRebuildService.rebuild(projectId, version, modulePath, featureId, codeCommit,
+                accessGuard.currentUser(request).username());
     }
 
     /** 生成指定项目版本的 Wiki 知识。对应 POST /api/wiki/generate。 */

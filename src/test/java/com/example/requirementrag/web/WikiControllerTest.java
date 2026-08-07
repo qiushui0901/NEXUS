@@ -6,6 +6,9 @@ import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.UserContext;
 import com.example.requirementrag.wiki.WikiGenerationService;
 import com.example.requirementrag.wiki.WikiRepository;
+import com.example.requirementrag.wiki.WikiStalenessService;
+import com.example.requirementrag.wiki.module.ModuleKnowledgeBuildService;
+import com.example.requirementrag.wiki.module.ModuleStaleRebuildService;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -44,7 +47,11 @@ class WikiControllerTest {
         ProjectRegistry projectRegistry = mock(ProjectRegistry.class);
         ProjectAccessGuard accessGuard = mock(ProjectAccessGuard.class);
         when(accessGuard.currentUser(any())).thenReturn(UserContext.defaultAdmin());
-        WikiController controller = new WikiController(repository, generationService, projectRegistry, accessGuard);
+        WikiStalenessService stalenessService = mock(WikiStalenessService.class);
+        ModuleKnowledgeBuildService moduleBuildService = mock(ModuleKnowledgeBuildService.class);
+        ModuleStaleRebuildService moduleRebuildService = mock(ModuleStaleRebuildService.class);
+        WikiController controller = new WikiController(repository, generationService, stalenessService,
+                moduleBuildService, moduleRebuildService, projectRegistry, accessGuard);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiExceptionHandler())
                 .build();

@@ -1,8 +1,29 @@
+## 0.8.4-SNAPSHOT — 2026-08-07
+
+### Added
+
+- 新增 `docs/wiki-next-iteration-module-slice.md`，将 Wiki 下一迭代收敛为 Module 页面纵向闭环，定义 ModuleFactBundle、Evidence Registry、声明级证据、发布质量门、REST/MCP 交付、符号级过期传播、stale-to-draft 流程与 MVP 验收标准。
+- 按 `docs/wiki-next-iteration-module-slice.md` 实现 Module 页面纵向闭环：
+  - 新增 `ModuleFactExtractor`：从符号图（`SQLiteSymbolGraphStore`）与仓库文件系统确定性抽取 `ModuleFactBundle`（公开符号、对外入口、核心调用链、上下游依赖、HTTP/消息/定时路由、数据对象、配置、测试与未解析调用诊断），支持显式 `modulePath`；无图快照时产出诊断而非失败。
+  - 新增 `ModuleWikiPlanner`：Bundle 编译为 MODULE 页面源，自动生成职责/入口/流程/依赖/数据配置/测试/知识缺口七类 Claim，按代码、调用图、依赖、路由、数据、配置、测试和诊断事实引用对应类型的已注册证据。
+  - 新增 `ModuleClaimQualityGate` 发布质量门：MODULE 页无代码证据、受支持 Claim 无证据、引用越界/跨项目/跨版本证据均阻止发布（已挂入 `WikiGenerationService` 发布链路）。
+  - 新增 `ModuleKnowledgeBuildService`：抽取 → 规划 → 质量门 → 落盘草稿（wiki-source + module-bundle）→ 初始化审核，不自动发布。
+  - 新增 `ModuleStaleRebuildService`（stale-to-draft）：从已发布模块页重建事实包，对比新旧 Claims 输出 ADDED/MODIFIED/REMOVED/UNCHANGED 差异，落盘 `claim-diff.json` 草稿供审核人只审变化声明。
+  - REST：`POST /api/wiki/modules/build`、`POST /api/wiki/modules/rebuild`。
+  - MCP：新增 `nexus_wiki_index`（按 pageType/stale 过滤的索引摘要），`nexus_wiki_page` 响应新增 pageType、claims、support、evidenceIds、gaps、stale 与当前代码提交。
+  - 新增 14 个模块闭环测试（抽取/门禁/构建/重建四类）。
+- 按 `docs/wiki-strengthening-plan.md` 的 MVP 落地 Wiki 知识编译增强：新增 `PageType`（OVERVIEW/MODULE/FEATURE/API/DATA/VERSION）与声明级证据 `Claim`（claimId/section/text/support/evidenceIds），渲染进 Markdown「声明与证据」段，向后兼容既有源定义。
+- 版本知识构建管线（`VersionKnowledgeBuildPipeline`）自动编译项目概览页与模块页：概览页汇总版本、代码提交、模块清单与风险；模块页按源码顶层目录聚合代码入口、符号与关联功能，均标注 DRAFT 待人工审核。
+- 功能识别改为按需求文件标题跨文件合并（同名条目并入同一功能页），不再由单个文件名直接决定页面。
+- 需求证据绑定内容哈希（块自带哈希或父文本 SHA-256），为增量失效检测提供依据。
+- 新增 `WikiStalenessService`：基于 Git commit（`git rev-parse HEAD` + 文件级 diff 命中页面代码入口）与需求内容哈希对比检测过期页面，只读计算、不覆盖已发布内容；`GitDiffService` 新增 `latestCommit`；对外暴露 `GET /api/wiki/staleness`。
+- 新增 `WikiStalenessServiceTest`（代码/需求/新鲜三场景）与管线合并、概览/模块页生成测试。
+
 ## 0.8.3-SNAPSHOT — 2026-08-06
 
 ### Added
 
-- 新增 `tech-briefing.html` 技术选型对比演示稿及配套 `docs/nexus-technology-selection-comparison.md` 讲解文档，基于 0.8.3 当前实现逐项比较 Sourcegraph、Copilot/Gemini/Amazon Q、Rovo/Glean、DeepWiki/Devin 的路线、优势与相对局限，并说明 NEXUS 的选型取舍；演示稿支持键盘翻页、目录导航和横向打印。
+- 新增 `tech-briefing.html` 技术选型对比演示稿及配套 `docs/nexus-technology-selection-comparison.md` 讲解文档，从代码上下文平台、企业知识搜索、编码执行 Agent 三个宏观方向，深入比较 Sourcegraph、Atlassian Rovo、GitHub Copilot 与 Qoder 的公开技术方式，补充通义灵码、CodeBuddy、文心快码 Comate、TRAE、MarsCode 等国内产品全景，以及 Repo Wiki、DeepWiki、Context Files 的提效方式，并说明研发证据平台的规划方案和预期优势；演示稿支持键盘翻页、目录导航和横向打印。
 - 新增 Agentic 检索编排骨架：策略层（`RetrievalStrategy`/`StrategyResult`）、规则版证据反射器（命中阈值/唯一父块/双侧覆盖 + 稳定 reason code）与最多两跳的编排循环。
 - 新增单线检索策略（`RequirementsOnlyStrategy`/`CodeOnlyStrategy`）与基于画像/查询意图的规则选择器；`nexus_search_requirements` 已接入编排器。
 - 新增 LLM 代码语义标注（`CodeSemanticAnnotator`）：中英文业务描述、关键词、用户问题与同义词；分层标注（核心走 LLM、非核心走静态）、三连败熔断与哈希缓存。
