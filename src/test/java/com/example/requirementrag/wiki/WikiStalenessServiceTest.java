@@ -1,7 +1,10 @@
 package com.example.requirementrag.wiki;
 
+import com.example.requirementrag.code.CodeRelation;
+import com.example.requirementrag.code.CodeSymbol;
 import com.example.requirementrag.code.GitDiffService;
 import com.example.requirementrag.code.GitDiffService.GitDiffResult;
+import com.example.requirementrag.code.SQLiteSymbolGraphStore;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.config.WikiProperties;
 import com.example.requirementrag.model.ChunkRecord;
@@ -26,11 +29,12 @@ class WikiStalenessServiceTest {
     private final GitDiffService gitDiffService = mock(GitDiffService.class);
     private final QdrantHybridStore documentStore = mock(QdrantHybridStore.class);
     private final ProjectRegistry projectRegistry = mock(ProjectRegistry.class);
+    private final SQLiteSymbolGraphStore graphStore = mock(SQLiteSymbolGraphStore.class);
 
     private WikiStalenessService service(Path root) {
         WikiProperties properties = new WikiProperties(root.toString(), temp.resolve("sources").toString());
         return new WikiStalenessService(new WikiRepository(mapper, properties), gitDiffService,
-                documentStore, projectRegistry);
+                documentStore, projectRegistry, graphStore);
     }
 
     private void publish(Path root, String versionJson, String pageJson) throws Exception {
@@ -157,5 +161,60 @@ class WikiStalenessServiceTest {
 
         assertThat(report.stale()).isFalse();
         assertThat(report.pages()).isEmpty();
+    }
+
+    @Test
+    void propagatesStalenessThroughCallRelationsToPageClaims() throws Exception {
+        Path root = temp.resolve("wiki");
+        String index = """
+                {"schemaVersion":2,"projectId":"game","projectName":"Game","version":"5.1",
+                "requirementVersion":"5.1","baseCodeCommit":"old","codeCommit":"old",
+                "generatedAt":"2026-08-01T00:00:00+08:00","pages":[{"featureId":"supply-records",
+                "title":"物资记录","category":"记录","introducedVersion":"5.1","status":"CODE_VERIFIED",
+                "summary":"s","aliases":[],"evidenceCount":1,"pageType":"MODULE"}]}
+                """;
+        String page = """
+                {"projectId":"game","projectName":"Game","version":"5.1","requirementVersion":"5.1",
+                "baseCodeCommit":"old","codeCommit":"old","generatedAt":"2026-08-01T00:00:00+08:00",
+                "featureId":"supply-records","title":"物资记录","category":"记录","introducedVersion":"5.1",
+                "status":"CODE_VERIFIED","aliases":[],"summary":"s","requirementSources":[],
+                "productRules":[],"processSteps":[],"codeEntries":[{"role":"对外入口",
+                "filePath":"src/impl/SupplyService.java","symbol":"com.game.SupplyService.query",
+                "commit":"old","changeType":"CURRENT_VERSION","verificationStatus":"PENDING_REVIEW"}],
+                "codeSymbols":["com.game.SupplyService.query"],"dataImpacts":[],"boundaryConditions":[],"acceptanceCriteria":[],
+                "testPoints":[],"testKnowledge":{"executionStatus":"NOT_AVAILABLE","executionReference":"",
+                "summary":"没有真实执行快照","cases":[]},"versionChange":{"changeType":"MODULE_FACT",
+                "baseVersion":"","version":"5.1","summary":""},"quality":{"reviewStatus":"PENDING_REVIEW",
+                "requirementEvidenceCount":0,"codeEvidenceCount":1,"realTestExecution":false,"missing":[]},
+                "risks":[],"relations":[],"evidence":[],"pageType":"MODULE","claims":[],
+                "markdownPath":"pages/supply-records.md"}
+                """;
+        publish(root, index, page);
+        when(gitDiffService.latestCommit("game")).thenReturn("new");
+        when(gitDiffService.diff("game", "old", "new")).thenReturn(new GitDiffResult(
+                GitDiffService.Availability.AVAILABLE, 1, 0, 1, 0, 0, 1, 0, 0,
+                List.of(new GitDiffService.GitFileChange(GitDiffService.ChangeType.MODIFIED,
+                        "src/impl/CacheWarmer.java", "src/impl/CacheWarmer.java"))));
+        CodeSymbol changed = new CodeSymbol("s1", "game", "new", "java", "METHOD",
+                "com.game.CacheWarmer.warm", "warm", "src/impl/CacheWarmer.java", 5, 9, false, false);
+        when(graphStore.symbolsByFiles("game", "new",
+                List.of("src/impl/CacheWarmer.java"), 200)).thenReturn(List.of(changed));
+        when(graphStore.latestCommit("game")).thenReturn("new");
+        when(graphStore.findSymbols("game", "new", "com.game.SupplyService.query", 5))
+                .thenReturn(List.of(new CodeSymbol("s2", "game", "new", "java", "METHOD",
+                        "com.game.SupplyService.query", "query", "src/impl/SupplyService.java", 20, 40,
+                        true, false)));
+        when(graphStore.relations("game", "new", "s2", true, 50))
+                .thenReturn(List.of(new CodeRelation("r1", "game", "new", "s1", "s2",
+                        "com.game.SupplyService.query", "src/impl/CacheWarmer.java", 8,
+                        CodeRelation.Resolution.EXACT, "")));
+        when(graphStore.symbolById("game", "new", "s1")).thenReturn(changed);
+
+        var report = service(root).staleness("game", "5.1");
+
+        assertThat(report.stale()).isTrue();
+        assertThat(report.pages()).singleElement().satisfies(stale ->
+                assertThat(stale.reasons()).anyMatch(reason ->
+                        reason.contains("com.game.CacheWarmer.warm") && reason.contains("传播")));
     }
 }

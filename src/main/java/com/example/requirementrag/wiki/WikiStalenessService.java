@@ -1,7 +1,10 @@
 package com.example.requirementrag.wiki;
 
+import com.example.requirementrag.code.CodeRelation;
+import com.example.requirementrag.code.CodeSymbol;
 import com.example.requirementrag.code.GitDiffService;
 import com.example.requirementrag.code.GitDiffService.GitDiffResult;
+import com.example.requirementrag.code.SQLiteSymbolGraphStore;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
@@ -15,8 +18,10 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 
 /** 基于 Git commit 与需求内容哈希的 Wiki 失效检测：只读计算，不修改已发布内容。 */
@@ -41,13 +46,16 @@ public class WikiStalenessService {
     private final GitDiffService gitDiffService;
     private final QdrantHybridStore documentStore;
     private final ProjectRegistry projectRegistry;
+    private final SQLiteSymbolGraphStore graphStore;
 
     public WikiStalenessService(WikiRepository repository, GitDiffService gitDiffService,
-                                QdrantHybridStore documentStore, ProjectRegistry projectRegistry) {
+                                QdrantHybridStore documentStore, ProjectRegistry projectRegistry,
+                                SQLiteSymbolGraphStore graphStore) {
         this.repository = repository;
         this.gitDiffService = gitDiffService;
         this.documentStore = documentStore;
         this.projectRegistry = projectRegistry;
+        this.graphStore = graphStore;
     }
 
     /** 检测指定版本 Wiki 的过期页面：代码 commit 差异 + 需求内容哈希差异。 */
@@ -102,13 +110,80 @@ public class WikiStalenessService {
             return reasons;
         }
         List<String> affectedPaths = changedPaths;
+        Set<String> affectedSymbols = changedSymbols(projectId, currentCommit, affectedPaths);
+        Map<String, String> claimImpact = claimImpacts(pages, affectedSymbols);
         for (Page page : pages) {
-            boolean touched = page.codeEntries().stream()
+            List<String> pageReasons = reasons.computeIfAbsent(page.featureId(), key -> new ArrayList<>());
+            boolean fileTouched = page.codeEntries().stream()
                     .anyMatch(entry -> affectedPaths.contains(normalize(entry.filePath())));
-            if (touched) reasons.computeIfAbsent(page.featureId(), key -> new ArrayList<>())
-                    .add("代码提交从 " + publishedCommit + " 变化到 " + currentCommit + "，命中页面代码入口");
+            if (fileTouched) {
+                pageReasons.add("代码提交从 " + publishedCommit + " 变化到 " + currentCommit
+                        + "，命中页面代码入口文件");
+                continue;
+            }
+            String claimSymbol = claimImpact.get(page.featureId());
+            if (claimSymbol != null) {
+                pageReasons.add("代码提交从 " + publishedCommit + " 变化到 " + currentCommit
+                        + "，符号 " + claimSymbol + " 经调用关系传播影响页面声明");
+            }
         }
         return reasons;
+    }
+
+    /** 变更文件 → 变更符号（符号图按文件反查，当前 commit 快照缺失时退回空集）。 */
+    private Set<String> changedSymbols(String projectId, String commit, List<String> changedPaths) {
+        try {
+            List<CodeSymbol> symbols = graphStore.symbolsByFiles(projectId, commit, changedPaths, 200);
+            Set<String> names = new LinkedHashSet<>();
+            for (CodeSymbol symbol : symbols) names.add(symbol.qualifiedName());
+            return names;
+        } catch (RuntimeException exception) {
+            log.warn("Symbol graph lookup failed for project {}; file-level staleness only", projectId, exception);
+            return Set.of();
+        }
+    }
+
+    /**
+     * 符号级传播：找出页面 codeSymbols 引用的符号中，哪些直接或经一层入向调用
+     * 被变更符号触及；返回 页面 featureId -> 受影响符号。
+     */
+    private Map<String, String> claimImpacts(List<Page> pages, Set<String> affectedSymbols) {
+        Map<String, String> impacts = new HashMap<>();
+        if (affectedSymbols.isEmpty()) return impacts;
+        for (Page page : pages) {
+            for (String symbol : page.codeSymbols()) {
+                if (symbol == null || symbol.isBlank()) continue;
+                if (affectedSymbols.contains(symbol)) {
+                    impacts.putIfAbsent(page.featureId(), symbol);
+                    continue;
+                }
+                String caller = directCallerOf(page.projectId(), symbol, affectedSymbols);
+                if (caller != null) impacts.putIfAbsent(page.featureId(), caller + " -> " + symbol);
+            }
+        }
+        return impacts;
+    }
+
+    /** 判断页面符号是否有来自变更符号的直达调用（caller 在受影响符号集合中）。 */
+    private String directCallerOf(String projectId, String pageSymbol, Set<String> affectedSymbols) {
+        try {
+            List<CodeSymbol> matches = graphStore.findSymbols(projectId, graphStore.latestCommit(projectId),
+                    pageSymbol, 5);
+            for (CodeSymbol symbol : matches) {
+                if (!symbol.qualifiedName().equals(pageSymbol)) continue;
+                for (CodeRelation relation : graphStore.relations(projectId, symbol.commitSha(),
+                        symbol.id(), true, 50)) {
+                    CodeSymbol caller = graphStore.symbolById(projectId, symbol.commitSha(),
+                            relation.callerSymbolId());
+                    if (caller != null && affectedSymbols.contains(caller.qualifiedName())) {
+                        return caller.qualifiedName();
+                    }
+                }
+            }
+        } catch (RuntimeException exception) {
+            log.debug("Symbol propagation lookup skipped for {}", pageSymbol, exception);
+        }
+        return null;
     }
 
     /** 需求失效检测：需求来源的当前内容哈希与发布哈希不一致时标记过期；读取失败则跳过（不误报）。 */
