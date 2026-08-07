@@ -19,3 +19,10 @@ If you're using Codex or another agent-capable tool, additional project-scoped h
 Managed by Trellis. Edits outside this block are preserved; edits inside may be overwritten by a future `trellis update`.
 
 <!-- TRELLIS:END -->
+
+## Changelog discipline
+
+Every code change that ships must update `CHANGELOG.md` under the current
+version section (Added / Changed / Removed / Fixed), in the same commit.
+Do not leave the changelog for later; a change without a changelog entry
+is incomplete.
