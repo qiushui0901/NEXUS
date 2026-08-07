@@ -142,6 +142,61 @@
     .positioning .formula { margin: 24px 0; font: 700 clamp(24px, 3vw, 42px)/1.35 Georgia, "Songti SC", serif; }
     .positioning p { color: #3e5d52; line-height: 1.65; }
 
+    .market-map { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 30px; }
+    .market-lane { padding: 26px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+    .market-lane h3 { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+    .market-lane h3 span { color: var(--muted); font: 600 11px/1.2 monospace; }
+    .market-lane p { color: var(--muted); line-height: 1.6; }
+    .market-lane .gap { margin: 18px -26px -26px; padding: 16px 26px; background: var(--amber-soft); color: #70420d; font-size: 13px; line-height: 1.5; }
+    .market-lane.nexus-lane { border: 2px solid var(--green); background: var(--green-soft); }
+    .market-lane.nexus-lane .gap { background: #183d31; color: #d5eee5; }
+
+    .duel { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 28px; }
+    .duel-side { min-height: 430px; padding: 28px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+    .duel-side.ours { border: 2px solid var(--green); background: var(--green-soft); }
+    .duel-brand { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 26px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+    .duel-brand strong { font: 700 clamp(24px, 2.5vw, 34px)/1 Georgia, serif; }
+    .duel-brand span { color: var(--muted); font: 600 11px monospace; }
+    .duel-list { display: grid; gap: 17px; }
+    .duel-point { display: grid; grid-template-columns: 92px 1fr; gap: 16px; align-items: start; }
+    .duel-point b { color: var(--green); font: 700 11px/1.5 monospace; text-transform: uppercase; }
+    .duel-side:not(.ours) .duel-point b { color: var(--blue); }
+    .duel-point p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+    .verdict { margin-top: 18px; padding: 18px 22px; border-left: 4px solid var(--amber); background: var(--amber-soft); color: #66400f; line-height: 1.55; }
+    .compact-duel .duel-side { min-height: 390px; padding: 22px 26px; }
+    .compact-duel .duel-brand { margin-bottom: 18px; padding-bottom: 12px; }
+    .compact-duel .duel-list { gap: 12px; }
+    .compact-duel .verdict { margin-top: 12px; padding: 13px 20px; }
+
+    .decision-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-top: 28px; }
+    .decision { padding: 22px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+    .decision.chosen { border: 2px solid var(--green); background: var(--green-soft); }
+    .decision .utility { margin-bottom: 14px; }
+    .decision p { color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .decision ul { margin: 16px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; line-height: 1.6; }
+    .decision .why { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--ink); font-weight: 700; }
+
+    .honest-grid { display: grid; grid-template-columns: 1.15fr .85fr; gap: 22px; margin-top: 28px; }
+    .honest-panel { padding: 28px; border: 1px solid var(--line); background: var(--surface); }
+    .honest-panel.adv { border-top: 5px solid var(--green); }
+    .honest-panel.cost { border-top: 5px solid var(--amber); }
+    .honest-panel ul { margin: 22px 0 0; padding-left: 20px; color: var(--muted); line-height: 1.75; }
+    .route-table { display: grid; grid-template-columns: 1.05fr .9fr 1.25fr 1fr; margin-top: 26px; border-top: 2px solid var(--ink); }
+    .route-cell { min-height: 92px; padding: 16px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--surface); font-size: 13px; line-height: 1.5; }
+    .route-cell:nth-child(4n) { border-right: 0; }
+    .route-cell.head { min-height: auto; color: var(--muted); font: 700 11px/1.2 monospace; text-transform: uppercase; }
+    .route-cell strong { display: block; margin-bottom: 7px; font-size: 16px; }
+    .route-cell.chosen { background: var(--green-soft); }
+    .route-cell.warn { background: var(--amber-soft); }
+    .stack-map { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 28px; }
+    .stack-layer { padding: 20px; border: 1px solid var(--line); border-top: 5px solid var(--blue); background: var(--surface); }
+    .stack-layer:nth-child(2) { border-top-color: var(--green); }
+    .stack-layer:nth-child(3) { border-top-color: var(--amber); }
+    .stack-layer:nth-child(4) { border-top-color: #754e9e; }
+    .stack-layer p { color: var(--muted); font-size: 13px; line-height: 1.55; }
+    .stack-products { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 15px; }
+    .stack-products span { padding: 5px 7px; border: 1px solid var(--line); color: var(--muted); font: 600 10px/1 monospace; }
+
     .controls { position: fixed; z-index: 20; right: 18px; bottom: 18px; display: flex; align-items: center; gap: 8px; padding: 7px; border: 1px solid #b7c5be; border-radius: 6px; background: rgba(255, 255, 255, .94); box-shadow: var(--shadow); }
     .controls button, .controls a { display: grid; place-items: center; width: 38px; height: 38px; border: 0; border-radius: 4px; color: var(--ink); background: transparent; cursor: pointer; text-decoration: none; }
     .controls button:hover, .controls a:hover { background: var(--green-soft); }
@@ -156,18 +211,21 @@
     .toc-list a { display: grid; grid-template-columns: 32px 1fr; gap: 12px; padding: 14px 0; border-top: 1px solid var(--line); color: var(--ink); text-decoration: none; }
     .toc-list a span:first-child { color: var(--green); font-family: monospace; }
     .speaker-note { display: none; }
+    .archived-detail { display: none; }
 
     @media (max-width: 900px) {
       html { scroll-snap-type: none; }
       .slide { min-height: auto; }
       .slide-inner { min-height: auto; }
-      .thesis-grid, .evidence-stage, .strategy { grid-template-columns: 1fr; }
+      .thesis-grid, .evidence-stage, .strategy, .duel, .honest-grid { grid-template-columns: 1fr; }
       .architecture { grid-template-columns: 1fr; }
       .arch-arrow { transform: rotate(90deg); min-height: 42px; }
       .flow { grid-template-columns: 1fr; }
       .flow-step { min-height: 130px; }
       .flow-step:not(:last-child)::after { top: auto; bottom: -18px; right: 50%; width: 2px; height: 24px; }
-      .reliability-strip, .advantage-grid { grid-template-columns: 1fr; }
+      .reliability-strip, .advantage-grid, .market-map, .decision-grid, .stack-map { grid-template-columns: 1fr; }
+      .route-table { grid-template-columns: 1fr; }
+      .route-cell { border-right: 0; }
       .reliability-strip div { border-right: 0; border-bottom: 1px solid var(--line); }
       .choice-row { grid-template-columns: 1fr; gap: 6px; }
       .choice-row.header { display: none; }
@@ -184,181 +242,308 @@
 </head>
 <body>
 <main class="deck" id="deck">
-  <section class="slide cover" data-title="技术选型与差异化优势">
-    <span class="slide-no">01 / 08</span>
+  <section class="slide cover" data-title="为什么不直接买一个大厂产品">
+    <span class="slide-no">01 / 09</span>
     <div class="slide-inner">
-      <div class="kicker">NEXUS 0.8.3 · TECHNICAL BRIEFING</div>
-      <h1>从“模型会回答”<br>到“结论有证据”</h1>
+      <div class="kicker">NEXUS 0.8.3 · TECHNOLOGY DECISION REVIEW</div>
+      <h1>为什么不直接买一个<br>大厂 AI 产品？</h1>
       <div class="cover-line" aria-hidden="true"></div>
-      <p class="lead">一套面向研发 Agent 的版本化需求、代码、测试与 Wiki 证据平台。</p>
-      <div class="cover-meta"><span>JAVA 17</span><span>SPRING BOOT 3.4.9</span><span>SPRING AI 1.1.2</span><span>QDRANT + SQLITE</span><span>MCP STREAMABLE HTTP</span></div>
+      <p class="lead">因为代码助手、企业搜索和研发证据平台解决的是三类不同问题。</p>
+      <div class="cover-meta"><span>BUILD VS BUY</span><span>TECHNOLOGY TRADE-OFFS</span><span>COMPETITIVE POSITION</span><span>EVIDENCE INFRASTRUCTURE</span></div>
     </div>
   </section>
 
-  <section class="slide" data-title="我们解决的不是聊天问题">
-    <span class="slide-no">02 / 08</span>
+  <section class="slide" data-title="市场上其实是四条路线">
+    <span class="slide-no">02 / 09</span>
     <div class="slide-inner">
-      <div class="kicker">01 · PRODUCT THESIS</div>
-      <div class="thesis-grid">
-        <div>
-          <h2>我们解决的不是<br>“聊天问题”</h2>
-          <div class="not-chat"><s>再造一个 AI IDE</s><br><span class="strong">建立研发事实的证据底座</span></div>
-        </div>
-        <div class="thesis-list">
-          <div class="thesis-item"><b>01</b><span><strong>版本边界</strong><br>每条需求、代码和 Wiki 结论都有项目、版本或 commit。</span></div>
-          <div class="thesis-item"><b>02</b><span><strong>证据边界</strong><br>模型只能引用当前检索白名单中的稳定证据 ID。</span></div>
-          <div class="thesis-item"><b>03</b><span><strong>不确定性可见</strong><br>无结果、降级、冲突与静态分析置信度不会被包装成确定答案。</span></div>
-          <div class="thesis-item"><b>04</b><span><strong>Agent 可调用</strong><br>通过 MCP 把内部研发知识交给 Copilot、Cursor、Claude Code 等客户端。</span></div>
-        </div>
+      <div class="kicker">01 · MARKET SEGMENTATION</div>
+      <h2>市场上不是一种产品，<br>而是四条技术路线</h2>
+      <div class="market-map">
+        <article class="market-lane"><h3>代码上下文平台 <span>Sourcegraph</span></h3><p>关键词搜索、代码图、跨仓上下文，为 LLM 找到相关代码。</p><div class="gap"><strong>相对缺口：</strong>需求版本、测试快照和 Wiki 发布不是核心数据模型。</div></article>
+        <article class="market-lane"><h3>企业知识搜索 <span>Rovo · Glean</span></h3><p>连接 Jira、Confluence、Drive、Slack 等 SaaS，把组织知识送入搜索和 Agent。</p><div class="gap"><strong>相对缺口：</strong>连接广但研发语义浅，commit 级符号关系和版本证据不是核心。</div></article>
+        <article class="market-lane"><h3>编码执行 Agent <span>Copilot · Gemini · Q · Devin</span></h3><p>理解当前任务，修改代码、运行测试、评审 PR 或操作云资源。</p><div class="gap"><strong>相对缺口：</strong>擅长“完成任务”，但不负责长期维护内部需求事实与证据生命周期。</div></article>
+        <article class="market-lane nexus-lane"><h3>研发证据基础设施 <span>NEXUS</span></h3><p>把需求版本、代码 commit、测试快照、Wiki 和证据 ID 建成可追溯的数据契约。</p><div class="gap"><strong>我们的取舍：</strong>不再造 IDE，不追求连接所有 SaaS；聚焦研发事实深度，并通过 MCP 服务现有 Agent。</div></article>
       </div>
-      <p class="footnote">定位：证据服务，而非通用模型、通用 IDE 或项目管理系统。</p>
+      <p class="footnote">结论：真正的替代关系只存在于局部能力；整体上 NEXUS 更接近“大厂产品之间缺失的证据层”。</p>
     </div>
   </section>
 
-  <section class="slide" data-title="总体架构">
-    <span class="slide-no">03 / 08</span>
+  <section class="slide archived-detail" data-title="四类代码上下文技术">
+    <span class="slide-no">03 / 11</span>
     <div class="slide-inner">
-      <div class="kicker">02 · ARCHITECTURE</div>
-      <h2>双知识引擎，统一证据出口</h2>
-      <p class="lead">语义检索、静态结构与版本事实采用不同存储，各做自己擅长的事。</p>
-      <div class="architecture">
-        <div class="arch-column">
-          <div class="arch-label">Knowledge inputs</div>
-          <div class="arch-block primary"><h3>需求知识</h3><p>Tika / ZIP HTML / Excel → 清洗 → Parent/Child 分块 → 内容哈希</p></div>
-          <div class="arch-block blue"><h3>代码知识</h3><p>Tree-sitter 多语言 AST → Chunk / Symbol / Call → Git commit 快照</p></div>
-          <div class="arch-block amber"><h3>版本事实</h3><p>需求快照、Git diff、测试快照、Wiki 索引与草稿生命周期</p></div>
-        </div>
-        <div class="arch-arrow" aria-hidden="true">→</div>
-        <div class="arch-column">
-          <div class="arch-label">Reasoning plane</div>
-          <div class="arch-block primary"><h3>Qdrant 混合检索</h3><p>需求：dense + sparse；代码：dense + desc_dense + sparse，RRF 融合</p></div>
-          <div class="arch-block blue"><h3>SQLite 符号图</h3><p>项目 / commit 隔离，EXACT / SAME_FILE / HEURISTIC / UNRESOLVED</p></div>
-          <div class="arch-block"><h3>Agentic 编排</h3><p>需求单线、代码单线、混合策略；最多两跳，证据不足才补检</p></div>
-          <div class="arch-block amber"><h3>证据与版本治理</h3><p>引用校验、冲突检测、四维版本对比、Wiki 审核发布与回滚</p></div>
-        </div>
-        <div class="arch-arrow" aria-hidden="true">→</div>
-        <div class="arch-column">
-          <div class="arch-label">Delivery</div>
-          <div class="arch-block primary"><h3>MCP</h3><p>10 个研发知识工具、Resources 与 Prompts，受控响应边界</p></div>
-          <div class="arch-block blue"><h3>REST + SSE</h3><p>索引、检索、影响分析、版本对比与真实流式开发方案</p></div>
-          <div class="arch-block amber"><h3>独立 Wiki</h3><p>已发布知识不依赖模型与 Qdrant，外部 AI 故障时仍可阅读</p></div>
-        </div>
+      <div class="kicker">02 · CONTEXT TECHNOLOGY</div>
+      <h2>产品背后，是四类上下文技术</h2>
+      <div class="route-table">
+        <div class="route-cell head">技术路线</div><div class="route-cell head">最擅长</div><div class="route-cell head">典型产品 / 组件</div><div class="route-cell head">结构性局限</div>
+        <div class="route-cell chosen"><strong>向量 / 语义问答</strong>Dense、Sparse、BM25、Rerank</div><div class="route-cell">规范与文档增强、自然语言找代码</div><div class="route-cell">通义灵码、CodeBuddy；Qdrant、Hologres/Proxima、Milvus</div><div class="route-cell warn">相似不等于调用关系；版本事实和精确定位弱</div>
+        <div class="route-cell chosen"><strong>Code Graph + LSP</strong>AST、Definition、Reference、Type、Call Edge</div><div class="route-cell">调用链、影响面、精确符号定位</div><div class="route-cell">Sourcegraph、MarsCode、Axon 类；JDT LS、gopls、TS Language Service</div><div class="route-cell warn">语言和构建环境成本高；动态调用仍不完整</div>
+        <div class="route-cell chosen"><strong>预编译 Wiki / Context</strong>Repo Map、架构摘要、规则文件</div><div class="route-cell">架构理解、部落知识、降低 Agent 探索成本</div><div class="route-cell">Qoder Repo Wiki、DeepWiki、Google Code Wiki、Meta context files</div><div class="route-cell warn">会过期；摘要失真；需要版本和来源哈希</div>
+        <div class="route-cell chosen"><strong>Hybrid</strong>多路召回 + 图 + Wiki + 当前任务</div><div class="route-cell">生产综合质量和复杂任务上下文</div><div class="route-cell">Qoder、通义灵码、CodeBuddy、Sourcegraph Cody、Gemini Enterprise</div><div class="route-cell warn">融合、预算、增量更新和评测最复杂</div>
       </div>
+      <p class="footnote">Hologres 是 SQL + 实时 Serving + 内置向量检索的数据基础设施，不是编码助手；LSP、Code Graph 和 Repo Wiki 也不是同一层产品。</p>
     </div>
   </section>
 
-  <section class="slide" data-title="技术选型">
-    <span class="slide-no">04 / 08</span>
+  <section class="slide archived-detail" data-title="NEXUS 在混合技术栈中的位置">
+    <span class="slide-no">04 / 11</span>
     <div class="slide-inner">
-      <div class="kicker">03 · TECHNOLOGY CHOICES</div>
-      <h2>选型围绕边界，不围绕热度</h2>
-      <p class="lead">每个组件承担一种明确的数据语义，避免用一个数据库或一个模型包办所有问题。</p>
-      <div class="choice-table">
-        <div class="choice-row header"><span>问题</span><span>选择</span><span>为什么</span></div>
-        <div class="choice-row"><strong>企业 Java 服务</strong><span class="selection">Java 17 + Spring Boot 3.4.9</span><p>稳定运行时、成熟 Web/Validation/Actuator 体系；JDK 与内部平台基线一致。</p></div>
-        <div class="choice-row"><strong>模型接入</strong><span class="selection">Spring AI 1.1.2 + OpenAI Compatible</span><p>生成、嵌入和工具协议解耦；模型按任务路由，不绑定单一供应商。</p></div>
-        <div class="choice-row"><strong>语义召回</strong><span class="selection">Qdrant named vectors + sparse</span><p>同一 point 同时承载原始语义、业务描述和关键词信号，原生过滤项目与版本。</p></div>
-        <div class="choice-row"><strong>代码结构</strong><span class="selection">Tree-sitter + SQLite</span><p>Tree-sitter 统一多语言抽取；SQLite 用事务保存可审计的 commit 级调用图，无需引入图数据库。</p></div>
-        <div class="choice-row"><strong>文档解析</strong><span class="selection">Apache Tika + 专用 ZIP/XLSX Loader</span><p>通用格式交给成熟解析器，业务结构保留专用规则，避免统一成失真的纯文本。</p></div>
-        <div class="choice-row"><strong>Agent 接入</strong><span class="selection">MCP Streamable HTTP</span><p>不自建 IDE；把内部证据开放给现有 Agent 客户端，复用开发者已有工作流。</p></div>
-        <div class="choice-row"><strong>前端交付</strong><span class="selection">静态 HTML + Vue WebJar</span><p>管理与浏览页面随单个 JAR 发布，无 Node 构建链；当前规模下维护成本最低。</p></div>
+      <div class="kicker">03 · HYBRID CONTEXT</div>
+      <h2>我们也是 Hybrid，<br>但中心不是 Agent，而是证据</h2>
+      <div class="stack-map">
+        <article class="stack-layer"><div class="utility">SEMANTIC</div><h3>语义与词法召回</h3><p>需求 dense + sparse；代码正文 dense + 业务描述 desc_dense + code-aware sparse；RRF 融合。</p><div class="stack-products"><span>QDRANT</span><span>EMBEDDING</span><span>RRF</span></div></article>
+        <article class="stack-layer"><div class="utility">STRUCTURE</div><h3>静态 Code Graph</h3><p>Tree-sitter 抽取 symbol/call，SQLite 保存 commit 快照，并标注精确、同文件、启发式和未解析。</p><div class="stack-products"><span>TREE-SITTER</span><span>SQLITE</span><span>GIT</span></div></article>
+        <article class="stack-layer"><div class="utility">PRECOMPILED</div><h3>版本化 Wiki / Context</h3><p>需求快照、版本清单、Wiki index/page、草稿审核与回滚；模型服务不可用时仍可读取。</p><div class="stack-products"><span>JSON</span><span>MARKDOWN</span><span>WIKI</span></div></article>
+        <article class="stack-layer"><div class="utility">DELIVERY</div><h3>有界 Agent 编排</h3><p>需求、代码和混合策略，最多两跳；通过 MCP 给任意 Agent 返回版本、证据、质量和警告。</p><div class="stack-products"><span>SPRING AI</span><span>MCP</span><span>2 HOPS</span></div></article>
       </div>
+      <div class="honest-grid">
+        <article class="honest-panel adv"><h3>相对纯 RAG 的优势</h3><ul><li>不仅按相似度找代码，还能按调用关系分析影响。</li><li>预编译知识与需求版本绑定，不只是一次性摘要。</li><li>每一路上下文都有来源、版本和降级语义。</li></ul></article>
+        <article class="honest-panel cost"><h3>相对大厂 Hybrid 的短板</h3><ul><li>当前是 Tree-sitter AST 图，不是完整 LSP/编译器语义图。</li><li>缺少 IDE 光标、编辑历史和丰富 SaaS connector。</li><li>Repo Wiki 的架构覆盖度不及 Qoder/DeepWiki。</li></ul></article>
+      </div>
+      <p class="footnote">准确表述：NEXUS 已跨过“向量问答”阶段，属于证据中心的 Hybrid Context；下一步最大技术缺口是 LSP/type resolution。</p>
     </div>
   </section>
 
-  <section class="slide" data-title="检索与可靠性">
-    <span class="slide-no">05 / 08</span>
+  <section class="slide compact-duel" data-title="对比 Sourcegraph">
+    <span class="slide-no">03 / 09</span>
     <div class="slide-inner">
-      <div class="kicker">04 · RETRIEVAL & RELIABILITY</div>
-      <h2>不是一次向量查询，而是一条可诊断管线</h2>
-      <div class="flow" aria-label="检索流程">
-        <div class="flow-step"><div class="utility">Route</div><h3>意图与画像</h3><p>需求评审、代码定位或混合开发问题，选择最小检索策略。</p></div>
-        <div class="flow-step"><div class="utility">Recall</div><h3>多路并行召回</h3><p>需求 dense/sparse，代码正文/业务描述/sparse，受控线程池并发。</p></div>
-        <div class="flow-step"><div class="utility">Rank</div><h3>融合与重排</h3><p>RRF 合并多路排名，LLM 重排可配置，保留混合顺序兜底。</p></div>
-        <div class="flow-step"><div class="utility">Reflect</div><h3>证据反思</h3><p>检查命中阈值、唯一父块和双侧覆盖；不足时最多补检一次。</p></div>
-        <div class="flow-step"><div class="utility">Deliver</div><h3>结构化交付</h3><p>返回证据、质量、阶段诊断与稳定 warning code。</p></div>
-      </div>
-      <div class="reliability-strip">
-        <div><strong>32</strong><span>Embedding 批大小；失败自动二分定位</span></div>
-        <div><strong>2 / 5s</strong><span>Qdrant 连接 / 读取超时</span></div>
-        <div><strong>2 hops</strong><span>Agentic 最大跳数，拒绝无界循环</span></div>
-        <div><strong>CI gate</strong><span>冻结黄金命中默认回归，不依赖外部服务</span></div>
-      </div>
-      <p class="footnote">0.8.3 已落地：安全需求索引替换、代码 collection + Alias 原子发布、Webhook 任务合并、有界跨项目检索。</p>
-    </div>
-  </section>
-
-  <section class="slide" data-title="证据优先">
-    <span class="slide-no">06 / 08</span>
-    <div class="slide-inner">
-      <div class="kicker">05 · EVIDENCE FIRST</div>
-      <div class="evidence-stage">
-        <div>
-          <h2>优势不在“更敢回答”<br>而在“知道依据在哪”</h2>
-          <div class="evidence-chain">
-            <div class="evidence-node"><h3>需求事实</h3><p>documentId + version + parent/child hash</p></div>
-            <div class="evidence-node"><h3>代码事实</h3><p>projectId + commit + file + symbol + line</p></div>
-            <div class="evidence-node"><h3>结构事实</h3><p>调用边带解析级别，歧义不冒充精确关系</p></div>
-            <div class="evidence-node"><h3>发布事实</h3><p>Wiki 草稿经审核状态机进入正式版本</p></div>
+      <div class="kicker">02 · CODE INTELLIGENCE</div>
+      <h2>Sourcegraph 更强在代码规模，<br>我们更深在版本证据</h2>
+      <div class="duel">
+        <article class="duel-side">
+          <div class="duel-brand"><strong>Sourcegraph Cody</strong><span>SEARCH-FIRST</span></div>
+          <div class="duel-list">
+            <div class="duel-point"><b>怎么做</b><p>Keyword Search + Sourcegraph Search API + Code Graph，为聊天和生成拉取跨仓代码上下文。</p></div>
+            <div class="duel-point"><b>优势</b><p>大规模代码搜索、成熟索引、跨代码托管平台、IDE 体验和多仓上下文明显更成熟。</p></div>
+            <div class="duel-point"><b>局限</b><p>核心对象是 repo/file/symbol；需求版本、测试执行快照、Wiki 审核发布需要外部系统承载。</p></div>
+            <div class="duel-point"><b>结果</b><p>很擅长回答“代码在哪里、怎么用”，但“某需求版本为何这样实现、测试是否跟上”不是原生闭环。</p></div>
           </div>
-        </div>
-        <div class="evidence-output">
-          <div class="utility" style="color:#8fe0c4">ANSWER CONTRACT</div>
-          <blockquote>“修改鉴权撤销逻辑时，应同步检查缓存失效入口与回归用例。”</blockquote>
-          <div class="citation"><span>requirement:3</span><span>code:1</span><span>code-graph:7</span></div>
-          <p style="margin:28px 0 0;color:#b8d0c7;line-height:1.7">非法引用会被过滤；证据不足返回降级和缺口，不让模型用流畅语言掩盖不确定性。</p>
-        </div>
+        </article>
+        <article class="duel-side ours">
+          <div class="duel-brand"><strong>我们的规划</strong><span>EVIDENCE-FIRST</span></div>
+          <div class="duel-list">
+            <div class="duel-point"><b>准备建设</b><p>混合代码检索、编译器/LSP 语义索引、commit 级关系快照，以及 HTTP、RPC、消息和数据对象关系。</p></div>
+            <div class="duel-point"><b>输出方式</b><p>每条代码证据携带仓库、commit、文件、符号、行号和关系置信度。</p></div>
+            <div class="duel-point"><b>主动取舍</b><p>不复制完整通用代码搜索，把投入集中在需求版本与代码、测试的关联上。</p></div>
+            <div class="duel-point"><b>预期优势</b><p>从“找到相关代码”升级为“需求版本 → 代码证据 → 影响范围 → 回归建议”。</p></div>
+          </div>
+        </article>
       </div>
+      <div class="verdict"><strong>技术判断：</strong>若目标只是企业代码搜索，优先采购 Sourcegraph；若目标是需求到代码和测试的版本化追溯，单独采购仍需建设证据层。</div>
     </div>
   </section>
 
-  <section class="slide" data-title="竞品对比">
-    <span class="slide-no">07 / 08</span>
+  <section class="slide" data-title="对比 Rovo 与 Glean">
+    <span class="slide-no">04 / 09</span>
     <div class="slide-inner">
-      <div class="kicker">06 · MARKET POSITION</div>
-      <h2>我们不替代 Copilot，<br>我们给 Agent 提供内部事实</h2>
+      <div class="kicker">03 · ENTERPRISE KNOWLEDGE</div>
+      <h2>Rovo / Glean 赢在连接广，<br>我们赢在研发语义深</h2>
+      <div class="duel">
+        <article class="duel-side">
+          <div class="duel-brand"><strong>Rovo / Glean</strong><span>CONNECTOR-FIRST</span></div>
+          <div class="duel-list">
+            <div class="duel-point"><b>怎么做</b><p>通过大量 SaaS connector 和组织知识图谱，把人员、项目、文档、会议与工作项统一搜索。</p></div>
+            <div class="duel-point"><b>优势</b><p>冷启动快、数据源覆盖广、组织级搜索和工作流自动化成熟，尤其适合 Jira/Confluence 体系。</p></div>
+            <div class="duel-point"><b>局限</b><p>通用连接器通常保留文档级语义，不会为每个仓库建立 commit 隔离的调用图和解析置信度。</p></div>
+            <div class="duel-point"><b>约束</b><p>Rovo 完整 AI 能力依赖 Atlassian Cloud 计划；跨系统事实版本如何冻结由各数据源决定。</p></div>
+          </div>
+        </article>
+        <article class="duel-side ours">
+          <div class="duel-brand"><strong>我们的规划</strong><span>DOMAIN-FIRST</span></div>
+          <div class="duel-list">
+            <div class="duel-point"><b>准备建设</b><p>统一项目、需求版本、代码 commit、测试 case 和 Wiki feature 的研发对象模型。</p></div>
+            <div class="duel-point"><b>接入范围</b><p>优先需求平台、Git、CI 测试和版本 Wiki，不建设全公司通用 connector 市场。</p></div>
+            <div class="duel-point"><b>版本策略</b><p>保留原始来源和历史快照，不只索引各系统的当前状态。</p></div>
+            <div class="duel-point"><b>预期优势</b><p>用更窄的数据源范围换取 commit、test case 和 feature 级的研发深度。</p></div>
+          </div>
+        </article>
+      </div>
+      <div class="verdict"><strong>技术判断：</strong>企业全域搜索应采购 Rovo/Glean；研发关键事实不能只停留在 connector 抽取结果，需要独立的版本和证据契约。</div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="对比编码 Agent">
+    <span class="slide-no">05 / 09</span>
+    <div class="slide-inner">
+      <div class="kicker">04 · CODING AGENTS</div>
+      <h2>Copilot 与 Qoder<br>两种 Agent 上下文路线</h2>
+      <div class="duel">
+        <article class="duel-side">
+          <div class="duel-brand"><strong>Copilot / Qoder</strong><span>EXECUTION-FIRST</span></div>
+          <div class="duel-list">
+            <div class="duel-point"><b>Copilot</b><p>以 GitHub、IDE、CLI、Issue、PR 和 MCP 为上下文与工具入口，优势是从任务直接进入代码和 PR 交付。</p></div>
+            <div class="duel-point"><b>Qoder</b><p>强调 Context Engineering、Repo Wiki、规则与记忆，并通过目标循环和多 Agent 支撑长任务。</p></div>
+            <div class="duel-point"><b>共同优势</b><p>编辑器、终端、测试、PR 和多文件修改成熟；预编译 Context 能降低重复探索成本。</p></div>
+            <div class="duel-point"><b>共同局限</b><p>当前会话上下文和 Repo Wiki 不天然等于已审核、可长期复现的业务版本事实。</p></div>
+          </div>
+        </article>
+        <article class="duel-side ours">
+          <div class="duel-brand"><strong>我们的规划</strong><span>CONTEXT CONTROL</span></div>
+          <div class="duel-list">
+            <div class="duel-point"><b>准备建设</b><p>通过 MCP 提供需求、代码、源码、调用图、影响分析、版本 Wiki、存疑和冲突工具。</p></div>
+            <div class="duel-point"><b>Context</b><p>建设绑定 commit、来源哈希和审核状态的版本化 Repo Wiki，支持摘要后按证据下钻。</p></div>
+            <div class="duel-point"><b>边界</b><p>不写代码、不操作 PR，把快速变化的执行能力留给 Copilot、Qoder 等成熟 Agent。</p></div>
+            <div class="duel-point"><b>预期优势</b><p>不同 Agent 共用同一正确版本和证据协议，避免客户端锁定与上下文漂移。</p></div>
+          </div>
+        </article>
+      </div>
+      <div class="verdict"><strong>技术判断：</strong>自建 Coding Agent 性价比低；自建 MCP 证据服务能利用所有 Agent，又不被单一客户端绑定。</div>
+    </div>
+  </section>
+
+  <section class="slide archived-detail" data-title="存储与检索选型对比">
+    <span class="slide-no">06 / 09</span>
+    <div class="slide-inner">
+      <div class="kicker">05 · STORAGE DECISIONS</div>
+      <h2>为什么不是“一个向量库解决一切”</h2>
+      <div class="decision-grid">
+        <article class="decision"><div class="utility">OPTION A</div><h3>全量塞进向量库</h3><p>大多数轻量 RAG 的路径：文档和代码统一 chunk、embedding、topK。</p><ul><li>实现最快</li><li>语义近似强</li><li>关系与版本 diff 弱</li><li>难表达“未解析”和置信度</li></ul><div class="why">不选：相似不等于调用关系，向量分数不能充当版本事实。</div></article>
+        <article class="decision"><div class="utility">OPTION B</div><h3>统一图数据库</h3><p>把需求、代码、测试、人员和版本都建成大图，再做图检索。</p><ul><li>关系表达丰富</li><li>跨域查询强</li><li>建模、运维和增量一致性成本高</li><li>当前规模收益不足</li></ul><div class="why">暂不选：没有需要分布式图查询的实际规模证据。</div></article>
+        <article class="decision chosen"><div class="utility">CHOSEN</div><h3>Qdrant + SQLite + 文件事实</h3><p>按数据语义分治，而不是按技术时髦程度统一。</p><ul><li>Qdrant：dense/desc_dense/sparse 召回</li><li>SQLite：事务化 commit 调用图</li><li>JSON/Markdown：可审阅版本与 Wiki</li><li>稳定 ID 在三者间关联</li></ul><div class="why">优势：最小运维成本下，同时保留语义、关系和可审阅事实。</div></article>
+      </div>
+      <p class="footnote">代码索引采用版本化 collection + Alias 原子发布；需求索引先写入并校验，再清理旧 point，避免在线半成品。</p>
+    </div>
+  </section>
+
+  <section class="slide archived-detail" data-title="模型与编排选型对比">
+    <span class="slide-no">07 / 09</span>
+    <div class="slide-inner">
+      <div class="kicker">06 · MODEL & ORCHESTRATION</div>
+      <h2>为什么不押注一个模型，<br>也不做无限 Agent 循环</h2>
+      <div class="decision-grid">
+        <article class="decision"><div class="utility">MONOLITHIC MODEL</div><h3>单模型 + 大上下文</h3><p>把代码和文档尽量塞进长上下文，依靠模型自行判断。</p><ul><li>原型简单</li><li>成本和延迟随上下文上涨</li><li>版本污染难诊断</li><li>模型替换会改变全链路行为</li></ul><div class="why">不选：无法建立确定的质量门和证据边界。</div></article>
+        <article class="decision"><div class="utility">OPEN-ENDED AGENT</div><h3>自主规划与反复检索</h3><p>让 Agent 自己选择工具，直到认为信息足够。</p><ul><li>灵活</li><li>行为难复现</li><li>工具调用和 token 不可控</li><li>错误上下文可能被持续放大</li></ul><div class="why">不选：研发证据服务首先需要确定性和可运营性。</div></article>
+        <article class="decision chosen"><div class="utility">CHOSEN</div><h3>任务路由 + 有界两跳</h3><p>不同任务选择生成、评审、标注或重排模型；检索策略最多补检一次。</p><ul><li>Spring AI + OpenAI Compatible 解耦供应商</li><li>规则反思检查唯一父块和双侧覆盖</li><li>失败显式 DEGRADED</li><li>冻结质量集进入 CI</li></ul><div class="why">优势：模型可替换，成本有上限，失败原因可聚合。</div></article>
+      </div>
+      <p class="footnote">我们的优势不是模型参数更大，而是模型之外仍有可测试的检索、版本和证据契约。</p>
+    </div>
+  </section>
+
+  <section class="slide archived-detail" data-title="完整能力矩阵">
+    <span class="slide-no">08 / 09</span>
+    <div class="slide-inner">
+      <div class="kicker">07 · CAPABILITY MATRIX</div>
+      <h2>单项能力未必最强，<br>组合覆盖是我们的差异</h2>
       <div class="compare-wrap">
         <table class="compare">
-          <thead><tr><th>能力维度</th><th class="nexus">NEXUS</th><th>Sourcegraph</th><th>GitHub Copilot</th><th>Atlassian Rovo</th><th>DeepWiki / Devin</th><th>Glean</th></tr></thead>
+          <thead><tr><th>核心问题</th><th class="nexus">NEXUS</th><th>Sourcegraph</th><th>Copilot / Gemini / Q</th><th>Rovo / Glean</th><th>Qoder / 灵码 / CodeBuddy</th><th>DeepWiki / Devin</th></tr></thead>
           <tbody>
-            <tr><td>跨仓代码理解</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td></tr>
-            <tr><td>符号图与影响分析</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-no"></i></td></tr>
-            <tr><td>企业文档 / 需求搜索</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td></tr>
-            <tr><td>需求版本快照与差异</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td></tr>
-            <tr><td>需求 + 代码 + 测试 + Wiki 对比</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td></tr>
-            <tr><td>证据白名单与稳定 ID</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td></tr>
-            <tr><td>自主修改代码 / 提交 PR</td><td class="nexus"><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td></tr>
-            <tr><td>MCP / Agent 工具接入</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td></tr>
-            <tr><td>私有部署与模型可替换</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td></tr>
+            <tr><td>跨仓代码搜索与上下文</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td></tr>
+            <tr><td>commit 级符号图与置信度</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td></tr>
+            <tr><td>企业 SaaS 连接器广度</td><td class="nexus"><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td></tr>
+            <tr><td>需求版本快照与确定性 diff</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td></tr>
+            <tr><td>需求 + 代码 + 测试 + Wiki 联合对比</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td></tr>
+            <tr><td>引用白名单、稳定 ID、覆盖率</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td></tr>
+            <tr><td>存疑、冲突与信息不足输出</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-part"></i></td><td><i class="dot-no"></i></td></tr>
+            <tr><td>自主修改代码和提交 PR</td><td class="nexus"><i class="dot-no"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-yes"></i></td><td><i class="dot-yes"></i></td></tr>
+            <tr><td>模型与 Agent 客户端可替换</td><td class="nexus"><i class="dot-yes"></i></td><td><i class="dot-part"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td><td><i class="dot-no"></i></td></tr>
           </tbody>
         </table>
       </div>
-      <div class="legend"><span><i class="dot-yes"></i>核心能力</span><span><i class="dot-part"></i>具备或可通过集成覆盖</span><span><i class="dot-no"></i>非核心定位</span></div>
-      <p class="footnote">比较基于公开产品定位，强调能力重心而非采购结论；云产品能力会持续变化。NEXUS 的“无自主改码”是产品边界：执行交给现有 Agent。</p>
+      <div class="legend"><span><i class="dot-yes"></i>产品核心</span><span><i class="dot-part"></i>部分覆盖或依赖集成</span><span><i class="dot-no"></i>非核心定位</span></div>
+      <p class="footnote">基于 2026-08 官方公开定位做架构层比较，不代表所有套餐、预览功能或定制服务。局限均是“相对本项目目标”的局限。</p>
     </div>
   </section>
 
-  <section class="slide" data-title="我们的优势与下一步">
-    <span class="slide-no">08 / 08</span>
+  <section class="slide archived-detail" data-title="我们的优势与代价">
+    <span class="slide-no">09 / 09</span>
     <div class="slide-inner">
-      <div class="kicker">07 · ADVANTAGE & STRATEGY</div>
-      <div class="strategy">
-        <div>
-          <h2>优势来自组合，<br>壁垒来自数据契约</h2>
-          <div class="positioning">
-            <div class="utility">POSITIONING</div>
-            <div class="formula">研发 Agent 的<br>版本化证据基础设施</div>
-            <p>上接 Copilot、Cursor、Claude Code、TRAE 等 Agent；下接内部需求、代码、测试、Wiki 与版本事实。</p>
-          </div>
+      <div class="kicker">08 · FINAL DECISION</div>
+      <h2>不是全面替代大厂，<br>而是控制最关键的一层</h2>
+      <div class="honest-grid">
+        <article class="honest-panel adv"><div class="utility">OUR ADVANTAGE</div><h3>值得自建的部分</h3><ul><li><strong>内部语义：</strong>需求版本、代码 commit、测试与 Wiki 的关系由我们定义。</li><li><strong>证据契约：</strong>稳定 ID、引用白名单、冲突与降级不会随模型更换消失。</li><li><strong>供应商中立：</strong>模型按任务路由，Agent 通过 MCP 替换，业务事实留在内部。</li><li><strong>可审计发布：</strong>向量索引原子切换，Wiki 有审核和回滚，质量有固定 CI 门禁。</li><li><strong>组合差异：</strong>单项不与大厂硬拼，但需求到代码、测试和版本的闭环市场覆盖稀缺。</li></ul></article>
+        <article class="honest-panel cost"><div class="utility" style="color:var(--amber)">COST & BOUNDARY</div><h3>必须承认的代价</h3><ul><li>代码搜索规模和精度不及 Sourcegraph。</li><li>企业连接器数量不及 Rovo/Glean。</li><li>代码执行和 IDE 体验不及 Copilot/Devin。</li><li>需要自行维护索引、评测和领域 loader。</li><li>只有持续积累真实需求、代码和测试关联，差异化才成立。</li></ul></article>
+      </div>
+      <div class="verdict"><strong>最终选型：</strong>采购或使用成熟 Agent 负责“执行”，必要时采购通用搜索负责“广度”；NEXUS 只控制不可外包的内部研发事实、版本关系与证据质量。</div>
+      <p class="footnote">一句话：他们优化“模型能做什么”，我们控制“模型依据什么做”。</p>
+    </div>
+  </section>
+  <section class="slide" data-title="我们准备建设的总体方案">
+    <span class="slide-no"></span>
+    <div class="slide-inner">
+      <div class="kicker">05 · PLANNED PLATFORM</div>
+      <h2>不重复造三类产品，<br>只建设它们之间的证据层</h2>
+      <div class="architecture">
+        <div class="arch-column">
+          <div class="arch-label">Inputs</div>
+          <div class="arch-block primary"><h3>需求与企业文档</h3><p>业务版本、原始来源、历史快照</p></div>
+          <div class="arch-block blue"><h3>Git 与编译器索引</h3><p>commit、symbol、reference、调用与跨服务关系</p></div>
+          <div class="arch-block amber"><h3>CI 测试结果</h3><p>真实 test case、执行状态与报告来源</p></div>
         </div>
-        <div class="strategy-line">
-          <div class="strategy-step"><h3>01 · 先做深证据链</h3><p>强化需求 → 代码 → 调用影响 → 测试的显式关联，而不是增加聊天入口。</p></div>
-          <div class="strategy-step"><h3>02 · 再做质量闭环</h3><p>固定黄金集、污染率、引用合法率和 P95；模型与参数变更必须过门禁。</p></div>
-          <div class="strategy-step"><h3>03 · 保持可替换</h3><p>模型供应商、Embedding、Agent 客户端和存储实现均不成为业务事实的唯一宿主。</p></div>
-          <div class="strategy-step"><h3>04 · 不扩张执行面</h3><p>不自建 AI IDE，不与成熟 Agent 争夺代码执行；通过 MCP 放大已有知识资产。</p></div>
+        <div class="arch-arrow" aria-hidden="true">→</div>
+        <div class="arch-column">
+          <div class="arch-label">Evidence plane</div>
+          <div class="arch-block primary"><h3>统一版本模型</h3><p>项目、需求版本、commit、测试快照和 Wiki 互相解析</p></div>
+          <div class="arch-block blue"><h3>混合上下文</h3><p>语义检索、代码关系和版本化 Wiki 按任务组合</p></div>
+          <div class="arch-block amber"><h3>证据治理</h3><p>来源、置信度、冲突、缺口、审核和质量反馈</p></div>
+        </div>
+        <div class="arch-arrow" aria-hidden="true">→</div>
+        <div class="arch-column">
+          <div class="arch-label">Consumers</div>
+          <div class="arch-block primary"><h3>MCP</h3><p>Copilot、Qoder、Cursor、Claude Code 等共享工具协议</p></div>
+          <div class="arch-block blue"><h3>REST / SSE</h3><p>供内部平台、评审工作台和自动化流程调用</p></div>
+          <div class="arch-block amber"><h3>版本化 Wiki</h3><p>预编译 Context，支持审核、失效和按证据下钻</p></div>
         </div>
       </div>
-      <p class="footnote">一句话总结：通用 Agent 负责“做事”，NEXUS 负责告诉它“基于哪个版本、哪些证据、影响到哪里”。</p>
+    </div>
+  </section>
+
+  <section class="slide" data-title="国内产品全景">
+    <span class="slide-no"></span>
+    <div class="slide-inner">
+      <div class="kicker">06 · CHINA LANDSCAPE</div>
+      <h2>国内产品很多，<br>差异主要在入口与 Context</h2>
+      <div class="route-table">
+        <div class="route-cell head">代表产品</div><div class="route-cell head">公开能力重点</div><div class="route-cell head">值得借鉴</div><div class="route-cell head">选型时重点验证</div>
+        <div class="route-cell chosen"><strong>通义灵码</strong>阿里云</div><div class="route-cell">工程自动感知、Agent、终端、多文件、Test Agent、企业知识库</div><div class="route-cell">规范直接进入编码；测试生成后继续运行与修复</div><div class="route-cell warn">知识版本、引用粒度、跨项目隔离、召回解释</div>
+        <div class="route-cell chosen"><strong>Qoder</strong>Repo Wiki 路线</div><div class="route-cell">Context Engineering、Repo Wiki、Rules/Memory、多 Agent、长任务</div><div class="route-cell">预编译 Context 降探索成本；知识在长任务中持续复用</div><div class="route-cell warn">Wiki 增量更新、commit 绑定、摘要纠错、生成成本</div>
+        <div class="route-cell chosen"><strong>CodeBuddy</strong>腾讯云</div><div class="route-cell">AI 编码助手、工程理解、生成与研发协作</div><div class="route-cell">腾讯云和团队研发工具链的一体化入口</div><div class="route-cell warn">私有知识、多仓、Code Graph、影响分析、私有部署</div>
+        <div class="route-cell chosen"><strong>文心快码 Comate</strong>百度</div><div class="route-cell">补全、问答、生成、测试与企业研发辅助</div><div class="route-cell">企业编码场景与百度云生态结合</div><div class="route-cell warn">工程级 Context、知识更新、引用解释、Agent 工具边界</div>
+      </div>
+      <p class="footnote">其他国内产品还包括 TRAE、MarsCode、CodeArts Snap、Fitten Code 等。全景用于建立市场覆盖，技术结论应以正式文档和 PoC 为准。</p>
+    </div>
+  </section>
+
+  <section class="slide" data-title="Wiki 与 Context 如何提效">
+    <span class="slide-no"></span>
+    <div class="slide-inner">
+      <div class="kicker">07 · WIKI PRODUCTIVITY</div>
+      <h2>Wiki 的价值不是文档更多，<br>而是探索更少</h2>
+      <div class="duel">
+        <article class="duel-side">
+          <div class="duel-brand"><strong>现有 Wiki / Context</strong><span>PRECOMPUTE</span></div>
+          <div class="duel-list">
+            <div class="duel-point"><b>Qoder</b><p>Repo Wiki 预先理解架构和设计，为长任务提供持久 Context。</p></div>
+            <div class="duel-point"><b>DeepWiki</b><p>把代码仓库生成可浏览、可问答的 Wiki 和系统图，适合陌生项目理解。</p></div>
+            <div class="duel-point"><b>Context Files</b><p><span class="mono">AGENTS.md</span>、Rules、Repository Map 保存约定、命令和代码地图。</p></div>
+            <div class="duel-point"><b>共同收益</b><p>减少重复搜索与 token，让人和 Agent 快速获得全局认知。</p></div>
+          </div>
+        </article>
+        <article class="duel-side ours">
+          <div class="duel-brand"><strong>我们的规划</strong><span>VERIFIED CONTEXT</span></div>
+          <div class="duel-list">
+            <div class="duel-point"><b>分层</b><p>仓库架构、模块说明、功能 Wiki、符号证据，先摘要再下钻。</p></div>
+            <div class="duel-point"><b>版本</b><p>每份 Context 绑定需求版本、Git commit 和来源哈希，代码变化后增量失效。</p></div>
+            <div class="duel-point"><b>审核</b><p>模型只生成草稿，人审核后发布；与代码、需求或测试冲突时告警。</p></div>
+            <div class="duel-point"><b>共享</b><p>通过 MCP Resource 和标准 Context 文件服务多个 Agent。</p></div>
+          </div>
+        </article>
+      </div>
+      <div class="verdict"><strong>预期优势：</strong>从“自动生成 Wiki”升级为“可失效、可审核、可追溯的 Context”，既降低 Agent 探索成本，也避免旧摘要长期传播。</div>
+    </div>
+  </section>
+
+  <section class="slide" data-title="规划方案的预期优势">
+    <span class="slide-no"></span>
+    <div class="slide-inner">
+      <div class="kicker">06 · EXPECTED ADVANTAGE</div>
+      <h2>三类成熟产品负责能力，<br>我们负责上下文可信</h2>
+      <div class="advantage-grid">
+        <article class="advantage"><div class="index">01 · VS CODE CONTEXT</div><h3>从相关代码到版本影响</h3><p>不只返回“可能相关”的代码，还准备把需求版本、代码关系和测试范围串成可回查路径。</p></article>
+        <article class="advantage"><div class="index">02 · VS ENTERPRISE SEARCH</div><h3>从连接广度到研发深度</h3><p>不竞争 connector 数量，重点提供 commit、symbol、test case 和 feature 级关系。</p></article>
+        <article class="advantage"><div class="index">03 · VS CODING AGENT</div><h3>从当前会话到长期事实</h3><p>Agent 可以更换，但正确版本、正式 Wiki、测试来源和证据协议保持稳定。</p></article>
+        <article class="advantage"><div class="index">04 · PLATFORM VALUE</div><h3>执行与事实解耦</h3><p>成熟产品持续升级模型和执行能力；内部平台长期控制不能外包的需求、版本和证据关系。</p></article>
+      </div>
+      <div class="verdict"><strong>最终选型：</strong>需要代码搜索时使用 Sourcegraph 类平台，需要企业搜索时使用 Rovo 类平台，执行使用 Copilot/Qoder；内部只建设研发版本与证据层。</div>
     </div>
   </section>
 </main>
@@ -379,7 +564,7 @@
 </div>
 
 <script>
-  const slides = [...document.querySelectorAll('.slide')];
+  const slides = [...document.querySelectorAll('.slide:not(.archived-detail)')];
   const progress = document.getElementById('progress');
   const toc = document.getElementById('toc');
   const tocList = document.getElementById('tocList');
@@ -387,6 +572,8 @@
 
   slides.forEach((slide, index) => {
     slide.id = `slide-${index + 1}`;
+    const slideNumber = slide.querySelector('.slide-no');
+    if (slideNumber) slideNumber.textContent = `${String(index + 1).padStart(2, '0')} / ${String(slides.length).padStart(2, '0')}`;
     const link = document.createElement('a');
     link.href = `#${slide.id}`;
     link.innerHTML = `<span>${String(index + 1).padStart(2, '0')}</span><span>${slide.dataset.title}</span>`;
