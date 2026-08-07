@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.json.JsonMapper;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -90,6 +91,113 @@ public class CodeQdrantStore {
         List<List<Map<String, Object>>> pointBatches = buildPointBatches(chunks, 32);
         deleteProject(collection, projectId);
         writePointBatches(collection, pointBatches);
+    }
+
+    /**
+     * 安全发布一个项目的全量代码索引：
+     * 写入版本化物理 collection → 校验点数 → Qdrant Alias 原子切换 → 清理旧版本。
+     * 任一步失败时 Alias 保持不变，在线查询始终读取上一个完整版本。
+     *
+     * @param alias    检索侧使用的别名（如 {@code code_x_active}），物理 collection 为 {@code <alias>-<ts>}
+     * @param projectId 项目 ID
+     * @param chunks    新版本的全部代码 chunk
+     */
+    public void publishProject(String alias, String projectId, List<CodeChunk> chunks) {
+        if (chunks == null || chunks.isEmpty()) {
+            throw new IllegalArgumentException("cannot publish an empty code index");
+        }
+        String physical = alias + "-" + Instant.now().toEpochMilli();
+        ensureCollection(physical);
+        writePointBatches(physical, buildPointBatches(chunks, 32));
+        verifyCollectionPoints(physical, projectId, chunks.size());
+        publishAlias(alias, physical);
+        retireOldCollections(alias, physical);
+    }
+
+    /** 校验物理 collection 中指定项目的点数与预期一致；不一致时抛异常（Alias 不切换）。 */
+    private void verifyCollectionPoints(String collection, String projectId, int expected) {
+        Map<String, Object> response = client.post().uri("/collections/{collection}/points/count", collection)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("filter", filter(projectId)))
+                .retrieve()
+                .body(new ParameterizedTypeReference<>() {});
+        Map<String, Object> result = map(response == null ? null : response.get("result"));
+        long count = ((Number) result.getOrDefault("count", 0)).longValue();
+        if (count != expected) {
+            throw new IllegalStateException("代码索引校验失败: collection " + collection
+                    + " 期望 " + expected + " 个 point, 实际 " + count);
+        }
+    }
+
+    /** 原子切换 Alias 到新物理 collection：alias 不存在则创建（并迁移删除旧物理 collection），存在则 swap。 */
+    private void publishAlias(String alias, String physical) {
+        String current = aliasTarget(alias);
+        Map<String, Object> action;
+        if (current == null) {
+            action = Map.of("create_alias", Map.of("collection_name", physical, "alias_name", alias));
+        } else {
+            action = Map.of("swap_aliases", List.of(
+                    Map.of("collection", current, "alias", alias),
+                    Map.of("collection", physical, "alias", alias)));
+        }
+        client.post().uri("/collections/aliases")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("actions", List.of(action)))
+                .retrieve().toBodilessEntity();
+        if (current == null) {
+            deleteLegacyPhysical(alias);
+        }
+    }
+
+    /** 查询全局 Alias 列表，返回 alias 当前指向的物理 collection；alias 不存在时返回 null。 */
+    private String aliasTarget(String alias) {
+        Map<String, Object> response = client.get().uri("/aliases").retrieve()
+                .body(new ParameterizedTypeReference<>() {});
+        Map<String, Object> result = map(response == null ? null : response.get("result"));
+        for (Object raw : list(result.get("aliases"))) {
+            Map<String, Object> entry = map(raw);
+            if (alias.equals(entry.get("alias_name"))) {
+                return (String) entry.get("collection_name");
+            }
+        }
+        return null;
+    }
+
+    /** 首次发布迁移：删除与 alias 同名的旧物理 collection（旧数据，best-effort）。 */
+    private void deleteLegacyPhysical(String alias) {
+        try {
+            client.delete().uri("/collections/{collection}", alias).retrieve().toBodilessEntity();
+        } catch (HttpClientErrorException.NotFound exception) {
+            // 无旧物理 collection（全新部署）
+        }
+    }
+
+    /** 清理过期物理 collection：保留最新 2 个（当前 + 上一个成功版本），其余删除。 */
+    private void retireOldCollections(String alias, String currentPhysical) {
+        String prefix = alias + "-";
+        Map<String, Object> response = client.get().uri("/collections").retrieve()
+                .body(new ParameterizedTypeReference<>() {});
+        Map<String, Object> result = map(response == null ? null : response.get("result"));
+        List<String> physicals = new ArrayList<>();
+        for (Object raw : list(result.get("collections"))) {
+            Map<String, Object> entry = map(raw);
+            String name = (String) entry.get("name");
+            if (name != null && name.startsWith(prefix)) {
+                physicals.add(name);
+            }
+        }
+        physicals.sort(Comparator.naturalOrder());
+        for (int index = 0; index < physicals.size() - 2; index++) {
+            String stale = physicals.get(index);
+            if (!stale.equals(currentPhysical)) {
+                try {
+                    client.delete().uri("/collections/{collection}", stale).retrieve().toBodilessEntity();
+                    LOGGER.info("Retired stale code index collection {}", stale);
+                } catch (RuntimeException exception) {
+                    LOGGER.warn("Failed to retire stale code index collection {}: {}", stale, exception.getMessage());
+                }
+            }
+        }
     }
 
     /** 增量写入代码 chunk，不删除项目内其他文件。 */

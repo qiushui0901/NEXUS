@@ -62,7 +62,7 @@ public class CodeKnowledgeService {
     public CodeIndexResponse index() throws IOException {
         CodeScanner.ScanResult result = scanner.scan(properties.code());
         List<CodeChunk> annotated = annotateChunks(properties.code().projectId(), result.chunks());
-        store.replaceProject(result.projectId(), annotated);
+        store.publishProject(liveCollection(properties.code().projectId()), result.projectId(), annotated);
         if (graphStore != null) graphStore.replaceSnapshot(result);
         return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(), annotated.size());
     }
@@ -71,9 +71,8 @@ public class CodeKnowledgeService {
     public CodeIndexResponse index(String projectId) throws IOException {
         RagProperties.ProjectConfig project = projectRegistry.require(projectId);
         CodeScanner.ScanResult result = scanner.scan(project.toCodeConfig());
-        String collection = projectRegistry.resolveCodeCollection(projectId);
         List<CodeChunk> annotated = annotateChunks(projectId, result.chunks());
-        store.replaceProject(collection, result.projectId(), annotated);
+        store.publishProject(liveCollection(projectId), result.projectId(), annotated);
         if (graphStore != null) graphStore.replaceSnapshot(result);
         return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(), annotated.size());
     }
@@ -84,7 +83,7 @@ public class CodeKnowledgeService {
             return chunks == null ? List.of() : chunks;
         }
         try {
-            String collection = projectRegistry.resolveCodeCollection(projectId);
+            String collection = liveCollection(projectId);
             Map<String, CodeQdrantStore.AnnotationEntry> cache = store.fetchAnnotationCache(collection, projectId);
             return annotator.annotateWithCache(chunks, cache);
         } catch (RuntimeException exception) {
@@ -97,7 +96,7 @@ public class CodeKnowledgeService {
     public List<CodeChunk> search(String query, String projectId, Integer limit) {
         String resolvedProject = projectId == null || projectId.isBlank() ? properties.code().projectId() : projectId;
         int resolvedLimit = Math.min(Math.max(limit == null ? 10 : limit, 1), 50);
-        String collection = resolveCodeCollection(resolvedProject);
+        String collection = liveCollection(resolvedProject);
         return store.hybridSearch(collection, query, resolvedProject, resolvedLimit);
     }
 
@@ -105,7 +104,7 @@ public class CodeKnowledgeService {
     public CodeQdrantStore.CodeSearchTrace searchTrace(String query, String projectId, Integer limit) {
         String resolvedProject = projectId == null || projectId.isBlank() ? properties.code().projectId() : projectId;
         int resolvedLimit = Math.min(Math.max(limit == null ? 10 : limit, 1), 50);
-        String collection = resolveCodeCollection(resolvedProject);
+        String collection = liveCollection(resolvedProject);
         return store.hybridSearchTrace(collection, query, resolvedProject, resolvedLimit);
     }
 
@@ -181,7 +180,7 @@ public class CodeKnowledgeService {
     /** 返回指定项目已写入的代码 chunk 数。 */
     public long count(String projectId) {
         String resolvedProject = projectId == null || projectId.isBlank() ? properties.code().projectId() : projectId;
-        String collection = resolveCodeCollection(resolvedProject);
+        String collection = liveCollection(resolvedProject);
         return store.countProject(collection, resolvedProject);
     }
 
@@ -222,6 +221,11 @@ public class CodeKnowledgeService {
                     projectId, exception);
             return properties.code().collection();
         }
+    }
+
+    /** 检索侧统一使用 Alias 名（{@code <base>-live}），指向最新发布的物理 collection。 */
+    private String liveCollection(String projectId) {
+        return resolveCodeCollection(projectId) + "-live";
     }
 
     /** 将旧版仅支持 Java 的扫描器适配为 CodeScanner 契约，兼容 pre-0.7 单元调用方。 */
