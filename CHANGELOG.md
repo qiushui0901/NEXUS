@@ -12,7 +12,6 @@
 
 ### Changed
 
-- LLM 重排模型切换为 `qwen3-rerank`（`LLM_RERANK_MODEL` 默认值更新；路由回退链随之变化）。
 - BGE 重排新增带分数结果（`rerankScored`）；配置 `llm-rerank-skip-gap` 后，BGE top1 与后续候选分差达到阈值时跳过 LLM 重排（默认 0 不启用，可回退完整链路）。
 - 新增配置档位 `local` / `evaluation` / `production` 三个 profile，以及启动期配置校验器（`RagConfigValidator`）：URL 合法性、collection 非空、topK 关系、超时与缓存非负、嵌入模型与仓库路径缺失均在启动时失败。
 - 平台迁移至 JDK 17（pom/Dockerfile/CI），替换全部 Java 21 API（`getFirst`/虚拟线程/`getLast`）。

@@ -125,7 +125,7 @@ app:
       generation-model: ${GENERATION_MODEL:claude-sonnet-4.6}
       development-plan-model: ${DEVELOPMENT_PLAN_MODEL:gpt-5.6-sol}
       doubt-review-model: ${DOUBT_REVIEW_MODEL:glm-5.2}
-      reranker-model: ${LLM_RERANK_MODEL:qwen3-rerank}
+      reranker-model: ${LLM_RERANK_MODEL:claude-sonnet-5}
       routing-model: ${LLM_ROUTING_MODEL:}
       annotation-model: ${ANNOTATION_MODEL:claude-opus-5}
     retrieval:
