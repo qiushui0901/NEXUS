@@ -18,10 +18,14 @@ import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
 import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
 import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
 import com.example.requirementrag.service.RagUnavailableException;
+import com.example.requirementrag.wiki.WikiModels;
+import com.example.requirementrag.wiki.WikiModels.Claim;
+import com.example.requirementrag.wiki.WikiModels.ClaimSupport;
 import com.example.requirementrag.wiki.WikiModels.CodeEntry;
 import com.example.requirementrag.wiki.WikiModels.Evidence;
 import com.example.requirementrag.wiki.WikiModels.KnowledgeQuality;
 import com.example.requirementrag.wiki.WikiModels.PageSource;
+import com.example.requirementrag.wiki.WikiModels.PageType;
 import com.example.requirementrag.wiki.WikiModels.RequirementSource;
 import com.example.requirementrag.wiki.WikiModels.Status;
 import com.example.requirementrag.wiki.WikiModels.TestKnowledge;
@@ -177,6 +181,10 @@ public class VersionKnowledgeBuildPipeline {
                 .limit(MAX_REQUIREMENT_EVIDENCE)
                 .map(item -> requirementEvidence(item.chunk(), item.version()))
                 .toList();
+        List<String> requirementContentHashes = candidate.evidence().stream()
+                .limit(MAX_REQUIREMENT_EVIDENCE)
+                .map(item -> contentHash(item.chunk()))
+                .toList();
         List<Evidence> codeEvidence = code.stream().limit(MAX_CODE_EVIDENCE)
                 .map(item -> codeEvidence(item, request.codeCommit(), version, projectId))
                 .toList();
@@ -201,41 +209,227 @@ public class VersionKnowledgeBuildPipeline {
                 + (codeEvidence.isEmpty() ? 0.0 : 0.25));
         return new FeatureFactDraft(featureId, title, candidate.changeType(), productRules, codeSymbols,
                 testPoints, requirementEvidence, codeEvidence, List.of(), conflicts, confidence,
-                "PENDING_REVIEW");
+                "PENDING_REVIEW", requirementContentHashes);
     }
 
-    /** 将功能草稿列表转换为 Wiki 页面源（VersionSource），统一标注待审核状态与缺失证据。 */
+    /** 将功能草稿列表编译为 Wiki 页面源（VersionSource）：概览页 + 模块页 + 功能页，统一标注待审核状态、声明级证据与缺失项。 */
     private VersionSource toWikiSource(BuildRequest request, RagProperties.ProjectConfig project, String version,
                                        String generatedAt, List<FeatureFactDraft> features) {
         String projectName = hasText(project.name()) ? project.name() : project.id();
-        List<PageSource> pages = features.stream().map(feature -> {
-            List<RequirementSource> requirementSources = feature.requirementEvidence().stream()
-                    .map(item -> new RequirementSource(request.documentId(), feature.featureId(),
-                            item.source(), item.version(), item.location(), "", item.verificationStatus()))
-                    .toList();
-            List<CodeEntry> codeEntries = feature.codeEvidence().stream()
-                    .map(item -> new CodeEntry("待审核代码入口", item.filePath(), item.symbol(), item.commit(),
-                            feature.changeType(), item.verificationStatus()))
-                    .toList();
-            List<String> missing = new ArrayList<>();
-            if (requirementSources.isEmpty()) missing.add("需求证据");
-            if (codeEntries.isEmpty()) missing.add("代码证据");
-            missing.add("真实测试执行快照");
-            return new PageSource(
-                    feature.featureId(), feature.title(), "自动草稿", version, Status.DRAFT,
-                    List.of(), "由版本需求增量生成的待审核知识页；所有结论均需依据右侧证据核验。",
-                    requirementSources, feature.productRules(), List.of(), codeEntries, feature.codeSymbols(),
-                    List.of(), feature.conflicts(), feature.testPoints(), feature.testPoints(),
-                    new TestKnowledge("NOT_AVAILABLE", "", "没有真实执行快照", List.of()),
-                    new VersionChange(feature.changeType(), safe(request.baseVersion()), version,
-                            "基于需求版本增量识别为 " + feature.changeType()),
-                    new KnowledgeQuality("PENDING_REVIEW", requirementSources.size(), codeEntries.size(),
-                            false, List.copyOf(missing)),
-                    feature.conflicts(), List.of(), concat(feature.requirementEvidence(), feature.codeEvidence())
-            );
-        }).toList();
+        List<PageSource> pages = new ArrayList<>();
+        pages.add(overviewPage(request, project, version, generatedAt, features));
+        pages.addAll(modulePages(request, version, features));
+        pages.addAll(features.stream().map(feature -> featurePage(request, project, version, feature)).toList());
         return new VersionSource(2, project.id(), projectName, version, version,
-                safe(request.baseCodeCommit()), safe(request.codeCommit()), generatedAt, pages);
+                safe(request.baseCodeCommit()), safe(request.codeCommit()), generatedAt, List.copyOf(pages));
+    }
+
+    /** 生成项目概览页：项目职责、版本、代码提交、模块清单与风险提示等确定性事实。 */
+    private PageSource overviewPage(BuildRequest request, RagProperties.ProjectConfig project, String version,
+                                    String generatedAt, List<FeatureFactDraft> features) {
+        String projectName = hasText(project.name()) ? project.name() : project.id();
+        List<String> modules = features.stream()
+                .flatMap(feature -> feature.codeEvidence().stream())
+                .map(evidence -> moduleOf(evidence.filePath()))
+                .filter(this::hasText)
+                .distinct()
+                .sorted()
+                .limit(30)
+                .map(name -> "module-" + kebab(name))
+                .toList();
+        List<String> risks = new ArrayList<>();
+        if (features.stream().anyMatch(feature -> feature.codeEvidence().isEmpty())) {
+            risks.add("存在未关联代码实现的功能页，需人工补充或确认缺失");
+        }
+        if (features.stream().anyMatch(feature -> !feature.conflicts().isEmpty())) {
+            risks.add("存在冲突功能页，发布前必须处理");
+        }
+        List<RequirementSource> requirements = features.stream()
+                .flatMap(feature -> feature.requirementEvidence().stream())
+                .limit(20)
+                .map(item -> new RequirementSource(request.documentId(), "overview", item.source(),
+                        item.version(), item.location(), "", item.verificationStatus()))
+                .toList();
+        List<Claim> claims = List.of(
+                new Claim("overview-version", "overview", "本 Wiki 面向版本 " + version
+                        + "（基线 " + (hasText(request.baseVersion()) ? request.baseVersion() : "无") + "）编译",
+                        requirements.isEmpty() ? ClaimSupport.UNSUPPORTED : ClaimSupport.FULL,
+                        evidenceIds("requirement", requirements)),
+                new Claim("overview-code", "overview", "代码知识面向提交 " + safe(request.codeCommit())
+                        + " 索引，commit 变化后相关页面应标记过期",
+                        ClaimSupport.INFERRED, List.of()),
+                new Claim("overview-test", "overview", "本版本没有真实测试执行快照，测试状态不得视为已验证",
+                        ClaimSupport.UNSUPPORTED, List.of())
+        );
+        return new PageSource(
+                "overview", projectName + " 项目概览", "项目", version, Status.DRAFT,
+                List.of(), "由版本知识构建确定性抽取的项目概览：版本、代码提交、模块与功能变化一览。",
+                requirements, List.of("项目 " + projectName + " 的版本知识由需求与代码索引编译，正式发布前需人工审核。"),
+                List.of(), List.of(), modules,
+                List.of(), List.of(), List.of(), List.of(),
+                new TestKnowledge("NOT_AVAILABLE", "", "没有真实执行快照", List.of()),
+                new VersionChange(features.isEmpty() ? "UNKNOWN" : "BUILT", safe(request.baseVersion()), version,
+                        "版本 " + version + " 知识构建于 " + generatedAt),
+                new KnowledgeQuality("PENDING_REVIEW", requirements.size(), modules.size(), false,
+                        List.of("真实测试执行快照")),
+                risks, modules.stream().map(name -> new WikiModels.Relation(name, "contains", "包含模块", ""))
+                        .limit(30).toList(),
+                List.of(), PageType.OVERVIEW, claims
+        );
+    }
+
+    /** 从全部功能草稿的代码证据按顶层模块聚合生成模块页，每个模块一个页面。 */
+    private List<PageSource> modulePages(BuildRequest request, String version, List<FeatureFactDraft> features) {
+        Map<String, List<Evidence>> byModule = new LinkedHashMap<>();
+        for (FeatureFactDraft feature : features) {
+            for (Evidence evidence : feature.codeEvidence()) {
+                String module = moduleOf(evidence.filePath());
+                if (module.isBlank()) continue;
+                byModule.computeIfAbsent(module, key -> new ArrayList<>()).add(evidence);
+            }
+        }
+        List<PageSource> pages = new ArrayList<>();
+        for (Map.Entry<String, List<Evidence>> entry : byModule.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey()).limit(30).toList()) {
+            String module = entry.getKey();
+            List<Evidence> evidence = entry.getValue().stream().distinct().limit(12).toList();
+            List<CodeEntry> codeEntries = evidence.stream()
+                    .map(item -> new CodeEntry("模块实现", item.filePath(), item.symbol(), item.commit(),
+                            "CURRENT_VERSION", item.verificationStatus()))
+                    .distinct().limit(20).toList();
+            List<String> symbols = evidence.stream()
+                    .map(item -> hasText(item.symbol()) ? item.symbol() : item.filePath())
+                    .distinct().limit(20).toList();
+            List<WikiModels.Relation> relations = features.stream()
+                    .filter(feature -> feature.codeEvidence().stream()
+                            .anyMatch(item -> module.equals(moduleOf(item.filePath()))))
+                    .map(feature -> new WikiModels.Relation(feature.featureId(), "implements", "功能实现", ""))
+                    .distinct().limit(20).toList();
+            List<Claim> claims = List.of(
+                    new Claim("module-" + kebab(module) + "-scope", "module",
+                            "模块 " + module + " 的代码入口来自当前代码索引，覆盖 " + evidence.size() + " 处证据",
+                            ClaimSupport.FULL, evidenceIds("code", evidence)),
+                    new Claim("module-" + kebab(module) + "-coverage", "module",
+                            "模块页仅为代码入口清单，职责与调用链需人工审核后发布",
+                            ClaimSupport.UNSUPPORTED, List.of())
+            );
+            pages.add(new PageSource(
+                    "module-" + kebab(module), module + " 模块", "模块", version, Status.DRAFT,
+                    List.of(), "由代码索引确定性抽取的模块页：列出模块内代码入口、符号与关联功能，待人工审核。",
+                    List.of(), List.of(), List.of(), codeEntries, symbols,
+                    List.of(), List.of(), List.of(), List.of(),
+                    new TestKnowledge("NOT_AVAILABLE", "", "没有真实执行快照", List.of()),
+                    new VersionChange("CURRENT_VERSION", safe(request.baseVersion()), version,
+                            "基于当前代码索引抽取"),
+                    new KnowledgeQuality("PENDING_REVIEW", 0, codeEntries.size(), false,
+                            List.of("需求证据", "真实测试执行快照")),
+                    List.of(), relations, evidence, PageType.MODULE, claims
+            ));
+        }
+        return pages;
+    }
+
+    /** 生成单个功能页：需求/代码证据、声明级证据与缺失标注。 */
+    private PageSource featurePage(BuildRequest request, RagProperties.ProjectConfig project, String version,
+                                   FeatureFactDraft feature) {
+        List<RequirementSource> requirementSources = new ArrayList<>();
+        for (int index = 0; index < feature.requirementEvidence().size(); index++) {
+            Evidence item = feature.requirementEvidence().get(index);
+            String hash = index < feature.requirementContentHashes().size()
+                    ? feature.requirementContentHashes().get(index) : "";
+            requirementSources.add(new RequirementSource(request.documentId(), feature.featureId(),
+                    item.source(), item.version(), item.location(), hash, item.verificationStatus()));
+        }
+        List<CodeEntry> codeEntries = feature.codeEvidence().stream()
+                .map(item -> new CodeEntry("待审核代码入口", item.filePath(), item.symbol(), item.commit(),
+                        feature.changeType(), item.verificationStatus()))
+                .toList();
+        List<String> missing = new ArrayList<>();
+        if (requirementSources.isEmpty()) missing.add("需求证据");
+        if (codeEntries.isEmpty()) missing.add("代码证据");
+        missing.add("真实测试执行快照");
+        return new PageSource(
+                feature.featureId(), feature.title(), "自动草稿", version, Status.DRAFT,
+                List.of(), "由版本需求增量生成的待审核知识页；所有结论均需依据右侧证据核验。",
+                requirementSources, feature.productRules(), List.of(), codeEntries, feature.codeSymbols(),
+                List.of(), feature.conflicts(), feature.testPoints(), feature.testPoints(),
+                new TestKnowledge("NOT_AVAILABLE", "", "没有真实执行快照", List.of()),
+                new VersionChange(feature.changeType(), safe(request.baseVersion()), version,
+                        "基于需求版本增量识别为 " + feature.changeType()),
+                new KnowledgeQuality("PENDING_REVIEW", requirementSources.size(), codeEntries.size(),
+                        false, List.copyOf(missing)),
+                feature.conflicts(), List.of(), concat(feature.requirementEvidence(), feature.codeEvidence()),
+                PageType.FEATURE, claimsFor(feature, requirementSources, codeEntries)
+        );
+    }
+
+    /** 为功能页生成声明级证据：需求变化、产品规则、代码职责与测试状态各一条，明确证据引用或标记无证据。 */
+    private List<Claim> claimsFor(FeatureFactDraft feature, List<RequirementSource> requirementSources,
+                                  List<CodeEntry> codeEntries) {
+        List<Claim> claims = new ArrayList<>();
+        List<String> requirementIds = rangeIds("requirement", requirementSources.size());
+        List<String> codeIds = rangeIds("code", codeEntries.size());
+        claims.add(new Claim(feature.featureId() + "-change", "version",
+                "「" + feature.title() + "」在本版本的变化类型为 " + feature.changeType(),
+                requirementSources.isEmpty() ? ClaimSupport.UNSUPPORTED : ClaimSupport.FULL, requirementIds));
+        if (!feature.productRules().isEmpty()) {
+            claims.add(new Claim(feature.featureId() + "-rules", "product",
+                    "产品规则来自需求父块摘录，需人工核验后确认",
+                    requirementSources.isEmpty() ? ClaimSupport.UNSUPPORTED : ClaimSupport.PARTIAL, requirementIds));
+        }
+        if (codeEntries.isEmpty()) {
+            claims.add(new Claim(feature.featureId() + "-code", "code",
+                    "未检索到代码实现证据，属于“尚未确认”状态而非已验证",
+                    ClaimSupport.UNSUPPORTED, List.of()));
+        } else {
+            claims.add(new Claim(feature.featureId() + "-code", "code",
+                    "代码实现分布于 " + codeEntries.size() + " 个入口，需按证据核验职责",
+                    ClaimSupport.PARTIAL, codeIds));
+        }
+        claims.add(new Claim(feature.featureId() + "-test", "test",
+                "没有真实测试执行快照，验收前不得视为已验证",
+                ClaimSupport.UNSUPPORTED, List.of()));
+        if (!feature.conflicts().isEmpty()) {
+            claims.add(new Claim(feature.featureId() + "-conflict", "risk",
+                    "存在未处理的冲突：发布前必须解决",
+                    ClaimSupport.CONFLICT, List.of()));
+        }
+        return List.copyOf(claims);
+    }
+
+    /** 生成 "type:0, type:1, ..." 形式的证据 ID 列表。 */
+    private List<String> rangeIds(String type, int count) {
+        List<String> ids = new ArrayList<>();
+        for (int index = 0; index < count; index++) ids.add(type + ":" + index);
+        return List.copyOf(ids);
+    }
+
+    /** 从证据列表生成同前缀的证据 ID 列表。 */
+    private List<String> evidenceIds(String type, List<?> evidence) {
+        return rangeIds(type, evidence.size());
+    }
+
+    /** 代码文件归属模块：剥离常见源码前缀后取首个路径段。 */
+    private String moduleOf(String filePath) {
+        String normalized = safe(filePath).replace('\\', '/');
+        for (String prefix : List.of("src/main/java/", "src/test/java/", "src/main/", "src/test/", "src/")) {
+            if (normalized.startsWith(prefix)) normalized = normalized.substring(prefix.length());
+        }
+        int slash = normalized.indexOf('/');
+        return (slash < 0 ? normalized : normalized.substring(0, slash)).trim();
+    }
+
+    /** 转 kebab-case：仅保留小写字母、数字与连字符。 */
+    private String kebab(String value) {
+        String kebab = value.replaceAll("([a-z0-9])([A-Z])", "$1-$2")
+                .toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("^-|-$", "");
+        return kebab.isBlank() ? "module" : kebab;
+    }
+
+    /** 计算需求块的稳定内容哈希：优先用块自带哈希，缺失时对父文本计算 SHA-256。 */
+    private String contentHash(ChunkRecord chunk) {
+        if (hasText(chunk.contentHash())) return chunk.contentHash().trim();
+        return sha256(chunk.parentText());
     }
 
     /** 以暂存目录方式原子落盘 build.json 与 wiki-source.json，整体移入目标草稿目录。 */
@@ -299,13 +493,13 @@ public class VersionKnowledgeBuildPipeline {
         return groupCandidates(changed, removed, null);
     }
 
-    /** 按文件名分组变化/删除条目为候选：推断变化类型（MODIFIED / ADDED_OR_CHANGED / REMOVED），证据按 parentOrder 排序。 */
+    /** 按规范化标题分组变化/删除条目为候选：同名功能跨文件合并为一项，推断变化类型（MODIFIED / ADDED_OR_CHANGED / REMOVED），证据按 parentOrder 排序。 */
     private List<Candidate> groupCandidates(List<VersionedChunk> changed, List<VersionedChunk> removed,
                                             String fixedChangeType) {
         Map<String, CandidateParts> grouped = new LinkedHashMap<>();
-        changed.forEach(chunk -> grouped.computeIfAbsent(filename(chunk.chunk()), key -> new CandidateParts())
+        changed.forEach(chunk -> grouped.computeIfAbsent(titleKey(chunk.chunk()), key -> new CandidateParts())
                 .changed.add(chunk));
-        removed.forEach(chunk -> grouped.computeIfAbsent(filename(chunk.chunk()), key -> new CandidateParts())
+        removed.forEach(chunk -> grouped.computeIfAbsent(titleKey(chunk.chunk()), key -> new CandidateParts())
                 .removed.add(chunk));
         return grouped.entrySet().stream().map(entry -> {
             CandidateParts parts = entry.getValue();
@@ -317,6 +511,11 @@ public class VersionKnowledgeBuildPipeline {
             evidence.sort(Comparator.comparingInt(item -> item.chunk().parentOrder()));
             return new Candidate(entry.getKey(), changeType, List.copyOf(evidence));
         }).sorted(Comparator.comparing(Candidate::filename)).toList();
+    }
+
+    /** 功能识别键：取需求文件名的功能标题（去掉目录与扩展名），跨文件同名条目合并为同一功能。 */
+    private String titleKey(ChunkRecord chunk) {
+        return title(chunk.filename());
     }
 
     /** 滚动读取某文档指定版本的全部块数据并去重父级，失败时抛出统一异常。 */

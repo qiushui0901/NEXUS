@@ -133,6 +133,45 @@ class WikiGenerationServiceTest {
                 .hasMessageContaining("不得包含向量、Qdrant 运行数据或凭据字段");
     }
 
+    @Test
+    void rendersClaimLevelEvidenceAndPageTypes() throws Exception {
+        Path source = temp.resolve("claim-sources");
+        Path root = temp.resolve("claim-wiki");
+        Files.createDirectories(source);
+        String json = structuredSourceJson().replace("\"evidence\": []",
+                "\"evidence\": [],\n                    \"pageType\": \"FEATURE\","
+                        + "\n                    \"claims\": [{\"claimId\": \"supply-rules\","
+                        + "\"section\": \"product\",\"text\": \"只展示当前活动周期内的记录\","
+                        + "\"support\": \"PARTIAL\",\"evidenceIds\": [\"requirement:0\"]}]");
+        Files.writeString(source.resolve("game-v5.1.json"), json);
+        ObjectMapper mapper = new ObjectMapper();
+        WikiProperties properties = new WikiProperties(root.toString(), source.toString());
+        WikiGenerationService service = new WikiGenerationService(mapper, properties,
+                new WikiRepository(mapper, properties));
+
+        service.generate("game", "5.1");
+
+        var page = repositoryFrom(properties).getPage("game", "5.1", "supply-records");
+        assertThat(page.pageType()).isEqualTo(WikiModels.PageType.FEATURE);
+        assertThat(page.claims()).singleElement().satisfies(claim -> {
+            assertThat(claim.claimId()).isEqualTo("supply-rules");
+            assertThat(claim.support()).isEqualTo(WikiModels.ClaimSupport.PARTIAL);
+            assertThat(claim.evidenceIds()).containsExactly("requirement:0");
+        });
+        assertThat(root.resolve("game/5.1/pages/supply-records.md")).content()
+                .contains("## 声明与证据")
+                .contains("supply-rules")
+                .contains("[PARTIAL]")
+                .contains("requirement:0");
+        var index = repositoryFrom(properties).getIndex("game", "5.1");
+        assertThat(index.pages()).singleElement().satisfies(summary ->
+                assertThat(summary.pageType()).isEqualTo(WikiModels.PageType.FEATURE));
+    }
+
+    private WikiRepository repositoryFrom(WikiProperties properties) {
+        return new WikiRepository(new ObjectMapper(), properties);
+    }
+
     private String legacySourceJson(boolean duplicate) {
         String secondId = duplicate ? "supply-records" : "unit-return-rule";
         return """

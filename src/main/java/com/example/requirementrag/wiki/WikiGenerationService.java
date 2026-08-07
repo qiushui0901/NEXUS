@@ -1,13 +1,17 @@
 package com.example.requirementrag.wiki;
 
 import com.example.requirementrag.config.WikiProperties;
+import com.example.requirementrag.wiki.module.ModuleClaimQualityGate;
 import com.example.requirementrag.wiki.WikiModels.CodeEntry;
+import com.example.requirementrag.wiki.WikiModels.Claim;
+import com.example.requirementrag.wiki.WikiModels.ClaimSupport;
 import com.example.requirementrag.wiki.WikiModels.Evidence;
 import com.example.requirementrag.wiki.WikiModels.KnowledgeQuality;
 import com.example.requirementrag.wiki.WikiModels.GenerationResult;
 import com.example.requirementrag.wiki.WikiModels.Page;
 import com.example.requirementrag.wiki.WikiModels.PageSource;
 import com.example.requirementrag.wiki.WikiModels.PageSummary;
+import com.example.requirementrag.wiki.WikiModels.PageType;
 import com.example.requirementrag.wiki.WikiModels.RequirementSource;
 import com.example.requirementrag.wiki.WikiModels.TestKnowledge;
 import com.example.requirementrag.wiki.WikiModels.VersionChange;
@@ -15,6 +19,7 @@ import com.example.requirementrag.wiki.WikiModels.VersionIndex;
 import com.example.requirementrag.wiki.WikiModels.VersionSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
@@ -46,13 +51,22 @@ public class WikiGenerationService {
 
     private final ObjectMapper objectMapper;
     private final WikiRepository repository;
+    private final ModuleClaimQualityGate claimQualityGate;
     private final Path sourceRoot;
     private final Object publishLock = new Object();
 
-    public WikiGenerationService(ObjectMapper objectMapper, WikiProperties properties, WikiRepository repository) {
+    @Autowired
+    public WikiGenerationService(ObjectMapper objectMapper, WikiProperties properties, WikiRepository repository,
+                                 ModuleClaimQualityGate claimQualityGate) {
         this.objectMapper = objectMapper;
         this.repository = repository;
+        this.claimQualityGate = claimQualityGate;
         this.sourceRoot = Path.of(properties.sourcePath()).toAbsolutePath().normalize();
+    }
+
+    /** 兼容测试与旧调用方的构造器：不启用声明质量门。 */
+    public WikiGenerationService(ObjectMapper objectMapper, WikiProperties properties, WikiRepository repository) {
+        this(objectMapper, properties, repository, ModuleClaimQualityGate.lenient());
     }
 
     /**
@@ -83,6 +97,7 @@ public class WikiGenerationService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Wiki 源定义无法解析", exception);
         }
         validate(source, safeProject, safeVersion);
+        claimQualityGate.validate(safeProject, safeVersion, source.pages());
 
         String generatedAt = text(source.generatedAt()).isBlank() ? Instant.now().toString() : source.generatedAt().trim();
         Path projectRoot = WikiPathPolicy.resolveBelow(repository.root(), safeProject);
@@ -97,7 +112,8 @@ public class WikiGenerationService {
                 Files.writeString(staging.resolve("pages").resolve(page.featureId() + ".md"),
                         renderMarkdown(page), StandardCharsets.UTF_8);
                 summaries.add(new PageSummary(page.featureId(), page.title(), page.category(),
-                        page.introducedVersion(), page.status(), page.summary(), page.aliases(), page.evidence().size()));
+                        page.introducedVersion(), page.status(), page.summary(), page.aliases(), page.evidence().size(),
+                        page.pageType() == null ? PageType.FEATURE : page.pageType()));
             }
             summaries.sort(java.util.Comparator.comparing(PageSummary::category).thenComparing(PageSummary::title));
             VersionIndex index = new VersionIndex(source.schemaVersion(), source.projectId(), source.projectName(),
@@ -150,6 +166,14 @@ public class WikiGenerationService {
             validateObjects(featureId, "codeEntries", page.codeEntries());
             if (page.testKnowledge() != null) validateTextList(featureId, "testKnowledge.cases", page.testKnowledge().cases());
             if (page.quality() != null) validateTextList(featureId, "quality.missing", page.quality().missing());
+            Set<String> claimIds = new HashSet<>();
+            for (Claim claim : list(page.claims())) {
+                if (claim == null) throw new IllegalArgumentException(featureId + " 包含空声明");
+                String claimId = WikiPathPolicy.identifier(claim.claimId(), "claimId");
+                if (!claimIds.add(claimId)) throw new IllegalArgumentException("重复 claimId: " + claimId);
+                if (claim.support() == null) throw new IllegalArgumentException(claimId + " 缺少支持强度");
+                validateTextList(claimId, "evidenceIds", claim.evidenceIds());
+            }
             for (WikiModels.Relation relation : list(page.relations())) {
                 if (relation == null) throw new IllegalArgumentException(featureId + " 包含空关联");
                 WikiPathPolicy.identifier(relation.targetFeatureId(), "relation.targetFeatureId");
@@ -183,6 +207,7 @@ public class WikiGenerationService {
     /** 将页面源数据补齐默认值（分类、引入版本、测试知识、版本变化、质量评估）并转为页面模型。 */
     private Page toPage(VersionSource source, PageSource page, String generatedAt) {
         String featureId = WikiPathPolicy.identifier(page.featureId(), "featureId");
+        PageType pageType = page.pageType() == null ? PageType.FEATURE : page.pageType();
         return new Page(
                 source.projectId(), text(source.projectName()), source.version(), text(source.requirementVersion()),
                 text(source.baseCodeCommit()), text(source.codeCommit()), generatedAt,
@@ -195,6 +220,7 @@ public class WikiGenerationService {
                 versionChange(page.versionChange(), source.version()),
                 quality(page.quality(), page.requirementSources(), page.codeEntries()),
                 list(page.risks()), list(page.relations()), list(page.evidence()),
+                pageType, list(page.claims()),
                 "pages/" + featureId + ".md");
     }
 
@@ -205,6 +231,7 @@ public class WikiGenerationService {
                 .append("featureId: ").append(yaml(page.featureId())).append('\n')
                 .append("projectId: ").append(yaml(page.projectId())).append('\n')
                 .append("version: ").append(yaml(page.version())).append('\n')
+                .append("pageType: ").append(page.pageType()).append('\n')
                 .append("status: ").append(page.status()).append('\n')
                 .append("codeCommit: ").append(yaml(page.codeCommit())).append('\n')
                 .append("generatedAt: ").append(yaml(page.generatedAt())).append('\n')
@@ -223,6 +250,18 @@ public class WikiGenerationService {
             out.append("## 关联功能\n\n");
             page.relations().forEach(relation -> out.append("- **").append(relation.label()).append("** (`")
                     .append(relation.targetFeatureId()).append("`)：").append(text(relation.description())).append('\n'));
+            out.append('\n');
+        }
+        if (!page.claims().isEmpty()) {
+            out.append("## 声明与证据\n\n");
+            for (Claim claim : page.claims()) {
+                out.append("- **").append(claim.claimId()).append("** [").append(claim.support()).append("] ")
+                        .append(text(claim.text())).append('\n');
+                if (!text(claim.section()).isBlank()) out.append("  - 段落：").append(claim.section()).append('\n');
+                if (claim.evidenceIds() != null && !claim.evidenceIds().isEmpty()) {
+                    out.append("  - 证据：").append(String.join(", ", claim.evidenceIds())).append('\n');
+                }
+            }
             out.append('\n');
         }
         if (!page.evidence().isEmpty()) {

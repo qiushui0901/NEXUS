@@ -10,6 +10,7 @@ import com.example.requirementrag.versioning.VersionModels.TestCaseStatus;
 import com.example.requirementrag.versioning.VersionModels.TestRunStatus;
 import com.example.requirementrag.versioning.VersionModels.TestSnapshot;
 import com.example.requirementrag.versioning.VersionModels.VersionManifest;
+import com.example.requirementrag.wiki.WikiModels;
 import com.example.requirementrag.wiki.WikiModels.PageSummary;
 import com.example.requirementrag.wiki.WikiModels.Status;
 import com.example.requirementrag.wiki.WikiModels.VersionIndex;
@@ -40,12 +41,12 @@ class VersionComparisonServiceTest {
                 GitDiffService.Availability.AVAILABLE, 1, 0, 1, 0, 0, 1, 1, 0, List.of()));
         when(wiki.findIndex("game", "5.0")).thenReturn(Optional.of(index("5.0",
                 new PageSummary("feature-a", "Feature A", "domain", "5.0", Status.DRAFT,
-                        "old", List.of(), 1))));
+                        "old", List.of(), 1, WikiModels.PageType.FEATURE))));
         when(wiki.findIndex("game", "5.1")).thenReturn(Optional.of(index("5.1",
                 new PageSummary("feature-a", "Feature A", "domain", "5.0", Status.CODE_VERIFIED,
-                        "new", List.of(), 2),
+                        "new", List.of(), 2, WikiModels.PageType.FEATURE),
                 new PageSummary("feature-b", "Feature B", "domain", "5.1", Status.DRAFT,
-                        "added", List.of(), 1))));
+                        "added", List.of(), 1, WikiModels.PageType.FEATURE))));
 
         var report = new VersionComparisonService(manifests, requirements, git, wiki)
                 .compare("game", "5.0", "5.1");

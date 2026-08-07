@@ -6,6 +6,25 @@ import java.util.List;
 public final class WikiModels {
     private WikiModels() {}
 
+    /** Wiki 页面类型：功能页之外的稳定知识与版本知识页面。 */
+    public enum PageType {
+        OVERVIEW,
+        MODULE,
+        FEATURE,
+        API,
+        DATA,
+        VERSION
+    }
+
+    /** 声明与证据之间的支持强度。 */
+    public enum ClaimSupport {
+        FULL,
+        PARTIAL,
+        INFERRED,
+        UNSUPPORTED,
+        CONFLICT
+    }
+
     /** 功能页面的核验状态。 */
     public enum Status {
         DRAFT,
@@ -31,6 +50,15 @@ public final class WikiModels {
             String filePath,
             String symbol,
             String verificationStatus
+    ) {}
+
+    /** 声明级证据：一项具体结论及其证据引用，取代页面末尾的散列表。 */
+    public record Claim(
+            String claimId,
+            String section,
+            String text,
+            ClaimSupport support,
+            List<String> evidenceIds
     ) {}
 
     /** 页面到其他功能页面的关联。 */
@@ -110,7 +138,9 @@ public final class WikiModels {
             KnowledgeQuality quality,
             List<String> risks,
             List<Relation> relations,
-            List<Evidence> evidence
+            List<Evidence> evidence,
+            PageType pageType,
+            List<Claim> claims
     ) {}
 
     /** 单个版本 Wiki 的源定义，含页面列表。 */
@@ -157,6 +187,8 @@ public final class WikiModels {
             List<String> risks,
             List<Relation> relations,
             List<Evidence> evidence,
+            PageType pageType,
+            List<Claim> claims,
             String markdownPath
     ) {}
 
@@ -169,7 +201,8 @@ public final class WikiModels {
             Status status,
             String summary,
             List<String> aliases,
-            int evidenceCount
+            int evidenceCount,
+            PageType pageType
     ) {}
 
     /** 单个版本发布后的索引，含全部页面摘要。 */

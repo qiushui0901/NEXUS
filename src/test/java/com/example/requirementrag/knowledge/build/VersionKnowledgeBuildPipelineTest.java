@@ -6,6 +6,7 @@ import com.example.requirementrag.config.WikiProperties;
 import com.example.requirementrag.knowledge.build.KnowledgeBuildModels.BuildRequest;
 import com.example.requirementrag.knowledge.build.KnowledgeBuildModels.BuildStatus;
 import com.example.requirementrag.model.ChunkRecord;
+import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.RagOutcome;
 import com.example.requirementrag.model.RagOutcomeStatus;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
@@ -86,12 +87,21 @@ class VersionKnowledgeBuildPipelineTest {
         assertThat(root.get("features").get(0).get("changeType").asText()).isEqualTo("MODIFIED");
         JsonNode wikiSource = mapper.readTree(Files.readString(draft.resolve("wiki-source.json")));
         assertThat(wikiSource.get("schemaVersion").asInt()).isEqualTo(2);
-        JsonNode page = wikiSource.get("pages").get(0);
-        assertThat(page.get("requirementSources")).hasSize(2);
-        assertThat(page.get("testKnowledge").get("executionStatus").asText()).isEqualTo("NOT_AVAILABLE");
-        assertThat(page.get("testKnowledge").get("summary").asText()).isEqualTo("没有真实执行快照");
-        assertThat(page.get("quality").get("realTestExecution").asBoolean()).isFalse();
-        assertThat(page.get("versionChange").get("changeType").asText()).isEqualTo("MODIFIED");
+        assertThat(wikiSource.get("pages")).hasSize(2);
+        assertThat(wikiSource.get("pages").get(0).get("pageType").asText()).isEqualTo("OVERVIEW");
+        JsonNode featurePage = null;
+        for (JsonNode page : wikiSource.get("pages")) {
+            if (page.get("pageType").asText().equals("FEATURE")) featurePage = page;
+        }
+        assertThat(featurePage).isNotNull();
+        assertThat(featurePage.get("requirementSources")).hasSize(2);
+        assertThat(featurePage.get("testKnowledge").get("executionStatus").asText()).isEqualTo("NOT_AVAILABLE");
+        assertThat(featurePage.get("testKnowledge").get("summary").asText()).isEqualTo("没有真实执行快照");
+        assertThat(featurePage.get("quality").get("realTestExecution").asBoolean()).isFalse();
+        assertThat(featurePage.get("versionChange").get("changeType").asText()).isEqualTo("MODIFIED");
+        assertThat(featurePage.get("claims")).isNotEmpty();
+        assertThat(featurePage.get("requirementSources").get(0).get("contentHash").asText())
+                .isEqualTo("new-hash");
         verify(draftLifecycleService).initializeDraft("game", "5.1", result.buildId(),
                 "system", result.generatedAt());
     }
@@ -111,6 +121,55 @@ class VersionKnowledgeBuildPipelineTest {
                 .isNotEqualTo(features.get(1).get("featureId").asText());
         assertThat(features.toString()).contains("feature-alpha", "feature-beta");
         assertThat(result.missingTests()).isEqualTo(2);
+    }
+
+    @Test
+    void mergesSameFeatureAcrossFilesIntoOnePage() throws Exception {
+        when(documentStore.scrollVersion("requirements_game", "requirements", "5.1"))
+                .thenReturn(List.of(
+                        chunk("a", "recharge.html", "hash-a", "Rule A", "5.1"),
+                        chunk("b", "ui/recharge.html", "hash-b", "Rule B", "5.1")));
+
+        var result = pipeline.build(new BuildRequest("game", "5.1", null, "requirements", null, "head"));
+
+        assertThat(result.features()).isEqualTo(1);
+        JsonNode pages = mapper.readTree(Files.readString(Path.of(result.draftPath()).resolve("wiki-source.json")))
+                .get("pages");
+        JsonNode feature = null;
+        for (JsonNode page : pages) {
+            if (page.get("pageType").asText().equals("FEATURE")) feature = page;
+        }
+        assertThat(feature).isNotNull();
+        assertThat(feature.get("requirementSources")).hasSize(2);
+        assertThat(feature.get("title").asText()).isEqualTo("recharge");
+    }
+
+    @Test
+    void generatesOverviewAndModulePagesFromCodeEvidence() throws Exception {
+        when(documentStore.scrollVersion("requirements_game", "requirements", "5.1"))
+                .thenReturn(List.of(chunk("alpha", "FeatureAlpha.html", "alpha-hash", "Rule alpha", "5.1")));
+        CodeChunk hit = new CodeChunk("id", "game", "abc123", "src/main/java/com/game/service/AuthService.java",
+                "method", "AuthService.login", 10, 20, "code text", "hash");
+        org.mockito.Mockito.doReturn(RagOutcome.of(RagOutcomeStatus.SUCCESS,
+                        new RetrievalBundle("FeatureAlpha Rule alpha", RetrievalProfile.WIKI_BUILD, "game",
+                                "requirements", "5.1", List.of(), List.of(hit)),
+                        "knowledge.test", 1, 1))
+                .when(retrievalPipeline).execute(any(
+                        com.example.requirementrag.retrieval.pipeline.RetrievalRequest.class));
+
+        var result = pipeline.build(new BuildRequest("game", "5.1", null, "requirements", null, "head"));
+
+        JsonNode pages = mapper.readTree(Files.readString(Path.of(result.draftPath()).resolve("wiki-source.json")))
+                .get("pages");
+        assertThat(pages).hasSize(3);
+        assertThat(pages.get(0).get("featureId").asText()).isEqualTo("overview");
+        assertThat(pages.get(0).get("pageType").asText()).isEqualTo("OVERVIEW");
+        JsonNode module = pages.get(1);
+        assertThat(module.get("pageType").asText()).isEqualTo("MODULE");
+        assertThat(module.get("featureId").asText()).isEqualTo("module-com");
+        assertThat(module.get("codeEntries").get(0).get("filePath").asText())
+                .isEqualTo("src/main/java/com/game/service/AuthService.java");
+        assertThat(module.get("claims")).isNotEmpty();
     }
 
     @Test

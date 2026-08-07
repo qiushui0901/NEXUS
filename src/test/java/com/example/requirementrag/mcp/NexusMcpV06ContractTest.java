@@ -406,7 +406,7 @@ class NexusMcpV06ContractTest {
                 "Feature", "category", "5.1", WikiModels.Status.FULLY_VERIFIED, List.of(), "summary", List.of(),
                 values, values, entries, values, values, values, values, values, null, null,
                 new WikiModels.KnowledgeQuality("VERIFIED", evidence, codeEntries, true, List.of()), values,
-                relationList, evidenceList, "wiki/feature-a.md");
+                relationList, evidenceList, WikiModels.PageType.FEATURE, List.of(), "wiki/feature-a.md");
     }
 
     private VersionModels.VersionComparisonReport report(int size) {

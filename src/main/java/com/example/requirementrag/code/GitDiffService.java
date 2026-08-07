@@ -97,6 +97,33 @@ public class GitDiffService {
         return summarize(changes);
     }
 
+    /**
+     * 返回项目代码仓库当前 HEAD 的 commit SHA。
+     *
+     * @param projectId 项目 ID
+     * @return 当前 HEAD 的完整 commit SHA
+     * @throws IOException          执行 git 命令失败
+     * @throws InterruptedException 等待 git 进程被中断
+     */
+    public String latestCommit(String projectId) throws IOException, InterruptedException {
+        RagProperties.ProjectConfig project = projectRegistry.require(projectId);
+        String configuredPath = hasText(project.repositoryPath())
+                ? project.repositoryPath() : properties.code().repositoryPath();
+        if (!hasText(configuredPath)) throw new IllegalStateException("项目代码仓库未配置");
+        Path repository = Path.of(configuredPath).toAbsolutePath().normalize();
+        if (!Files.isDirectory(repository.resolve(".git"))) throw new IllegalStateException("项目代码仓库不可用");
+
+        Process process = new ProcessBuilder("git", "rev-parse", "HEAD")
+                .directory(repository.toFile()).redirectErrorStream(true).start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+        int exitCode = process.waitFor();
+        if (exitCode != 0 || !COMMIT.matcher(output).matches()) {
+            log.warn("git rev-parse HEAD failed for project {}", projectId);
+            throw new IllegalStateException("Git 仓库状态不可用");
+        }
+        return output;
+    }
+
     /** 解析 git diff --name-status 输出的一行（制表符分隔），无法识别时返回 null。 */
     private GitFileChange parse(String line) {
         String[] fields = line.split("\\t");

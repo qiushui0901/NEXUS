@@ -40,7 +40,8 @@ public final class KnowledgeBuildModels {
             List<Evidence> testEvidence,
             List<String> conflicts,
             double confidence,
-            String reviewStatus
+            String reviewStatus,
+            List<String> requirementContentHashes
     ) {
         public FeatureFactDraft {
             productRules = copy(productRules);
@@ -50,6 +51,7 @@ public final class KnowledgeBuildModels {
             codeEvidence = copy(codeEvidence);
             testEvidence = copy(testEvidence);
             conflicts = copy(conflicts);
+            requirementContentHashes = copy(requirementContentHashes);
         }
 
         private static <T> List<T> copy(List<T> values) {
