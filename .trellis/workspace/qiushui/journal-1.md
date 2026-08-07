@@ -506,3 +506,66 @@ Committed MCP 0.6 contract matrix, 0.8 BGE/shiguang eval tooling, smoke/ecosyste
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: 符号级 stale 传播真实场景验收（0.8.4）
+
+**Date**: 2026-08-07
+**Task**: 符号级 stale 传播真实场景验收（0.8.4）
+**Branch**: `main`
+
+### Summary
+
+shiguang 真实仓库：修改调用方触发 module-repository 经调用边传播 STALE；修复 codeSymbols 传播基准
+
+### Main Changes
+
+# 符号级 stale 传播真实场景验收（0.8.4）
+
+- 日期：2026-08-07
+- 实现：`WikiStalenessService` 传播链路升级为「Git diff → 变更文件 → 变更符号（symbolsByFiles）→ 入向调用关系（relations）→ 页面 codeSymbols → STALE」，原因中携带「变更符号 -> 页面符号」传播链
+- 测试：`WikiStalenessServiceTest` 新增调用关系传播用例（4/4 绿）；全量 327 测试回归绿
+
+## 真实仓库验收（shiguang）
+
+场景设计：**修改模块的调用方**（而非模块自身文件），验证传播而非文件命中。
+
+1. shiguang 仓库 `smoke-symbol-stale` 临时分支提交 `64c428f`：改动 `CommentContentServiceImpl.java`（CommentContentRepository 的调用方）一个 import 行
+2. 符号图快照同步到 `64c428f`（模拟代码索引完成后的状态；真实流程由 code index 完成）
+3. `GET /api/wiki/staleness?projectId=shiguang-eval&version=v1` 结果：
+
+```
+stale: true
+pages: [module-repository]
+  reason: 代码提交从 d29f325... 变化到 64c428f...，
+    符号 CommentContentServiceImpl.batchFindCommentContent ->
+    CommentContentRepository.findByPrimaryKeyNoteIdAndPrimaryKeyYearMonthInAndPrimaryKeyContentIdIn
+    经调用关系传播影响页面声明
+```
+
+- 变更文件是 service 包（页面入口文件未命中）→ 纯符号/调用关系传播 ✓
+- 传播链展示调用方符号与页面符号 ✓
+- 验收后已清理：shiguang 回到 main（d29f325）、临时分支删除、符号图恢复备份、应用/Qdrant 停止
+
+## 验收暴露并修复的真实缺口
+
+- Module 草稿缺 build.json → publish 404（已在上一轮修复 `9b051eb`）
+- 符号传播原基于 `codeEntries`（仅含 entryPoint，repository 类模块为空）→ 改为基于 `codeSymbols` 后传播生效
+- 符号图 `code_graph_snapshot` 表与 `code_symbol/code_relation` 必须同步更新，`latestCommit` 才能反映新快照（真实流程由索引保证）
+
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

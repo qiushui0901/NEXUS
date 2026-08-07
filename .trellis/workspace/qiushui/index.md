@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
+- **Total Sessions**: 14
 - **Last Active**: 2026-08-07
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~508 | Active |
+| `journal-1.md` | ~571 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 14 | 2026-08-07 | 符号级 stale 传播真实场景验收（0.8.4） | - | `main` |
 | 13 | 2026-08-07 | Wiki Module 纵向闭环冒烟验证（0.8.4） | - | `main` |
 | 12 | 2026-08-03 | 完成 0.8.2 可信文档召回与 parent 代表项优化 | `fe171e2` | `main` |
 | 11 | 2026-07-30 | Commit and archive 0.8 + MCP contract | `b9489ab` | `main` |
