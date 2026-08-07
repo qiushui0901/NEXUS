@@ -432,3 +432,77 @@ Committed MCP 0.6 contract matrix, 0.8 BGE/shiguang eval tooling, smoke/ecosyste
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: Wiki Module 纵向闭环冒烟验证（0.8.4）
+
+**Date**: 2026-08-07
+**Task**: Wiki Module 纵向闭环冒烟验证（0.8.4）
+**Branch**: `main`
+
+### Summary
+
+真实仓库验证 Module build/发布/重建/stale 闭环：Claim 引用类型精确、下标有效；修复 build.json 缺口
+
+### Main Changes
+
+# 冒烟验证结果：Module 页面纵向闭环（0.8.4）
+
+- 日期：2026-08-07
+- 环境：本机 `NEXUS-0.8.4-SNAPSHOT.jar`（local profile，端口 18080）+ shiguang 真实仓库
+- 项目配置：`PROJECT_1_ID=shiguang-eval`、`PROJECT_1_REPO_PATH=/Users/user/Documents/qiushui-shiguang`（HEAD `d29f325`，与 SQLite 符号图快照 commit 一致）
+
+## 验证链路
+
+### 1. Module build API（POST /api/wiki/modules/build）
+
+- `modulePath=.../domain/repository`：featureId=`module-repository`，10 条证据（CODE×4 / DEPENDENCY×2 / DATA×4），6 条 Claim。
+  全部 evidenceIds 下标有效；`repository-dependencies`(INFERRED) 引用 2 条 DEPENDENCY 类型证据 ✓
+- `modulePath=.../controller`：featureId=`module-controller`，24 条证据（CODE×8 / CODE_GRAPH×6 / ROUTE×10），6 条 Claim：
+  - `controller-entry` **FULL** 引用 10 条 **ROUTE** 类型证据 ✓（类型精确匹配）
+  - `controller-flow` PARTIAL 引用 6 条 **CODE_GRAPH** ✓
+  - `controller-responsibility` PARTIAL 引用 8 条 **CODE** ✓
+
+### 2. 发布链路（草稿 → 审核 → 发布）
+
+- 冒烟发现并修复：模块草稿缺 `build.json` → `publish` 报 404「知识草稿构建产物不存在」。
+  修复：两个构建服务补齐兼容 `BuildArtifact`（commit `9b051eb`）。
+- 修复后：`transition DRAFT→IN_REVIEW→APPROVED` → `publish` → **PUBLISHED，1 页** ✓
+
+### 3. rebuild（POST /api/wiki/modules/rebuild）
+
+- 对已发布 `module-repository` 重建：6 条 Claim 全部 UNCHANGED（源码未变，行为正确）✓
+- 生成新草稿并落盘 `claim-diff.json` ✓
+
+### 4. staleness（GET /api/wiki/staleness）
+
+- published commit `d29f32589c` == 当前 HEAD `d29f32589c` → `stale: false` ✓
+
+## 结论
+
+- 各类型 Claim 引用正确类型、有效下标的 Evidence（不只是单元测试）✓
+- Module 草稿 → 审核 → 发布 → 重建 → 失效检测闭环在真实仓库上走通 ✓
+- 产出 1 个集成修复（build.json）并入 0.8.4（Fixed 段）
+- 回归：327 单元测试全绿
+
+## 已知边界（后续迭代）
+
+- 符号级 stale 传播尚未真实验收：本仓 HEAD 与发布 commit 一致，未触发 diff 命中路径；需在下一迭代用真实 git 变更验证「符号 → 调用关系 → Claim → 页面」的失效传播
+- rebuild 的 MODIFIED/REMOVED 差异仅在源码实际变化时出现，本次验证为 UNCHANGED 基线
+
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
