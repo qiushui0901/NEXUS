@@ -130,6 +130,7 @@ public class ModuleStaleRebuildService {
             Files.createDirectories(versionRoot);
             deleteRecursively(staging);
             Files.createDirectories(staging);
+            writeSafeJson(staging.resolve("build.json"), buildArtifact(projectId, version, buildId));
             writeSafeJson(staging.resolve("wiki-source.json"), wikiSource);
             writeSafeJson(staging.resolve("module-bundle.json"), bundle);
             writeSafeJson(staging.resolve("claim-diff.json"), Map.of("claimChanges", changes));
@@ -139,6 +140,16 @@ public class ModuleStaleRebuildService {
             deleteQuietly(staging);
             throw new IllegalStateException("模块重建草稿写入失败", exception);
         }
+    }
+
+    /** 合成与现有发布链路兼容的构建产物。 */
+    private com.example.requirementrag.knowledge.build.KnowledgeBuildModels.BuildArtifact buildArtifact(
+            String projectId, String version, String buildId) {
+        return new com.example.requirementrag.knowledge.build.KnowledgeBuildModels.BuildArtifact(
+                buildId, com.example.requirementrag.knowledge.build.KnowledgeBuildModels.BuildStatus.DRAFT,
+                new com.example.requirementrag.knowledge.build.KnowledgeBuildModels.BuildRequest(
+                        projectId, version, null, projectId, "", ""),
+                java.time.Instant.now().toString(), List.of(), List.of());
     }
 
     private void writeSafeJson(Path file, Object value) throws IOException {

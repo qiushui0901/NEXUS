@@ -77,7 +77,7 @@ public class ModuleKnowledgeBuildService {
                 text(request.actor()).isBlank() ? "system" : request.actor(), generatedAt);
     }
 
-    /** 以暂存目录方式原子落盘 wiki-source.json 与 module-bundle.json，整体移入目标草稿目录。 */
+    /** 以暂存目录方式原子落盘 build.json / wiki-source.json / module-bundle.json，整体移入目标草稿目录。 */
     private Path writeDraft(String projectId, String version, String buildId,
                             VersionSource wikiSource, ModuleFactBundle bundle) {
         Path versionRoot = resolveBelow(draftRoot, projectId, version);
@@ -88,6 +88,7 @@ public class ModuleKnowledgeBuildService {
             Files.createDirectories(versionRoot);
             deleteRecursively(staging);
             Files.createDirectories(staging);
+            writeSafeJson(staging.resolve("build.json"), buildArtifact(projectId, version, buildId));
             writeSafeJson(staging.resolve("wiki-source.json"), wikiSource);
             writeSafeJson(staging.resolve("module-bundle.json"), bundle);
             move(staging, target);
@@ -96,6 +97,16 @@ public class ModuleKnowledgeBuildService {
             deleteQuietly(staging);
             throw new IllegalStateException("模块知识草稿写入失败", exception);
         }
+    }
+
+    /** 合成与现有发布链路兼容的构建产物（NO_CHANGES 检查与发布审计需要 build.json）。 */
+    private com.example.requirementrag.knowledge.build.KnowledgeBuildModels.BuildArtifact buildArtifact(
+            String projectId, String version, String buildId) {
+        return new com.example.requirementrag.knowledge.build.KnowledgeBuildModels.BuildArtifact(
+                buildId, com.example.requirementrag.knowledge.build.KnowledgeBuildModels.BuildStatus.DRAFT,
+                new com.example.requirementrag.knowledge.build.KnowledgeBuildModels.BuildRequest(
+                        projectId, version, null, projectId, "", ""),
+                java.time.Instant.now().toString(), List.of(), List.of());
     }
 
     /** 序列化对象为 JSON 并校验不含向量、Qdrant 运行数据或凭据等敏感字段后写入文件。 */

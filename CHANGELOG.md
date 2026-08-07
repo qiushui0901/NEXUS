@@ -19,6 +19,11 @@
 - 新增 `WikiStalenessService`：基于 Git commit（`git rev-parse HEAD` + 文件级 diff 命中页面代码入口）与需求内容哈希对比检测过期页面，只读计算、不覆盖已发布内容；`GitDiffService` 新增 `latestCommit`；对外暴露 `GET /api/wiki/staleness`。
 - 新增 `WikiStalenessServiceTest`（代码/需求/新鲜三场景）与管线合并、概览/模块页生成测试。
 
+### Fixed
+
+- 模块知识草稿补齐 `build.json` 构建产物（`ModuleKnowledgeBuildService` / `ModuleStaleRebuildService`），与既有发布链路（NO_CHANGES 检查、发布审计）契约一致；此前模块草稿无法通过 `publish` 发布。
+
+
 ## 0.8.3-SNAPSHOT — 2026-08-06
 
 ### Added
