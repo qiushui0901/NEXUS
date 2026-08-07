@@ -41,7 +41,16 @@ public class EmbeddingBatcher {
     EmbeddingBatcher(EmbeddingModel embeddingModel, BoundedTtlCache<String, float[]> cache) {
         this.embeddingModel = embeddingModel;
         this.cache = cache;
-        this.modelFingerprint = embeddingModel.getClass().getName();
+        this.modelFingerprint = embeddingModel.getClass().getName() + ":" + probeDimension();
+    }
+
+    /** 探测并缓存嵌入维度，纳入缓存指纹：同一客户端类切换模型或维度时缓存自然失效。 */
+    private String probeDimension() {
+        try {
+            return String.valueOf(embeddingModel.dimensions());
+        } catch (RuntimeException exception) {
+            return "unknown";
+        }
     }
 
     /**

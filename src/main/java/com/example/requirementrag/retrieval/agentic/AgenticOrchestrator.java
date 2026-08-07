@@ -77,7 +77,8 @@ public class AgenticOrchestrator {
             if (merged != null) {
                 current = merge(merged, current);
             }
-            ReflectionVerdict verdict = reflector.evaluate(current);
+            EvidenceReflector.ReflectionResult reflection = reflector.evaluate(current);
+            ReflectionVerdict verdict = reflection.verdict();
             if (verdict == ReflectionVerdict.CONFIDENT) {
                 return deliver(current, orchestrationWarnings, hop + 1, false);
             }

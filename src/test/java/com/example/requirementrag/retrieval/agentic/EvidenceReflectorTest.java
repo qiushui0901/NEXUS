@@ -32,26 +32,62 @@ class EvidenceReflectorTest {
     void confidentWhenRequirementHitsMeetThreshold() {
         EvidenceReflector reflector = new EvidenceReflector(MIN_HITS);
         assertEquals(ReflectionVerdict.CONFIDENT,
-                reflector.evaluate(result(RetrievalProfile.REQUIREMENT_REVIEW, RagOutcomeStatus.SUCCESS, 1)));
+                reflector.evaluate(result(RetrievalProfile.REQUIREMENT_REVIEW, RagOutcomeStatus.SUCCESS, 1)).verdict());
     }
 
     @Test
     void insufficientWhenRequirementHitsBelowThreshold() {
         EvidenceReflector reflector = new EvidenceReflector(3);
         assertEquals(ReflectionVerdict.INSUFFICIENT,
-                reflector.evaluate(result(RetrievalProfile.REQUIREMENT_REVIEW, RagOutcomeStatus.SUCCESS, 2)));
+                reflector.evaluate(result(RetrievalProfile.REQUIREMENT_REVIEW, RagOutcomeStatus.SUCCESS, 2)).verdict());
     }
 
     @Test
     void notRetrievableWhenCoreStageFailed() {
         EvidenceReflector reflector = new EvidenceReflector(MIN_HITS);
         assertEquals(ReflectionVerdict.NOT_RETRIEVABLE,
-                reflector.evaluate(result(RetrievalProfile.REQUIREMENT_REVIEW, RagOutcomeStatus.FAILED, 0)));
+                reflector.evaluate(result(RetrievalProfile.REQUIREMENT_REVIEW, RagOutcomeStatus.FAILED, 0)).verdict());
+    }
+
+
+    @Test
+    void reportsStableReasonCodes() {
+        EvidenceReflector reflector = new EvidenceReflector(MIN_HITS);
+        assertEquals("BELOW_MIN_HITS", reflector.evaluate(
+                result(RetrievalProfile.REQUIREMENT_REVIEW, RagOutcomeStatus.SUCCESS, 0)).reasonCode());
+        assertEquals("CORE_STAGE_FAILED", reflector.evaluate(
+                result(RetrievalProfile.REQUIREMENT_REVIEW, RagOutcomeStatus.FAILED, 0)).reasonCode());
+        assertEquals("HIT_THRESHOLD_MET", reflector.evaluate(
+                result(RetrievalProfile.REQUIREMENT_REVIEW, RagOutcomeStatus.SUCCESS, 1)).reasonCode());
+    }
+
+    @Test
+    void duplicateOnlyEvidenceIsInsufficient() {
+        EvidenceReflector reflector = new EvidenceReflector(MIN_HITS);
+        StrategyResult duplicate = new StrategyResult("hybrid",
+                new RetrievalBundle("query", RetrievalProfile.REQUIREMENT_REVIEW, "game",
+                        "requirements", "5.1", List.of(hit("h1"), hit("h1")), List.of()),
+                RagOutcomeStatus.SUCCESS, List.of(), List.of());
+        EvidenceReflector.ReflectionResult reflection = reflector.evaluate(duplicate);
+        assertEquals(ReflectionVerdict.INSUFFICIENT, reflection.verdict());
+        assertEquals("DUPLICATE_ONLY", reflection.reasonCode());
+    }
+
+    @Test
+    void singleSidedEvidenceIsInsufficientForDualProfile() {
+        EvidenceReflector reflector = new EvidenceReflector(MIN_HITS);
+        StrategyResult singleSided = new StrategyResult("hybrid",
+                new RetrievalBundle("query", RetrievalProfile.DEVELOPMENT_PLAN, "game",
+                        "requirements", "5.1", List.of(hit("h1")), List.of()),
+                RagOutcomeStatus.SUCCESS, List.of(), List.of());
+        EvidenceReflector.ReflectionResult reflection = reflector.evaluate(singleSided);
+        assertEquals(ReflectionVerdict.INSUFFICIENT, reflection.verdict());
+        assertEquals("SINGLE_SIDE_ONLY", reflection.reasonCode());
     }
 
     @Test
     void notRetrievableWhenNull() {
         EvidenceReflector reflector = new EvidenceReflector(MIN_HITS);
-        assertEquals(ReflectionVerdict.NOT_RETRIEVABLE, reflector.evaluate(null));
+        assertEquals(ReflectionVerdict.NOT_RETRIEVABLE, reflector.evaluate(null).verdict());
     }
 }
