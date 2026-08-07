@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "src/main/java/com/example/requirementrag/wiki/module/ModuleFactExtractor.java", "reason": "确定性事实抽取"}
+{"file": "src/main/java/com/example/requirementrag/wiki/module/ModuleWikiPlanner.java", "reason": "七类声明生成"}
+{"file": "src/main/java/com/example/requirementrag/wiki/module/ModuleClaimQualityGate.java", "reason": "发布质量门"}
+{"file": "src/main/java/com/example/requirementrag/wiki/module/ModuleKnowledgeBuildService.java", "reason": "草稿构建"}
+{"file": "src/main/java/com/example/requirementrag/wiki/module/ModuleStaleRebuildService.java", "reason": "stale-to-draft 重建"}
