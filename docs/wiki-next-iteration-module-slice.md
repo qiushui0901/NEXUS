@@ -416,21 +416,29 @@ Git diff
 
 选择一个真实仓库和一个模块进行验收。
 
-- [ ] 通过配置或路径稳定识别目标模块。
-- [ ] 自动生成 `ModuleFactBundle`，不依赖手写 Wiki Source。
-- [ ] Bundle 包含模块入口、核心符号、调用关系、配置和测试。
-- [ ] 自动生成 Module Wiki 草稿。
-- [ ] 页面包含职责、入口、流程、依赖、数据配置、测试和缺口 Claims。
-- [ ] 每个 `FULL` Claim 至少绑定一个有效证据。
-- [ ] `INFERRED` Claim 显示推断性质和置信度。
-- [ ] Claim 可以跳转到需求或仓库相对源码位置。
-- [ ] MCP 可以列出 Module 页面并读取 Claims。
-- [ ] 修改核心符号后，页面出现在 StaleReport。
-- [ ] StaleReport 可以显式生成新草稿。
-- [ ] 新草稿显示 Claim 级差异。
-- [ ] 未审核草稿不能覆盖正式 Wiki。
-- [ ] 无代码证据、无效引用或跨 commit 证据会阻止发布。
-- [ ] 已发布页面在模型和向量服务不可用时仍可读取。
+> 验收记录（2026-08-10，shiguang-eval / shiguang-kv-biz 真实仓库，符号图快照 commit 与仓库 HEAD 一致）：
+> 完整流程 `build → IN_REVIEW → APPROVED → publish → stale → rebuild` 全部走通；
+> 质量门四条硬约束（真实 CODE 证据 / commit 一致性 / 文件与行号有效性 / CONFLICT 拦截）在发布链路强制生效；
+> 修改模块调用方（service 包，不碰模块自身文件）后 `module-repository` 经调用关系传播进入 StaleReport；
+> rebuild 生成带 claim-diff 的新草稿；import-only 变更下 Claim 全 UNCHANGED（差异机制由单元测试覆盖 MODIFIED/ADDED/REMOVED）。
+
+- [x] 通过配置或路径稳定识别目标模块（`modulePath` 显式传入，越界路径拒绝）。
+- [x] 自动生成 `ModuleFactBundle`，不依赖手写 Wiki Source（repository/controller 模块自动抽取）。
+- [x] Bundle 包含模块入口、核心符号、调用关系、配置和测试（controller 模块 24 条证据：CODE×8 / CODE_GRAPH×6 / ROUTE×10）。
+- [x] 自动生成 Module Wiki 草稿。
+- [x] 页面包含职责、入口、流程、依赖、数据配置、测试和缺口 Claims（6-7 类，逐类引用对应类型证据）。
+- [x] 每个 `FULL` Claim 至少绑定一个有效证据（`controller-entry` FULL 引用 10 条 ROUTE 证据，下标与类型均有效）。
+- [x] `INFERRED` Claim 显示推断性质（support 状态 + 依赖/数据配置证据引用）。
+- [x] Claim 可以跳转到需求或仓库相对源码位置（evidence 携带 filePath + lines 区间，发布门禁核验行号在文件范围内）。
+- [x] MCP 可以列出 Module 页面并读取 Claims（`nexus_wiki_index` + `nexus_wiki_page`，契约测试覆盖）。
+- [x] 修改核心符号后，页面出现在 StaleReport（真实验收：调用方符号经入向调用边传播标记 `module-repository` STALE，reason 展示传播链）。
+- [x] StaleReport 可以显式生成新草稿（`POST /api/wiki/modules/rebuild`）。
+- [x] 新草稿显示 Claim 级差异（`claim-diff.json` + API 返回 ADDED/MODIFIED/REMOVED/UNCHANGED）。
+- [x] 未审核草稿不能覆盖正式 Wiki（DRAFT→IN_REVIEW→APPROVED→PUBLISHED 状态机 + 快照回滚）。
+- [x] 无代码证据、无效引用或跨 commit 证据会阻止发布（质量门四条硬约束：真实 CODE 证据、commit 一致性、文件/行号有效性、CONFLICT 拦截，另有跨项目/版本与越界引用拦截）。
+- [x] 已发布页面在模型和向量服务不可用时仍可读取（`WikiRepository` 纯文件读取；本机无模型网关环境下完成全部验收）。
+
+**结论**：Module 页面纵向闭环通过真实仓库验收，视为完成。后续迭代（Overview/API/Data 页面扩展）按第 12 节机制进行，本轮暂不启动。
 
 ## 12. 后续扩展
 

@@ -28,12 +28,14 @@ class ModuleKnowledgeBuildServiceTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private final ModuleFactExtractor extractor = mock(ModuleFactExtractor.class);
     private final KnowledgeDraftLifecycleService draftLifecycleService = mock(KnowledgeDraftLifecycleService.class);
+    private final com.example.requirementrag.config.ProjectRegistry projectRegistry =
+            mock(com.example.requirementrag.config.ProjectRegistry.class);
 
     private ModuleKnowledgeBuildService service() {
         WikiProperties properties = new WikiProperties(temp.resolve("wiki").toString(),
                 temp.resolve("sources").toString(), temp.resolve("drafts").toString());
         return new ModuleKnowledgeBuildService(mapper, properties, extractor, new ModuleWikiPlanner(),
-                new ModuleClaimQualityGate(), draftLifecycleService);
+                new ModuleClaimQualityGate(projectRegistry), draftLifecycleService);
     }
 
     private ModuleFactBundle bundle() {
@@ -51,6 +53,18 @@ class ModuleKnowledgeBuildServiceTest {
                         new ModuleFactModels.ModuleEvidence("code:auth:1", "CODE", "game", "5.1", "abc123",
                                 "src/auth/AuthService.java", "com.game.auth.AuthService.revoke", 10, 20, "s2")),
                 List.of());
+    }
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubProject() throws Exception {
+        when(projectRegistry.require("game")).thenReturn(new com.example.requirementrag.config.RagProperties.ProjectConfig(
+                "game", "Game", "game", "server", "requirements_game", "code_game",
+                temp.toString(), "group/game", null, List.of(), List.of(), 1_000_000));
+        java.nio.file.Path module = temp.resolve("src/auth");
+        java.nio.file.Files.createDirectories(module);
+        StringBuilder source = new StringBuilder();
+        for (int line = 1; line <= 50; line++) source.append("line ").append(line).append('\n');
+        java.nio.file.Files.writeString(module.resolve("AuthService.java"), source.toString());
     }
 
     @Test
@@ -86,7 +100,7 @@ class ModuleKnowledgeBuildServiceTest {
 
         assertThatThrownBy(() -> service().build(new ModuleBuildRequest("game", "5.1", "src/auth", "abc123", "system")))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("没有代码证据");
+                .hasMessageContaining("没有真实 CODE 证据");
     }
 
     @Test

@@ -97,7 +97,7 @@ public class WikiGenerationService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Wiki 源定义无法解析", exception);
         }
         validate(source, safeProject, safeVersion);
-        claimQualityGate.validate(safeProject, safeVersion, source.pages());
+        claimQualityGate.validate(safeProject, safeVersion, text(source.codeCommit()), source.pages());
 
         String generatedAt = text(source.generatedAt()).isBlank() ? Instant.now().toString() : source.generatedAt().trim();
         Path projectRoot = WikiPathPolicy.resolveBelow(repository.root(), safeProject);

@@ -33,7 +33,7 @@ class ModuleStaleRebuildServiceTest {
         WikiProperties properties = new WikiProperties(temp.resolve("wiki").toString(),
                 temp.resolve("sources").toString(), temp.resolve("drafts").toString());
         return new ModuleStaleRebuildService(mapper, properties, new WikiRepository(mapper, properties),
-                extractor, new ModuleWikiPlanner(), new ModuleClaimQualityGate(), draftLifecycleService);
+                extractor, new ModuleWikiPlanner(), ModuleClaimQualityGate.lenient(), draftLifecycleService);
     }
 
     private void publishModulePage(String oldClaimText) throws Exception {

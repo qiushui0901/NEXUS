@@ -78,7 +78,9 @@ public class ModuleStaleRebuildService {
 
         ModuleFactBundle bundle = extractor.extract(safeProject, modulePath, safeVersion);
         PageSource page = planner.plan(bundle, safeVersion, null, codeCommit);
-        qualityGate.validate(safeProject, safeVersion, List.of(page));
+        String targetCommit = codeCommit == null || codeCommit.isBlank()
+                ? text(bundle.commitSha()) : codeCommit;
+        qualityGate.validate(safeProject, safeVersion, targetCommit, List.of(page));
 
         List<ClaimChange> changes = claimChanges(oldClaims, page.claims());
         String buildId = Instant.now().toString().replaceAll("[^0-9]", "").substring(0, 14)

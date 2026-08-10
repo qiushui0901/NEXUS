@@ -64,7 +64,9 @@ public class ModuleKnowledgeBuildService {
 
         ModuleFactBundle bundle = extractor.extract(projectId, modulePath, version);
         PageSource page = planner.plan(bundle, version, null, request.codeCommit());
-        qualityGate.validate(projectId, version, List.of(page));
+        String codeCommit = request.codeCommit() == null || request.codeCommit().isBlank()
+                ? text(bundle.commitSha()) : request.codeCommit();
+        qualityGate.validate(projectId, version, codeCommit, List.of(page));
 
         String buildId = Instant.now().toString().replaceAll("[^0-9]", "").substring(0, 14)
                 + "-" + UUID.randomUUID().toString().substring(0, 8);
