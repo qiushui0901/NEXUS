@@ -2,6 +2,7 @@ package com.example.requirementrag.service;
 
 import com.example.requirementrag.model.KnowledgeEntry;
 import com.example.requirementrag.model.ChunkRecord;
+import com.example.requirementrag.model.IngestResponse;
 import com.example.requirementrag.observability.RagObservability;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
 import com.example.requirementrag.retrieval.pipeline.RetrievalResultCache;
@@ -17,6 +18,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
 class RequirementIngestionServiceTest {
@@ -56,6 +58,58 @@ class RequirementIngestionServiceTest {
 
         verify(store).replaceVersion(eq("doc-a"), eq("5.1"), anyList());
         verify(resultCache).invalidate(org.mockito.ArgumentMatchers.anyString(), eq("doc-a"), eq("5.1"));
+    }
+
+    @Test
+    void ingestsPdfViaTikaTextExtraction() throws Exception {
+        when(preprocessor.clean(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(observability.observe(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<java.util.function.Supplier<?>>any()))
+                .thenAnswer(invocation -> invocation.getArgument(3, java.util.function.Supplier.class).get());
+        when(chunker.split(any())).thenAnswer(invocation -> {
+            String text = invocation.getArgument(0);
+            return java.util.List.of(new ParentChildChunker.ParentChunk(1, text, java.util.List.of(text)));
+        });
+        org.mockito.Mockito.doAnswer(invocation -> {
+            invocation.getArgument(3, Runnable.class).run();
+            return null;
+        }).when(observability).observe(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any(Runnable.class));
+        stubProjectLookup(null, "project-a");
+        RequirementIngestionService service = new RequirementIngestionService(
+                store, preprocessor, resultCache, projectRegistry, chunker, observability);
+
+        byte[] pdf = createMinimalPdf();
+        IngestResponse response = service.ingest(
+                new org.springframework.mock.web.MockMultipartFile("file", "requirements.pdf",
+                        "application/pdf", pdf),
+                "5.1", "doc-pdf");
+
+        assertThat(response.chunks()).isGreaterThan(0);
+        org.mockito.ArgumentCaptor<java.util.List> captor =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        verify(store).replaceVersion(eq("doc-pdf"), eq("5.1"), captor.capture());
+        assertThat(captor.getValue()).isNotEmpty();
+    }
+
+    private byte[] createMinimalPdf() throws Exception {
+        try (org.apache.pdfbox.pdmodel.PDDocument document = new org.apache.pdfbox.pdmodel.PDDocument()) {
+            org.apache.pdfbox.pdmodel.PDPage page = new org.apache.pdfbox.pdmodel.PDPage();
+            document.addPage(page);
+            try (org.apache.pdfbox.pdmodel.PDPageContentStream content =
+                         new org.apache.pdfbox.pdmodel.PDPageContentStream(document, page)) {
+                content.beginText();
+                content.setFont(new org.apache.pdfbox.pdmodel.font.PDType1Font(
+                        org.apache.pdfbox.pdmodel.font.Standard14Fonts.FontName.HELVETICA), 12);
+                content.newLineAtOffset(72, 720);
+                content.showText("Hello PDF requirement text");
+                content.endText();
+            }
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            document.save(out);
+            return out.toByteArray();
+        }
     }
 
     @Test

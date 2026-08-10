@@ -55,6 +55,10 @@
   - **源码接口行号校验**：拒绝 `startLine<1`、`endLine<1`、`startLine>endLine` 与超出文件长度（不再返回 0 行号元数据）。
   - 新增回归测试：401 两场景、网关身份头、dirty worktree 拒绝、行号三类非法范围、缓存失效两场景、增量索引 live alias 写入。
 
+### Added
+
+- 文档摄入格式确认与固化（开源 RAG 引擎对比后的 P0 落地）：上传入口经 Apache Tika 原生支持 `pdf` / `docx` / `xlsx` / `html` / `txt` / HTML-zip（PDF 文本提取由 Tika→PDFBox 完成，无需额外组件）；新增真实 PDF 摄入回归测试（PDFBox 生成 → Tika 提取 → 分块入库），`docs/user-guide.md` 记录支持格式；扫描件 OCR 记为已知缺口。检索评测对照能力（`tools/retrieval-eval-comparison.py` 基线/重排对照 + 54 条冻结评测集 + QualityGate 全 profile 门禁）经核对已具备，无需引入 FlashRAG。
+
 ### Fixed
 
 - 增量索引第四轮修复（0.8.5）：

@@ -104,6 +104,11 @@ Compose 会拉起 NEXUS、Qdrant、Prometheus、Grafana。请将仓库挂载或�
 
 ## 5. 需求摄入与存疑
 
+支持格式（经 Apache Tika 自动识别）：`pdf`、`docx`、`xlsx`、`html`、`txt` 及含 HTML 的 `zip` 包。
+扫描件 OCR（图片型 PDF 的文字识别）暂不支持，属已知缺口。
+
+## 5. 需求摄入与存疑
+
 流水线：
 
 ```text
