@@ -638,3 +638,62 @@ Module 纵向闭环 MVP 15 项验收全部通过（docs/wiki-next-iteration-modu
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: 质量门审查整改：封堵绕过 + rebuild 守卫（0.8.4）
+
+**Date**: 2026-08-10
+**Task**: 质量门审查整改：封堵绕过 + rebuild 守卫（0.8.4）
+**Branch**: `main`
+
+### Summary
+
+commit fail-closed、符号存在性、ID 前缀-类型一致性、rebuild 的 StaleReport/MODULE 守卫；13 个门禁测试，335 全绿
+
+### Main Changes
+
+# 质量门审查整改：封堵绕过 + rebuild 守卫（0.8.4）
+
+- 日期：2026-08-10
+- 依据：对 Module 闭环的代码审查意见（跨 commit 可绕过、符号未核验、ID 前缀未校验、rebuild 无守卫）
+
+## 逐条核对与整改
+
+| 审查意见 | 结论 | 处理 |
+|---|---|---|
+| commit 未真正校验，跨 commit 可发布 | 上一轮已加比对，但存在空值绕过（commit 为空时跳过） | **fail-closed**：目标提交或任一代码证据 commit 缺失即拦截（`d761df9`） |
+| 文件/路径/行号未校验 | 上一轮已校验（文件存在、路径不越根、行号不越界） | 保留 + 新增**符号存在性**：CODE 证据的符号必须仍在符号图快照 |
+| 只有配置/诊断证据也能通过 | 上一轮已改为必须含 type=CODE | 保留，回归测试在 |
+| CONFLICT 未阻止发布 | 上一轮已拦截 | 保留，回归测试在 |
+| Evidence ID 下标关联未验证类型前缀 | **真实缺口** | 新增 namespace↔type 映射校验（code↔CODE 等 8 组），不匹配即拦截 |
+| INFERRED 无置信度字段 | 文档要求但未实现 | 记录为 MVP 已知缺口 |
+| rebuild 未确认目标来自 StaleReport、未校验 MODULE | **真实缺口** | rebuild 强制：目标必须是 MODULE 页 + 出现在当前 StaleReport；staleness 基础设施不可用则拒绝 |
+| checklist 未勾选 | 上一轮已勾选 15 项 | 保留并记录验收记录 |
+| 测试以 mock 为主，未跑真实流程 | 已用 shiguang 真实验收（build→review→publish→stale→rebuild） | 补充说明：符号图快照同步受网关限制，真实索引流程未覆盖 |
+| 需求/CI 测试/RPC/消息/缓存事实不完整 | 同意 | 记录为 MVP 已知缺口（文档 §11 新增小节） |
+
+## 新增回归测试（13 个模块门禁测试，全量 335 绿）
+
+- 目标提交缺失 / 证据 commit 缺失 → 拦截
+- 证据符号不在符号图 → 拦截
+- evidenceId namespace 与类型不匹配（route 前缀引用 CODE 证据）→ 拦截
+- rebuild 非 MODULE 页面 → 拒绝
+- rebuild 目标不在 StaleReport → 拒绝
+- 既有：真实 CODE 证据、跨 commit、文件缺失、行号越界、CONFLICT、FULL 无证据、越界引用、跨项目/版本
+
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

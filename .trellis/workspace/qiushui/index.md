@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
+- **Total Sessions**: 16
 - **Last Active**: 2026-08-10
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~640 | Active |
+| `journal-1.md` | ~699 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-08-10 | 质量门审查整改：封堵绕过 + rebuild 守卫（0.8.4） | - | `main` |
 | 15 | 2026-08-10 | Module 质量门四硬约束与完整闭环真实验收（0.8.4） | - | `main` |
 | 14 | 2026-08-07 | 符号级 stale 传播真实场景验收（0.8.4） | - | `main` |
 | 13 | 2026-08-07 | Wiki Module 纵向闭环冒烟验证（0.8.4） | - | `main` |
