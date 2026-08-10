@@ -569,3 +569,72 @@ pages: [module-repository]
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: Module 质量门四硬约束与完整闭环真实验收（0.8.4）
+
+**Date**: 2026-08-10
+**Task**: Module 质量门四硬约束与完整闭环真实验收（0.8.4）
+**Branch**: `main`
+
+### Summary
+
+shiguang 真实仓库走通 build→review→publish→stale→rebuild；MVP checklist 15 项全部勾选，Module 闭环判定完成
+
+### Main Changes
+
+# Module 质量门四硬约束 + 完整闭环真实验收（0.8.4）
+
+- 日期：2026-08-10
+- 实现：`ModuleClaimQualityGate` 四条硬约束
+- 测试：新增 4 个约束回归用例（真实 CODE 证据 / 跨 commit / 文件缺失与行号越界 / CONFLICT 拦截），全量 330 测试绿
+
+## 四条硬约束
+
+1. **真实 CODE Evidence**：MODULE 页必须含至少一条 `type=CODE` 证据（DEPENDENCY/DATA/CONFIG/DIAGNOSTIC 等派生事实不算）
+2. **commit 一致性**：全部证据 commit 必须等于目标代码提交（非空时逐条比对，跨 commit 拦截）
+3. **文件/行号有效性**：代码类证据（CODE/CODE_GRAPH/ROUTE/TEST_SYMBOL）文件必须存在于仓库根内、行号不越界；仓库不可核验时 fail-closed
+4. **CONFLICT 拦截**：任何 CONFLICT 声明阻止发布
+
+## 完整闭环真实验收（shiguang-eval / repository 模块）
+
+```
+build（四硬约束放行，DRAFT）
+  → IN_REVIEW → APPROVED（review）
+  → publish（PUBLISHED，1 页）
+  → staleness（基线 false：commit 一致）
+  → 修改调用方（CommentContentServiceImpl，import-only）
+  → staleness（true：符号传播链 batchFindCommentContent ->
+    findByPrimaryKeyNoteId... 标记 module-repository）
+  → rebuild（新草稿 + claim-diff.json）
+```
+
+- 完整链路真实走通 ✓
+- rebuild 后 Claims 全 UNCHANGED 为**正确行为**：import-only 变更不改变模块事实；MODIFIED/ADDED/REMOVED 差异生成由单元测试覆盖（`ModuleStaleRebuildServiceTest`）
+- 发布链路中质量门四硬约束在 `WikiGenerationService.generate` 强制生效（publish 必经）
+
+## 验收环境
+
+- shiguang 真实仓库（符号图快照 commit 同步到 HEAD；真实环境由代码索引完成同步）
+- 验收后已清理：临时分支删除、符号图恢复备份、应用/Qdrant 停止、冒烟产物移除
+
+## 结论
+
+Module 纵向闭环 MVP 15 项验收全部通过（docs/wiki-next-iteration-module-slice.md §11 已勾选并记录），**Module 闭环视为完成**。Overview/API/Data 页面扩展暂不启动（按文档 §12 后续进行）。
+
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
