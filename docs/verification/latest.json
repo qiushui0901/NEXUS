@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-10T03:45:09.227805+00:00",
+  "git": {
+    "commit": "8f4759c5b52e4197cc69d7df003dab21caf46b41",
+    "branch": "main"
+  },
+  "version": "0.8.4-SNAPSHOT",
+  "command": "JAVA_HOME=<jdk17> ./mvnw verify",
+  "enforcerSkipped": false,
+  "java": "openjdk version \"17.0.20\" 2026-07-21 LTS",
+  "tests": {
+    "run": 335,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "jacocoCoverageCheck": "met",
+  "jarBuilt": "yes",
+  "buildResult": "SUCCESS",
+  "exitCode": 0
+}

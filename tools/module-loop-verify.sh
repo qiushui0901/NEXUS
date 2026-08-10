@@ -35,9 +35,31 @@ json_get() { python3 -c "import json,sys; d=json.load(sys.stdin); print(d$1)"; }
 
 cd "$WORKDIR"
 
+# 失败清理：任何一步失败都恢复仓库分支与符号图
+cleanup() {
+  local rc=$?
+  if [ -n "${SMOKE_BRANCH:-}" ] && git -C "$REPO" rev-parse --verify -q "$SMOKE_BRANCH" >/dev/null; then
+    git -C "$REPO" checkout -q main 2>/dev/null || true
+    git -C "$REPO" branch -q -D "$SMOKE_BRANCH" 2>/dev/null || true
+    echo "cleaned smoke branch: $SMOKE_BRANCH"
+  fi
+  if [ -n "${DB_BACKUP:-}" ] && [ -f "$DB_BACKUP" ] && [ -f "$DB" ]; then
+    cp "$DB_BACKUP" "$DB"
+    echo "restored symbol graph"
+  fi
+  if [ $rc -ne 0 ]; then
+    echo "验收失败（exit $rc），已清理" >&2
+  fi
+  exit $rc
+}
+trap cleanup EXIT
+
 step "0. 前置检查"
 [ -f "$JAR" ] || { echo "jar 不存在，先执行 verify"; exit 1; }
 [ -d "$REPO/.git" ] || { echo "仓库不可用: $REPO"; exit 1; }
+[ -z "$(git status --porcelain)" ] || { echo "NEXUS 工作区有未提交改动，拒绝验收"; exit 1; }
+[ -z "$(git -C "$REPO" status --porcelain)" ] || { echo "$REPO 工作区有未提交改动，拒绝验收"; exit 1; }
+[ "$(git -C "$REPO" branch --show-current)" = "main" ] || { echo "$REPO 不在 main 分支，拒绝验收"; exit 1; }
 pgrep -f "tools/qdrant" >/dev/null || { echo "Qdrant 未运行"; exit 1; }
 PUBLISHED_COMMIT=$(git -C "$REPO" rev-parse HEAD)
 echo "published baseline commit: ${PUBLISHED_COMMIT:0:10}"
@@ -66,8 +88,8 @@ curl -s "$BASE/api/wiki/staleness?projectId=$PROJECT_ID&version=$VERSION" \
 echo "baseline fresh"
 
 step "5. 制造符号变更（修改模块调用方，不碰模块自身文件）"
-BRANCH="smoke-verify-$(date +%s)"
-git -C "$REPO" checkout -q -b "$BRANCH"
+SMOKE_BRANCH="smoke-verify-$(date +%s)"
+git -C "$REPO" checkout -q -b "$SMOKE_BRANCH"
 CALLER=$(grep -rl "CommentContentRepository" "$REPO/shiguang-kv/shiguang-kv-biz/src/main/java" \
   --include="*.java" | grep -v "/repository/" | head -1)
 [ -n "$CALLER" ] || { echo "未找到调用方文件"; exit 1; }
@@ -79,7 +101,8 @@ echo "changed caller: $(basename "$CALLER") @ ${NEW_COMMIT:0:10}"
 
 step "6. 同步符号图快照到新 commit（真实环境由代码索引完成）"
 DB="$WORKDIR/data/code-graph/code-graph.db"
-cp "$DB" /tmp/code-graph.verify.bak
+DB_BACKUP=$(mktemp)
+cp "$DB" "$DB_BACKUP"
 sqlite3 "$DB" "update code_symbol set commit_sha='$NEW_COMMIT' where project_id='$PROJECT_ID';
 update code_relation set commit_sha='$NEW_COMMIT' where project_id='$PROJECT_ID';
 update code_graph_snapshot set commit_sha='$NEW_COMMIT' where project_id='$PROJECT_ID';"
@@ -108,10 +131,11 @@ print('changed claims:', len(changes), '/', len(d['claimChanges']))
 "
 echo "claim-diff 落盘: data/wiki-drafts/$PROJECT_ID/$VERSION/$(ls -t data/wiki-drafts/$PROJECT_ID/$VERSION | head -1)/claim-diff.json"
 
-step "9. 清理（返回主分支，恢复符号图）"
+step "9. 清理（trap 兜底：成功路径也显式恢复）"
 git -C "$REPO" checkout -q main
-git -C "$REPO" branch -q -D "$BRANCH"
-cp /tmp/code-graph.verify.bak "$DB"
+git -C "$REPO" branch -q -D "$SMOKE_BRANCH"
+cp "$DB_BACKUP" "$DB"
+rm -f "$DB_BACKUP"
 echo "cleaned"
 
 printf '\n\033[1;32m=== Module 闭环端到端验收通过 ===\033[0m\n'
