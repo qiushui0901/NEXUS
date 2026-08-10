@@ -58,6 +58,14 @@ public final class ModuleFactModels {
             String version,
             String modulePath,
             String codeCommit,
-            String actor
-    ) {}
+            String actor,
+            String documentId,
+            String requirementVersion
+    ) {
+        /** 兼容旧调用方：不携带需求文档标识。 */
+        public ModuleBuildRequest(String projectId, String version, String modulePath, String codeCommit,
+                                  String actor) {
+            this(projectId, version, modulePath, codeCommit, actor, null, null);
+        }
+    }
 }

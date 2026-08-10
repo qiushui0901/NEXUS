@@ -92,13 +92,14 @@ public class ModuleClaimQualityGate {
         }
     }
 
-    /** 硬约束 3：目标提交与每条代码证据的 commit 都必须存在且一致（fail-closed，不允许空值绕过）。 */
+    /** 硬约束 3：目标提交与每条代码类证据的 commit 都必须存在且一致（fail-closed，不允许空值绕过）。 */
     private void validateCommitConsistency(PageSource page, String codeCommit) {
         if (codeCommit == null || codeCommit.isBlank()) {
             throw new IllegalArgumentException("MODULE 页面缺少目标代码提交，禁止发布: " + page.featureId());
         }
         for (int index = 0; index < page.evidence().size(); index++) {
             Evidence evidence = page.evidence().get(index);
+            if (!FILE_EVIDENCE_TYPES.contains(evidence.type())) continue;
             if (evidence.commit() == null || evidence.commit().isBlank()) {
                 throw new IllegalArgumentException("代码证据缺少 commit，禁止发布: " + page.featureId()
                         + " evidence[" + index + "]");
@@ -196,7 +197,7 @@ public class ModuleClaimQualityGate {
                     throw new IllegalArgumentException("Claim 证据 ID 前缀与证据类型不一致: " + claim.claimId()
                             + " -> " + evidenceId + "（证据类型 " + evidence.type() + "）");
                 }
-                if (!projectId.equals(evidence.source())) {
+                if (!"REQUIREMENT".equals(evidence.type()) && !projectId.equals(evidence.source())) {
                     throw new IllegalArgumentException("Claim 证据跨项目: " + claim.claimId() + " -> " + evidenceId);
                 }
                 if (!version.equals(evidence.version())) {
@@ -249,6 +250,7 @@ public class ModuleClaimQualityGate {
             case "config" -> "CONFIG".equals(evidenceType);
             case "test" -> "TEST_SYMBOL".equals(evidenceType);
             case "diagnostic" -> "DIAGNOSTIC".equals(evidenceType);
+            case "requirement" -> "REQUIREMENT".equals(evidenceType);
             default -> false;
         };
     }

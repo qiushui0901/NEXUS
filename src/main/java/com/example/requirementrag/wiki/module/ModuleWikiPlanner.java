@@ -11,6 +11,7 @@ import com.example.requirementrag.wiki.WikiModels.KnowledgeQuality;
 import com.example.requirementrag.wiki.WikiModels.PageSource;
 import com.example.requirementrag.wiki.WikiModels.PageType;
 import com.example.requirementrag.wiki.WikiModels.Relation;
+import com.example.requirementrag.wiki.WikiModels.RequirementSource;
 import com.example.requirementrag.wiki.WikiModels.Status;
 import com.example.requirementrag.wiki.WikiModels.TestKnowledge;
 import com.example.requirementrag.wiki.WikiModels.VersionChange;
@@ -32,10 +33,14 @@ public class ModuleWikiPlanner {
     private static final int MAX_ENTRY_POINTS = 15;
     private static final int MAX_FLOWS = 20;
 
-    /** 规划模块页面：职责、入口、流程、依赖、数据配置、测试与缺口七类 Claims。 */
-    public PageSource plan(ModuleFactBundle bundle, String version, String baseVersion, String codeCommit) {
+    /** 规划模块页面：职责、入口、流程、依赖、数据配置、测试与缺口 Claims，关联需求证据可选。 */
+    public PageSource plan(ModuleFactBundle bundle, String version, String baseVersion, String codeCommit,
+                           List<WikiModels.Evidence> requirementEvidence) {
         String featureId = "module-" + safeId(bundle.moduleId());
-        List<WikiModels.Evidence> evidence = toEvidence(bundle);
+        List<WikiModels.Evidence> codeEvidence = toEvidence(bundle);
+        List<WikiModels.Evidence> evidence = new ArrayList<>(codeEvidence);
+        evidence.addAll(requirementEvidence);
+        List<RequirementSource> requirementSources = toRequirementSources(requirementEvidence);
         List<CodeEntry> codeEntries = toCodeEntries(bundle, codeCommit);
         List<String> symbols = bundle.publicSymbols().stream()
                 .map(CodeSymbol::qualifiedName)
@@ -46,16 +51,17 @@ public class ModuleWikiPlanner {
         List<String> missing = new ArrayList<>();
         if (bundle.entryPoints().isEmpty()) missing.add("对外入口证据");
         if (bundle.tests().isEmpty()) missing.add("真实测试证据");
-        missing.add("关联需求");
+        if (requirementEvidence.isEmpty()) missing.add("关联需求");
 
-        List<Claim> claims = claims(bundle, evidence, missing);
+        List<Claim> claims = claims(bundle, requirementEvidence, evidence, missing);
         String summary = "模块 " + bundle.moduleId() + " 的确定性事实页：职责、入口、核心流程、数据配置与测试，"
-                + "共 " + bundle.evidence().size() + " 条代码证据，待人工审核。";
+                + "共 " + bundle.evidence().size() + " 条代码证据" + (requirementEvidence.isEmpty() ? "" : "、"
+                + requirementEvidence.size() + " 条需求证据") + "，待人工审核。";
         List<String> risks = diagnostics(bundle);
         return new PageSource(
                 featureId, bundle.title() + " 模块", "模块", version, Status.DRAFT,
                 List.of(), summary,
-                List.of(), List.of("职责边界由符号图与文件扫描确定性抽取；对外边界以代码证据为准。"),
+                requirementSources, List.of("职责边界由符号图与文件扫描确定性抽取；对外边界以代码证据为准。"),
                 processSteps, codeEntries, symbols,
                 bundle.dataObjects(), List.of(), List.of(), List.of(),
                 new TestKnowledge(bundle.tests().isEmpty() ? "NOT_AVAILABLE" : "REPORTED",
@@ -64,14 +70,29 @@ public class ModuleWikiPlanner {
                         bundle.tests().stream().limit(10).map(CodeSymbol::qualifiedName).toList()),
                 new VersionChange("MODULE_FACT", text(baseVersion), version, "基于代码图谱 commit "
                         + text(bundle.commitSha()) + " 确定性编译"),
-                new KnowledgeQuality("PENDING_REVIEW", 0, codeEntries.size(),
+                new KnowledgeQuality("PENDING_REVIEW", requirementSources.size(), codeEntries.size(),
                         false, List.copyOf(missing)),
-                risks, List.of(), evidence, PageType.MODULE, claims
+                risks, List.of(), List.copyOf(evidence), PageType.MODULE, claims
         );
     }
 
-    /** 生成七类声明：职责、入口、流程、依赖、数据配置、测试与知识缺口，只引用已注册证据。 */
-    private List<Claim> claims(ModuleFactBundle bundle, List<Evidence> evidence, List<String> missing) {
+    /** 需求证据转换为页面需求来源指针（contentHash 留空：模块页不做需求增量失效检测）。 */
+    private List<RequirementSource> toRequirementSources(List<WikiModels.Evidence> requirements) {
+        return requirements.stream()
+                .map(item -> new RequirementSource(text(item.source()), "module", text(item.source()),
+                        text(item.version()), text(item.location()), "", text(item.verificationStatus())))
+                .limit(20)
+                .toList();
+    }
+
+    /** 兼容旧调用方：不携带需求证据。 */
+    public PageSource plan(ModuleFactBundle bundle, String version, String baseVersion, String codeCommit) {
+        return plan(bundle, version, baseVersion, codeCommit, List.of());
+    }
+
+    /** 生成八类声明：职责、入口、流程、依赖、数据配置、测试、关联需求与知识缺口，只引用已注册证据。 */
+    private List<Claim> claims(ModuleFactBundle bundle, List<Evidence> requirements,
+                               List<Evidence> evidence, List<String> missing) {
         List<Claim> claims = new ArrayList<>();
         String module = bundle.moduleId();
         List<String> codeIds = evidenceIds(bundle, "CODE");
@@ -110,6 +131,14 @@ public class ModuleWikiPlanner {
                 "识别到 " + bundle.tests().size() + " 个测试符号；真实执行结果待关联",
                 bundle.tests().isEmpty() ? ClaimSupport.UNSUPPORTED : ClaimSupport.INFERRED,
                 prefix(testIds, 10)));
+        if (!requirements.isEmpty()) {
+            int offset = evidence.size() - requirements.size();
+            claims.add(new Claim(module + "-requirements", "requirements",
+                    "关联需求 " + requirements.size() + " 条（版本 " + text(requirements.get(0).version()) + "）",
+                    ClaimSupport.FULL,
+                    java.util.stream.IntStream.range(0, Math.min(requirements.size(), 10))
+                            .mapToObj(index -> "requirement:" + (offset + index)).toList()));
+        }
         if (!bundle.diagnostics().isEmpty()) {
             claims.add(new Claim(module + "-gaps", "gaps",
                     "存在 " + bundle.diagnostics().size() + " 条知识缺口（未解析调用等），发布前需处理或确认",

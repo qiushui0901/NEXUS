@@ -18,6 +18,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -29,6 +30,8 @@ class ModuleStaleRebuildServiceTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private final ModuleFactExtractor extractor = mock(ModuleFactExtractor.class);
     private final KnowledgeDraftLifecycleService draftLifecycleService = mock(KnowledgeDraftLifecycleService.class);
+    private final com.example.requirementrag.retrieval.pipeline.RetrievalPipeline retrievalPipeline =
+            mock(com.example.requirementrag.retrieval.pipeline.RetrievalPipeline.class);
     private final com.example.requirementrag.wiki.WikiStalenessService stalenessService =
             mock(com.example.requirementrag.wiki.WikiStalenessService.class);
 
@@ -37,7 +40,7 @@ class ModuleStaleRebuildServiceTest {
                 temp.resolve("sources").toString(), temp.resolve("drafts").toString());
         return new ModuleStaleRebuildService(mapper, properties, new WikiRepository(mapper, properties),
                 extractor, new ModuleWikiPlanner(), ModuleClaimQualityGate.lenient(), draftLifecycleService,
-                stalenessService);
+                stalenessService, retrievalPipeline);
     }
 
     private void publishModulePage(String oldClaimText) throws Exception {
@@ -88,6 +91,20 @@ class ModuleStaleRebuildServiceTest {
                 List.of());
     }
 
+    private void stubEmptyRetrieval() {
+        try {
+            when(retrievalPipeline.execute(any())).thenReturn(
+                    com.example.requirementrag.model.RagOutcome.of(
+                            com.example.requirementrag.model.RagOutcomeStatus.NO_RESULTS,
+                            new com.example.requirementrag.retrieval.pipeline.RetrievalBundle("q",
+                                    com.example.requirementrag.retrieval.pipeline.RetrievalProfile.WIKI_BUILD,
+                                    "game", null, "5.1", List.of(), List.of(), List.of()),
+                            "retrieval.test", 0, 0));
+        } catch (Exception exception) {
+            throw new RuntimeException(exception);
+        }
+    }
+
     private void stubStaleReport(String featureId) {
         when(stalenessService.staleness("game", "5.1")).thenReturn(
                 new com.example.requirementrag.wiki.WikiStalenessService.StaleReport("game", "5.1",
@@ -101,6 +118,7 @@ class ModuleStaleRebuildServiceTest {
     void rebuildsModulePageAndReportsClaimLevelDiff() throws Exception {
         publishModulePage("旧的职责描述");
         stubStaleReport("module-auth");
+        stubEmptyRetrieval();
         when(extractor.extract("game", "src/auth", "5.1")).thenReturn(newBundle());
         when(draftLifecycleService.initializeDraft(anyString(), anyString(), anyString(), anyString(), anyString()))
                 .thenAnswer(invocation -> new KnowledgeDraftModels.DraftMetadata(

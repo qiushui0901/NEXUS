@@ -2,6 +2,12 @@ package com.example.requirementrag.wiki.module;
 
 import com.example.requirementrag.config.WikiProperties;
 import com.example.requirementrag.knowledge.build.KnowledgeBuildModels.BuildStatus;
+import com.example.requirementrag.model.RagOutcome;
+import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
+import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
+import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
+import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
+import com.example.requirementrag.service.RagUnavailableException;
 import com.example.requirementrag.knowledge.build.KnowledgeDraftLifecycleService;
 import com.example.requirementrag.knowledge.build.KnowledgeDraftModels.DraftMetadata;
 import com.example.requirementrag.wiki.WikiModels.PageSource;
@@ -41,17 +47,20 @@ public class ModuleKnowledgeBuildService {
     private final ModuleWikiPlanner planner;
     private final ModuleClaimQualityGate qualityGate;
     private final KnowledgeDraftLifecycleService draftLifecycleService;
+    private final RetrievalPipeline retrievalPipeline;
     private final Path draftRoot;
 
     public ModuleKnowledgeBuildService(ObjectMapper objectMapper, WikiProperties properties,
                                        ModuleFactExtractor extractor, ModuleWikiPlanner planner,
                                        ModuleClaimQualityGate qualityGate,
-                                       KnowledgeDraftLifecycleService draftLifecycleService) {
+                                       KnowledgeDraftLifecycleService draftLifecycleService,
+                                       RetrievalPipeline retrievalPipeline) {
         this.objectMapper = objectMapper;
         this.extractor = extractor;
         this.planner = planner;
         this.qualityGate = qualityGate;
         this.draftLifecycleService = draftLifecycleService;
+        this.retrievalPipeline = retrievalPipeline;
         this.draftRoot = Path.of(properties.draftPath()).toAbsolutePath().normalize();
     }
 
@@ -63,7 +72,9 @@ public class ModuleKnowledgeBuildService {
         if (modulePath.isEmpty()) throw new IllegalArgumentException("modulePath 不能为空");
 
         ModuleFactBundle bundle = extractor.extract(projectId, modulePath, version);
-        PageSource page = planner.plan(bundle, version, null, request.codeCommit());
+        List<com.example.requirementrag.wiki.WikiModels.Evidence> requirements =
+                retrieveRequirements(request, bundle);
+        PageSource page = planner.plan(bundle, version, null, request.codeCommit(), requirements);
         String codeCommit = request.codeCommit() == null || request.codeCommit().isBlank()
                 ? text(bundle.commitSha()) : request.codeCommit();
         qualityGate.validate(projectId, version, codeCommit, List.of(page));
@@ -99,6 +110,41 @@ public class ModuleKnowledgeBuildService {
             deleteQuietly(staging);
             throw new IllegalStateException("模块知识草稿写入失败", exception);
         }
+    }
+
+    /** 按模块职责与核心符号检索需求证据；需求检索不可用或未配置文档时不阻断模块构建。 */
+    private List<com.example.requirementrag.wiki.WikiModels.Evidence> retrieveRequirements(
+            ModuleBuildRequest request, ModuleFactBundle bundle) {
+        String documentId = text(request.documentId());
+        if (documentId.isBlank() || retrievalPipeline == null || bundle.publicSymbols().isEmpty()) {
+            return List.of();
+        }
+        String query = bundle.title() + " " + bundle.publicSymbols().stream()
+                .map(com.example.requirementrag.code.CodeSymbol::qualifiedName)
+                .limit(5).collect(java.util.stream.Collectors.joining(" "));
+        try {
+            RagOutcome<RetrievalBundle> outcome = retrievalPipeline.execute(new RetrievalRequest(
+                    query, RetrievalProfile.WIKI_BUILD, request.projectId(), documentId,
+                    text(request.requirementVersion()).isBlank() ? request.version() : request.requirementVersion(),
+                    5));
+            return outcome.data().requirementEvidence().stream()
+                    .limit(5)
+                    .map(chunk -> new com.example.requirementrag.wiki.WikiModels.Evidence(
+                            "REQUIREMENT", text(chunk.filename()), text(chunk.filename()),
+                            text(chunk.version()), "parentOrder=" + chunk.parentOrder(),
+                            excerpt(chunk.parentText(), 240), "", "", "", "PENDING_REVIEW"))
+                    .toList();
+        } catch (RagUnavailableException exception) {
+            log.warn("Requirement retrieval unavailable for module {}; building without requirement evidence",
+                    bundle.moduleId());
+            return List.of();
+        }
+    }
+
+    /** 折叠空白并截断到最大字符数。 */
+    private static String excerpt(String value, int maxChars) {
+        String normalized = value == null ? "" : value.replaceAll("\\s+", " ").trim();
+        return normalized.length() <= maxChars ? normalized : normalized.substring(0, maxChars) + "…";
     }
 
     /** 合成与现有发布链路兼容的构建产物（NO_CHANGES 检查与发布审计需要 build.json）。 */

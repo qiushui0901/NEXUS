@@ -30,6 +30,8 @@ class ModuleKnowledgeBuildServiceTest {
     private final KnowledgeDraftLifecycleService draftLifecycleService = mock(KnowledgeDraftLifecycleService.class);
     private final com.example.requirementrag.config.ProjectRegistry projectRegistry =
             mock(com.example.requirementrag.config.ProjectRegistry.class);
+    private final com.example.requirementrag.retrieval.pipeline.RetrievalPipeline retrievalPipeline =
+            mock(com.example.requirementrag.retrieval.pipeline.RetrievalPipeline.class);
     private final com.example.requirementrag.code.SQLiteSymbolGraphStore graphStore =
             mock(com.example.requirementrag.code.SQLiteSymbolGraphStore.class);
 
@@ -37,7 +39,8 @@ class ModuleKnowledgeBuildServiceTest {
         WikiProperties properties = new WikiProperties(temp.resolve("wiki").toString(),
                 temp.resolve("sources").toString(), temp.resolve("drafts").toString());
         return new ModuleKnowledgeBuildService(mapper, properties, extractor, new ModuleWikiPlanner(),
-                new ModuleClaimQualityGate(projectRegistry, graphStore), draftLifecycleService);
+                new ModuleClaimQualityGate(projectRegistry, graphStore), draftLifecycleService,
+                retrievalPipeline);
     }
 
     private ModuleFactBundle bundle() {
@@ -99,6 +102,38 @@ class ModuleKnowledgeBuildServiceTest {
             assertThat(written.resolve("module-bundle.json")).isRegularFile();
             String source = Files.readString(written.resolve("wiki-source.json"));
             assertThat(source).contains("pageType").contains("MODULE").contains("claims");
+        }
+    }
+
+    @Test
+    void bindsRequirementEvidenceFromTheRetrievalPipeline() throws Exception {
+        when(extractor.extract("game", "src/auth", "5.1")).thenReturn(bundle());
+        com.example.requirementrag.model.ChunkRecord requirement = new com.example.requirementrag.model.ChunkRecord(
+                "req-1", "requirements", "5.1", "登录模块.html", "parent-login",
+                "登录与令牌规则", "登录与令牌规则", "hash-login", 1, 1);
+        when(retrievalPipeline.execute(any())).thenReturn(
+                com.example.requirementrag.model.RagOutcome.of(
+                        com.example.requirementrag.model.RagOutcomeStatus.SUCCESS,
+                        new com.example.requirementrag.retrieval.pipeline.RetrievalBundle("认证模块 登录",
+                                com.example.requirementrag.retrieval.pipeline.RetrievalProfile.WIKI_BUILD,
+                                "game", "requirements", "5.1", List.of(requirement), List.of(), List.of()),
+                        "retrieval.test", 1, 1));
+        when(draftLifecycleService.initializeDraft(anyString(), anyString(), anyString(), anyString(), anyString()))
+                .thenAnswer(invocation -> new KnowledgeDraftModels.DraftMetadata(
+                        invocation.getArgument(2), invocation.getArgument(0), invocation.getArgument(1),
+                        KnowledgeDraftModels.DraftStatus.DRAFT, 0, invocation.getArgument(4),
+                        invocation.getArgument(4), invocation.getArgument(3), List.of(), null));
+
+        service().build(new ModuleBuildRequest("game", "5.1", "src/auth", "abc123", "system",
+                "requirements", "5.1"));
+
+        Path draftRoot = temp.resolve("drafts").resolve("game").resolve("5.1");
+        try (var dirs = Files.list(draftRoot)) {
+            Path written = dirs.findFirst().orElseThrow();
+            String source = Files.readString(written.resolve("wiki-source.json"));
+            assertThat(source).contains("auth-requirements")
+                    .contains("关联需求 1 条")
+                    .contains("登录模块.html");
         }
     }
 

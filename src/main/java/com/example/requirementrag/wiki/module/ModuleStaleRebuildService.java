@@ -3,7 +3,14 @@ package com.example.requirementrag.wiki.module;
 import com.example.requirementrag.config.WikiProperties;
 import com.example.requirementrag.knowledge.build.KnowledgeDraftLifecycleService;
 import com.example.requirementrag.knowledge.build.KnowledgeDraftModels.DraftMetadata;
+import com.example.requirementrag.model.RagOutcome;
+import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
+import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
+import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
+import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
+import com.example.requirementrag.service.RagUnavailableException;
 import com.example.requirementrag.wiki.WikiModels;
+import com.example.requirementrag.code.CodeSymbol;
 import com.example.requirementrag.wiki.WikiModels.Claim;
 import com.example.requirementrag.wiki.WikiModels.Page;
 import com.example.requirementrag.wiki.WikiModels.PageSource;
@@ -56,13 +63,15 @@ public class ModuleStaleRebuildService {
     private final ModuleClaimQualityGate qualityGate;
     private final KnowledgeDraftLifecycleService draftLifecycleService;
     private final WikiStalenessService stalenessService;
+    private final RetrievalPipeline retrievalPipeline;
     private final Path draftRoot;
 
     public ModuleStaleRebuildService(ObjectMapper objectMapper, WikiProperties properties,
                                      WikiRepository wikiRepository, ModuleFactExtractor extractor,
                                      ModuleWikiPlanner planner, ModuleClaimQualityGate qualityGate,
                                      KnowledgeDraftLifecycleService draftLifecycleService,
-                                     WikiStalenessService stalenessService) {
+                                     WikiStalenessService stalenessService,
+                                     RetrievalPipeline retrievalPipeline) {
         this.objectMapper = objectMapper;
         this.wikiRepository = wikiRepository;
         this.extractor = extractor;
@@ -70,6 +79,7 @@ public class ModuleStaleRebuildService {
         this.qualityGate = qualityGate;
         this.draftLifecycleService = draftLifecycleService;
         this.stalenessService = stalenessService;
+        this.retrievalPipeline = retrievalPipeline;
         this.draftRoot = Path.of(properties.draftPath()).toAbsolutePath().normalize();
     }
 
@@ -87,7 +97,8 @@ public class ModuleStaleRebuildService {
         List<Claim> oldClaims = new ArrayList<>(published.claims());
 
         ModuleFactBundle bundle = extractor.extract(safeProject, modulePath, safeVersion);
-        PageSource page = planner.plan(bundle, safeVersion, null, codeCommit);
+        PageSource page = planner.plan(bundle, safeVersion, null, codeCommit,
+                retrieveRequirements(safeProject, safeVersion, bundle));
         String targetCommit = codeCommit == null || codeCommit.isBlank()
                 ? text(bundle.commitSha()) : codeCommit;
         qualityGate.validate(safeProject, safeVersion, targetCommit, List.of(page));
@@ -161,6 +172,36 @@ public class ModuleStaleRebuildService {
             deleteQuietly(staging);
             throw new IllegalStateException("模块重建草稿写入失败", exception);
         }
+    }
+
+    /** 按模块职责检索需求证据；不可用或模块无公开符号时不携带需求证据。 */
+    private List<WikiModels.Evidence> retrieveRequirements(String projectId, String version,
+                                                           ModuleFactBundle bundle) {
+        if (retrievalPipeline == null || bundle.publicSymbols().isEmpty()) return List.of();
+        String query = bundle.title() + " " + bundle.publicSymbols().stream()
+                .map(CodeSymbol::qualifiedName)
+                .limit(5).collect(java.util.stream.Collectors.joining(" "));
+        try {
+            RagOutcome<RetrievalBundle> outcome = retrievalPipeline.execute(new RetrievalRequest(
+                    query, RetrievalProfile.WIKI_BUILD, projectId, null, version, 5));
+            return outcome.data().requirementEvidence().stream()
+                    .limit(5)
+                    .map(chunk -> new WikiModels.Evidence(
+                            "REQUIREMENT", text(chunk.filename()), text(chunk.filename()),
+                            text(chunk.version()), "parentOrder=" + chunk.parentOrder(),
+                            excerpt(chunk.parentText(), 240), "", "", "", "PENDING_REVIEW"))
+                    .toList();
+        } catch (RagUnavailableException exception) {
+            log.warn("Requirement retrieval unavailable for module {}; rebuilding without requirement evidence",
+                    bundle.moduleId());
+            return List.of();
+        }
+    }
+
+    /** 折叠空白并截断到最大字符数。 */
+    private static String excerpt(String value, int maxChars) {
+        String normalized = value == null ? "" : value.replaceAll("\\s+", " ").trim();
+        return normalized.length() <= maxChars ? normalized : normalized.substring(0, maxChars) + "…";
     }
 
     /** 合成与现有发布链路兼容的构建产物。 */
