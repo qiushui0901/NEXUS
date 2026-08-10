@@ -47,6 +47,25 @@ class EvidenceRegistryTest {
     }
 
     @Test
+    void contextSliceSkipsChunksOutsideTheEvidenceWhitelist() {
+        ChunkRecord registered = requirement("req-1", "module-a/spec.html", "已注册规则");
+        ChunkRecord foreign = new ChunkRecord("foreign-1", "doc-b", "9.9", "other-doc.html",
+                "parent-foreign", "其他文档正文", "其他文档正文", "hash-foreign", 1, 1);
+        EvidenceRegistry registry = EvidenceRegistry.from(bundle(List.of(registered), List.of()));
+
+        EvidenceRegistry.ContextSlice slice = registry.requirementContextSlice(
+                List.of(registered, foreign), 500);
+
+        assertThat(slice.text())
+                .as("白名单外的分块不得进入生成上下文")
+                .contains("已注册规则")
+                .doesNotContain("其他文档正文")
+                .doesNotContain("evidenceId=?");
+        assertThat(slice.includedChunks()).isEqualTo(1);
+        assertThat(slice.omittedChunks()).isZero();
+    }
+
+    @Test
     void contextSliceWithoutBudgetKeepsEverything() {
         ChunkRecord moduleA = requirement("req-a1", "module-a/spec.html", "A 模块规则");
         ChunkRecord moduleB = requirement("req-b1", "module-b/spec.html", "B 模块规则");

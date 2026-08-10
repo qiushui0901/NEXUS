@@ -167,38 +167,40 @@ public final class EvidenceRegistry {
         if (chunks == null || chunks.isEmpty()) {
             return new ContextSlice("", 0, 0, 0);
         }
-        List<ChunkRecord> ordered = new java.util.ArrayList<>(chunks);
-        ordered.sort(Comparator.comparing(chunk -> firstText(chunk.filename(), "")));
+        List<ChunkRecord> registered = new java.util.ArrayList<>();
+        for (ChunkRecord chunk : chunks) {
+            if (requirementIds.get(chunk) != null) {
+                registered.add(chunk);
+            }
+        }
+        if (registered.isEmpty()) {
+            return new ContextSlice("", 0, 0, 0);
+        }
+        registered.sort(Comparator.comparing(chunk -> firstText(chunk.filename(), "")));
         java.util.Map<String, List<ChunkRecord>> byModule = new java.util.LinkedHashMap<>();
-        for (ChunkRecord chunk : ordered) {
+        for (ChunkRecord chunk : registered) {
             byModule.computeIfAbsent(moduleOf(chunk.filename()), key -> new java.util.ArrayList<>()).add(chunk);
         }
         StringBuilder builder = new StringBuilder();
         int included = 0;
         int omitted = 0;
         List<String> modules = new java.util.ArrayList<>(byModule.keySet());
-        for (int round = 0; included < chunks.size() && !modules.isEmpty(); round++) {
+        for (int round = 0; included < registered.size() && !modules.isEmpty(); round++) {
             boolean progressed = false;
             for (String module : modules) {
                 List<ChunkRecord> pending = byModule.get(module);
                 if (pending.isEmpty()) continue;
                 ChunkRecord chunk = pending.remove(0);
                 String id = requirementIds.get(chunk);
-                String block = "[evidenceId=" + (id == null ? "?" : id) + "] 文件: "
-                        + safeSource(chunk.filename()) + "\n"
+                String block = "[evidenceId=" + id + "] 文件: " + safeSource(chunk.filename()) + "\n"
                         + boundedExcerpt(firstText(chunk.parentText(), chunk.childText())) + "\n\n";
-                if (maxChars > 0 && builder.length() >= maxChars) {
-                    omitted += 1 + pending.size();
-                    pending.clear();
-                    continue;
-                }
                 int remaining = maxChars <= 0 ? block.length() : maxChars - builder.length();
-                if (remaining <= 0) {
+                if (remaining < block.length()) {
                     omitted += 1 + pending.size();
                     pending.clear();
                     continue;
                 }
-                builder.append(block, 0, Math.min(block.length(), remaining));
+                builder.append(block);
                 included++;
                 progressed = true;
                 if (maxChars > 0 && builder.length() >= maxChars) {

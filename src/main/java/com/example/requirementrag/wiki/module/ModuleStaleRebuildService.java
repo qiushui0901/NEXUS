@@ -187,9 +187,11 @@ public class ModuleStaleRebuildService {
             return outcome.data().requirementEvidence().stream()
                     .limit(5)
                     .map(chunk -> new WikiModels.Evidence(
-                            "REQUIREMENT", text(chunk.filename()), text(chunk.filename()),
+                            "REQUIREMENT", text(chunk.filename()), projectId,
                             text(chunk.version()), "parentOrder=" + chunk.parentOrder(),
-                            excerpt(chunk.parentText(), 240), "", "", "", "PENDING_REVIEW"))
+                            excerpt(chunk.parentText(), 240),
+                            hasText(chunk.contentHash()) ? chunk.contentHash() : "",
+                            text(chunk.documentId()), text(chunk.parentId()), "PENDING_REVIEW"))
                     .toList();
         } catch (RagUnavailableException exception) {
             log.warn("Requirement retrieval unavailable for module {}; rebuilding without requirement evidence",
@@ -199,6 +201,10 @@ public class ModuleStaleRebuildService {
     }
 
     /** 折叠空白并截断到最大字符数。 */
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
+    }
+
     private static String excerpt(String value, int maxChars) {
         String normalized = value == null ? "" : value.replaceAll("\\s+", " ").trim();
         return normalized.length() <= maxChars ? normalized : normalized.substring(0, maxChars) + "…";

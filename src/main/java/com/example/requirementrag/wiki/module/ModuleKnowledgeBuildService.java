@@ -119,6 +119,11 @@ public class ModuleKnowledgeBuildService {
         if (documentId.isBlank() || retrievalPipeline == null || bundle.publicSymbols().isEmpty()) {
             return List.of();
         }
+        String requirementVersion = text(request.requirementVersion());
+        if (!requirementVersion.isBlank() && !request.version().equals(requirementVersion)) {
+            throw new IllegalArgumentException("需求来源版本必须与页面版本一致: " + requirementVersion
+                    + " != " + request.version());
+        }
         String query = bundle.title() + " " + bundle.publicSymbols().stream()
                 .map(com.example.requirementrag.code.CodeSymbol::qualifiedName)
                 .limit(5).collect(java.util.stream.Collectors.joining(" "));
@@ -130,15 +135,21 @@ public class ModuleKnowledgeBuildService {
             return outcome.data().requirementEvidence().stream()
                     .limit(5)
                     .map(chunk -> new com.example.requirementrag.wiki.WikiModels.Evidence(
-                            "REQUIREMENT", text(chunk.filename()), text(chunk.filename()),
+                            "REQUIREMENT", text(chunk.filename()), request.projectId(),
                             text(chunk.version()), "parentOrder=" + chunk.parentOrder(),
-                            excerpt(chunk.parentText(), 240), "", "", "", "PENDING_REVIEW"))
+                            excerpt(chunk.parentText(), 240),
+                            hasText(chunk.contentHash()) ? chunk.contentHash() : "",
+                            text(chunk.documentId()), text(chunk.parentId()), "PENDING_REVIEW"))
                     .toList();
         } catch (RagUnavailableException exception) {
             log.warn("Requirement retrieval unavailable for module {}; building without requirement evidence",
                     bundle.moduleId());
             return List.of();
         }
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     /** 折叠空白并截断到最大字符数。 */

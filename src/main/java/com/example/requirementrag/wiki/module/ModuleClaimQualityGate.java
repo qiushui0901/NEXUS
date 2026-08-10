@@ -197,7 +197,7 @@ public class ModuleClaimQualityGate {
                     throw new IllegalArgumentException("Claim 证据 ID 前缀与证据类型不一致: " + claim.claimId()
                             + " -> " + evidenceId + "（证据类型 " + evidence.type() + "）");
                 }
-                if (!"REQUIREMENT".equals(evidence.type()) && !projectId.equals(evidence.source())) {
+                if (!projectId.equals(evidence.source())) {
                     throw new IllegalArgumentException("Claim 证据跨项目: " + claim.claimId() + " -> " + evidenceId);
                 }
                 if (!version.equals(evidence.version())) {

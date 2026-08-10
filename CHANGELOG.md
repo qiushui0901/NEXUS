@@ -45,6 +45,12 @@
 - 完整验证固化为机器可读产物：`tools/verify-report.sh` 以 JDK 17 运行不跳过 Enforcer 的 `mvnw verify`，聚合 surefire 报告并输出 `docs/verification/<version>-<commit>.json` 与 `latest.json`（测试数、JaCoCo 结果、jar、commit）；`tools/module-loop-verify.sh` 增加失败清理（trap 恢复分支与符号图）与 dirty worktree / 分支防护。
 ### Fixed
 
+- 审查整改（0.8.5 证据与上下文安全）：
+  - 需求上下文切片恢复 fail-closed：`requirementContextSlice` 只纳入 Evidence 白名单内（已注册 `evidenceId`）的分块，未注册分块直接跳过（不再生成 `evidenceId=?` 附带正文）；预算不足时只追加完整 block，放不下的计入 omitted（不再截断 evidence ID/文件名并虚报 included）。
+  - 需求证据 provenance 补全：`REQUIREMENT` Evidence 的 source 改为项目标识（质量门对所有证据执行项目边界校验，关闭 REQUIREMENT 跨项目绕过）；filePath/documentId、symbol/parentId、commit/contentHash 承载原始 chunk 的 documentId、parentId 与内容哈希，页面 `requirementSources` 恢复真实 documentId/entryId/contentHash，可参与需求 stale 检测。
+  - 需求来源版本契约明确：`requirementVersion` 与页面版本不一致时构建拒绝（删除"独立需求版本"语义，消除与跨版本质量门的矛盾）。
+  - REST 入口接入：`POST /api/wiki/modules/build` 接收可选 `documentId` / `requirementVersion`，Phase 3 跨域样例可经真实产品入口使用。
+  - Java AST shadow 测试断言收窄到实际能力：构造器以 `constructor` 种类断言、重载按行号区分、嵌套限定名精确；显式记录 adapter 限制（record 紧凑构造器不单独成符号、extends/implements/annotations 尚未填充），不再虚假声明覆盖。
 - 模块知识草稿补齐 `build.json` 构建产物（`ModuleKnowledgeBuildService` / `ModuleStaleRebuildService`），与既有发布链路（NO_CHANGES 检查、发布审计）契约一致；此前模块草稿无法通过 `publish` 发布。
 
 

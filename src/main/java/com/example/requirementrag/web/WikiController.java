@@ -98,10 +98,12 @@ public class WikiController {
     public Object moduleBuild(@RequestParam String projectId, @RequestParam String version,
                               @RequestParam String modulePath,
                               @RequestParam(required = false) String codeCommit,
+                              @RequestParam(required = false) String documentId,
+                              @RequestParam(required = false) String requirementVersion,
                               HttpServletRequest request) {
         requireAccess(projectId, request);
         return moduleBuildService.build(new ModuleBuildRequest(projectId, version, modulePath, codeCommit,
-                accessGuard.currentUser(request).username()));
+                accessGuard.currentUser(request).username(), documentId, requirementVersion));
     }
 
     /** 从已发布模块页重建草稿并输出 Claim 级差异。对应 POST /api/wiki/modules/rebuild。 */

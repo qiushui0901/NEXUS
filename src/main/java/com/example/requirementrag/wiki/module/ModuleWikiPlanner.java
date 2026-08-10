@@ -76,13 +76,20 @@ public class ModuleWikiPlanner {
         );
     }
 
-    /** 需求证据转换为页面需求来源指针（contentHash 留空：模块页不做需求增量失效检测）。 */
+    /** 需求证据转换为页面需求来源指针：documentId/entryId/contentHash 来自原始 chunk（filePath/symbol/commit 承载）。 */
     private List<RequirementSource> toRequirementSources(List<WikiModels.Evidence> requirements) {
         return requirements.stream()
-                .map(item -> new RequirementSource(text(item.source()), "module", text(item.source()),
-                        text(item.version()), text(item.location()), "", text(item.verificationStatus())))
+                .map(item -> new RequirementSource(
+                        hasText(item.filePath()) ? item.filePath() : text(item.source()),
+                        hasText(item.symbol()) ? item.symbol() : "module",
+                        text(item.title()), text(item.version()), text(item.location()),
+                        text(item.commit()), text(item.verificationStatus())))
                 .limit(20)
                 .toList();
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     /** 兼容旧调用方：不携带需求证据。 */

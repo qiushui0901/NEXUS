@@ -133,8 +133,24 @@ class ModuleKnowledgeBuildServiceTest {
             String source = Files.readString(written.resolve("wiki-source.json"));
             assertThat(source).contains("auth-requirements")
                     .contains("关联需求 1 条")
-                    .contains("登录模块.html");
+                    .contains("登录模块.html")
+                    .as("需求来源携带真实 provenance（documentId / entryId / contentHash）")
+                    .contains("\"documentId\" : \"requirements\"")
+                    .contains("\"entryId\" : \"parent-login\"")
+                    .contains("\"contentHash\" : \"hash-login\"")
+                    .as("需求证据 source 为项目标识（质量门项目边界校验可用）")
+                    .contains("\"source\" : \"game\"");
         }
+    }
+
+    @Test
+    void rejectsRequirementVersionDifferentFromPageVersion() {
+        when(extractor.extract("game", "src/auth", "5.1")).thenReturn(bundle());
+
+        assertThatThrownBy(() -> service().build(new ModuleBuildRequest("game", "5.1", "src/auth",
+                "abc123", "system", "requirements", "5.0")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("需求来源版本必须与页面版本一致");
     }
 
     @Test
