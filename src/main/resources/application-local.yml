@@ -2,6 +2,10 @@
 # 启用：SPRING_PROFILES_ACTIVE=local
 app:
   rag:
+    auth:
+      # 本地开发：允许默认管理员；生产环境（production profile）为 fail-closed。
+      default-admin-allowed: true
+
     qdrant:
       base-url: ${QDRANT_URL:http://localhost:6333}
     retrieval:

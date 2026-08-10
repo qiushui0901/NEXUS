@@ -1,6 +1,7 @@
 package com.example.requirementrag.service;
 
 import com.example.requirementrag.model.IngestResponse;
+import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.retrieval.pipeline.RetrievalResultCache;
 import com.example.requirementrag.model.KnowledgeEntry;
@@ -31,18 +32,20 @@ public class RequirementIngestionService {
     private final ParentChildChunker chunker;
     private final RagObservability observability;
     private final RetrievalResultCache resultCache;
+    private final ProjectRegistry projectRegistry;
 
     /**
      * 注入向量库、预处理器、分块器、可观测性组件与检索缓存（导入成功后失效缓存）。
      */
     public RequirementIngestionService(QdrantHybridStore store, TextPreprocessor preprocessor,
-                                       RetrievalResultCache resultCache,
+                                       RetrievalResultCache resultCache, ProjectRegistry projectRegistry,
                                        ParentChildChunker chunker, RagObservability observability) {
         this.store = store;
         this.preprocessor = preprocessor;
         this.chunker = chunker;
         this.observability = observability;
         this.resultCache = resultCache;
+        this.projectRegistry = projectRegistry;
     }
 
     /**
@@ -122,7 +125,11 @@ public class RequirementIngestionService {
                     () -> store.replaceVersion(documentId, version, chunks));
         }
         if (resultCache != null) {
-            resultCache.invalidate(documentId, version);
+            String cacheProjectId = projectRegistry == null ? null
+                    : projectRegistry.findProjectIdByRequirementCollection(collection).orElse(null);
+            if (cacheProjectId != null) {
+                resultCache.invalidate(cacheProjectId, documentId, version);
+            }
         }
         observability.event("document_ingested");
         return new IngestResponse(documentId, version, chunks.size());

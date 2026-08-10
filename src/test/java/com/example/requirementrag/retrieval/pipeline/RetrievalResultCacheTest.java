@@ -32,7 +32,7 @@ class RetrievalResultCacheTest {
         RetrievalResultCache cache = cache();
         cache.put(request("query"), "project-a", "doc-a", "5.1", 10, outcome());
 
-        cache.invalidate("doc-a", "5.1");
+        cache.invalidate("project-a", "doc-a", "5.1");
 
         assertThat(cache.get(request("query"), "project-a", "doc-a", "5.1", 10)).isEmpty();
     }
@@ -44,7 +44,7 @@ class RetrievalResultCacheTest {
         cache.put(new RetrievalRequest("query", RetrievalProfile.REQUIREMENT_REVIEW,
                 "project-a", "doc-a", "6.0", 10), "project-a", "doc-a", "6.0", 10, outcome());
 
-        cache.invalidate("doc-a", "5.1");
+        cache.invalidate("project-a", "doc-a", "5.1");
 
         assertThat(cache.get(request("query"), "project-a", "doc-a", "5.1", 10)).isEmpty();
         assertThat(cache.get(new RetrievalRequest("query", RetrievalProfile.REQUIREMENT_REVIEW,

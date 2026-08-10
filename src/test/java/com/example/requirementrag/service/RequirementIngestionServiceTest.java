@@ -26,6 +26,13 @@ class RequirementIngestionServiceTest {
     private final ParentChildChunker chunker = mock(ParentChildChunker.class);
     private final RagObservability observability = mock(RagObservability.class);
     private final RetrievalResultCache resultCache = mock(RetrievalResultCache.class);
+    private final com.example.requirementrag.config.ProjectRegistry projectRegistry =
+            mock(com.example.requirementrag.config.ProjectRegistry.class);
+
+    private void stubProjectLookup(String collection, String projectId) {
+        when(projectRegistry.findProjectIdByRequirementCollection(collection))
+                .thenReturn(java.util.Optional.ofNullable(projectId));
+    }
 
     @Test
     void defaultCollectionIngestionInvalidatesRetrievalCache() {
@@ -41,13 +48,14 @@ class RequirementIngestionServiceTest {
         }).when(observability).observe(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.any(Runnable.class));
+        stubProjectLookup(null, "project-a");
         RequirementIngestionService service = new RequirementIngestionService(
-                store, preprocessor, resultCache, chunker, observability);
+                store, preprocessor, resultCache, projectRegistry, chunker, observability);
 
         service.ingestEntries("doc-a", "5.1", List.of(new KnowledgeEntry("spec.html", "规则文本")));
 
         verify(store).replaceVersion(eq("doc-a"), eq("5.1"), anyList());
-        verify(resultCache).invalidate("doc-a", "5.1");
+        verify(resultCache).invalidate(org.mockito.ArgumentMatchers.anyString(), eq("doc-a"), eq("5.1"));
     }
 
     @Test
@@ -64,13 +72,14 @@ class RequirementIngestionServiceTest {
         }).when(observability).observe(org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
                 org.mockito.ArgumentMatchers.any(Runnable.class));
+        stubProjectLookup("requirements_custom", "project-a");
         RequirementIngestionService service = new RequirementIngestionService(
-                store, preprocessor, resultCache, chunker, observability);
+                store, preprocessor, resultCache, projectRegistry, chunker, observability);
 
         service.ingestEntries("requirements_custom", "doc-a", "5.1",
                 List.of(new KnowledgeEntry("spec.html", "规则文本")));
 
         verify(store).replaceVersion(eq("requirements_custom"), eq("doc-a"), eq("5.1"), anyList());
-        verify(resultCache).invalidate("doc-a", "5.1");
+        verify(resultCache).invalidate(org.mockito.ArgumentMatchers.anyString(), eq("doc-a"), eq("5.1"));
     }
 }

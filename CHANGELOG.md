@@ -56,6 +56,14 @@
 
 ### Fixed
 
+- 增量索引第三轮修复（0.8.5）：
+  - 删除失败语义明确：新 chunk 已写入但旧 chunk 清理失败时抛部分失败异常（记录待清理 ID），提示对同一 commit 范围重试收敛——不再静默新旧并存。
+  - `indexedChunks` 统计修正为真实扫描 chunk 数（此前误用文件数）。
+  - 缓存失效纳入项目维度：`RetrievalResultCache.invalidate(projectId, documentId, version)`，`ProjectRegistry.findProjectIdByRequirementCollection` 反查项目（默认 collection 映射默认项目），不再无差别清除其他项目缓存。
+  - 默认 profile 认证 fail-closed：`default-admin-allowed` 默认改为 `false`，本地开发由 `application-local.yml` 显式开启（生产/默认 profile 直连一律 401）。
+  - 增量扫描 commit provenance 测试：dirty worktree 下 `scanFiles` 仍从 `git show` 读取目标 commit 内容（不混入未提交修改）。
+### Fixed
+
 - 增量索引第二轮修复（0.8.5）：
   - 删除 API 不再按 filePath 删除（会误删新 chunk）：先滚动快照旧 chunk ID，再 upsert 新 chunk（新 ID），最后只按旧 ID 删除；任一步失败旧数据保留，删除失败最多新旧并存（下次索引收敛）。
   - 全量与增量索引共用项目级锁（`CodeIndexLockService`），杜绝并发发布乱序与交错写入。

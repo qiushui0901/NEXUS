@@ -93,8 +93,8 @@ public class IncrementalCodeIndexService {
 
         return indexLockService.execute(projectId, () -> {
             try {
-                applyIncremental(projectId, codeConfig, newSha, sourceFiles);
-                return buildResponse(projectId, oldSha, newSha, changedFiles, sourceFiles);
+                int chunkCount = applyIncremental(projectId, codeConfig, newSha, sourceFiles);
+                return buildResponse(projectId, oldSha, newSha, changedFiles, sourceFiles, chunkCount);
             } catch (IOException | InterruptedException exception) {
                 throw new IncrementalExecutionException(exception);
             }
@@ -106,8 +106,8 @@ public class IncrementalCodeIndexService {
      * 最后只按旧 ID 删除——新 chunk 永不被删除 API 波及；
      * 任一步失败时旧数据保留（最多新旧并存，下次索引收敛）。
      */
-    private void applyIncremental(String projectId, RagProperties.Code codeConfig, String newSha,
-                                  List<String> sourceFiles) throws IOException, InterruptedException {
+    private int applyIncremental(String projectId, RagProperties.Code codeConfig, String newSha,
+                                 List<String> sourceFiles) throws IOException, InterruptedException {
         String liveCollection = projectRegistry.resolveCodeCollection(projectId) + "-live";
         java.util.Map<String, List<String>> oldIdsByFile = new java.util.LinkedHashMap<>();
         for (String filePath : sourceFiles) {
@@ -116,14 +116,22 @@ public class IncrementalCodeIndexService {
         CodeScanner.ScanResult changed = scanner.scanFiles(codeConfig, newSha, sourceFiles);
         List<CodeChunk> chunks = changed.chunks();
         store.upsertChunks(liveCollection, chunks);
-        int deleted = 0;
+        java.util.List<String> pendingCleanup = new java.util.ArrayList<>();
         for (String filePath : sourceFiles) {
             List<String> oldIds = oldIdsByFile.getOrDefault(filePath, List.of());
-            store.deleteChunks(liveCollection, oldIds);
-            deleted += oldIds.size();
+            try {
+                store.deleteChunks(liveCollection, oldIds);
+            } catch (RuntimeException exception) {
+                log.warn("增量索引旧 chunk 清理失败 {}: {} 个旧 ID 待重试", filePath, oldIds.size(), exception);
+                pendingCleanup.addAll(oldIds);
+            }
+        }
+        if (!pendingCleanup.isEmpty()) {
+            throw new IllegalStateException("增量索引部分完成：新 chunk 已写入，但 " + pendingCleanup.size()
+                    + " 个旧 chunk 清理失败（新旧并存）。请对同一 commit 范围重试增量索引以收敛");
         }
         log.info("增量索引完成 {}: {} 个源码文件, {} 个新 chunk, 删除 {} 个旧 chunk（live alias {}）",
-                projectId, sourceFiles.size(), chunks.size(), deleted, liveCollection);
+                projectId, sourceFiles.size(), chunks.size(), deletedOldIds(oldIdsByFile), liveCollection);
         if (graphStore != null) {
             try {
                 CodeScanner.ScanResult snapshot = scanner.scan(codeConfig);
@@ -138,12 +146,18 @@ public class IncrementalCodeIndexService {
                 log.warn("跳过静态图谱快照 {}: {}", projectId, exception.getMessage());
             }
         }
+        return chunks.size();
+    }
+
+    private long deletedOldIds(java.util.Map<String, List<String>> oldIdsByFile) {
+        return oldIdsByFile.values().stream().mapToLong(List::size).sum();
     }
 
     private IncrementalCodeIndexResponse buildResponse(String projectId, String oldSha, String newSha,
-                                                       List<String> changedFiles, List<String> sourceFiles) {
+                                                       List<String> changedFiles, List<String> sourceFiles,
+                                                       int chunkCount) {
         return new IncrementalCodeIndexResponse(projectId, oldSha, newSha,
-                changedFiles.size(), sourceFiles.size(), sourceFiles.size());
+                changedFiles.size(), sourceFiles.size(), chunkCount);
     }
 
     /** 包装受检异常以适配锁服务函数式接口。 */

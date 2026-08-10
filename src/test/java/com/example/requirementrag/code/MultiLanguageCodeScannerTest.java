@@ -4,6 +4,7 @@ import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.model.CodeChunk;
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -73,11 +74,36 @@ class MultiLanguageCodeScannerTest {
                 .hasMessageContaining("工作树有未提交修改");
     }
 
-    private static void git(Path root, String... args) throws Exception {
+    @Test
+    void scanFilesReadsFromTheCommitTreeNotTheDirtyWorktree() throws Exception {
+        Path root = Files.createTempDirectory("nexus-scanfiles-");
+        git(root, "init");
+        git(root, "config", "user.email", "test@example.com");
+        git(root, "config", "user.name", "Test");
+        Files.writeString(root.resolve("Hero.java"), "class Hero { void committed() {} }\n");
+        git(root, "add", ".");
+        git(root, "commit", "-m", "initial");
+        String sha = git(root, "rev-parse", "HEAD");
+        Files.writeString(root.resolve("Hero.java"), "class Hero { void uncommitted() {} }\n");
+
+        MultiLanguageCodeScanner scanner = new MultiLanguageCodeScanner(new CodeLanguageRegistry());
+        CodeScanner.ScanResult result = scanner.scanFiles(new RagProperties.Code(
+                "demo", root.toString(), "code", List.of(), List.of(), 1_000_000),
+                sha, List.of("Hero.java"));
+
+        assertThat(result.chunks()).anyMatch(chunk -> chunk.symbolName().equals("committed"));
+        assertThat(result.chunks()).noneMatch(chunk -> chunk.symbolName().equals("uncommitted"));
+    }
+
+    private static String git(Path root, String... args) throws Exception {
         java.util.List<String> command = new java.util.ArrayList<>();
         command.add("git");
         command.addAll(java.util.List.of(args));
-        new ProcessBuilder(command).directory(root.toFile()).redirectErrorStream(true).start().waitFor();
+        Process process = new ProcessBuilder(command).directory(root.toFile())
+                .redirectErrorStream(true).start();
+        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+        process.waitFor();
+        return output;
     }
 
     @Test

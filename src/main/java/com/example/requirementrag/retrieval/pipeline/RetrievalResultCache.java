@@ -44,9 +44,10 @@ public class RetrievalResultCache {
         cache.put(key(request, projectId, documentId, version, limit), outcome);
     }
 
-    /** 失效指定文档/版本的全部缓存条目（需求内容替换后调用，防止旧结果残留）。 */
-    public void invalidate(String documentId, String version) {
-        cache.invalidateWhere(key -> key.documentId().equals(documentId) && key.version().equals(version));
+    /** 失效指定项目/文档/版本的全部缓存条目（需求内容替换后调用，防止旧结果残留）。 */
+    public void invalidate(String projectId, String documentId, String version) {
+        cache.invalidateWhere(key -> key.projectId().equals(projectId)
+                && key.documentId().equals(documentId) && key.version().equals(version));
     }
 
     /** 构建缓存键：query 去除首尾空白，并纳入配置指纹保证配置变更即失效。 */

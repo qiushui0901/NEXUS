@@ -85,6 +85,22 @@ public class ProjectRegistry {
         return (collection != null && !collection.isBlank()) ? collection : properties.qdrant().collection();
     }
 
+    /** 按需求 collection 反查项目 ID；未命中且等于全局默认 collection 时返回默认项目。 */
+    public Optional<String> findProjectIdByRequirementCollection(String collection) {
+        if (collection == null || collection.isBlank()) {
+            return Optional.of(defaultProject().id());
+        }
+        for (RagProperties.ProjectConfig project : projectMap.values()) {
+            if (collection.equals(project.requirementCollection())) {
+                return Optional.of(project.id());
+            }
+        }
+        if (collection.equals(properties.qdrant().collection())) {
+            return Optional.of(defaultProject().id());
+        }
+        return Optional.empty();
+    }
+
     /** 解析项目代码库对应的 collection 名：项目未单独配置时回退到全局 code.collection。 */
     public String resolveCodeCollection(String projectId) {
         RagProperties.ProjectConfig project = require(projectId);

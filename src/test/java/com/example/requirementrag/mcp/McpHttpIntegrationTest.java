@@ -15,7 +15,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "logging.structured.format.console=",
         "management.tracing.sampling.probability=0",
-        "app.rag.knowledge.bootstrap-enabled=false"
+        "app.rag.knowledge.bootstrap-enabled=false",
+        "app.rag.auth.default-admin-allowed=true"
 })
 class McpHttpIntegrationTest {
 
@@ -27,6 +28,9 @@ class McpHttpIntegrationTest {
     @Test
     void discoversTenToolsPromptsAndWikiResourceTemplate() throws Exception {
         HttpResponse<String> initialized = post(initialize(), null, null);
+        if (initialized.statusCode() != 200) {
+            System.out.println("MCP 401 BODY: " + initialized.body());
+        }
         assertEquals(200, initialized.statusCode());
         assertTrue(initialized.body().contains("\"protocolVersion\""));
         String sessionId = initialized.headers().firstValue("mcp-session-id").orElseThrow();
