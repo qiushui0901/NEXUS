@@ -697,3 +697,73 @@ commit fail-closed、符号存在性、ID 前缀-类型一致性、rebuild 的 S
 ### Next Steps
 
 - None - task complete
+
+
+## Session 17: Module 闭环最终验证与验收产物固化（0.8.4）
+
+**Date**: 2026-08-10
+**Task**: Module 闭环最终验证与验收产物固化（0.8.4）
+**Branch**: `main`
+
+### Summary
+
+verify 335 绿 + JaCoCo 通过；验收脚本 tools/module-loop-verify.sh 入库；CHANGELOG/提交一致
+
+### Main Changes
+
+# 最终质量验证与验收产物固化（0.8.4）
+
+- 日期：2026-08-10
+
+## 最终验证（最新提交状态）
+
+```
+JAVA_HOME=... ./mvnw -Denforcer.skip=true verify
+```
+
+- **Tests run: 335, Failures: 0, Errors: 0, Skipped: 0**（含质量门 13 个模块门禁测试）
+- JaCoCo coverage-check：`All coverage checks have been met`（343 类）
+- jar：`target/NEXUS-0.8.4-SNAPSHOT.jar` 打包成功
+- IT（RetrievalEvaluation*IT / HttpBgeRerankerLiveIT）由环境变量门控，无 failsafe 插件，默认不执行
+- **BUILD SUCCESS**，26.3s
+
+## CHANGELOG 与提交一致性
+
+- 工作区干净，全部提交已推送
+- 0.8.4 节 13 条条目 ↔ 功能提交逐一对应（module 闭环、schema 增强、质量门两轮、build.json 修复、符号传播、验收脚本）
+- 最近提交链：`03c6d73`（验收脚本）→ `d761df9`（质量门加固）→ `1e75981`（四硬约束）→ ...
+
+## 可复现验收产物
+
+- 脚本：`tools/module-loop-verify.sh`（已入库，可执行）
+  - 复现完整真实闭环：build → review → publish → staleness 基线 → 修改调用方 → 符号图同步 → stale 传播 → rebuild → claim diff → 清理
+  - 每次运行自带断言（基线 fresh、stale 含传播链、rebuild 出草稿），失败即退出
+- 真实验收执行记录（历次，shiguang-eval / repository 模块）：
+  - build：module-repository 10 证据（CODE×4/DEPENDENCY×2/DATA×4）；module-controller 24 证据（CODE×8/CODE_GRAPH×6/ROUTE×10），FULL entry → 10 ROUTE
+  - publish：PUBLISHED（质量门四硬约束放行）
+  - stale：修改 CommentContentServiceImpl 后 `module-repository` 经调用边传播标记 STALE
+  - rebuild：新草稿 + claim-diff.json（import-only 变更下全 UNCHANGED，正确）
+- 已知限制（已记录文档 §11）：符号图快照同步由脚本完成（真实环境由代码索引生成）；需求/CI 测试/RPC 消息缓存事实为 MVP 已知缺口
+
+## 下一步决策点
+
+Module 闭环已作为稳定模板收尾。后续二选一（待用户决定）：
+1. 接入需求证据（ModuleFactBundle.requirements ← 需求检索）
+2. 扩展 Overview/API/Data 页面
+
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
