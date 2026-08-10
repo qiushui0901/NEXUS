@@ -65,6 +65,8 @@ public class RagConfigValidator {
             return environment.getProperty("app.rag.auth.default-admin-allowed", Boolean.class) != null
                     ? new AuthProperties(
                             environment.getProperty("app.rag.auth.identity-header"),
+                            environment.getProperty("app.rag.auth.role-header"),
+                            environment.getProperty("app.rag.auth.trusted-sources"),
                             Boolean.TRUE.equals(environment.getProperty("app.rag.auth.default-admin-allowed",
                                     Boolean.class)))
                     : null;

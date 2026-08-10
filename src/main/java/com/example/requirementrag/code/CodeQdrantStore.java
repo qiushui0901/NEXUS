@@ -218,22 +218,30 @@ public class CodeQdrantStore {
                 .retrieve().toBodilessEntity();
     }
 
-    /** 滚动读取某个项目下指定文件在 collection 中的现有 chunk ID（增量索引替换前的旧 ID 快照）。 */
+    /** 滚动读取某个项目下指定文件在 collection 中的全部现有 chunk ID（增量索引替换前的旧 ID 快照，跨分页）。 */
     public List<String> scrollChunkIds(String collection, String projectId, String filePath, int limit) {
         ensureCollection(collection);
-        Map<String, Object> body = new java.util.LinkedHashMap<>();
-        body.put("filter", fileFilter(projectId, filePath));
-        body.put("with_payload", false);
-        body.put("limit", Math.min(Math.max(limit, 1), 100_000));
-        Map<String, Object> response = client.post()
-                .uri("/collections/{collection}/points/scroll", collection)
-                .contentType(MediaType.APPLICATION_JSON).body(body).retrieve()
-                .body(new ParameterizedTypeReference<>() {});
         List<String> ids = new java.util.ArrayList<>();
-        Map<String, Object> result = response == null ? Map.of() : map(response.get("result"));
-        for (Object point : list(result.get("points"))) {
-            String id = String.valueOf(map(point).get("id"));
-            if (!id.isBlank() && !"null".equals(id)) ids.add(id);
+        Object offset = null;
+        int pageSize = Math.min(Math.max(limit, 1), 100_000);
+        while (true) {
+            Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("filter", fileFilter(projectId, filePath));
+            body.put("with_payload", false);
+            body.put("limit", pageSize);
+            if (offset != null) body.put("offset", offset);
+            Map<String, Object> response = client.post()
+                    .uri("/collections/{collection}/points/scroll", collection)
+                    .contentType(MediaType.APPLICATION_JSON).body(body).retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+            Map<String, Object> result = response == null ? Map.of() : map(response.get("result"));
+            List<Object> points = list(result.get("points"));
+            for (Object point : points) {
+                String id = String.valueOf(map(point).get("id"));
+                if (!id.isBlank() && !"null".equals(id)) ids.add(id);
+            }
+            offset = result.get("next_page_offset");
+            if (offset == null || points.isEmpty() || ids.size() >= limit) break;
         }
         return List.copyOf(ids);
     }

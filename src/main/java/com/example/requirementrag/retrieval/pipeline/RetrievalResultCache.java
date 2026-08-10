@@ -50,6 +50,11 @@ public class RetrievalResultCache {
                 && key.documentId().equals(documentId) && key.version().equals(version));
     }
 
+    /** 失效全部项目中指定文档/版本的全部缓存条目（collection 被多项目共用、无法唯一归属时使用）。 */
+    public void invalidateAll(String documentId, String version) {
+        cache.invalidateWhere(key -> key.documentId().equals(documentId) && key.version().equals(version));
+    }
+
     /** 构建缓存键：query 去除首尾空白，并纳入配置指纹保证配置变更即失效。 */
     private Key key(RetrievalRequest request, String projectId, String documentId, String version, int limit) {
         return new Key(request.query().strip(), projectId, documentId, version, request.profile(), limit,

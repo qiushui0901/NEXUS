@@ -347,4 +347,50 @@ class CodeQdrantStoreTest {
 
         server.verify();
     }
+
+    @Test
+    void scrollChunkIdsWalksAllPagesUntilNextPageOffsetIsNull() {
+        org.springframework.web.client.RestClient.Builder builder = org.springframework.web.client.RestClient.builder();
+        org.springframework.test.web.client.MockRestServiceServer server =
+                org.springframework.test.web.client.MockRestServiceServer.bindTo(builder).build();
+        org.springframework.web.client.RestClient client = builder.build();
+        com.example.requirementrag.config.RagProperties props =
+                mock(com.example.requirementrag.config.RagProperties.class);
+        when(props.retrieval()).thenReturn(new com.example.requirementrag.config.RagProperties.Retrieval(
+                50, 50, 40, 20, 10, false, 1_000, 3, 3, 30_000,
+                -1, -1, -1, -1, null, null, null, true, 3));
+        CodeQdrantStore store = new CodeQdrantStore(client,
+                mock(org.springframework.ai.embedding.EmbeddingModel.class),
+                mock(com.example.requirementrag.retrieval.EmbeddingBatcher.class),
+                new com.example.requirementrag.retrieval.SparseVectorizer(),
+                props, null);
+
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.containsString("/collections/code-live")))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.method(
+                        org.springframework.http.HttpMethod.GET))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\": {\"exists\": true}}",
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+        // 第一页：2 个 ID + next_page_offset；第二页：1 个 ID + null
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.containsString("/points/scroll")))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.method(
+                        org.springframework.http.HttpMethod.POST))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\": {\"points\": [{\"id\": \"page1-a\"}, {\"id\": \"page1-b\"}],"
+                                + " \"next_page_offset\": 2}}",
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.containsString("/points/scroll")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\": {\"points\": [{\"id\": \"page2-c\"}],"
+                                + " \"next_page_offset\": null}}",
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+
+        java.util.List<String> ids = store.scrollChunkIds("code-live", "demo", "src/Huge.java", 100);
+
+        assertThat(ids).containsExactly("page1-a", "page1-b", "page2-c");
+        server.verify();
+    }
 }

@@ -48,7 +48,17 @@
 - 旧 chunk 清理失败 → 抛出可重试的部分失败异常（新旧并存，查询可能短暂看到重复命中），重试同一范围收敛；
 - 查询侧短期可能看到新旧并存（最终一致）；需要强一致时应升级为 staging collection + alias 原子切换（暂未实施）。
 
-## 4. 实现位置与测试
+## 4. 部署限制：索引协调为单 JVM 内锁
+
+`CodeIndexLockService` 的项目级锁是进程内实现（`ConcurrentHashMap` + `synchronized`）。
+**多实例部署时，不同 JVM 的索引任务仍可能交错写入同一 live alias**（旧任务覆盖新任务、
+互相删除对方 chunk）。当前缓解：
+
+- 生产部署建议同一时间只有一个实例执行索引任务（单写者），或由外部调度串行化；
+- 跨 JVM 的分布式协调（基于 Qdrant 的乐观锁或独立协调服务）是已知缺口，需要强一致时实施。
+
+## 5. 实现位置与测试
+
 
 
 - 状态机：`RetrievalPipeline`（核心阶段全失败且无证据 → `RagUnavailableException`；有 warning → DEGRADED；全空 → NO_RESULTS）

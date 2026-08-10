@@ -113,6 +113,32 @@ class RequirementIngestionServiceTest {
     }
 
     @Test
+    void sharedFallbackCollectionInvalidatesAllProjects() {
+        when(preprocessor.clean(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(observability.observe(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<java.util.function.Supplier<?>>any()))
+                .thenAnswer(invocation -> invocation.getArgument(3, java.util.function.Supplier.class).get());
+        when(chunker.split(any())).thenReturn(java.util.List.of(
+                new ParentChildChunker.ParentChunk(1, "规则文本", java.util.List.of("规则文本"))));
+        org.mockito.Mockito.doAnswer(invocation -> {
+            invocation.getArgument(3, Runnable.class).run();
+            return null;
+        }).when(observability).observe(org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString(),
+                org.mockito.ArgumentMatchers.any(Runnable.class));
+        when(projectRegistry.findProjectIdByRequirementCollection("shared_collection"))
+                .thenReturn(java.util.Optional.empty());
+        RequirementIngestionService service = new RequirementIngestionService(
+                store, preprocessor, resultCache, projectRegistry, chunker, observability);
+
+        service.ingestEntries("shared_collection", "doc-a", "5.1",
+                List.of(new KnowledgeEntry("spec.html", "规则文本")));
+
+        verify(resultCache).invalidateAll("doc-a", "5.1");
+        verify(resultCache, never()).invalidate(anyString(), eq("doc-a"), eq("5.1"));
+    }
+
+    @Test
     void explicitCollectionIngestionAlsoInvalidatesRetrievalCache() {
         when(preprocessor.clean(any())).thenAnswer(invocation -> invocation.getArgument(0));
         when(observability.observe(any(), any(), any(),

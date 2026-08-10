@@ -36,7 +36,7 @@ class ProjectAuthInterceptorTest {
                 new ProjectAuthorizationService(projectRegistry),
                 projectIdResolver,
                 new com.example.requirementrag.security.UserContextResolver(
-                        new com.example.requirementrag.config.AuthProperties(null, true)));
+                        new com.example.requirementrag.config.AuthProperties(null, null, null, true)));
     }
 
     @Test
@@ -45,7 +45,7 @@ class ProjectAuthInterceptorTest {
                 new ProjectAuthorizationService(projectRegistry),
                 projectIdResolver,
                 new com.example.requirementrag.security.UserContextResolver(
-                        new com.example.requirementrag.config.AuthProperties(null, false)));
+                        new com.example.requirementrag.config.AuthProperties(null, null, null, false)));
         MockHttpServletRequest request = jsonPost("/api/code/search");
         MockHttpServletResponse response = new MockHttpServletResponse();
 
@@ -61,7 +61,7 @@ class ProjectAuthInterceptorTest {
                 new ProjectAuthorizationService(projectRegistry),
                 projectIdResolver,
                 new com.example.requirementrag.security.UserContextResolver(
-                        new com.example.requirementrag.config.AuthProperties("X-Gateway-User", false)));
+                        new com.example.requirementrag.config.AuthProperties("X-Gateway-User", null, null, false)));
         MockHttpServletRequest request = jsonPost("/api/code/search");
         request.addHeader("X-Gateway-User", "gateway-bot");
         MockHttpServletResponse response = new MockHttpServletResponse();
@@ -71,8 +71,66 @@ class ProjectAuthInterceptorTest {
 
         assertTrue(allowed);
         assertThat(request.getAttribute(UserContext.REQUEST_ATTRIBUTE))
-                .isInstanceOfSatisfying(UserContext.class, user ->
-                        assertThat(user.username()).isEqualTo("gateway-bot"));
+                .isInstanceOfSatisfying(UserContext.class, user -> {
+                    assertThat(user.username()).isEqualTo("gateway-bot");
+                    assertThat(user.role()).as("身份头只断言身份，不授予提升权限")
+                            .isEqualTo(com.example.requirementrag.model.UserRole.READONLY);
+                });
+    }
+
+    @Test
+    void identityHeaderWithoutRoleCannotExecuteWriteOperations() throws Exception {
+        interceptor = new ProjectAuthInterceptor(
+                new ProjectAuthorizationService(projectRegistry),
+                projectIdResolver,
+                new com.example.requirementrag.security.UserContextResolver(
+                        new com.example.requirementrag.config.AuthProperties("X-Gateway-User", null, null, false)));
+        MockHttpServletRequest request = jsonPost("/api/code/index");
+        request.addHeader("X-Gateway-User", "forged");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        boolean allowed = interceptor.preHandle(request, response, handler(CodeController.class, "index"));
+
+        assertFalse(allowed);
+        assertEquals(HttpServletResponse.SC_FORBIDDEN, response.getStatus());
+    }
+
+    @Test
+    void invalidRoleHeaderIsRejected() throws Exception {
+        interceptor = new ProjectAuthInterceptor(
+                new ProjectAuthorizationService(projectRegistry),
+                projectIdResolver,
+                new com.example.requirementrag.security.UserContextResolver(
+                        new com.example.requirementrag.config.AuthProperties("X-Gateway-User",
+                                "X-Gateway-Role", null, false)));
+        MockHttpServletRequest request = jsonPost("/api/code/search");
+        request.addHeader("X-Gateway-User", "gateway-bot");
+        request.addHeader("X-Gateway-Role", "GOD_MODE");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        boolean allowed = interceptor.preHandle(request, response, handler(CodeController.class, "search"));
+
+        assertFalse(allowed);
+        assertEquals(HttpServletResponse.SC_UNAUTHORIZED, response.getStatus());
+    }
+
+    @Test
+    void identityHeaderFromUntrustedSourceIsRejected() throws Exception {
+        interceptor = new ProjectAuthInterceptor(
+                new ProjectAuthorizationService(projectRegistry),
+                projectIdResolver,
+                new com.example.requirementrag.security.UserContextResolver(
+                        new com.example.requirementrag.config.AuthProperties("X-Gateway-User",
+                                null, "10.0.0.0/8", false)));
+        MockHttpServletRequest request = jsonPost("/api/code/search");
+        request.addHeader("X-Gateway-User", "gateway-bot");
+        request.setRemoteAddr("192.168.1.10");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        boolean allowed = interceptor.preHandle(request, response, handler(CodeController.class, "search"));
+
+        assertFalse(allowed);
+        assertEquals(HttpServletResponse.SC_UNAUTHORIZED, response.getStatus());
     }
 
     @Test

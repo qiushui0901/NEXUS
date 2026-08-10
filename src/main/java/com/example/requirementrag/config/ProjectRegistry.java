@@ -85,18 +85,19 @@ public class ProjectRegistry {
         return (collection != null && !collection.isBlank()) ? collection : properties.qdrant().collection();
     }
 
-    /** 按需求 collection 反查项目 ID；未命中且等于全局默认 collection 时返回默认项目。 */
+    /**
+     * 按需求 collection 反查项目 ID。
+     * 显式配置的 collection 唯一归属一个项目；全局默认 collection 可能被多项目共用，
+     * 此时返回 empty（调用方应做全量失效，避免只清理默认项目的缓存）。
+     */
     public Optional<String> findProjectIdByRequirementCollection(String collection) {
         if (collection == null || collection.isBlank()) {
-            return Optional.of(defaultProject().id());
+            return Optional.empty();
         }
         for (RagProperties.ProjectConfig project : projectMap.values()) {
             if (collection.equals(project.requirementCollection())) {
                 return Optional.of(project.id());
             }
-        }
-        if (collection.equals(properties.qdrant().collection())) {
-            return Optional.of(defaultProject().id());
         }
         return Optional.empty();
     }

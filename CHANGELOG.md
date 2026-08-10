@@ -24,6 +24,7 @@
 ### Added
 
 - 新增 `docs/nexus-0.8.5-development-roadmap.md`，规划全系统 RAG 加固：统一检索与重排、错误降级与超时、跨 REST/SSE/MCP 的证据闭环、代码索引可回滚升级、大文档 Map-Reduce 与全链路质量门。
+- 新增 `docs/nexus-open-source-rag-engine-comparison.md`，基于 GitHub 最新数据对比 RAGFlow、LlamaIndex、LightRAG、GraphRAG、PageIndex、Graphiti、Haystack、RAG-Anything、R2R 等核心 RAG 引擎，并给出 NEXUS 的集成与选型建议。
 
 ### Changed
 
@@ -59,6 +60,14 @@
 
 - 文档摄入格式确认与固化（开源 RAG 引擎对比后的 P0 落地）：上传入口经 Apache Tika 原生支持 `pdf` / `docx` / `xlsx` / `html` / `txt` / HTML-zip（PDF 文本提取由 Tika→PDFBox 完成，无需额外组件）；新增真实 PDF 摄入回归测试（PDFBox 生成 → Tika 提取 → 分块入库），`docs/user-guide.md` 记录支持格式；扫描件 OCR 记为已知缺口。检索评测对照能力（`tools/retrieval-eval-comparison.py` 基线/重排对照 + 54 条冻结评测集 + QualityGate 全 profile 门禁）经核对已具备，无需引入 FlashRAG。
 
+### Fixed
+
+- 审查整改（0.8.5 安全与索引边界）：
+  - 身份头最小权限：身份头只断言身份，角色取自可选角色头（缺失/非法 → READONLY，伪造身份头无法执行写入/评审）；非法角色值返回 401；可选受信来源（IP 前缀/CIDR）拒绝非受信来源的身份头请求。
+  - 共用默认 collection 的缓存失效：collection 无法唯一归属项目时改用全量失效（`invalidateAll`），不再只清理默认项目缓存。
+  - 旧 chunk ID 滚动读取支持分页（`next_page_offset` 翻页），超大文件更新后不再残留第二页起的旧 chunk。
+  - 文档明确索引协调为单 JVM 内锁，多实例部署需单写者或外部调度（跨 JVM 协调列为已知缺口）。
+  - 新增测试：身份头无角色不能执行 WRITE、非法角色 401、非受信来源 401、共用 collection 全量失效、scroll 跨页删除。
 ### Fixed
 
 - 增量索引第四轮修复（0.8.5）：

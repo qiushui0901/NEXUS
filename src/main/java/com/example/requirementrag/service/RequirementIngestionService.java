@@ -129,6 +129,8 @@ public class RequirementIngestionService {
                     : projectRegistry.findProjectIdByRequirementCollection(collection).orElse(null);
             if (cacheProjectId != null) {
                 resultCache.invalidate(cacheProjectId, documentId, version);
+            } else {
+                resultCache.invalidateAll(documentId, version);
             }
         }
         observability.event("document_ingested");
