@@ -15,10 +15,12 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 
 class IncrementalCodeIndexServiceTest {
 
@@ -55,14 +57,20 @@ class IncrementalCodeIndexServiceTest {
                 Files.createTempDirectory("nexus-incremental-graph-").toString());
         IncrementalCodeIndexResponse response = new IncrementalCodeIndexService(
                 registry, new MultiLanguageCodeScanner(new CodeLanguageRegistry()), store,
-                new GitDiffService(properties, registry), graphStore)
+                new GitDiffService(properties, registry), graphStore, new CodeIndexLockService())
                 .indexWithResult("project", baseSha, newSha);
 
         assertEquals(2, response.javaFiles());
         assertTrue(response.indexedChunks() > 0);
         verify(store).upsertChunks(eq("code-v51-live"), anyList());
-        verify(store).deleteFileChunks("code-v51-live", "project", "src/service_old.py");
-        verify(store).deleteFileChunks("code-v51-live", "project", "src/service_new.py");
+        verify(store, org.mockito.Mockito.times(2)).deleteChunks(eq("code-v51-live"), anyList());
+        verify(store, org.mockito.Mockito.never()).deleteFileChunks(anyString(), anyString(), anyString());
+        org.mockito.ArgumentCaptor<java.util.List> captor =
+                org.mockito.ArgumentCaptor.forClass(java.util.List.class);
+        verify(store, org.mockito.Mockito.atLeastOnce()).deleteChunks(eq("code-v51-live"), captor.capture());
+        assertTrue(captor.getAllValues().stream().flatMap(java.util.Collection::stream)
+                        .allMatch(id -> id.equals("old-id-1")),
+                "删除必须只按旧 chunk ID，不得按 filePath 删除新写入的 chunk");
         assertEquals(newSha, graphStore.latestCommit("project"));
         assertTrue(graphStore.symbolsByFiles("project", newSha, List.of("src/service_old.py"), 10).isEmpty());
         assertTrue(graphStore.symbolsByFiles("project", newSha, List.of("src/service_new.py"), 10)

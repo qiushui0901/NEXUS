@@ -37,10 +37,47 @@ public class RagConfigValidator {
         validateRetrieval(errors);
         validateUrls(errors);
         validateCode(errors);
+        validateAuthBoundary(errors);
         if (!errors.isEmpty()) {
             throw new IllegalStateException("配置校验失败:\n- " + String.join("\n- ", errors));
         }
         log.info("配置校验通过: qdrant={} retrieval 已就绪", properties.qdrant().baseUrl());
+    }
+
+    /**
+     * 认证边界启动校验：默认管理员模式只允许绑定 loopback；
+     * 监听非 loopback 地址时必须配置可信网关身份头，否则拒绝启动（fail-closed）。
+     */
+    private void validateAuthBoundary(List<String> errors) {
+        AuthProperties auth = authProperties();
+        if (auth == null) return;
+        boolean loopback = isLoopbackAddress(environment.getProperty("server.address"));
+        if (!auth.defaultAdminAllowed()) return;
+        if (auth.identityHeader() != null) return;
+        if (!loopback) {
+            errors.add("app.rag.auth.default-admin-allowed=true 且未配置 identity-header，但监听地址不是 loopback；"
+                    + "生产环境必须配置可信网关身份头或绑定 loopback");
+        }
+    }
+
+    private AuthProperties authProperties() {
+        try {
+            return environment.getProperty("app.rag.auth.default-admin-allowed", Boolean.class) != null
+                    ? new AuthProperties(
+                            environment.getProperty("app.rag.auth.identity-header"),
+                            Boolean.TRUE.equals(environment.getProperty("app.rag.auth.default-admin-allowed",
+                                    Boolean.class)))
+                    : null;
+        } catch (RuntimeException exception) {
+            return null;
+        }
+    }
+
+    private boolean isLoopbackAddress(String address) {
+        if (address == null || address.isBlank()) return true;
+        String normalized = address.trim().toLowerCase(java.util.Locale.ROOT);
+        return normalized.equals("localhost") || normalized.equals("127.0.0.1")
+                || normalized.equals("::1") || normalized.startsWith("127.");
     }
 
     private void validateQdrant(List<String> errors) {

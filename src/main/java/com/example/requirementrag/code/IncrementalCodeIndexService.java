@@ -27,22 +27,32 @@ public class IncrementalCodeIndexService {
     private final CodeQdrantStore store;
     private final GitDiffService gitDiffService;
     private final SQLiteSymbolGraphStore graphStore;
+    private final CodeIndexLockService indexLockService;
 
     @Autowired
     public IncrementalCodeIndexService(ProjectRegistry projectRegistry, CodeScanner scanner,
                                        CodeQdrantStore store, GitDiffService gitDiffService,
-                                       SQLiteSymbolGraphStore graphStore) {
+                                       SQLiteSymbolGraphStore graphStore,
+                                       CodeIndexLockService indexLockService) {
         this.projectRegistry = projectRegistry;
         this.scanner = scanner;
         this.store = store;
         this.gitDiffService = gitDiffService;
         this.graphStore = graphStore;
+        this.indexLockService = indexLockService;
     }
 
     /** Compatibility constructor for pre-0.7 unit callers. */
     IncrementalCodeIndexService(ProjectRegistry projectRegistry, JavaCodeScanner scanner,
                                 CodeQdrantStore store, GitDiffService gitDiffService) {
-        this(projectRegistry, CodeKnowledgeService.legacy(scanner), store, gitDiffService, null);
+        this(projectRegistry, CodeKnowledgeService.legacy(scanner), store, gitDiffService, null,
+                new CodeIndexLockService());
+    }
+
+    /** 兼容旧测试调用方：不携带共享锁。 */
+    IncrementalCodeIndexService(ProjectRegistry projectRegistry, CodeScanner scanner,
+                                CodeQdrantStore store, GitDiffService gitDiffService) {
+        this(projectRegistry, scanner, store, gitDiffService, null, new CodeIndexLockService());
     }
 
     /**
@@ -81,13 +91,39 @@ public class IncrementalCodeIndexService {
             return new IncrementalCodeIndexResponse(projectId, oldSha, newSha, changedFiles.size(), 0, 0);
         }
 
+        return indexLockService.execute(projectId, () -> {
+            try {
+                applyIncremental(projectId, codeConfig, newSha, sourceFiles);
+                return buildResponse(projectId, oldSha, newSha, changedFiles, sourceFiles);
+            } catch (IOException | InterruptedException exception) {
+                throw new IncrementalExecutionException(exception);
+            }
+        });
+    }
+
+    /**
+     * 在 live alias 上执行文件级安全替换：先快照旧 chunk ID，再写入新 chunk（新 ID），
+     * 最后只按旧 ID 删除——新 chunk 永不被删除 API 波及；
+     * 任一步失败时旧数据保留（最多新旧并存，下次索引收敛）。
+     */
+    private void applyIncremental(String projectId, RagProperties.Code codeConfig, String newSha,
+                                  List<String> sourceFiles) throws IOException, InterruptedException {
         String liveCollection = projectRegistry.resolveCodeCollection(projectId) + "-live";
+        java.util.Map<String, List<String>> oldIdsByFile = new java.util.LinkedHashMap<>();
+        for (String filePath : sourceFiles) {
+            oldIdsByFile.put(filePath, store.scrollChunkIds(liveCollection, projectId, filePath, 10_000));
+        }
         CodeScanner.ScanResult changed = scanner.scanFiles(codeConfig, newSha, sourceFiles);
         List<CodeChunk> chunks = changed.chunks();
         store.upsertChunks(liveCollection, chunks);
+        int deleted = 0;
         for (String filePath : sourceFiles) {
-            store.deleteFileChunks(liveCollection, projectId, filePath);
+            List<String> oldIds = oldIdsByFile.getOrDefault(filePath, List.of());
+            store.deleteChunks(liveCollection, oldIds);
+            deleted += oldIds.size();
         }
+        log.info("增量索引完成 {}: {} 个源码文件, {} 个新 chunk, 删除 {} 个旧 chunk（live alias {}）",
+                projectId, sourceFiles.size(), chunks.size(), deleted, liveCollection);
         if (graphStore != null) {
             try {
                 CodeScanner.ScanResult snapshot = scanner.scan(codeConfig);
@@ -102,10 +138,19 @@ public class IncrementalCodeIndexService {
                 log.warn("跳过静态图谱快照 {}: {}", projectId, exception.getMessage());
             }
         }
-        log.info("增量索引完成 {}: {} 个源码文件, {} 个 chunk（写入 live alias {}）",
-                projectId, sourceFiles.size(), chunks.size(), liveCollection);
+    }
+
+    private IncrementalCodeIndexResponse buildResponse(String projectId, String oldSha, String newSha,
+                                                       List<String> changedFiles, List<String> sourceFiles) {
         return new IncrementalCodeIndexResponse(projectId, oldSha, newSha,
-                changedFiles.size(), sourceFiles.size(), chunks.size());
+                changedFiles.size(), sourceFiles.size(), sourceFiles.size());
+    }
+
+    /** 包装受检异常以适配锁服务函数式接口。 */
+    private static final class IncrementalExecutionException extends RuntimeException {
+        IncrementalExecutionException(Exception cause) {
+            super(cause);
+        }
     }
 
     private String normalizePath(String path) {

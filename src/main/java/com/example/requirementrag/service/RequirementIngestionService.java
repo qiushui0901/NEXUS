@@ -117,12 +117,12 @@ public class RequirementIngestionService {
         if (collection != null && !collection.isBlank()) {
             observability.observe("qdrant.upsert", documentId, version,
                     () -> store.replaceVersion(collection, documentId, version, chunks));
-            if (resultCache != null) {
-                resultCache.invalidate(documentId, version);
-            }
         } else {
             observability.observe("qdrant.upsert", documentId, version,
                     () -> store.replaceVersion(documentId, version, chunks));
+        }
+        if (resultCache != null) {
+            resultCache.invalidate(documentId, version);
         }
         observability.event("document_ingested");
         return new IngestResponse(documentId, version, chunks.size());

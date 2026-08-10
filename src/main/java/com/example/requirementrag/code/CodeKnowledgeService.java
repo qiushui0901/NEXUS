@@ -38,26 +38,27 @@ public class CodeKnowledgeService {
     private final CodeQdrantStore store;
     private final SQLiteSymbolGraphStore graphStore;
     private final CodeSemanticAnnotator annotator;
-    private final java.util.concurrent.ConcurrentHashMap<String, Object> indexLocks =
-            new java.util.concurrent.ConcurrentHashMap<>();
+    private final CodeIndexLockService indexLockService;
 
     @Autowired
     public CodeKnowledgeService(RagProperties properties, ProjectRegistry projectRegistry,
                                 CodeScanner scanner, CodeQdrantStore store,
                                 SQLiteSymbolGraphStore graphStore,
-                                CodeSemanticAnnotator annotator) {
+                                CodeSemanticAnnotator annotator,
+                                CodeIndexLockService indexLockService) {
         this.properties = properties;
         this.projectRegistry = projectRegistry;
         this.scanner = scanner;
         this.store = store;
         this.graphStore = graphStore;
         this.annotator = annotator;
+        this.indexLockService = indexLockService;
     }
 
     /** Compatibility constructor for pre-0.7 unit callers. */
     CodeKnowledgeService(RagProperties properties, ProjectRegistry projectRegistry,
                          JavaCodeScanner scanner, CodeQdrantStore store) {
-        this(properties, projectRegistry, legacy(scanner), store, null, null);
+        this(properties, projectRegistry, legacy(scanner), store, null, null, new CodeIndexLockService());
     }
 
     /** 扫描默认配置仓库并替换写入 Qdrant。 */
@@ -71,14 +72,25 @@ public class CodeKnowledgeService {
      * 杜绝旧索引晚完成覆盖新 live 的发布乱序。
      */
     public CodeIndexResponse index(String projectId) throws IOException {
-        Object lock = indexLocks.computeIfAbsent(projectId, key -> new Object());
-        synchronized (lock) {
-            RagProperties.ProjectConfig project = projectRegistry.require(projectId);
-            CodeScanner.ScanResult result = scanner.scan(project.toCodeConfig());
-            List<CodeChunk> annotated = annotateChunks(projectId, result.chunks());
-            store.publishProject(liveCollection(projectId), result.projectId(), annotated);
-            if (graphStore != null) graphStore.replaceSnapshot(result);
-            return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(), annotated.size());
+        return indexLockService.execute(projectId, () -> {
+            try {
+                RagProperties.ProjectConfig project = projectRegistry.require(projectId);
+                CodeScanner.ScanResult result = scanner.scan(project.toCodeConfig());
+                List<CodeChunk> annotated = annotateChunks(projectId, result.chunks());
+                store.publishProject(liveCollection(projectId), result.projectId(), annotated);
+                if (graphStore != null) graphStore.replaceSnapshot(result);
+                return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(),
+                        annotated.size());
+            } catch (IOException exception) {
+                throw new IndexExecutionException(exception);
+            }
+        });
+    }
+
+    /** 包装受检异常以适配锁服务函数式接口。 */
+    private static final class IndexExecutionException extends RuntimeException {
+        IndexExecutionException(IOException cause) {
+            super(cause);
         }
     }
 
