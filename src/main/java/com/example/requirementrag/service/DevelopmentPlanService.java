@@ -120,8 +120,18 @@ public class DevelopmentPlanService {
         List<RagWarning> warnings = new ArrayList<>(retrieval.warnings());
         List<RagStageDiagnostic> diagnostics = new ArrayList<>(retrieval.stageDiagnostics());
 
+        EvidenceRegistry.ContextSlice requirementSlice = registry.requirementContextSlice(
+                documents, MAX_DOCUMENT_CONTEXT_CHARS);
+        if (requirementSlice.omittedChunks() > 0) {
+            String message = "需求正文超出上下文预算，省略 " + requirementSlice.omittedChunks()
+                    + " 个块（覆盖 " + requirementSlice.coveredModules() + " 个模块）";
+            warnings.add(new RagWarning("llm.generate.plan", "CONTEXT_TRUNCATED", message, 0));
+            diagnostics.add(new RagStageDiagnostic("llm.generate.plan", RagOutcomeStatus.DEGRADED,
+                    0, requirementSlice.includedChunks()));
+        }
+
         RagOutcome<PlanDraft> draftOutcome = draftWithProductContext(query, documents, code,
-                resolvedDocumentId, resolvedVersion, registry);
+                resolvedDocumentId, resolvedVersion, registry, requirementSlice);
         collect(draftOutcome, warnings, diagnostics);
         PlanDraft draft = draftOutcome.data();
 
@@ -222,7 +232,8 @@ public class DevelopmentPlanService {
     /** 带产品上下文调用生成模型产出方案草稿；无证据或模型失败时降级为空草稿并记录可观测结果。 */
     private RagOutcome<PlanDraft> draftWithProductContext(String query, List<ChunkRecord> documents,
                                                            List<CodeChunk> code, String documentId, String version,
-                                                           EvidenceRegistry registry) {
+                                                           EvidenceRegistry registry,
+                                                           EvidenceRegistry.ContextSlice requirementSlice) {
         long started = System.nanoTime();
         if (documents.isEmpty()) {
             RagOutcome<PlanDraft> outcome = RagOutcome.of(RagOutcomeStatus.NO_RESULTS, PlanDraft.empty(), "llm.generate.plan",
@@ -264,7 +275,7 @@ public class DevelopmentPlanService {
                             - steps：若干 {text, evidenceIds}，描述具体落地步骤。
                             - risks：若干 {text, evidenceIds}。
                             """.formatted(query,
-                            registry.promptRequirementContext(documents, MAX_DOCUMENT_CONTEXT_CHARS),
+                            requirementSlice.text(),
                             registry.promptCodeContext(code, MAX_CODE_CONTEXT_CHARS)))
                     .options(GenerationChatOptions.forModel(properties.llm().resolvedDevelopmentPlanModel()).build())
                     .call()

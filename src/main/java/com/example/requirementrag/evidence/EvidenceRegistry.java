@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -150,18 +151,77 @@ public final class EvidenceRegistry {
         return chunks.stream().map(codeIds::get).filter(Objects::nonNull).distinct().toList();
     }
 
+    /** 需求正文上下文切片：文本 + 覆盖报告（纳入/省略块与覆盖模块），预算内按模块轮转保留代表块。 */
+    public record ContextSlice(String text, int includedChunks, int omittedChunks, int coveredModules) {}
+
     /** 将需求分块组装为带 evidenceId 标注的提示上下文，总长度受 maxChars 限制。 */
     public String promptRequirementContext(List<ChunkRecord> chunks, int maxChars) {
-        StringBuilder builder = new StringBuilder();
-        if (chunks == null) return "";
-        for (ChunkRecord chunk : chunks) {
-            String id = requirementIds.get(chunk);
-            if (id == null) continue;
-            appendBounded(builder, "[evidenceId=" + id + "] 文件: " + safeSource(chunk.filename())
-                    + "\n" + boundedExcerpt(firstText(chunk.parentText(), chunk.childText())) + "\n\n", maxChars);
-            if (builder.length() >= maxChars) break;
+        return requirementContextSlice(chunks, maxChars).text();
+    }
+
+    /**
+     * 预算内按文件模块轮转选取需求块（每模块至少保留一条代表块），
+     * 预算用尽后的省略块计入覆盖报告，杜绝后部模块静默丢失。
+     */
+    public ContextSlice requirementContextSlice(List<ChunkRecord> chunks, int maxChars) {
+        if (chunks == null || chunks.isEmpty()) {
+            return new ContextSlice("", 0, 0, 0);
         }
-        return builder.toString();
+        List<ChunkRecord> ordered = new java.util.ArrayList<>(chunks);
+        ordered.sort(Comparator.comparing(chunk -> firstText(chunk.filename(), "")));
+        java.util.Map<String, List<ChunkRecord>> byModule = new java.util.LinkedHashMap<>();
+        for (ChunkRecord chunk : ordered) {
+            byModule.computeIfAbsent(moduleOf(chunk.filename()), key -> new java.util.ArrayList<>()).add(chunk);
+        }
+        StringBuilder builder = new StringBuilder();
+        int included = 0;
+        int omitted = 0;
+        List<String> modules = new java.util.ArrayList<>(byModule.keySet());
+        for (int round = 0; included < chunks.size() && !modules.isEmpty(); round++) {
+            boolean progressed = false;
+            for (String module : modules) {
+                List<ChunkRecord> pending = byModule.get(module);
+                if (pending.isEmpty()) continue;
+                ChunkRecord chunk = pending.remove(0);
+                String id = requirementIds.get(chunk);
+                String block = "[evidenceId=" + (id == null ? "?" : id) + "] 文件: "
+                        + safeSource(chunk.filename()) + "\n"
+                        + boundedExcerpt(firstText(chunk.parentText(), chunk.childText())) + "\n\n";
+                if (maxChars > 0 && builder.length() >= maxChars) {
+                    omitted += 1 + pending.size();
+                    pending.clear();
+                    continue;
+                }
+                int remaining = maxChars <= 0 ? block.length() : maxChars - builder.length();
+                if (remaining <= 0) {
+                    omitted += 1 + pending.size();
+                    pending.clear();
+                    continue;
+                }
+                builder.append(block, 0, Math.min(block.length(), remaining));
+                included++;
+                progressed = true;
+                if (maxChars > 0 && builder.length() >= maxChars) {
+                    for (List<ChunkRecord> rest : byModule.values()) {
+                        omitted += rest.size();
+                        rest.clear();
+                    }
+                    break;
+                }
+            }
+            if (!progressed) {
+                for (List<ChunkRecord> rest : byModule.values()) omitted += rest.size();
+                break;
+            }
+        }
+        return new ContextSlice(builder.toString(), included, omitted, modules.size());
+    }
+
+    /** 需求文件名归属模块：取首个路径段（无路径时用文件名本身）。 */
+    private static String moduleOf(String filename) {
+        String normalized = filename == null ? "" : filename.replace('\\', '/');
+        int slash = normalized.indexOf('/');
+        return (slash < 0 ? normalized : normalized.substring(0, slash)).trim();
     }
 
     /** 将代码分块组装为带 evidenceId 标注的提示上下文，总长度受 maxChars 限制。 */

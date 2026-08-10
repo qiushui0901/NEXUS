@@ -31,6 +31,35 @@ class EvidenceRegistryTest {
     }
 
     @Test
+    void contextSliceKeepsOneRepresentativePerModuleAndReportsOmissions() {
+        List<ChunkRecord> chunks = new java.util.ArrayList<>();
+        for (int module = 0; module < 5; module++) {
+            chunks.add(requirement("req-m" + module, "module-" + module + "/spec.html", "模块规则内容"));
+        }
+        EvidenceRegistry registry = EvidenceRegistry.from(bundle(chunks, List.of()));
+
+        EvidenceRegistry.ContextSlice slice = registry.requirementContextSlice(chunks, 150);
+
+        assertThat(slice.coveredModules()).isEqualTo(5);
+        assertThat(slice.omittedChunks()).isGreaterThan(0);
+        assertThat(slice.text()).contains("module-0");
+        assertThat(slice.includedChunks() + slice.omittedChunks()).isEqualTo(5);
+    }
+
+    @Test
+    void contextSliceWithoutBudgetKeepsEverything() {
+        ChunkRecord moduleA = requirement("req-a1", "module-a/spec.html", "A 模块规则");
+        ChunkRecord moduleB = requirement("req-b1", "module-b/spec.html", "B 模块规则");
+        EvidenceRegistry registry = EvidenceRegistry.from(bundle(List.of(moduleA, moduleB), List.of()));
+
+        EvidenceRegistry.ContextSlice slice = registry.requirementContextSlice(List.of(moduleA, moduleB), -1);
+
+        assertThat(slice.omittedChunks()).isZero();
+        assertThat(slice.includedChunks()).isEqualTo(2);
+        assertThat(slice.coveredModules()).isEqualTo(2);
+    }
+
+    @Test
     void removesPrivateAbsolutePathsAndBoundsExcerpts() {
         String longText = "a".repeat(500);
         ChunkRecord requirement = requirement("req-1", "/private/workspace/requirements.md", longText);
