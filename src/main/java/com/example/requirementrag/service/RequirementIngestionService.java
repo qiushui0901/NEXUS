@@ -2,6 +2,7 @@ package com.example.requirementrag.service;
 
 import com.example.requirementrag.model.IngestResponse;
 import com.example.requirementrag.model.ChunkRecord;
+import com.example.requirementrag.retrieval.pipeline.RetrievalResultCache;
 import com.example.requirementrag.model.KnowledgeEntry;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
 import com.example.requirementrag.observability.RagObservability;
@@ -29,16 +30,19 @@ public class RequirementIngestionService {
     private final TextPreprocessor preprocessor;
     private final ParentChildChunker chunker;
     private final RagObservability observability;
+    private final RetrievalResultCache resultCache;
 
     /**
-     * 注入向量库、预处理器、分块器与可观测性组件。
+     * 注入向量库、预处理器、分块器、可观测性组件与检索缓存（导入成功后失效缓存）。
      */
     public RequirementIngestionService(QdrantHybridStore store, TextPreprocessor preprocessor,
+                                       RetrievalResultCache resultCache,
                                        ParentChildChunker chunker, RagObservability observability) {
         this.store = store;
         this.preprocessor = preprocessor;
         this.chunker = chunker;
         this.observability = observability;
+        this.resultCache = resultCache;
     }
 
     /**
@@ -113,6 +117,9 @@ public class RequirementIngestionService {
         if (collection != null && !collection.isBlank()) {
             observability.observe("qdrant.upsert", documentId, version,
                     () -> store.replaceVersion(collection, documentId, version, chunks));
+            if (resultCache != null) {
+                resultCache.invalidate(documentId, version);
+            }
         } else {
             observability.observe("qdrant.upsert", documentId, version,
                     () -> store.replaceVersion(documentId, version, chunks));

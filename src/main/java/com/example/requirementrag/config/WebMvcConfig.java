@@ -11,7 +11,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * 拦截 /api/**，放行监控状态、webhook 与 actuator 端点。
  */
 @Configuration
-@EnableConfigurationProperties({WikiProperties.class, VersioningProperties.class})
+@EnableConfigurationProperties({WikiProperties.class, VersioningProperties.class, AuthProperties.class})
 public class WebMvcConfig implements WebMvcConfigurer {
 
     private final ProjectAuthInterceptor projectAuthInterceptor;

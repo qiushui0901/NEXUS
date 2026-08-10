@@ -38,6 +38,8 @@ public class CodeKnowledgeService {
     private final CodeQdrantStore store;
     private final SQLiteSymbolGraphStore graphStore;
     private final CodeSemanticAnnotator annotator;
+    private final java.util.concurrent.ConcurrentHashMap<String, Object> indexLocks =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     @Autowired
     public CodeKnowledgeService(RagProperties properties, ProjectRegistry projectRegistry,
@@ -60,21 +62,24 @@ public class CodeKnowledgeService {
 
     /** 扫描默认配置仓库并替换写入 Qdrant。 */
     public CodeIndexResponse index() throws IOException {
-        CodeScanner.ScanResult result = scanner.scan(properties.code());
-        List<CodeChunk> annotated = annotateChunks(properties.code().projectId(), result.chunks());
-        store.publishProject(liveCollection(properties.code().projectId()), result.projectId(), annotated);
-        if (graphStore != null) graphStore.replaceSnapshot(result);
-        return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(), annotated.size());
+        return index(properties.code().projectId());
     }
 
-    /** 扫描指定项目仓库并替换写入 Qdrant。 */
+    /**
+     * 扫描指定项目仓库并替换写入 Qdrant。
+     * 同一项目的索引任务在项目级锁内串行执行（同步 API / webhook / 后台任务共用此入口），
+     * 杜绝旧索引晚完成覆盖新 live 的发布乱序。
+     */
     public CodeIndexResponse index(String projectId) throws IOException {
-        RagProperties.ProjectConfig project = projectRegistry.require(projectId);
-        CodeScanner.ScanResult result = scanner.scan(project.toCodeConfig());
-        List<CodeChunk> annotated = annotateChunks(projectId, result.chunks());
-        store.publishProject(liveCollection(projectId), result.projectId(), annotated);
-        if (graphStore != null) graphStore.replaceSnapshot(result);
-        return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(), annotated.size());
+        Object lock = indexLocks.computeIfAbsent(projectId, key -> new Object());
+        synchronized (lock) {
+            RagProperties.ProjectConfig project = projectRegistry.require(projectId);
+            CodeScanner.ScanResult result = scanner.scan(project.toCodeConfig());
+            List<CodeChunk> annotated = annotateChunks(projectId, result.chunks());
+            store.publishProject(liveCollection(projectId), result.projectId(), annotated);
+            if (graphStore != null) graphStore.replaceSnapshot(result);
+            return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(), annotated.size());
+        }
     }
 
     /** 代码块语义标注：先加载既有标注缓存，再分层标注（LLM + 静态），annotator 不可用时不阻断索引。 */
@@ -201,11 +206,17 @@ public class CodeKnowledgeService {
             throw new IllegalArgumentException("filePath escapes repository root");
         }
         List<String> lines = Files.readAllLines(file, StandardCharsets.UTF_8);
-        int start = Math.max(1, startLine == null ? 1 : startLine);
-        int end = Math.min(lines.size(), endLine == null ? Math.min(lines.size(), start + 120) : endLine);
-        if (start > end) {
-            start = end;
+        int requestedStart = startLine == null ? 1 : startLine;
+        int requestedEnd = endLine == null ? Math.min(lines.size(), requestedStart + 120) : endLine;
+        if (requestedStart < 1 || requestedEnd < 1 || requestedStart > requestedEnd) {
+            throw new IllegalArgumentException("非法行范围: startLine=" + startLine + ", endLine=" + endLine);
         }
+        if (requestedEnd > lines.size()) {
+            throw new IllegalArgumentException("行范围超出文件长度: startLine=" + startLine
+                    + ", endLine=" + endLine + "（文件共 " + lines.size() + " 行）");
+        }
+        int start = requestedStart;
+        int end = requestedEnd;
         StringBuilder text = new StringBuilder();
         for (int line = start; line <= end; line++) {
             text.append(String.format("%5d  %s%n", line, lines.get(line - 1)));

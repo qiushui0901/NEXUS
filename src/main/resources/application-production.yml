@@ -9,6 +9,11 @@ spring:
 
 app:
   rag:
+    auth:
+      # 生产 fail-closed：直连应用端口不能以默认管理员执行写操作。
+      # 必须配置可信网关身份头（AUTH_IDENTITY_HEADER），否则所有请求返回 401。
+      identity-header: ${AUTH_IDENTITY_HEADER:}
+      default-admin-allowed: false
     qdrant:
       base-url: ${QDRANT_URL:}
     code:

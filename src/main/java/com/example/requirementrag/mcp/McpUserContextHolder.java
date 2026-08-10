@@ -2,6 +2,7 @@ package com.example.requirementrag.mcp;
 
 import com.example.requirementrag.model.UserContext;
 import com.example.requirementrag.security.UnauthenticatedException;
+import com.example.requirementrag.security.UserContextResolver;
 
 /**
  * 承载 MCP 请求线程的认证用户上下文。
@@ -11,8 +12,14 @@ import com.example.requirementrag.security.UnauthenticatedException;
 public final class McpUserContextHolder {
 
     private static final ThreadLocal<UserContext> HOLDER = new ThreadLocal<>();
+    private static volatile UserContextResolver resolver;
 
     private McpUserContextHolder() {
+    }
+
+    /** 注册统一身份解析器（应用启动时由配置注入）。 */
+    public static void registerResolver(UserContextResolver value) {
+        resolver = value;
     }
 
     /** 设置当前线程的认证用户（Filter 层调用）。 */
@@ -20,10 +27,13 @@ public final class McpUserContextHolder {
         HOLDER.set(user);
     }
 
-    /** 取回当前线程的认证用户；未设置时回退为默认管理员（统一身份由外部网关管理）。 */
+    /** 取回当前线程的认证用户；未设置时按认证边界解析（生产 fail-closed）。 */
     public static UserContext get() {
         UserContext user = HOLDER.get();
-        return user != null ? user : UserContext.defaultAdmin();
+        if (user != null) return user;
+        UserContextResolver active = resolver;
+        if (active != null) return active.resolveFallback();
+        return UserContext.defaultAdmin();
     }
 
     /** 取回当前线程的认证用户；未设置时返回 null（不抛异常）。 */

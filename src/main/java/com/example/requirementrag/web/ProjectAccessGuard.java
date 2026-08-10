@@ -2,6 +2,7 @@ package com.example.requirementrag.web;
 
 import com.example.requirementrag.model.UserContext;
 import com.example.requirementrag.security.ProjectAuthorizationService;
+import com.example.requirementrag.security.UserContextResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.stereotype.Component;
 
@@ -10,15 +11,18 @@ import org.springframework.stereotype.Component;
 public class ProjectAccessGuard {
 
     private final ProjectAuthorizationService authorizationService;
+    private final UserContextResolver userContextResolver;
 
-    public ProjectAccessGuard(ProjectAuthorizationService authorizationService) {
+    public ProjectAccessGuard(ProjectAuthorizationService authorizationService,
+                              UserContextResolver userContextResolver) {
         this.authorizationService = authorizationService;
+        this.userContextResolver = userContextResolver;
     }
 
-    /** 获取当前请求用户；统一身份由外部网关管理，缺失时回退为默认管理员。 */
+    /** 获取当前请求用户；无请求属性时按认证边界解析（生产 fail-closed）。 */
     public UserContext currentUser(HttpServletRequest request) {
         UserContext user = (UserContext) request.getAttribute(UserContext.REQUEST_ATTRIBUTE);
-        return user != null ? user : UserContext.defaultAdmin();
+        return user != null ? user : userContextResolver.resolve(request);
     }
 
     /** 校验当前用户对指定项目的访问权限，无权访问时抛 AccessDeniedException。 */

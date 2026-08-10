@@ -31,6 +31,13 @@ public class MultiLanguageCodeScanner implements CodeScanner {
     public ScanResult scan(RagProperties.Code config) throws IOException {
         Path root = Path.of(config.repositoryPath()).toAbsolutePath().normalize();
         String commit = git(root, List.of("rev-parse", "HEAD"), false);
+        if (!commit.isBlank()) {
+            String dirty = git(root, List.of("status", "--porcelain"), false);
+            if (dirty != null && !dirty.isBlank()) {
+                throw new IllegalArgumentException("工作树有未提交修改，索引内容不能冒充 commit " + commit
+                        + " 快照；请先提交或清理工作树（HEAD=" + commit + "）");
+            }
+        }
         List<Path> files;
         try (var stream = Files.walk(root)) {
             files = stream.filter(Files::isRegularFile)

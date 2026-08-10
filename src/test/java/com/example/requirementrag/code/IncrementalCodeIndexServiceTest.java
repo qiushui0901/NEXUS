@@ -60,9 +60,9 @@ class IncrementalCodeIndexServiceTest {
 
         assertEquals(2, response.javaFiles());
         assertTrue(response.indexedChunks() > 0);
-        verify(store).deleteFileChunks("code-v51", "project", "src/service_old.py");
-        verify(store).deleteFileChunks("code-v51", "project", "src/service_new.py");
-        verify(store).upsertChunks(eq("code-v51"), anyList());
+        verify(store).upsertChunks(eq("code-v51-live"), anyList());
+        verify(store).deleteFileChunks("code-v51-live", "project", "src/service_old.py");
+        verify(store).deleteFileChunks("code-v51-live", "project", "src/service_new.py");
         assertEquals(newSha, graphStore.latestCommit("project"));
         assertTrue(graphStore.symbolsByFiles("project", newSha, List.of("src/service_old.py"), 10).isEmpty());
         assertTrue(graphStore.symbolsByFiles("project", newSha, List.of("src/service_new.py"), 10)

@@ -52,4 +52,34 @@ class CodeKnowledgeServiceSourceTest {
         return new CodeKnowledgeService(properties, mock(ProjectRegistry.class),
                 mock(JavaCodeScanner.class), mock(CodeQdrantStore.class));
     }
+
+    @Test
+    void rejectsInvalidLineRanges() throws Exception {
+        Path root = Files.createTempDirectory("nexus-source-lines-");
+        Path source = root.resolve("Hero.java");
+        Files.writeString(source, "line1\nline2\nline3\n");
+        RagProperties properties = mock(RagProperties.class);
+        RagProperties.Code code = new RagProperties.Code("demo", root.toString(), "code",
+                List.of(), List.of(), 1_000_000);
+        when(properties.code()).thenReturn(code);
+        com.example.requirementrag.config.ProjectRegistry registry = mock(ProjectRegistry.class);
+        when(registry.require("demo")).thenReturn(new com.example.requirementrag.config.RagProperties.ProjectConfig(
+                "demo", "Demo", "demo", "server", "req", "code", root.toString(), null, null,
+                List.of(), List.of(), 1_000_000));
+        CodeKnowledgeService service = new CodeKnowledgeService(properties,
+                registry, mock(JavaCodeScanner.class), mock(CodeQdrantStore.class));
+
+        assertThatThrownBy(() -> service.source("demo", "Hero.java", 10, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("非法行范围");
+        assertThatThrownBy(() -> service.source("demo", "Hero.java", 0, 5))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("非法行范围");
+        assertThatThrownBy(() -> service.source("demo", "Hero.java", 5, 2))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("非法行范围");
+        assertThatThrownBy(() -> service.source("demo", "Hero.java", 1, 99))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("超出文件长度");
+    }
 }

@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class MultiLanguageCodeScannerTest {
 
@@ -51,6 +52,32 @@ class MultiLanguageCodeScannerTest {
                 .contains("Hero", "train", "save");
         assertThat(result.calls()).extracting(CodeCall::targetName).contains("save");
         assertThat(result.diagnostics()).noneMatch(diagnostic -> diagnostic.code().equals("PARSE_FAILED"));
+    }
+
+    @Test
+    void rejectsDirtyWorktreeForFullScan() throws Exception {
+        Path root = Files.createTempDirectory("nexus-dirty-");
+        git(root, "init");
+        git(root, "config", "user.email", "test@example.com");
+        git(root, "config", "user.name", "Test");
+        Files.writeString(root.resolve("Hero.java"), "class Hero { void save() {} }\n");
+        git(root, "add", ".");
+        git(root, "commit", "-m", "initial");
+        Files.writeString(root.resolve("Hero.java"), "class Hero { void changed() {} }\n");
+
+        MultiLanguageCodeScanner scanner = new MultiLanguageCodeScanner(new CodeLanguageRegistry());
+
+        assertThatThrownBy(() -> scanner.scan(new RagProperties.Code(
+                "demo", root.toString(), "code", List.of(), List.of(), 1_000_000)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("工作树有未提交修改");
+    }
+
+    private static void git(Path root, String... args) throws Exception {
+        java.util.List<String> command = new java.util.ArrayList<>();
+        command.add("git");
+        command.addAll(java.util.List.of(args));
+        new ProcessBuilder(command).directory(root.toFile()).redirectErrorStream(true).start().waitFor();
     }
 
     @Test

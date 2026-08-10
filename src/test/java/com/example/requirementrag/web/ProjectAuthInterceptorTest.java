@@ -8,12 +8,15 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockHttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.web.method.HandlerMethod;
 
 import java.lang.reflect.Method;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.when;
 
@@ -31,7 +34,45 @@ class ProjectAuthInterceptorTest {
     void setUp() {
         interceptor = new ProjectAuthInterceptor(
                 new ProjectAuthorizationService(projectRegistry),
-                projectIdResolver);
+                projectIdResolver,
+                new com.example.requirementrag.security.UserContextResolver(
+                        new com.example.requirementrag.config.AuthProperties(null, true)));
+    }
+
+    @Test
+    void rejectsRequestsWhenDefaultAdminIsForbidden() throws Exception {
+        interceptor = new ProjectAuthInterceptor(
+                new ProjectAuthorizationService(projectRegistry),
+                projectIdResolver,
+                new com.example.requirementrag.security.UserContextResolver(
+                        new com.example.requirementrag.config.AuthProperties(null, false)));
+        MockHttpServletRequest request = jsonPost("/api/code/search");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        boolean allowed = interceptor.preHandle(request, response, handler(CodeController.class, "search"));
+
+        assertFalse(allowed);
+        assertEquals(HttpServletResponse.SC_UNAUTHORIZED, response.getStatus());
+    }
+
+    @Test
+    void acceptsTrustedGatewayIdentityHeader() throws Exception {
+        interceptor = new ProjectAuthInterceptor(
+                new ProjectAuthorizationService(projectRegistry),
+                projectIdResolver,
+                new com.example.requirementrag.security.UserContextResolver(
+                        new com.example.requirementrag.config.AuthProperties("X-Gateway-User", false)));
+        MockHttpServletRequest request = jsonPost("/api/code/search");
+        request.addHeader("X-Gateway-User", "gateway-bot");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        when(projectIdResolver.resolveForAccess(request)).thenReturn("any-project");
+
+        boolean allowed = interceptor.preHandle(request, response, handler(CodeController.class, "search"));
+
+        assertTrue(allowed);
+        assertThat(request.getAttribute(UserContext.REQUEST_ATTRIBUTE))
+                .isInstanceOfSatisfying(UserContext.class, user ->
+                        assertThat(user.username()).isEqualTo("gateway-bot"));
     }
 
     @Test

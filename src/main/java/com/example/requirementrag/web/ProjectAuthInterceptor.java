@@ -3,6 +3,8 @@ package com.example.requirementrag.web;
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.UserContext;
 import com.example.requirementrag.security.ProjectAuthorizationService;
+import com.example.requirementrag.security.UnauthenticatedException;
+import com.example.requirementrag.security.UserContextResolver;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpMethod;
@@ -16,18 +18,27 @@ public class ProjectAuthInterceptor implements HandlerInterceptor {
 
     private final ProjectAuthorizationService authorizationService;
     private final ProjectIdResolver projectIdResolver;
+    private final UserContextResolver userContextResolver;
 
     public ProjectAuthInterceptor(ProjectAuthorizationService authorizationService,
-                                  ProjectIdResolver projectIdResolver) {
+                                  ProjectIdResolver projectIdResolver,
+                                  UserContextResolver userContextResolver) {
         this.authorizationService = authorizationService;
         this.projectIdResolver = projectIdResolver;
+        this.userContextResolver = userContextResolver;
     }
 
-    /** 以默认管理员上下文执行权限与项目访问校验，通过后将 UserContext 写入请求属性。 */
+    /** 解析可信身份后执行权限与项目访问校验；无法建立身份时返回 401，通过后将 UserContext 写入请求属性。 */
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler)
             throws Exception {
-        UserContext user = UserContext.defaultAdmin();
+        UserContext user;
+        try {
+            user = userContextResolver.resolve(request);
+        } catch (UnauthenticatedException exception) {
+            response.sendError(HttpServletResponse.SC_UNAUTHORIZED, exception.getMessage());
+            return false;
+        }
 
         Permission required = resolveRequiredPermission(request, handler);
         try {

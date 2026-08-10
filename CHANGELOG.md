@@ -45,6 +45,15 @@
 - 完整验证固化为机器可读产物：`tools/verify-report.sh` 以 JDK 17 运行不跳过 Enforcer 的 `mvnw verify`，聚合 surefire 报告并输出 `docs/verification/<version>-<commit>.json` 与 `latest.json`（测试数、JaCoCo 结果、jar、commit）；`tools/module-loop-verify.sh` 增加失败清理（trap 恢复分支与符号图）与 dirty worktree / 分支防护。
 ### Fixed
 
+- 审查整改（0.8.5 系统边界与数据正确性）：
+  - **认证 fail-closed**：新增 `AuthProperties`（`app.rag.auth.identity-header` / `default-admin-allowed`）与 `UserContextResolver`；REST 拦截器与 MCP 身份过滤器统一解析可信身份，缺少网关头或默认管理员被禁时返回 401；`application-production.yml` 默认禁止默认管理员（直连应用端口不能以管理员执行写操作）；本地开发保持默认管理员模式。
+  - **增量代码索引**：写入 `<base>-live` alias（检索立即可见），顺序改为「扫描 → upsert → 删除旧」，失败不再丢数据；符号图快照在 dirty worktree 时跳过（不伪造 commit）。
+  - **dirty worktree 拒绝**：全量扫描发现未提交修改时拒绝（索引内容不得冒充 commit 快照）。
+  - **需求导入缓存失效**：`RetrievalResultCache.invalidate(documentId, version)`，同版本替换后旧检索结果不再残留（空结果缓存同样失效）。
+  - **并发索引顺序**：`CodeKnowledgeService.index` 项目级锁串行化（同步 API / webhook / 后台任务统一入口），杜绝旧索引晚完成覆盖新 live。
+  - **源码接口行号校验**：拒绝 `startLine<1`、`endLine<1`、`startLine>endLine` 与超出文件长度（不再返回 0 行号元数据）。
+  - 新增回归测试：401 两场景、网关身份头、dirty worktree 拒绝、行号三类非法范围、缓存失效两场景、增量索引 live alias 写入。
+
 - 审查整改（0.8.5 证据与上下文安全）：
   - 需求上下文切片恢复 fail-closed：`requirementContextSlice` 只纳入 Evidence 白名单内（已注册 `evidenceId`）的分块，未注册分块直接跳过（不再生成 `evidenceId=?` 附带正文）；预算不足时只追加完整 block，放不下的计入 omitted（不再截断 evidence ID/文件名并虚报 included）。
   - 需求证据 provenance 补全：`REQUIREMENT` Evidence 的 source 改为项目标识（质量门对所有证据执行项目边界校验，关闭 REQUIREMENT 跨项目绕过）；filePath/documentId、symbol/parentId、commit/contentHash 承载原始 chunk 的 documentId、parentId 与内容哈希，页面 `requirementSources` 恢复真实 documentId/entryId/contentHash，可参与需求 stale 检测。

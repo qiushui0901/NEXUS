@@ -81,25 +81,29 @@ public class IncrementalCodeIndexService {
             return new IncrementalCodeIndexResponse(projectId, oldSha, newSha, changedFiles.size(), 0, 0);
         }
 
-        String collection = projectRegistry.resolveCodeCollection(projectId);
-        for (String filePath : sourceFiles) {
-            store.deleteFileChunks(collection, projectId, filePath);
-        }
-
+        String liveCollection = projectRegistry.resolveCodeCollection(projectId) + "-live";
         CodeScanner.ScanResult changed = scanner.scanFiles(codeConfig, newSha, sourceFiles);
         List<CodeChunk> chunks = changed.chunks();
-        store.upsertChunks(collection, chunks);
+        store.upsertChunks(liveCollection, chunks);
+        for (String filePath : sourceFiles) {
+            store.deleteFileChunks(liveCollection, projectId, filePath);
+        }
         if (graphStore != null) {
-            CodeScanner.ScanResult snapshot = scanner.scan(codeConfig);
-            if (newSha.equals(snapshot.commitSha())) {
-                graphStore.replaceSnapshot(snapshot);
-            }
-            else {
-                log.warn("跳过静态图谱快照 {}: 工作区 HEAD {} 与目标 commit {} 不一致",
-                        projectId, snapshot.commitSha(), newSha);
+            try {
+                CodeScanner.ScanResult snapshot = scanner.scan(codeConfig);
+                if (newSha.equals(snapshot.commitSha())) {
+                    graphStore.replaceSnapshot(snapshot);
+                }
+                else {
+                    log.warn("跳过静态图谱快照 {}: 工作区 HEAD {} 与目标 commit {} 不一致",
+                            projectId, snapshot.commitSha(), newSha);
+                }
+            } catch (IllegalArgumentException exception) {
+                log.warn("跳过静态图谱快照 {}: {}", projectId, exception.getMessage());
             }
         }
-        log.info("增量索引完成 {}: {} 个源码文件, {} 个 chunk", projectId, sourceFiles.size(), chunks.size());
+        log.info("增量索引完成 {}: {} 个源码文件, {} 个 chunk（写入 live alias {}）",
+                projectId, sourceFiles.size(), chunks.size(), liveCollection);
         return new IncrementalCodeIndexResponse(projectId, oldSha, newSha,
                 changedFiles.size(), sourceFiles.size(), chunks.size());
     }

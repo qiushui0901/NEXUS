@@ -170,7 +170,10 @@ app:
       current-version-questions: ${REVIEW_CURRENT_VERSION_QUESTIONS:12}
       prior-version-questions: ${REVIEW_PRIOR_VERSION_QUESTIONS:3}
     auth:
-      enabled: false
+      # 可信网关身份头名（如 X-Gateway-User）；为空表示不校验身份头。
+      # 生产环境（application-production.yml）禁止默认管理员并应配置该头。
+      identity-header: ${AUTH_IDENTITY_HEADER:}
+      default-admin-allowed: ${AUTH_DEFAULT_ADMIN_ALLOWED:true}
 
     # 多项目注册表。为空时自动基于上方 knowledge/code 构造默认项目。
     # 每个项目独立 collection，互不干扰。
