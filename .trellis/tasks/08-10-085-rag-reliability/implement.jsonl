@@ -1,0 +1,2 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "src/test/java/com/example/requirementrag/evaluation/RetrievalQualityGateTest.java", "reason": "Phase 0-1：全 profile 黄金存活 + NO_RESULTS 门禁"}
