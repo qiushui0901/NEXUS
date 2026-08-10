@@ -22,6 +22,8 @@
 - Wiki 过期检测（`WikiStalenessService`）升级为符号级传播：Git diff 变更文件 → 变更符号（`symbolsByFiles`）→ 入向调用关系（`relations`）→ 命中页面 `codeSymbols` 引用的符号 → 标记页面 STALE 并在原因中展示「变更符号 -> 页面符号」传播链；文件未命中但调用关系被变更触及的页面同样失效。
 
 - 模块发布质量门补齐四条硬约束（`ModuleClaimQualityGate`）：必须含至少一条真实 CODE 证据；全部证据 commit 与目标代码提交一致；证据文件存在于仓库且行号不越界（fail-closed）；任何 CONFLICT 声明阻止发布。新增对应回归测试（真实代码证据/跨 commit/文件缺失/行号越界/CONFLICT 拦截）。
+- `ModuleStaleRebuildService` 加固：重建目标必须是 MODULE 页面且必须出现在当前 StaleReport 中（失效检测基础设施不可用时拒绝重建）。
+- 模块发布质量门加固（`ModuleClaimQualityGate`）：目标代码提交与每条代码证据 commit 缺失/不一致均拦截（fail-closed，不允许空值绕过）；CODE 证据的符号必须仍存在于当前符号图快照；Claim 证据 ID 的 namespace 前缀必须与实际证据类型一致（`code`↔CODE、`code-graph`↔CODE_GRAPH、`route`↔ROUTE、`dependency`↔DEPENDENCY、`data`↔DATA、`config`↔CONFIG、`test`↔TEST_SYMBOL、`diagnostic`↔DIAGNOSTIC）。
 ### Fixed
 
 - 模块知识草稿补齐 `build.json` 构建产物（`ModuleKnowledgeBuildService` / `ModuleStaleRebuildService`），与既有发布链路（NO_CHANGES 检查、发布审计）契约一致；此前模块草稿无法通过 `publish` 发布。

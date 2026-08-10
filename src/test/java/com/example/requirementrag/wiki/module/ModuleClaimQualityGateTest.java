@@ -1,6 +1,7 @@
 package com.example.requirementrag.wiki.module;
 
 import com.example.requirementrag.code.CodeSymbol;
+import com.example.requirementrag.code.SQLiteSymbolGraphStore;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.wiki.WikiModels;
@@ -22,6 +23,7 @@ class ModuleClaimQualityGateTest {
     Path temp;
 
     private final ProjectRegistry projectRegistry = mock(ProjectRegistry.class);
+    private final SQLiteSymbolGraphStore graphStore = mock(SQLiteSymbolGraphStore.class);
     private ModuleClaimQualityGate gate;
 
     @BeforeEach
@@ -30,7 +32,12 @@ class ModuleClaimQualityGateTest {
                 "game", "Game", "game", "server", "requirements_game", "code_game",
                 temp.toString(), "group/game", null, List.of(), List.of(), 1_000_000);
         when(projectRegistry.require("game")).thenReturn(project);
-        gate = new ModuleClaimQualityGate(projectRegistry);
+        when(graphStore.latestCommit("game")).thenReturn("abc123");
+        when(graphStore.findSymbols("game", "abc123", "com.game.auth.AuthService", 5))
+                .thenReturn(List.of(new CodeSymbol("s1", "game", "abc123", "java", "CLASS",
+                        "com.game.auth.AuthService", "AuthService", "src/auth/AuthService.java", 1, 50,
+                        false, false)));
+        gate = new ModuleClaimQualityGate(projectRegistry, graphStore);
         Path module = temp.resolve("src/auth");
         Files.createDirectories(module);
         StringBuilder source = new StringBuilder();
@@ -107,6 +114,41 @@ class ModuleClaimQualityGateTest {
     }
 
     @Test
+    void rejectsMissingCommitOnTargetOrEvidence() {
+        var page = plannedPage();
+        assertThatThrownBy(() -> gate.validate("game", "5.1", "", List.of(page)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("缺少目标代码提交");
+        WikiModels.Evidence noCommit = new WikiModels.Evidence("CODE", "com.game.auth.AuthService",
+                "game", "5.1", "lines=1-50", "x", "", "src/auth/AuthService.java",
+                "com.game.auth.AuthService", "PENDING_REVIEW");
+        var broken = rebuilt(null, List.of(noCommit), List.of());
+        assertThatThrownBy(() -> gate.validate("game", "5.1", "abc123", List.of(broken)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("缺少 commit");
+    }
+
+    @Test
+    void rejectsCodeEvidenceWhoseSymbolDisappearedFromTheGraph() {
+        var page = plannedPage();
+        when(graphStore.findSymbols("game", "abc123", "com.game.auth.AuthService", 5))
+                .thenReturn(List.of());
+        assertThatThrownBy(() -> gate.validate("game", "5.1", "abc123", List.of(page)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("符号已不存在");
+    }
+
+    @Test
+    void rejectsEvidenceIdNamespaceMismatchingEvidenceType() {
+        var page = plannedPage();
+        var broken = rebuilt(null, null, List.of(new WikiModels.Claim("auth-entry", "entry",
+                "类型不一致引用", WikiModels.ClaimSupport.FULL, List.of("route:auth:0"))));
+        assertThatThrownBy(() -> gate.validate("game", "5.1", "abc123", List.of(broken)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("前缀与证据类型不一致");
+    }
+
+    @Test
     void rejectsEvidenceFileOutsideRepositoryOrMissing() {
         var page = plannedPage();
         WikiModels.Evidence missingFile = new WikiModels.Evidence("CODE", "x", "game", "5.1",
@@ -161,8 +203,9 @@ class ModuleClaimQualityGateTest {
     @Test
     void rejectsEvidenceFromAnotherProjectOrVersion() {
         var page = plannedPage();
-        WikiModels.Evidence foreign = new WikiModels.Evidence("CODE", "x", "other-project", "6.0",
-                "lines=1-2", "x", "abc123", "src/auth/AuthService.java", "x", "PENDING_REVIEW");
+        WikiModels.Evidence foreign = new WikiModels.Evidence("CODE", "com.game.auth.AuthService",
+                "other-project", "6.0", "lines=1-2", "x", "abc123", "src/auth/AuthService.java",
+                "com.game.auth.AuthService", "PENDING_REVIEW");
         var broken = rebuilt(null, List.of(foreign),
                 List.of(new WikiModels.Claim("broken-cross", "entry", "引用跨项目证据",
                         WikiModels.ClaimSupport.FULL, List.of("code:auth:0"))));

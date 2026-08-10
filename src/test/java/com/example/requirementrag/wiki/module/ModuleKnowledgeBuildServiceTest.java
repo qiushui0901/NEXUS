@@ -30,12 +30,14 @@ class ModuleKnowledgeBuildServiceTest {
     private final KnowledgeDraftLifecycleService draftLifecycleService = mock(KnowledgeDraftLifecycleService.class);
     private final com.example.requirementrag.config.ProjectRegistry projectRegistry =
             mock(com.example.requirementrag.config.ProjectRegistry.class);
+    private final com.example.requirementrag.code.SQLiteSymbolGraphStore graphStore =
+            mock(com.example.requirementrag.code.SQLiteSymbolGraphStore.class);
 
     private ModuleKnowledgeBuildService service() {
         WikiProperties properties = new WikiProperties(temp.resolve("wiki").toString(),
                 temp.resolve("sources").toString(), temp.resolve("drafts").toString());
         return new ModuleKnowledgeBuildService(mapper, properties, extractor, new ModuleWikiPlanner(),
-                new ModuleClaimQualityGate(projectRegistry), draftLifecycleService);
+                new ModuleClaimQualityGate(projectRegistry, graphStore), draftLifecycleService);
     }
 
     private ModuleFactBundle bundle() {
@@ -57,6 +59,15 @@ class ModuleKnowledgeBuildServiceTest {
 
     @org.junit.jupiter.api.BeforeEach
     void stubProject() throws Exception {
+        when(graphStore.latestCommit("game")).thenReturn("abc123");
+        when(graphStore.findSymbols("game", "abc123", "com.game.auth.AuthService", 5))
+                .thenReturn(List.of(new CodeSymbol("s1", "game", "abc123", "java", "CLASS",
+                        "com.game.auth.AuthService", "AuthService", "src/auth/AuthService.java", 1, 50,
+                        false, false)));
+        when(graphStore.findSymbols("game", "abc123", "com.game.auth.AuthService.revoke", 5))
+                .thenReturn(List.of(new CodeSymbol("s2", "game", "abc123", "java", "METHOD",
+                        "com.game.auth.AuthService.revoke", "revoke", "src/auth/AuthService.java", 10, 20,
+                        true, false)));
         when(projectRegistry.require("game")).thenReturn(new com.example.requirementrag.config.RagProperties.ProjectConfig(
                 "game", "Game", "game", "server", "requirements_game", "code_game",
                 temp.toString(), "group/game", null, List.of(), List.of(), 1_000_000));

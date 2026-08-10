@@ -3,11 +3,13 @@ package com.example.requirementrag.wiki.module;
 import com.example.requirementrag.config.WikiProperties;
 import com.example.requirementrag.knowledge.build.KnowledgeDraftLifecycleService;
 import com.example.requirementrag.knowledge.build.KnowledgeDraftModels.DraftMetadata;
+import com.example.requirementrag.wiki.WikiModels;
 import com.example.requirementrag.wiki.WikiModels.Claim;
 import com.example.requirementrag.wiki.WikiModels.Page;
 import com.example.requirementrag.wiki.WikiModels.PageSource;
 import com.example.requirementrag.wiki.WikiModels.VersionSource;
 import com.example.requirementrag.wiki.WikiRepository;
+import com.example.requirementrag.wiki.WikiStalenessService;
 import com.example.requirementrag.wiki.module.ModuleFactModels.ModuleFactBundle;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -53,27 +55,35 @@ public class ModuleStaleRebuildService {
     private final ModuleWikiPlanner planner;
     private final ModuleClaimQualityGate qualityGate;
     private final KnowledgeDraftLifecycleService draftLifecycleService;
+    private final WikiStalenessService stalenessService;
     private final Path draftRoot;
 
     public ModuleStaleRebuildService(ObjectMapper objectMapper, WikiProperties properties,
                                      WikiRepository wikiRepository, ModuleFactExtractor extractor,
                                      ModuleWikiPlanner planner, ModuleClaimQualityGate qualityGate,
-                                     KnowledgeDraftLifecycleService draftLifecycleService) {
+                                     KnowledgeDraftLifecycleService draftLifecycleService,
+                                     WikiStalenessService stalenessService) {
         this.objectMapper = objectMapper;
         this.wikiRepository = wikiRepository;
         this.extractor = extractor;
         this.planner = planner;
         this.qualityGate = qualityGate;
         this.draftLifecycleService = draftLifecycleService;
+        this.stalenessService = stalenessService;
         this.draftRoot = Path.of(properties.draftPath()).toAbsolutePath().normalize();
     }
 
-    /** 重建已发布模块页：抽取 → 规划 → 质量门 → 写草稿（含 Claim 差异）→ 初始化审核。 */
+    /** 重建已发布模块页：校验目标来自当前 StaleReport 且为 MODULE 页，再抽取 → 规划 → 质量门 → 写草稿（含 Claim 差异）→ 初始化审核。 */
     public RebuildResult rebuild(String projectId, String version, String modulePath, String featureId,
                                  String codeCommit, String actor) {
         String safeProject = identifier(projectId, "projectId");
         String safeVersion = identifier(version, "version");
-        Page published = wikiRepository.getPage(safeProject, safeVersion, identifier(featureId, "featureId"));
+        String safeFeatureId = identifier(featureId, "featureId");
+        Page published = wikiRepository.getPage(safeProject, safeVersion, safeFeatureId);
+        if (published.pageType() == null || published.pageType() != WikiModels.PageType.MODULE) {
+            throw new IllegalArgumentException("重建目标不是 MODULE 页面: " + safeFeatureId);
+        }
+        requireInStaleReport(safeProject, safeVersion, safeFeatureId);
         List<Claim> oldClaims = new ArrayList<>(published.claims());
 
         ModuleFactBundle bundle = extractor.extract(safeProject, modulePath, safeVersion);
@@ -93,6 +103,15 @@ public class ModuleStaleRebuildService {
         DraftMetadata draft = draftLifecycleService.initializeDraft(safeProject, safeVersion, buildId,
                 text(actor).isBlank() ? "system" : actor, generatedAt);
         return new RebuildResult(draft, List.copyOf(changes));
+    }
+
+    /** 校验目标页面出现在当前 StaleReport 中；失效检测基础设施不可用时拒绝重建。 */
+    private void requireInStaleReport(String projectId, String version, String featureId) {
+        WikiStalenessService.StaleReport report = stalenessService.staleness(projectId, version);
+        boolean listed = report.pages().stream().anyMatch(page -> page.featureId().equals(featureId));
+        if (!listed) {
+            throw new IllegalArgumentException("目标页面不在当前 StaleReport 中，无需重建: " + featureId);
+        }
     }
 
     /** 对比新旧 Claims：按 claimId 对齐，输出新增、修改（文本或支持状态变化）、删除与未变化。 */

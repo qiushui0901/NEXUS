@@ -1,5 +1,6 @@
 package com.example.requirementrag.wiki.module;
 
+import com.example.requirementrag.code.SQLiteSymbolGraphStore;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.wiki.WikiModels.Claim;
@@ -34,14 +35,16 @@ public class ModuleClaimQualityGate {
     private static final Pattern LOCATION_LINES = Pattern.compile("^lines=(\\d+)-(\\d+)$");
 
     private final ProjectRegistry projectRegistry;
+    private final SQLiteSymbolGraphStore graphStore;
 
-    public ModuleClaimQualityGate(ProjectRegistry projectRegistry) {
+    public ModuleClaimQualityGate(ProjectRegistry projectRegistry, SQLiteSymbolGraphStore graphStore) {
         this.projectRegistry = projectRegistry;
+        this.graphStore = graphStore;
     }
 
     /** 不校验任何内容的门禁实例（旧测试/构造路径的兼容占位）。 */
     public static ModuleClaimQualityGate lenient() {
-        return new ModuleClaimQualityGate(null) {
+        return new ModuleClaimQualityGate(null, null) {
             @Override
             public void validate(String projectId, String version, String codeCommit, List<PageSource> pages) {
             }
@@ -49,14 +52,14 @@ public class ModuleClaimQualityGate {
     }
 
     /**
-     * 校验 MODULE 页面发布质量，四条硬约束：
+     * 校验 MODULE 页面发布质量，硬约束：
      * <ol>
      *   <li>至少一条真实 CODE 证据（仅类型为 CODE 的条目才算数）；</li>
-     *   <li>全部证据的 commit 与目标代码提交一致（非空时逐条比对）；</li>
-     *   <li>证据文件存在于仓库根目录内且行号在文件行数范围内；</li>
-     *   <li>任何 CONFLICT 声明阻止发布。</li>
+     *   <li>任何 CONFLICT 声明阻止发布；</li>
+     *   <li>代码证据必须绑定目标代码提交（缺 commit 或与目标不一致均拦截，fail-closed）；</li>
+     *   <li>代码类证据文件必须存在于仓库根目录内、行号不越界、符号仍存在于符号图快照；</li>
+     *   <li>Claim 引用下标有效、证据 ID 的 namespace 前缀与实际证据类型一致、不跨项目/版本。</li>
      * </ol>
-     * 另保持既有约束：FULL/受支持 Claim 必须引用页面内证据，引用下标有效且不跨项目/版本。
      *
      * @throws IllegalArgumentException 门禁失败时
      */
@@ -67,6 +70,7 @@ public class ModuleClaimQualityGate {
             validateConflicts(page);
             validateCommitConsistency(page, codeCommit);
             validateFileAndLines(projectId, page);
+            validateSymbolPresence(projectId, page);
             validateClaimReferences(projectId, version, page);
         }
     }
@@ -88,12 +92,17 @@ public class ModuleClaimQualityGate {
         }
     }
 
-    /** 硬约束 3：非空 commit 时，页面全部证据必须与目标代码提交一致。 */
+    /** 硬约束 3：目标提交与每条代码证据的 commit 都必须存在且一致（fail-closed，不允许空值绕过）。 */
     private void validateCommitConsistency(PageSource page, String codeCommit) {
-        if (codeCommit == null || codeCommit.isBlank()) return;
+        if (codeCommit == null || codeCommit.isBlank()) {
+            throw new IllegalArgumentException("MODULE 页面缺少目标代码提交，禁止发布: " + page.featureId());
+        }
         for (int index = 0; index < page.evidence().size(); index++) {
             Evidence evidence = page.evidence().get(index);
-            if (evidence.commit() == null || evidence.commit().isBlank()) continue;
+            if (evidence.commit() == null || evidence.commit().isBlank()) {
+                throw new IllegalArgumentException("代码证据缺少 commit，禁止发布: " + page.featureId()
+                        + " evidence[" + index + "]");
+            }
             if (!codeCommit.equals(evidence.commit())) {
                 throw new IllegalArgumentException("Claim 证据跨 commit（页面 " + codeCommit + "，证据 "
                         + evidence.commit() + "）: " + page.featureId() + " evidence[" + index + "]");
@@ -140,7 +149,33 @@ public class ModuleClaimQualityGate {
         }
     }
 
-    /** 既有约束：Claim 引用下标有效、类型存在、不跨项目/版本。 */
+    /** 硬约束 5：CODE 类型证据的符号必须仍存在于当前符号图快照（文件在但符号被删除时拦截）。 */
+    private void validateSymbolPresence(String projectId, PageSource page) {
+        if (graphStore == null) return;
+        String commit = null;
+        try {
+            commit = graphStore.latestCommit(projectId);
+        } catch (RuntimeException exception) {
+            throw new IllegalArgumentException("符号图快照不可用，无法核验证据符号: " + page.featureId(), exception);
+        }
+        if (commit == null) {
+            throw new IllegalArgumentException("符号图快照不存在，无法核验证据符号: " + page.featureId());
+        }
+        for (int index = 0; index < page.evidence().size(); index++) {
+            Evidence evidence = page.evidence().get(index);
+            if (!"CODE".equals(evidence.type())) continue;
+            String symbol = evidence.symbol();
+            if (symbol == null || symbol.isBlank()) continue;
+            boolean present = graphStore.findSymbols(projectId, commit, symbol, 5).stream()
+                    .anyMatch(found -> symbol.equals(found.qualifiedName()));
+            if (!present) {
+                throw new IllegalArgumentException("证据符号已不存在于代码快照: " + page.featureId()
+                        + " evidence[" + index + "] " + symbol);
+            }
+        }
+    }
+
+    /** 既有约束：Claim 引用下标有效、证据 ID namespace 与实际类型一致、不跨项目/版本。 */
     private void validateClaimReferences(String projectId, String version, PageSource page) {
         for (Claim claim : list(page.claims())) {
             if (claim.support() == ClaimSupport.FULL && list(claim.evidenceIds()).isEmpty()) {
@@ -156,6 +191,11 @@ public class ModuleClaimQualityGate {
                             + " -> " + evidenceId);
                 }
                 Evidence evidence = page.evidence().get(index);
+                String namespace = namespaceOf(evidenceId);
+                if (namespace != null && !namespaceMatchesType(namespace, evidence.type())) {
+                    throw new IllegalArgumentException("Claim 证据 ID 前缀与证据类型不一致: " + claim.claimId()
+                            + " -> " + evidenceId + "（证据类型 " + evidence.type() + "）");
+                }
                 if (!projectId.equals(evidence.source())) {
                     throw new IllegalArgumentException("Claim 证据跨项目: " + claim.claimId() + " -> " + evidenceId);
                 }
@@ -187,6 +227,30 @@ public class ModuleClaimQualityGate {
 
     private String firstText(String primary, String fallback) {
         return primary != null && !primary.isBlank() ? primary.trim() : (fallback == null ? "" : fallback.trim());
+    }
+
+    /** 提取证据 ID 的 namespace 前缀（形如 code:auth:0 -> code）；格式不识别时返回 null。 */
+    static String namespaceOf(String evidenceId) {
+        if (evidenceId == null) return null;
+        int firstColon = evidenceId.indexOf(':');
+        if (firstColon <= 0) return null;
+        return evidenceId.substring(0, firstColon);
+    }
+
+    /** namespace 与 Evidence 类型的合法映射（code-graph <-> CODE_GRAPH 等）。 */
+    static boolean namespaceMatchesType(String namespace, String evidenceType) {
+        if (namespace == null || evidenceType == null) return false;
+        return switch (namespace) {
+            case "code" -> "CODE".equals(evidenceType);
+            case "code-graph" -> "CODE_GRAPH".equals(evidenceType);
+            case "route" -> "ROUTE".equals(evidenceType);
+            case "dependency" -> "DEPENDENCY".equals(evidenceType);
+            case "data" -> "DATA".equals(evidenceType);
+            case "config" -> "CONFIG".equals(evidenceType);
+            case "test" -> "TEST_SYMBOL".equals(evidenceType);
+            case "diagnostic" -> "DIAGNOSTIC".equals(evidenceType);
+            default -> false;
+        };
     }
 
     /** 解析证据 ID 为页面 evidence 下标；格式不识别时返回 null。 */

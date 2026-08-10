@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -28,12 +29,15 @@ class ModuleStaleRebuildServiceTest {
     private final ObjectMapper mapper = new ObjectMapper();
     private final ModuleFactExtractor extractor = mock(ModuleFactExtractor.class);
     private final KnowledgeDraftLifecycleService draftLifecycleService = mock(KnowledgeDraftLifecycleService.class);
+    private final com.example.requirementrag.wiki.WikiStalenessService stalenessService =
+            mock(com.example.requirementrag.wiki.WikiStalenessService.class);
 
     private ModuleStaleRebuildService service() {
         WikiProperties properties = new WikiProperties(temp.resolve("wiki").toString(),
                 temp.resolve("sources").toString(), temp.resolve("drafts").toString());
         return new ModuleStaleRebuildService(mapper, properties, new WikiRepository(mapper, properties),
-                extractor, new ModuleWikiPlanner(), ModuleClaimQualityGate.lenient(), draftLifecycleService);
+                extractor, new ModuleWikiPlanner(), ModuleClaimQualityGate.lenient(), draftLifecycleService,
+                stalenessService);
     }
 
     private void publishModulePage(String oldClaimText) throws Exception {
@@ -84,9 +88,19 @@ class ModuleStaleRebuildServiceTest {
                 List.of());
     }
 
+    private void stubStaleReport(String featureId) {
+        when(stalenessService.staleness("game", "5.1")).thenReturn(
+                new com.example.requirementrag.wiki.WikiStalenessService.StaleReport("game", "5.1",
+                        "old", "new", true,
+                        List.of(new com.example.requirementrag.wiki.WikiStalenessService.StalePage(featureId,
+                                com.example.requirementrag.wiki.WikiModels.PageType.MODULE,
+                                "auth 模块", List.of("代码提交变化")))));
+    }
+
     @Test
     void rebuildsModulePageAndReportsClaimLevelDiff() throws Exception {
         publishModulePage("旧的职责描述");
+        stubStaleReport("module-auth");
         when(extractor.extract("game", "src/auth", "5.1")).thenReturn(newBundle());
         when(draftLifecycleService.initializeDraft(anyString(), anyString(), anyString(), anyString(), anyString()))
                 .thenAnswer(invocation -> new KnowledgeDraftModels.DraftMetadata(
@@ -107,5 +121,32 @@ class ModuleStaleRebuildServiceTest {
             Path written = dirs.findFirst().orElseThrow();
             assertThat(written.resolve("claim-diff.json")).isRegularFile();
         }
+    }
+
+    @Test
+    void rejectsRebuildOfNonModulePage() throws Exception {
+        publishModulePage("旧的职责描述");
+        Path pageFile = temp.resolve("wiki").resolve("game").resolve("5.1").resolve("pages")
+                .resolve("module-auth.json");
+        String content = Files.readString(pageFile).replace("\"pageType\":\"MODULE\"",
+                "\"pageType\":\"FEATURE\"");
+        Files.writeString(pageFile, content);
+        stubStaleReport("module-auth");
+
+        assertThatThrownBy(() -> service().rebuild("game", "5.1", "src/auth", "module-auth", "new", "reviewer"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("不是 MODULE 页面");
+    }
+
+    @Test
+    void rejectsRebuildWhenTargetIsNotInStaleReport() throws Exception {
+        publishModulePage("旧的职责描述");
+        when(stalenessService.staleness("game", "5.1")).thenReturn(
+                new com.example.requirementrag.wiki.WikiStalenessService.StaleReport("game", "5.1",
+                        "old", "old", false, List.of()));
+
+        assertThatThrownBy(() -> service().rebuild("game", "5.1", "src/auth", "module-auth", "new", "reviewer"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("不在当前 StaleReport");
     }
 }
