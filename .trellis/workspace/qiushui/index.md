@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
+- **Total Sessions**: 18
 - **Last Active**: 2026-08-10
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~769 | Active |
+| `journal-1.md` | ~834 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-08-10 | 0.8.5 交付项 1：评测基线与统一检索管线（Phase 0-1） | - | `main` |
 | 17 | 2026-08-10 | Module 闭环最终验证与验收产物固化（0.8.4） | - | `main` |
 | 16 | 2026-08-10 | 质量门审查整改：封堵绕过 + rebuild 守卫（0.8.4） | - | `main` |
 | 15 | 2026-08-10 | Module 质量门四硬约束与完整闭环真实验收（0.8.4） | - | `main` |

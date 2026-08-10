@@ -767,3 +767,68 @@ Module 闭环已作为稳定模板收尾。后续二选一（待用户决定）�
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: 0.8.5 交付项 1：评测基线与统一检索管线（Phase 0-1）
+
+**Date**: 2026-08-10
+**Task**: 0.8.5 交付项 1：评测基线与统一检索管线（Phase 0-1）
+**Branch**: `main`
+
+### Summary
+
+QualityGate 全 profile + NO_RESULTS 门禁；336 测试 verify 全绿；0.8.5-SNAPSHOT 版本化
+
+### Main Changes
+
+# 0.8.5 交付项 1：评测基线与统一检索管线（Phase 0-1）
+
+- 日期：2026-08-10
+
+## 完成内容
+
+1. **版本升级**：0.8.5-SNAPSHOT（pom/yml/Dockerfile/README/verify-report），CHANGELOG 新建 0.8.5 节
+2. **检索质量门禁扩展**（`RetrievalQualityGateTest`，随 CI 默认执行）：
+   - 全 profile HIT 回归：48 条冻结用例（REQUIREMENT_REVIEW 12 / DEVELOPMENT_PLAN 30 / WIKI_BUILD 12）断言**文档黄金 + 代码黄金**命中都不被确定性逻辑（去重/代表选择/截断）误杀
+   - 严格 NO_RESULTS 断言：6 条无答案用例在空语料下必须返回 `RagOutcomeStatus.NO_RESULTS`（路线图"真正零命中返回 NO_RESULTS，不虚构命中"）
+   - 测试按用例自身 profile 驱动管线（此前固定 REQUIREMENT_REVIEW 只覆盖 6 条）
+
+## 现状核对（路线图 Phase 0/1 对照）
+
+| 路线图要求 | 现状 |
+|---|---|
+| 评测集 ≥50 条 | 54 条（shiguang-v1，含 NO_RESULTS×6、version-leakage、cross-project、dependency-degradation tags）✓ |
+| 同一管线多 profile | RetrievalPipeline + 3 profiles；服务层全部走 pipeline ✓ |
+| 入口不复制检索逻辑 | DevelopmentPlan/Stream/DoubtReview/agentic 均经 pipeline ✓ |
+| 评测 JSON 报告 | RetrievalEvaluationIT → report.json + md（env 门控）✓ |
+| 缓存隔离/配置指纹 | 0.8.1 已实现 ✓ |
+| 数据/代码/配置/模型指纹 | tools/retrieval-eval-comparison.py 已实现 ✓ |
+
+## 验证
+
+`JAVA_HOME=.../ms-17.0.20 ./mvnw verify`：**336 测试全绿，BUILD SUCCESS**（含新 NO_RESULTS 门禁）
+
+## 下一步（交付项 2：错误/降级/超时治理 Phase 2）
+
+现状快照：
+- MCP：依赖失败 → DEGRADED + warning ✓（McpToolInvocationService）
+- SSE：warning 事件已发（DevelopmentPlanStreamService）；error 事件与核心失败结束语义待确认
+- REST：NO_RESULTS/DEGRADED 尚未结构化暴露（ReviewFacade 返回结果+warning，无 status 字段）；依赖失败走异常 → 5xx
+- 待做：REST 响应 status 契约、SSE error 事件、静默 catch 清理、warning code 定稿
+
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
