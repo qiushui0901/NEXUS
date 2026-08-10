@@ -832,3 +832,34 @@ QualityGate 全 profile + NO_RESULTS 门禁；336 测试 verify 全绿；0.8.5-S
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 0.8.5 交付项 2-6：状态契约、证据闭环、AST shadow、大文档覆盖、质量门收口
+
+**Date**: 2026-08-10
+**Task**: 0.8.5 交付项 2-6：状态契约、证据闭环、AST shadow、大文档覆盖、质量门收口
+**Branch**: `main`
+
+### Summary
+
+Phase 2-6 全部落地：341 测试 verify 全绿；状态契约注册表 + CONTEXT_TRUNCATED；Module 需求证据接入；Java AST shadow 差异报告；模块轮转上下文切片
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+(No commits - planning session)
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
