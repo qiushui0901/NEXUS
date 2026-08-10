@@ -72,8 +72,8 @@ public class CodeKnowledgeService {
      * 杜绝旧索引晚完成覆盖新 live 的发布乱序。
      */
     public CodeIndexResponse index(String projectId) throws IOException {
-        return indexLockService.execute(projectId, () -> {
-            try {
+        try {
+            return indexLockService.execute(projectId, () -> {
                 RagProperties.ProjectConfig project = projectRegistry.require(projectId);
                 CodeScanner.ScanResult result = scanner.scan(project.toCodeConfig());
                 List<CodeChunk> annotated = annotateChunks(projectId, result.chunks());
@@ -81,16 +81,11 @@ public class CodeKnowledgeService {
                 if (graphStore != null) graphStore.replaceSnapshot(result);
                 return new CodeIndexResponse(result.projectId(), result.commitSha(), result.files(),
                         annotated.size());
-            } catch (IOException exception) {
-                throw new IndexExecutionException(exception);
-            }
-        });
-    }
-
-    /** 包装受检异常以适配锁服务函数式接口。 */
-    private static final class IndexExecutionException extends RuntimeException {
-        IndexExecutionException(IOException cause) {
-            super(cause);
+            });
+        } catch (IOException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new IllegalStateException("代码索引失败", exception);
         }
     }
 

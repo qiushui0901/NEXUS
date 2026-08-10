@@ -56,6 +56,12 @@
 
 ### Fixed
 
+- 增量索引第四轮修复（0.8.5）：
+  - 重试安全：删除前从旧 ID 集合排除本次 upsert 的新 chunk ID——部分失败后按提示重试同一 commit 范围不再删除刚写入的数据；新增重试场景回归测试（live 含旧 ID + 上次失败残留新 ID）。
+  - 受检异常原类型恢复：`CodeIndexLockService.execute` 改为支持受检异常的 `ThrowingSupplier`，`IOException`/`InterruptedException` 按原类型透出（不再被包装成 RuntimeException），InterruptedException 同时恢复中断位。
+  - 最终一致策略文档化：`docs/retrieval-status-contract.md` 明确增量索引的文件级安全替换与重试收敛语义（升级 staging + alias 原子发布留待强一致需求时实施）。
+### Fixed
+
 - 增量索引第三轮修复（0.8.5）：
   - 删除失败语义明确：新 chunk 已写入但旧 chunk 清理失败时抛部分失败异常（记录待清理 ID），提示对同一 commit 范围重试收敛——不再静默新旧并存。
   - `indexedChunks` 统计修正为真实扫描 chunk 数（此前误用文件数）。

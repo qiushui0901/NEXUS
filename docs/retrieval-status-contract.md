@@ -39,7 +39,17 @@
 
 新增失败路径时必须登记 code，禁止复用语义不同的既有 code。
 
-## 3. 实现位置与测试
+## 3. 代码索引发布语义（增量路径）
+
+增量索引采用**文件级安全替换 + 最终一致**策略（MVP 决策，非原子发布）：
+
+- 顺序：滚动快照旧 chunk ID → `git show` 读取目标 commit 内容 → upsert 新 chunk（新 ID）→ 只按**旧 ID** 删除；
+- 删除前过滤本次 upsert 的新 ID——**部分失败后对同一 commit 范围重试不会删除刚写入的 chunk**；
+- 旧 chunk 清理失败 → 抛出可重试的部分失败异常（新旧并存，查询可能短暂看到重复命中），重试同一范围收敛；
+- 查询侧短期可能看到新旧并存（最终一致）；需要强一致时应升级为 staging collection + alias 原子切换（暂未实施）。
+
+## 4. 实现位置与测试
+
 
 - 状态机：`RetrievalPipeline`（核心阶段全失败且无证据 → `RagUnavailableException`；有 warning → DEGRADED；全空 → NO_RESULTS）
 - HTTP 映射：`ApiExceptionHandler`（RagUnavailable → 503 + `outcome=FAILED`；EmbeddingUnavailable → 503）

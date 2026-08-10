@@ -12,6 +12,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 基于 Git diff 的增量代码索引服务。
@@ -91,14 +92,21 @@ public class IncrementalCodeIndexService {
             return new IncrementalCodeIndexResponse(projectId, oldSha, newSha, changedFiles.size(), 0, 0);
         }
 
-        return indexLockService.execute(projectId, () -> {
-            try {
+        try {
+            return indexLockService.execute(projectId, () -> {
                 int chunkCount = applyIncremental(projectId, codeConfig, newSha, sourceFiles);
                 return buildResponse(projectId, oldSha, newSha, changedFiles, sourceFiles, chunkCount);
-            } catch (IOException | InterruptedException exception) {
-                throw new IncrementalExecutionException(exception);
+            });
+        } catch (IOException | InterruptedException exception) {
+            if (exception instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
             }
-        });
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw exception;
+        } catch (Exception exception) {
+            throw new IllegalStateException("增量索引失败", exception);
+        }
     }
 
     /**
@@ -116,9 +124,12 @@ public class IncrementalCodeIndexService {
         CodeScanner.ScanResult changed = scanner.scanFiles(codeConfig, newSha, sourceFiles);
         List<CodeChunk> chunks = changed.chunks();
         store.upsertChunks(liveCollection, chunks);
+        Set<String> newChunkIds = chunks.stream().map(CodeChunk::id).collect(java.util.stream.Collectors.toSet());
         java.util.List<String> pendingCleanup = new java.util.ArrayList<>();
         for (String filePath : sourceFiles) {
-            List<String> oldIds = oldIdsByFile.getOrDefault(filePath, List.of());
+            List<String> oldIds = oldIdsByFile.getOrDefault(filePath, List.of()).stream()
+                    .filter(id -> !newChunkIds.contains(id))
+                    .toList();
             try {
                 store.deleteChunks(liveCollection, oldIds);
             } catch (RuntimeException exception) {
@@ -160,12 +171,6 @@ public class IncrementalCodeIndexService {
                 changedFiles.size(), sourceFiles.size(), chunkCount);
     }
 
-    /** 包装受检异常以适配锁服务函数式接口。 */
-    private static final class IncrementalExecutionException extends RuntimeException {
-        IncrementalExecutionException(Exception cause) {
-            super(cause);
-        }
-    }
 
     private String normalizePath(String path) {
         return path.replace('\\', '/');
