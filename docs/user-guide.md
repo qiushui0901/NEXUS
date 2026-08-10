@@ -322,7 +322,21 @@ Cursor / Codex / stdio 桥接完整说明见 [mcp-quickstart.md](mcp-quickstart.
 
 ---
 
-## 13. 当前限制
+## 13. 检索状态与降级语义
+
+所有检索入口（REST / SSE / MCP）返回统一四态：
+
+- `SUCCESS`：正常命中；
+- `NO_RESULTS`：真正零命中（语料存在但无匹配），HTTP 2xx；
+- `DEGRADED`：非关键依赖（BGE/LLM 重排等）失败但保留可用候选，附带 warnings；
+- `FAILED`：核心依赖失败且无可用证据，HTTP 503。
+
+每次响应携带 warnings（stage + code + message + durationMs）；稳定 warning code
+注册表见 [retrieval-status-contract.md](retrieval-status-contract.md)。大文档正文
+超出上下文预算时按模块轮转保留代表块并输出 `CONTEXT_TRUNCATED` 警告（省略块数、
+覆盖模块数），不再静默丢弃后部模块。
+
+## 14. 当前限制
 
 细节见 [nexus-improvement-roadmap.md](nexus-improvement-roadmap.md)。摘要：
 

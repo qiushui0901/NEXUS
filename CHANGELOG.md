@@ -33,6 +33,7 @@
 - Phase 3 证据闭环补齐跨域验收样例：Module Wiki 需求证据接入（`ModuleKnowledgeBuildService` / `ModuleStaleRebuildService` 经 `RetrievalPipeline` WIKI_BUILD profile 检索需求，绑定 `requirement:N` 证据与「关联需求」Claim；需求检索不可用时不阻断模块构建）；质量门适配需求证据（commit/跨项目校验仅适用于代码类证据，`requirement`↔REQUIREMENT 前缀映射）。
 - Phase 4 核对收口：Java AST shadow 差异报告（`JavaAstStructureShadowTest`）——同一 fixture 对 Tree-sitter AST 主扫描器与旧正则扫描器做符号差异对比，覆盖 record / 方法重载 / 嵌套类型 / 注解 / 继承 / 实现 / 构造器，断言 AST 全结构识别且差异报告精确暴露旧解析器结构盲区（record 完全漏检，嵌套类与方法不夸大）；索引发布回滚（版本化 collection + alias 原子切换 + 校验失败不发布）、影响分析三类关系置信度（静态/启发式/未解析）与索引并发互斥经代码核对与既有测试确认。
 - Phase 5 大文档覆盖收口：需求正文上下文按模块轮转切片（`EvidenceRegistry.requirementContextSlice`）——预算内每模块至少保留一条代表块，预算用尽的省略块计入覆盖报告（纳入/省略块数、覆盖模块数），不再静默丢弃后部模块；`DevelopmentPlanService` 在省略发生时输出 `CONTEXT_TRUNCATED` warning + DEGRADED 诊断并复用到提示文本。新增切片覆盖与无预算两个测试。
+- Phase 6 文档收口：`docs/user-guide.md` 新增「检索状态与降级语义」章节（四态 × 三入口、warnings 结构、`CONTEXT_TRUNCATED` 与注册表指引），`docs/retrieval-status-contract.md` 作为权威契约；`docs/verification/` 固化机器可读验证报告。
 - 检索质量门禁（`RetrievalQualityGateTest`）扩展为全 profile 确定性回归：48 条 HIT 用例（REQUIREMENT_REVIEW / DEVELOPMENT_PLAN / WIKI_BUILD）断言文档与代码黄金命中不被确定性逻辑误杀；6 条 NO_RESULTS 用例断言空语料必须返回 `NO_RESULTS`（不虚构命中）。随 CI 默认执行，不依赖 Qdrant/Embedding/BGE。
 
 - Wiki 过期检测（`WikiStalenessService`）升级为符号级传播：Git diff 变更文件 → 变更符号（`symbolsByFiles`）→ 入向调用关系（`relations`）→ 命中页面 `codeSymbols` 引用的符号 → 标记页面 STALE 并在原因中展示「变更符号 -> 页面符号」传播链；文件未命中但调用关系被变更触及的页面同样失效。
