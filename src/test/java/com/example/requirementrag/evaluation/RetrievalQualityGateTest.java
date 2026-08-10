@@ -63,7 +63,6 @@ class RetrievalQualityGateTest {
     @Test
     void everyGoldenRequirementHitSurvivesTheDeterministicPipeline() throws Exception {
         List<RetrievalEvaluationCase> cases = RetrievalEvaluationDataset.loadResource(DATASET).stream()
-                .filter(c -> c.profile() == RetrievalEvaluationCase.RetrievalProfile.REQUIREMENT_REVIEW)
                 .filter(c -> c.expectedOutcome() == RetrievalEvaluationCase.ExpectedOutcome.HIT)
                 .toList();
         assertThat(cases).isNotEmpty();
@@ -73,6 +72,36 @@ class RetrievalQualityGateTest {
             failures.addAll(assertCase(testCase));
         }
         assertThat(failures).as("golden hits lost by deterministic pipeline").isEmpty();
+    }
+
+    @Test
+    void everyNoResultsCaseStaysNoResultsThroughTheDeterministicPipeline() throws Exception {
+        List<RetrievalEvaluationCase> cases = RetrievalEvaluationDataset.loadResource(DATASET).stream()
+                .filter(c -> c.expectedOutcome() == RetrievalEvaluationCase.ExpectedOutcome.NO_RESULTS)
+                .toList();
+        assertThat(cases).isNotEmpty();
+
+        List<String> failures = new ArrayList<>();
+        for (RetrievalEvaluationCase testCase : cases) {
+            when(queryRouter.routeWithOutcome(eq(testCase.query()), any()))
+                    .thenReturn(RagOutcome.of(RagOutcomeStatus.SUCCESS,
+                            new QueryRouting(testCase.projectId(), "server", 1.0, "explicit"),
+                            "query.route", 1, 1));
+            when(projectRegistry.resolveRequirementCollection(testCase.projectId()))
+                    .thenReturn("requirements_" + testCase.projectId());
+            when(documentStore.hybridSearch(any(), eq(testCase.query()), eq(testCase.documentId()),
+                    eq(testCase.version()))).thenReturn(List.of());
+            when(codeKnowledgeService.search(any(), eq(testCase.projectId()), any())).thenReturn(List.of());
+
+            RagOutcome<RetrievalBundle> outcome = pipeline.execute(new RetrievalRequest(testCase.query(),
+                    RetrievalProfile.REQUIREMENT_REVIEW, testCase.projectId(),
+                    testCase.documentId(), testCase.version(), TOP_K));
+
+            if (outcome.status() != RagOutcomeStatus.NO_RESULTS) {
+                failures.add(testCase.id() + " empty corpus must yield NO_RESULTS, got " + outcome.status());
+            }
+        }
+        assertThat(failures).as("empty corpus must not produce hits").isEmpty();
     }
 
     private List<String> assertCase(RetrievalEvaluationCase testCase) throws Exception {
@@ -89,8 +118,13 @@ class RetrievalQualityGateTest {
         when(documentStore.hybridSearch(any(), eq(testCase.query()), eq(testCase.documentId()), eq(testCase.version())))
                 .thenReturn(candidates);
 
+        List<com.example.requirementrag.model.CodeChunk> codeCandidates = goldCodeChunks(testCase);
+        codeCandidates.addAll(noiseCodeChunks(testCase));
+        when(codeKnowledgeService.search(any(), eq(testCase.projectId()), any())).thenReturn(codeCandidates);
+
+        RetrievalProfile profile = RetrievalProfile.valueOf(testCase.profile().name());
         RagOutcome<RetrievalBundle> outcome = pipeline.execute(new RetrievalRequest(testCase.query(),
-                RetrievalProfile.REQUIREMENT_REVIEW, testCase.projectId(),
+                profile, testCase.projectId(),
                 testCase.documentId(), testCase.version(), TOP_K));
 
         for (RetrievalEvaluationCase.GoldDocument gold : testCase.goldDocuments()) {
@@ -101,7 +135,37 @@ class RetrievalQualityGateTest {
                 failures.add(testCase.id() + " lost gold " + gold.filename() + "#" + gold.parentOrder());
             }
         }
+        for (RetrievalEvaluationCase.GoldCode gold : testCase.goldCode()) {
+            boolean hit = outcome.data().codeEvidence().stream()
+                    .anyMatch(chunk -> gold.symbolName().equals(chunk.symbolName())
+                            && gold.filePath().equals(chunk.filePath()));
+            if (!hit) {
+                failures.add(testCase.id() + " lost gold code " + gold.symbolName());
+            }
+        }
         return failures;
+    }
+
+    private List<com.example.requirementrag.model.CodeChunk> goldCodeChunks(RetrievalEvaluationCase testCase) {
+        List<com.example.requirementrag.model.CodeChunk> chunks = new ArrayList<>();
+        for (RetrievalEvaluationCase.GoldCode gold : testCase.goldCode()) {
+            chunks.add(codeChunk(testCase, gold.filePath(), gold.symbolName(), "gold"));
+        }
+        return chunks;
+    }
+
+    private List<com.example.requirementrag.model.CodeChunk> noiseCodeChunks(RetrievalEvaluationCase testCase) {
+        List<com.example.requirementrag.model.CodeChunk> chunks = new ArrayList<>();
+        chunks.add(codeChunk(testCase, "src/UnrelatedService.java", "com.example.UnrelatedService.run", "noise-a"));
+        chunks.add(codeChunk(testCase, "src/OtherService.java", "com.example.OtherService.handle", "noise-b"));
+        return chunks;
+    }
+
+    private com.example.requirementrag.model.CodeChunk codeChunk(RetrievalEvaluationCase testCase, String filePath,
+                                                                 String symbolName, String marker) {
+        return new com.example.requirementrag.model.CodeChunk("id-" + marker + "-" + symbolName,
+                testCase.projectId(), "sha", filePath, "method", symbolName, 1, 10,
+                marker + "-" + symbolName, "hash-" + marker);
     }
 
     private List<ChunkRecord> goldChunks(RetrievalEvaluationCase testCase) {
