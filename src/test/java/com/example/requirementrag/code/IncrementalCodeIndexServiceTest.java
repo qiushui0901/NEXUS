@@ -148,6 +148,43 @@ class IncrementalCodeIndexServiceTest {
         assertEquals(0, response.indexedChunks());
     }
 
+    @Test
+    void retryDeletesOnlyOldIdsWhenTheNewChunkAlreadyExists() throws Exception {
+        git("init");
+        git("config", "user.email", "test@example.com");
+        git("config", "user.name", "Test User");
+        Path file = repository.resolve("src/service.py");
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, "def run():\n    return 1\n", StandardCharsets.UTF_8);
+        git("add", ".");
+        git("commit", "-m", "initial");
+        String baseSha = git("rev-parse", "HEAD");
+        Files.writeString(file, "def run():\n    return 2\n", StandardCharsets.UTF_8);
+        git("add", ".");
+        git("commit", "-m", "change service");
+        String newSha = git("rev-parse", "HEAD");
+
+        ProjectRegistry registry = mock(ProjectRegistry.class);
+        CodeQdrantStore store = mock(CodeQdrantStore.class);
+        RagProperties properties = mock(RagProperties.class);
+        RagProperties.ProjectConfig project = new RagProperties.ProjectConfig(
+                "project", "Project", "group", "server", "requirements-v51", "code-v51",
+                repository.toString(), null, null, List.of(), List.of(), 1_000_000);
+        whenProject(registry, project);
+        MultiLanguageCodeScanner scanner = new MultiLanguageCodeScanner(new CodeLanguageRegistry());
+        String newId = scanner.scanFiles(project.toCodeConfig(), newSha, List.of("src/service.py"))
+                .chunks().get(0).id();
+        org.mockito.Mockito.when(store.scrollChunkIds(
+                "code-v51-live", "project", "src/service.py", 10_000))
+                .thenReturn(List.of("old-id", newId));
+
+        new IncrementalCodeIndexService(registry, scanner, store,
+                new GitDiffService(properties, registry), null, new CodeIndexLockService())
+                .indexWithResult("project", baseSha, newSha);
+
+        verify(store).deleteChunks("code-v51-live", List.of("old-id"));
+    }
+
     private void whenProject(ProjectRegistry registry, RagProperties.ProjectConfig project) {
         org.mockito.Mockito.when(registry.require("project")).thenReturn(project);
         org.mockito.Mockito.when(registry.resolveCodeCollection("project")).thenReturn("code-v51");

@@ -126,12 +126,14 @@ public class IncrementalCodeIndexService {
         store.upsertChunks(liveCollection, chunks);
         Set<String> newChunkIds = chunks.stream().map(CodeChunk::id).collect(java.util.stream.Collectors.toSet());
         java.util.List<String> pendingCleanup = new java.util.ArrayList<>();
+        int deleted = 0;
         for (String filePath : sourceFiles) {
             List<String> oldIds = oldIdsByFile.getOrDefault(filePath, List.of()).stream()
                     .filter(id -> !newChunkIds.contains(id))
                     .toList();
             try {
                 store.deleteChunks(liveCollection, oldIds);
+                deleted += oldIds.size();
             } catch (RuntimeException exception) {
                 log.warn("增量索引旧 chunk 清理失败 {}: {} 个旧 ID 待重试", filePath, oldIds.size(), exception);
                 pendingCleanup.addAll(oldIds);
@@ -142,7 +144,7 @@ public class IncrementalCodeIndexService {
                     + " 个旧 chunk 清理失败（新旧并存）。请对同一 commit 范围重试增量索引以收敛");
         }
         log.info("增量索引完成 {}: {} 个源码文件, {} 个新 chunk, 删除 {} 个旧 chunk（live alias {}）",
-                projectId, sourceFiles.size(), chunks.size(), deletedOldIds(oldIdsByFile), liveCollection);
+                projectId, sourceFiles.size(), chunks.size(), deleted, liveCollection);
         if (graphStore != null) {
             try {
                 CodeScanner.ScanResult snapshot = scanner.scan(codeConfig);
@@ -158,10 +160,6 @@ public class IncrementalCodeIndexService {
             }
         }
         return chunks.size();
-    }
-
-    private long deletedOldIds(java.util.Map<String, List<String>> oldIdsByFile) {
-        return oldIdsByFile.values().stream().mapToLong(List::size).sum();
     }
 
     private IncrementalCodeIndexResponse buildResponse(String projectId, String oldSha, String newSha,
