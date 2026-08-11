@@ -63,6 +63,8 @@
 ### Changed
 
 - 平台回迁：Spring AI 1.1.2 → **2.0.0**、Spring Boot 3.4.9 → **4.1.0**、**JDK 17 → 21**（pom/Enforcer/Dockerfile/README/verify-report）；移除 spring-ai-alibaba BOM（无 artifact 使用）。适配：`ChatClient.options()` 改传 Options Builder（2.0 签名）、SSE 事件改用项目 Jackson 2 序列化 JSON 字符串发送（Boot 4 默认 Jackson 3 转换器无法序列化 Jackson 2 JsonNode payload）。360 测试全绿（JDK 21 + Enforcer verify 通过）。
+- CI（`.github/workflows/ci.yml`）JDK 17 → 21（`setup-java` temurin 21），与 Enforcer 要求一致。
+
 
 ### Fixed
 
