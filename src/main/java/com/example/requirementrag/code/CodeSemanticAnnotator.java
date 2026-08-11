@@ -6,6 +6,7 @@ import com.example.requirementrag.service.GenerationChatOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -53,6 +54,7 @@ public class CodeSemanticAnnotator {
     private final java.util.concurrent.ExecutorService annotationExecutor;
     private final int parallelism;
 
+    @Autowired
     public CodeSemanticAnnotator(ChatClient chatClient, ObjectMapper objectMapper, RagProperties properties) {
         this(chatClient, objectMapper, properties, defaultParallelism());
     }
