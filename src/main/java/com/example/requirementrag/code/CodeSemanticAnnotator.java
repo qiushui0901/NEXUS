@@ -234,7 +234,7 @@ public class CodeSemanticAnnotator {
         String response = chatClient.prompt()
                 .system(SYSTEM_PROMPT)
                 .user(buildUserPrompt(batch))
-                .options(GenerationChatOptions.forModel(resolveModel()).build())
+                .options(GenerationChatOptions.forModel(resolveModel()))
                 .call()
                 .content();
         List<SemanticAnnotation> annotations = parseAnnotations(response, batch.size());

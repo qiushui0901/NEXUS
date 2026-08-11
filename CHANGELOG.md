@@ -60,6 +60,10 @@
 
 - 文档摄入格式确认与固化（开源 RAG 引擎对比后的 P0 落地）：上传入口经 Apache Tika 原生支持 `pdf` / `docx` / `xlsx` / `html` / `txt` / HTML-zip（PDF 文本提取由 Tika→PDFBox 完成，无需额外组件）；新增真实 PDF 摄入回归测试（PDFBox 生成 → Tika 提取 → 分块入库），`docs/user-guide.md` 记录支持格式；扫描件 OCR 记为已知缺口。检索评测对照能力（`tools/retrieval-eval-comparison.py` 基线/重排对照 + 54 条冻结评测集 + QualityGate 全 profile 门禁）经核对已具备，无需引入 FlashRAG。
 
+### Changed
+
+- 平台回迁：Spring AI 1.1.2 → **2.0.0**、Spring Boot 3.4.9 → **4.1.0**、**JDK 17 → 21**（pom/Enforcer/Dockerfile/README/verify-report）；移除 spring-ai-alibaba BOM（无 artifact 使用）。适配：`ChatClient.options()` 改传 Options Builder（2.0 签名）、SSE 事件改用项目 Jackson 2 序列化 JSON 字符串发送（Boot 4 默认 Jackson 3 转换器无法序列化 Jackson 2 JsonNode payload）。360 测试全绿（JDK 21 + Enforcer verify 通过）。
+
 ### Fixed
 
 - 审查整改（0.8.5 安全与索引边界）：

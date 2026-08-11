@@ -138,7 +138,7 @@ public class DoubtReviewService {
                                 context.latestContext(),
                                 context.retrievedContext(),
                                 count))
-                        .options(GenerationChatOptions.forModel(properties.llm().resolvedDoubtReviewModel()).build())
+                        .options(GenerationChatOptions.forModel(properties.llm().resolvedDoubtReviewModel()))
                         .call()
                         .entity(DoubtBatch.class));
 
@@ -163,7 +163,7 @@ public class DoubtReviewService {
                                 Objects.toString(request.module(), "全部"),
                                 historicalContext,
                                 count))
-                        .options(GenerationChatOptions.forModel(properties.llm().resolvedDoubtReviewModel()).build())
+                        .options(GenerationChatOptions.forModel(properties.llm().resolvedDoubtReviewModel()))
                         .call()
                         .entity(DoubtBatch.class));
 

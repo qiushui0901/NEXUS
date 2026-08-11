@@ -11,7 +11,7 @@
 - Module Wiki 从事实抽取、Evidence、Claim、质量门到 stale-to-draft 的真实仓库闭环；
 - MCP 工具、Wiki 页面和版本差异的结构化交付；
 - 统一检索、BGE/LLM 重排、并行召回、缓存和离线评测的基础能力；
-- Java 17、Spring Boot 3.4、Spring AI 1.1.2、Qdrant、Tree-sitter、SQLite 符号图；
+- Java 21、Spring Boot 4.1、Spring AI 2.0、Qdrant、Tree-sitter、SQLite 符号图；
 - 构建、覆盖率和确定性评测已有 CI 基线。
 
 0.8.5 不重复做 Wiki 页面类型扩展，也不提前建设 0.9 的 SSO、PostgreSQL、多仓库管理和完整企业化部署。

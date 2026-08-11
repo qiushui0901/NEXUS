@@ -5,7 +5,7 @@
 NEXUS 把分散的产品文档、Git 仓库与测试信号，整理成按**项目 + 版本**组织的知识服务。团队浏览同一套 Wiki；编码 Agent 通过 **MCP** 调用同一批事实，拿到带稳定编号的引用，而不是无法核对的模型空话。
 
 > 当前版本：`0.8.5-SNAPSHOT`  
-> 技术栈：Java 17 · Spring Boot 3.4 · Spring AI 1.1.2（Alibaba 基线）· Qdrant · Tree-sitter
+> 技术栈：Java 21 · Spring Boot 4.1 · Spring AI 2.0· Qdrant · Tree-sitter
 
 ---
 
@@ -108,7 +108,7 @@ Compose 共享部署、MCP 客户端、索引与 API 说明见下方文档，不
 
 ## 技术栈
 
-- **运行时：** Java 17、Spring Boot 3.4、Spring AI 1.1.2（Spring AI Alibaba 基线）  
+- **运行时：** Java 21、Spring Boot 4.1、Spring AI 2.0  
 - **检索：** Qdrant dense + desc_dense 双向量 + sparse、LLM 重排（BGE 分差可跳过）、OpenAI 兼容网关（嵌入 + 生成）  
 - **代码：** Tree-sitter 多语言解析、SQLite 调用图、LLM 语义标注  
 - **交付：** Maven、Docker / Compose、Actuator、Prometheus、OpenTelemetry  
@@ -125,7 +125,7 @@ NEXUS 仍在活跃开发（`0.8.x`）。证据检索、版本化 Wiki、MCP 与�
 
 ## 参与贡献
 
-1. 使用 JDK 17，提交前运行 `./mvnw -B verify`。  
+1. 使用 JDK 21，提交前运行 `./mvnw -B verify`。  
 2. 优先小而聚焦的变更；遵守现有证据与版本隔离约定。  
 3. 不要提交 `.env`、Qdrant 存储、向量或私有业务文档。  
 4. 改动检索或版本知识时，先读 [`.trellis/spec/backend/retrieval-and-version-knowledge.md`](.trellis/spec/backend/retrieval-and-version-knowledge.md)。

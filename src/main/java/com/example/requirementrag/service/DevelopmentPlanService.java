@@ -277,7 +277,7 @@ public class DevelopmentPlanService {
                             """.formatted(query,
                             requirementSlice.text(),
                             registry.promptCodeContext(code, MAX_CODE_CONTEXT_CHARS)))
-                    .options(GenerationChatOptions.forModel(properties.llm().resolvedDevelopmentPlanModel()).build())
+                    .options(GenerationChatOptions.forModel(properties.llm().resolvedDevelopmentPlanModel()))
                     .call()
                     .entity(PlanDraft.class);
             if (draft == null) {

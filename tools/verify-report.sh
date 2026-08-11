@@ -4,7 +4,7 @@
 # 用法：./tools/verify-report.sh
 # 输出：docs/verification/<version>-<git-commit>.json + 更新 docs/verification/latest.json
 #
-# 依赖：JDK 17（Enforcer 要求）、maven、bash
+# 依赖：JDK 21（Enforcer 要求）、maven、bash
 set -euo pipefail
 
 WORKDIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,9 +12,9 @@ cd "$WORKDIR"
 
 VERSION=$(sed -n '16p' pom.xml | sed 's/.*<version>\(.*\)<\/version>.*/\1/')
 COMMIT=$(git rev-parse HEAD)
-JAVA_HOME="$(/usr/libexec/java_home -v 17)"
+JAVA_HOME="$(/usr/libexec/java_home -v 21)"
 
-echo "verify with JDK 17 (Enforcer enabled)..."
+echo "verify with JDK 21 (Enforcer enabled)..."
 "$JAVA_HOME/bin/java" -version 2>&1 | head -1 > /tmp/nexus-java-version.txt
 VERIFY_LOG=$(mktemp)
 set +e
@@ -43,7 +43,7 @@ summary = {
     "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     "git": {"commit": "$COMMIT", "branch": subprocess.run(["git", "branch", "--show-current"], capture_output=True, text=True).stdout.strip()},
     "version": "$VERSION",
-    "command": "JAVA_HOME=<jdk17> ./mvnw verify",
+    "command": "JAVA_HOME=<jdk21> ./mvnw verify",
     "enforcerSkipped": False,
     "java": open("/tmp/nexus-java-version.txt").read().strip(),
     "tests": {"run": $TESTS, "failures": $FAILURES, "errors": $ERRORS, "skipped": $SKIPPED},

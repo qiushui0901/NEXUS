@@ -156,7 +156,7 @@ public class DevelopmentPlanStreamService {
                 Flux<String> content = chatClient.prompt()
                         .system(streamSystemPrompt())
                         .user(streamUserPrompt(request.query(), documents, code, registry))
-                        .options(GenerationChatOptions.forModel(properties.llm().resolvedDevelopmentPlanModel()).build())
+                        .options(GenerationChatOptions.forModel(properties.llm().resolvedDevelopmentPlanModel()))
                         .stream()
                         .content();
                 generationOutcome = consumeValidatedModelStreamOutcome(content, parsed -> {
@@ -404,7 +404,10 @@ public class DevelopmentPlanStreamService {
 
     private void send(SseEmitter emitter, AtomicBoolean closed, DevelopmentPlanStreamEvent event) throws IOException {
         if (closed.get()) return;
-        emitter.send(SseEmitter.event().name(event.type()).data(event, MediaType.APPLICATION_JSON));
+        // 用项目自身的 Jackson 2 序列化事件为 JSON 字符串发送（Boot 4 默认 Jackson 3
+        // 转换器无法正确序列化 Jackson 2 的 JsonNode payload）
+        String json = objectMapper.writeValueAsString(event);
+        emitter.send(SseEmitter.event().name(event.type()).data(json, MediaType.APPLICATION_JSON));
     }
 
     private void sendUnchecked(SseEmitter emitter, AtomicBoolean closed, DevelopmentPlanStreamEvent event) {
