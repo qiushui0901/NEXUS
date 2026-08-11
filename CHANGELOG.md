@@ -28,6 +28,7 @@
 
 ### Changed
 
+- 重写拾光检索评测集：42 个代码用例全部改为拾光业务实现问题，覆盖登录注册、短信验证码、笔记生命周期、评论、关注、搜索、上传、推荐与 AI 对话；移除问题和需求语料中的 NEXUS/BGE/Qdrant/Wiki 平台契约，更新冻结 SHA-256，并用合法的零值关闭 runner 检索缓存。
 - 重写 `docs/nexus-technology-selection-comparison.md`，将 NEXUS 定位为 AI 研发提效与决策辅助平台，按企业知识助手、研发协作助手、代码上下文助手和编码执行 Agent 分层比较 Glean、Rovo、Copilot、Sourcegraph、Qoder、DeepWiki 及国内同类产品，明确自建与复用边界。
 
 - Phase 2 核对收口：错误/降级/超时治理基础设施（7 阶段稳定 warning code、核心失败 503 + `outcome=FAILED`、非关键失败 DEGRADED 保留候选、零命中 NO_RESULTS、SSE warning/error 事件、MCP DEGRADED）经代码核对与既有测试确认齐备；新增 `docs/retrieval-status-contract.md` 作为状态语义与 warning code 的权威注册表（REST/SSE/MCP 三入口映射 + 15 个稳定 code + 安全约束）。
@@ -64,6 +65,8 @@
 
 - 平台回迁：Spring AI 1.1.2 → **2.0.0**、Spring Boot 3.4.9 → **4.1.0**、**JDK 17 → 21**（pom/Enforcer/Dockerfile/README/verify-report）；移除 spring-ai-alibaba BOM（无 artifact 使用）。适配：`ChatClient.options()` 改传 Options Builder（2.0 签名）、SSE 事件改用项目 Jackson 2 序列化 JSON 字符串发送（Boot 4 默认 Jackson 3 转换器无法序列化 Jackson 2 JsonNode payload）。360 测试全绿（JDK 21 + Enforcer verify 通过）。
 - CI（`.github/workflows/ci.yml`）JDK 17 → 21（`setup-java` temurin 21），与 Enforcer 要求一致。
+
+- 代码语义标注并发化（`CodeSemanticAnnotator`）：LLM 批次标注按固定线程池并行（默认 `min(4, 核数/2)`，可构造注入调整），结果顺序与输入一致；熔断语义适配并发（失败批次计数达阈值后，未提交批次走静态标注，已提交批次快速失败），`annotate` 耗时从串行的 500-750 次调用降为并行吞吐。新增并发顺序与熔断适配测试。
 
 
 ### Fixed

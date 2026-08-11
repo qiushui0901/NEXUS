@@ -50,11 +50,31 @@ public class CodeSemanticAnnotator {
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
     private final RagProperties properties;
+    private final java.util.concurrent.ExecutorService annotationExecutor;
+    private final int parallelism;
 
     public CodeSemanticAnnotator(ChatClient chatClient, ObjectMapper objectMapper, RagProperties properties) {
+        this(chatClient, objectMapper, properties, defaultParallelism());
+    }
+
+    /** 显式指定并发度的构造（测试或调优用）。 */
+    CodeSemanticAnnotator(ChatClient chatClient, ObjectMapper objectMapper, RagProperties properties,
+                          int parallelism) {
         this.chatClient = chatClient;
         this.objectMapper = objectMapper;
         this.properties = properties;
+        this.parallelism = Math.max(1, parallelism);
+        this.annotationExecutor = java.util.concurrent.Executors.newFixedThreadPool(this.parallelism,
+                runnable -> {
+                    Thread thread = new Thread(runnable, "code-annotate");
+                    thread.setDaemon(true);
+                    return thread;
+                });
+    }
+
+    private static int defaultParallelism() {
+        int cores = Runtime.getRuntime().availableProcessors();
+        return Math.max(1, Math.min(4, cores / 2));
     }
 
     /**
@@ -186,47 +206,63 @@ public class CodeSemanticAnnotator {
         }
         try {
             int totalBatches = (chunks.size() + BATCH_SIZE - 1) / BATCH_SIZE;
-            log.info("开始语义标注: {} 个 chunk, {} 批 (批次大小 {})", chunks.size(), totalBatches, BATCH_SIZE);
+            log.info("开始语义标注: {} 个 chunk, {} 批 (批次大小 {}, 并发 {})",
+                    chunks.size(), totalBatches, BATCH_SIZE, parallelism);
             long startMs = System.currentTimeMillis();
-            List<CodeChunk> result = new ArrayList<>(chunks.size());
-            int batchCount = 0;
-            int consecutiveFailures = 0;
-            boolean circuitOpen = false;
+            List<java.util.concurrent.Future<List<CodeChunk>>> futures = new ArrayList<>(totalBatches);
+            java.util.concurrent.atomic.AtomicInteger consecutiveFailures = new java.util.concurrent.atomic.AtomicInteger();
+            java.util.concurrent.atomic.AtomicBoolean circuitOpen = new java.util.concurrent.atomic.AtomicBoolean();
             for (int i = 0; i < chunks.size(); i += BATCH_SIZE) {
                 int end = Math.min(i + BATCH_SIZE, chunks.size());
                 List<CodeChunk> batch = chunks.subList(i, end);
-                batchCount++;
-                long elapsedSec = (System.currentTimeMillis() - startMs) / 1000;
-                long etaSec = batchCount > 1 ? elapsedSec * (totalBatches - batchCount) / (batchCount - 1) : 0;
-                log.info("标注进度: {}/{} 批 ({}/{} chunks), 已用 {}s, 预计剩余 {}s",
-                        batchCount, totalBatches, i, chunks.size(), elapsedSec, etaSec);
-                if (circuitOpen) {
-                    result.addAll(batch.stream().map(this::staticAnnotate).toList());
+                if (circuitOpen.get()) {
+                    futures.add(java.util.concurrent.CompletableFuture
+                            .completedFuture(batch.stream().map(this::staticAnnotate).toList()));
                     continue;
                 }
-                try {
-                    result.addAll(annotateBatch(batch));
-                    consecutiveFailures = 0;
-                }
-                catch (Exception ex) {
-                    consecutiveFailures++;
-                    log.warn("批次语义标注失败 ({}/{} consecutive, {} chunks): {}",
-                            consecutiveFailures, MAX_CONSECUTIVE_LLM_FAILURES, batch.size(), ex.getMessage());
-                    result.addAll(batch.stream().map(this::staticAnnotate).toList());
-                    if (consecutiveFailures >= MAX_CONSECUTIVE_LLM_FAILURES) {
-                        circuitOpen = true;
-                        log.warn("语义标注熔断：本次索引剩余 {} 个核心 chunk 使用静态标注",
-                                chunks.size() - end);
-                    }
-                }
+                futures.add(annotationExecutor.submit(() -> annotateBatchOrStatic(batch,
+                        consecutiveFailures, circuitOpen)));
+            }
+            List<CodeChunk> result = new ArrayList<>(chunks.size());
+            int completed = 0;
+            for (java.util.concurrent.Future<List<CodeChunk>> future : futures) {
+                result.addAll(future.get());
+                completed++;
+                long elapsedSec = (System.currentTimeMillis() - startMs) / 1000;
+                long etaSec = elapsedSec * (totalBatches - completed) / Math.max(completed, 1);
+                log.info("标注进度: {}/{} 批, 已用 {}s, 预计剩余 {}s", completed, totalBatches, elapsedSec, etaSec);
             }
             long totalSec = (System.currentTimeMillis() - startMs) / 1000;
-            log.info("语义标注完成: {} 个 chunk, 耗时 {}s", result.size(), totalSec);
+            log.info("语义标注完成: {} 个 chunk, 耗时 {}s（并发 {}）", result.size(), totalSec, parallelism);
             return result;
         }
         catch (Exception ex) {
             log.warn("代码语义标注失败，返回未标注的 chunks: {}", ex.getMessage());
             return chunks;
+        }
+    }
+
+    /** 单批标注：熔断打开时静态标注；LLM 失败时静态标注并累计连续失败。 */
+    private List<CodeChunk> annotateBatchOrStatic(List<CodeChunk> batch,
+                                                  java.util.concurrent.atomic.AtomicInteger consecutiveFailures,
+                                                  java.util.concurrent.atomic.AtomicBoolean circuitOpen) {
+        if (circuitOpen.get()) {
+            return batch.stream().map(this::staticAnnotate).toList();
+        }
+        try {
+            List<CodeChunk> annotated = annotateBatch(batch);
+            consecutiveFailures.set(0);
+            return annotated;
+        }
+        catch (Exception ex) {
+            int failures = consecutiveFailures.incrementAndGet();
+            log.warn("批次语义标注失败 ({}/{} consecutive, {} chunks): {}",
+                    failures, MAX_CONSECUTIVE_LLM_FAILURES, batch.size(), ex.getMessage());
+            if (failures >= MAX_CONSECUTIVE_LLM_FAILURES) {
+                circuitOpen.set(true);
+                log.warn("语义标注熔断：剩余批次使用静态标注");
+            }
+            return batch.stream().map(this::staticAnnotate).toList();
         }
     }
 

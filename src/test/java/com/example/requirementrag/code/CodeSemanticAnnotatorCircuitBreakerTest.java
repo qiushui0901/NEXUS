@@ -27,7 +27,10 @@ class CodeSemanticAnnotatorCircuitBreakerTest {
 
         List<CodeChunk> annotated = annotator.annotate(chunks);
 
-        assertThat(attempts).hasValue(3);
+        assertThat(attempts)
+                .as("并发下熔断打开前已提交的批次会尝试，未提交批次走静态标注")
+                .hasValueGreaterThanOrEqualTo(3)
+                .hasValueLessThan(10);
         assertThat(annotated).hasSize(100)
                 .allSatisfy(chunk -> {
                     assertThat(chunk.businessDescCn()).isNotBlank();
@@ -56,7 +59,9 @@ class CodeSemanticAnnotatorCircuitBreakerTest {
 
         List<CodeChunk> annotated = annotator.annotate(chunks);
 
-        assertThat(attempts).hasValue(6);
+        assertThat(attempts)
+                .as("并发下成功批次会重置失败计数，但批次执行顺序不定，只保证总量")
+                .hasValueGreaterThanOrEqualTo(3);
         assertThat(annotated).allSatisfy(chunk -> assertThat(chunk.businessDescCn()).isNotBlank());
     }
 
@@ -64,5 +69,31 @@ class CodeSemanticAnnotatorCircuitBreakerTest {
         return new CodeChunk("chunk-" + index, "project-a", "commit", "src/OrderService.java",
                 "method", "handle" + index, 1, 2, "void handle" + index + "() {}", "hash-" + index, "java")
                 .withStaticAnalysis("OrderService", "", List.of(), List.of());
+    }
+
+    @Test
+    void parallelAnnotationPreservesInputOrderAndConcurrency() throws Exception {
+        CodeSemanticAnnotator annotator = new CodeSemanticAnnotator(null, null, null, 4) {
+            @Override
+            List<CodeChunk> annotateBatch(List<CodeChunk> batch) {
+                return batch.stream()
+                        .map(chunk -> chunk.withSemantics("并发-" + chunk.symbolName(),
+                                "parallel", List.of(), List.of()))
+                        .toList();
+            }
+        };
+        List<CodeChunk> chunks = IntStream.range(0, 45)
+                .mapToObj(this::coreChunk)
+                .toList();
+
+        List<CodeChunk> annotated = annotator.annotate(chunks);
+
+        assertThat(annotated).hasSize(45);
+        for (int i = 0; i < chunks.size(); i++) {
+            assertThat(annotated.get(i).symbolName())
+                    .as("结果顺序必须与输入一致")
+                    .isEqualTo(chunks.get(i).symbolName());
+            assertThat(annotated.get(i).businessDescCn()).startsWith("并发-");
+        }
     }
 }
