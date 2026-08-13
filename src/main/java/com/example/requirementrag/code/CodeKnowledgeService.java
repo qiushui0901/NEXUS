@@ -39,13 +39,15 @@ public class CodeKnowledgeService {
     private final SQLiteSymbolGraphStore graphStore;
     private final CodeSemanticAnnotator annotator;
     private final CodeIndexLockService indexLockService;
+    private final AnnotationCacheStore annotationCacheStore;
 
     @Autowired
     public CodeKnowledgeService(RagProperties properties, ProjectRegistry projectRegistry,
                                 CodeScanner scanner, CodeQdrantStore store,
                                 SQLiteSymbolGraphStore graphStore,
                                 CodeSemanticAnnotator annotator,
-                                CodeIndexLockService indexLockService) {
+                                CodeIndexLockService indexLockService,
+                                AnnotationCacheStore annotationCacheStore) {
         this.properties = properties;
         this.projectRegistry = projectRegistry;
         this.scanner = scanner;
@@ -53,12 +55,14 @@ public class CodeKnowledgeService {
         this.graphStore = graphStore;
         this.annotator = annotator;
         this.indexLockService = indexLockService;
+        this.annotationCacheStore = annotationCacheStore;
     }
 
     /** Compatibility constructor for pre-0.7 unit callers. */
     CodeKnowledgeService(RagProperties properties, ProjectRegistry projectRegistry,
                          JavaCodeScanner scanner, CodeQdrantStore store) {
-        this(properties, projectRegistry, legacy(scanner), store, null, null, new CodeIndexLockService());
+        this(properties, projectRegistry, legacy(scanner), store, null, null, new CodeIndexLockService(),
+                null);
     }
 
     /** 扫描默认配置仓库并替换写入 Qdrant。 */
@@ -89,15 +93,25 @@ public class CodeKnowledgeService {
         }
     }
 
-    /** 代码块语义标注：先加载既有标注缓存，再分层标注（LLM + 静态），annotator 不可用时不阻断索引。 */
+    /** 代码块语义标注：先加载既有标注缓存（磁盘 + 新旧 collection 合并），再分层标注（LLM + 静态），annotator 不可用时不阻断索引。 */
     private List<CodeChunk> annotateChunks(String projectId, List<CodeChunk> chunks) {
         if (annotator == null || chunks == null || chunks.isEmpty()) {
             return chunks == null ? List.of() : chunks;
         }
         try {
-            String collection = liveCollection(projectId);
-            Map<String, CodeQdrantStore.AnnotationEntry> cache = store.fetchAnnotationCache(collection, projectId);
-            return annotator.annotateWithCache(chunks, cache);
+            Map<String, CodeQdrantStore.AnnotationEntry> cache = new HashMap<>();
+            if (annotationCacheStore != null) {
+                cache.putAll(annotationCacheStore.load(projectId));
+            }
+            // 磁盘缓存优先；collection 缓存按 最新 live → 旧物理 顺序补漏，标注结果随磁盘持久化。
+            for (String collection : List.of(liveCollection(projectId), resolveCodeCollection(projectId))) {
+                cache.putAll(store.fetchAnnotationCache(collection, projectId));
+            }
+            List<CodeChunk> annotated = annotator.annotateWithCache(chunks, cache);
+            if (annotationCacheStore != null) {
+                annotationCacheStore.append(projectId, annotated);
+            }
+            return annotated;
         } catch (RuntimeException exception) {
             log.warn("代码语义标注跳过（回退为未标注索引）: {}", exception.getMessage());
             return chunks;

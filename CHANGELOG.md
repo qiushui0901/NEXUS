@@ -26,6 +26,7 @@
 
 - 新增 `docs/nexus-0.8.5-development-roadmap.md`，规划全系统 RAG 加固：统一检索与重排、错误降级与超时、跨 REST/SSE/MCP 的证据闭环、代码索引可回滚升级、大文档 Map-Reduce 与全链路质量门。
 - 新增 `docs/nexus-open-source-rag-engine-comparison.md`，基于 GitHub 最新数据对比 RAGFlow、LlamaIndex、LightRAG、GraphRAG、PageIndex、Graphiti、Haystack、RAG-Anything、R2R 等核心 RAG 引擎，并给出 NEXUS 的集成与选型建议。
+- 新增 `AnnotationCacheStore`：代码语义标注结果按项目磁盘持久化（JSONL 追加），全量索引与失败重试时磁盘缓存优先、live 与旧物理 collection 缓存补漏，避免重复调用 LLM 标注。
 - 完成封神需求文档与代码评测集的 LightRAG/NEXUS 对比复测，补充 NEXUS 的 Recall@1/5/10、MRR@10、平均首命中排名、空召回率、P50/P95 延迟及可复现评测报告。
 - 新增 `docs/fengshen-code-retrieval-three-way-comparison.md`，汇总 LightRAG、NEXUS、RAGFlow 的封神代码召回、排序、延迟、数据质量与选型分析。
 
