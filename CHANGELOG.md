@@ -2,6 +2,7 @@
 
 ### Added
 
+- 新增 `tools/generate-fengshen-retrieval-eval.py`，分别生成 200 道需求文档/业务名词题和 500 道代码题；两套评估集各自输出可运行的 JSONL Gold 与便于人工评估的 Markdown 答案集。
 - 新增 `docs/wiki-next-iteration-module-slice.md`，将 Wiki 下一迭代收敛为 Module 页面纵向闭环，定义 ModuleFactBundle、Evidence Registry、声明级证据、发布质量门、REST/MCP 交付、符号级过期传播、stale-to-draft 流程与 MVP 验收标准。
 - 按 `docs/wiki-next-iteration-module-slice.md` 实现 Module 页面纵向闭环：
   - 新增 `ModuleFactExtractor`：从符号图（`SQLiteSymbolGraphStore`）与仓库文件系统确定性抽取 `ModuleFactBundle`（公开符号、对外入口、核心调用链、上下游依赖、HTTP/消息/定时路由、数据对象、配置、测试与未解析调用诊断），支持显式 `modulePath`；无图快照时产出诊断而非失败。
@@ -25,10 +26,11 @@
 
 - 新增 `docs/nexus-0.8.5-development-roadmap.md`，规划全系统 RAG 加固：统一检索与重排、错误降级与超时、跨 REST/SSE/MCP 的证据闭环、代码索引可回滚升级、大文档 Map-Reduce 与全链路质量门。
 - 新增 `docs/nexus-open-source-rag-engine-comparison.md`，基于 GitHub 最新数据对比 RAGFlow、LlamaIndex、LightRAG、GraphRAG、PageIndex、Graphiti、Haystack、RAG-Anything、R2R 等核心 RAG 引擎，并给出 NEXUS 的集成与选型建议。
+- 完成封神需求文档与代码评测集的 LightRAG/NEXUS 对比复测，补充 NEXUS 的 Recall@1/5/10、MRR@10、平均首命中排名、空召回率、P50/P95 延迟及可复现评测报告。
+- 新增 `docs/fengshen-code-retrieval-three-way-comparison.md`，汇总 LightRAG、NEXUS、RAGFlow 的封神代码召回、排序、延迟、数据质量与选型分析。
 
 ### Changed
 
-- 重写拾光检索评测集：42 个代码用例全部改为拾光业务实现问题，覆盖登录注册、短信验证码、笔记生命周期、评论、关注、搜索、上传、推荐与 AI 对话；移除问题和需求语料中的 NEXUS/BGE/Qdrant/Wiki 平台契约，更新冻结 SHA-256，并用合法的零值关闭 runner 检索缓存。
 - 重写 `docs/nexus-technology-selection-comparison.md`，将 NEXUS 定位为 AI 研发提效与决策辅助平台，按企业知识助手、研发协作助手、代码上下文助手和编码执行 Agent 分层比较 Glean、Rovo、Copilot、Sourcegraph、Qoder、DeepWiki 及国内同类产品，明确自建与复用边界。
 
 - Phase 2 核对收口：错误/降级/超时治理基础设施（7 阶段稳定 warning code、核心失败 503 + `outcome=FAILED`、非关键失败 DEGRADED 保留候选、零命中 NO_RESULTS、SSE warning/error 事件、MCP DEGRADED）经代码核对与既有测试确认齐备；新增 `docs/retrieval-status-contract.md` 作为状态语义与 warning code 的权威注册表（REST/SSE/MCP 三入口映射 + 15 个稳定 code + 安全约束）。
