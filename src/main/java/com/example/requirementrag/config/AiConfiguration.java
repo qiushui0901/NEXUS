@@ -33,6 +33,19 @@ public class AiConfiguration {
         return new JsonMapper();
     }
 
+    /**
+     * 禁止 OpenAI 网关连接池复用空闲连接：nginx 侧 keep-alive 超时后连接呈半开状态，
+     * okhttp 复用这类连接时请求永远等不到响应（曾导致索引 embedding 阶段无限挂起）。
+     * 内网网关每次新建连接开销可忽略。
+     */
+    @Bean
+    org.springframework.ai.openai.http.okhttp.OpenAiHttpClientBuilderCustomizer noStalePoolReuse() {
+        return builder -> {
+            builder.maxIdleConnections(0);
+            builder.keepAliveDuration(java.time.Duration.ofSeconds(5));
+        };
+    }
+
     /** 显式注册 NEXUS MCP 工具（Spring AI 1.x 不自动扫描 @Tool，且避免与自动发现重复）。 */
     @Bean
     org.springframework.ai.tool.ToolCallbackProvider nexusMcpToolCallbacks(

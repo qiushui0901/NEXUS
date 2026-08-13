@@ -41,7 +41,7 @@ class EmbeddingBatcherTest {
 
         List<float[]> vectors = new EmbeddingBatcher(model).embedAll(texts);
 
-        assertThat(batchSizes).containsExactly(32, 32, 3);
+        assertThat(batchSizes).containsExactly(8, 8, 8, 8, 8, 8, 8, 8, 3);
         assertThat(vectors).extracting(vector -> vector[0])
                 .containsExactlyElementsOf(texts.stream().map(Float::parseFloat).toList());
     }

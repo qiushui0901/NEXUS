@@ -115,10 +115,13 @@ public class QdrantHybridStore {
     /** 校验新写入的 point ID 全部可读且数量一致；不一致时抛异常（旧点保留）。 */
     private void verifyVersion(String collection, String documentId, String version, java.util.Set<String> newIds) {
         Map<String, Object> request = new LinkedHashMap<>();
-        request.put("filter", Map.of("must", java.util.List.of(
+        Map<String, Object> filter = new LinkedHashMap<>();
+        filter.put("must", java.util.List.of(
                 Map.of("key", "documentId", "match", Map.of("value", documentId)),
                 Map.of("key", "version", "match", Map.of("value", version)),
-                Map.of("key", "$point_id", "match", Map.of("any", new java.util.ArrayList<>(newIds))))));
+                // Qdrant >= 1.13 rejects "$point_id" + match.any; use has_id instead.
+                Map.of("has_id", new java.util.ArrayList<>(newIds))));
+        request.put("filter", filter);
         request.put("limit", Math.max(256, newIds.size()));
         request.put("with_payload", false);
         Map<String, Object> response = client.post().uri("/collections/{collection}/points/scroll", collection)

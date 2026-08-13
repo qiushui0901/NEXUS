@@ -19,7 +19,8 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class EmbeddingBatcher {
 
-    static final int DEFAULT_BATCH_SIZE = 32;
+    // ponytail: 网关 text-embedding-v4 上游批上限为 8（16 即被拒），32 为旧 bge-m3 时代的默认值。
+    static final int DEFAULT_BATCH_SIZE = 8;
 
     private final EmbeddingModel embeddingModel;
     private final BoundedTtlCache<String, float[]> cache;

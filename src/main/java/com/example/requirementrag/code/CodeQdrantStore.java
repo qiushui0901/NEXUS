@@ -129,24 +129,44 @@ public class CodeQdrantStore {
         }
     }
 
-    /** 原子切换 Alias 到新物理 collection：alias 不存在则创建（并迁移删除旧物理 collection），存在则 swap。 */
+    /** 原子切换 Alias 到新物理 collection：alias 不存在则创建（并迁移删除旧物理 collection），存在则 swap（失败回退 delete+create）。 */
     private void publishAlias(String alias, String physical) {
         String current = aliasTarget(alias);
         Map<String, Object> action;
         if (current == null) {
             action = Map.of("create_alias", Map.of("collection_name", physical, "alias_name", alias));
+            try {
+                postAliasActions(action);
+            } catch (HttpClientErrorException.Conflict conflict) {
+                // 同名遗留物理 collection 与 alias 命名冲突（历史遗留的空壳），删除后重试。
+                LOGGER.warn("alias {} 与遗留物理 collection 冲突，清理后重试: {}", alias, conflict.getMessage());
+                deleteLegacyPhysical(alias);
+                postAliasActions(action);
+            }
         } else {
             action = Map.of("swap_aliases", List.of(
                     Map.of("collection", current, "alias", alias),
                     Map.of("collection", physical, "alias", alias)));
+            try {
+                postAliasActions(action);
+            } catch (HttpClientErrorException.BadRequest exception) {
+                // 本机 Qdrant 1.15.4 对 swap_aliases 解析失败（AliasOperations untagged enum 400）。
+                // 回退 delete+create：非原子但有兜底，首次遇到时记录一次。
+                LOGGER.warn("swap_aliases 不可用（{}），回退 delete+create 切换 alias {}", exception.getMessage(), alias);
+                postAliasActions(Map.of("delete_alias", Map.of("alias_name", alias)));
+                postAliasActions(Map.of("create_alias", Map.of("collection_name", physical, "alias_name", alias)));
+            }
         }
+        if (current == null) {
+            deleteLegacyPhysical(alias);
+        }
+    }
+
+    private void postAliasActions(Map<String, Object> action) {
         client.post().uri("/collections/aliases")
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("actions", List.of(action)))
                 .retrieve().toBodilessEntity();
-        if (current == null) {
-            deleteLegacyPhysical(alias);
-        }
     }
 
     /** 查询全局 Alias 列表，返回 alias 当前指向的物理 collection；alias 不存在时返回 null。 */

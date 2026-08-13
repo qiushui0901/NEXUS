@@ -32,8 +32,15 @@ spring:
           model: ${OPENAI_CHAT_MODEL:claude-sonnet-4.6}
       embedding:
         enabled: true
+        # 网关经 VPN 隧道，连接可能间歇挂起：短超时 + 重试让请求快速失败重试，而非无限等待。
+        timeout: ${OPENAI_EMBEDDING_READ_TIMEOUT:20s}
         options:
           model: ${OPENAI_EMBEDDING_MODEL:text-embedding-v4}
+    retry:
+      max-attempts: ${OPENAI_RETRY_MAX_ATTEMPTS:5}
+      backoff:
+        initial-interval: ${OPENAI_RETRY_BACKOFF_MS:2000ms}
+        multiplier: ${OPENAI_RETRY_BACKOFF_MULTIPLIER:2}
     ollama:
       base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
       chat:

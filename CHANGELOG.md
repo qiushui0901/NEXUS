@@ -31,6 +31,8 @@
 
 ### Changed
 
+- OpenAI 网关连通性加固：禁用 okhttp 空闲连接池复用（nginx 侧 keep-alive 超时后连接半开，embedding 请求无限挂起），embedding 读超时 20s 且失败重试 5 次（2s 起指数退避）；Embedding 批大小 32→8（`text-embedding-v4` 上游批上限为 8）。
+- Qdrant 兼容性：验证点 ID 改用 `has_id`（≥1.13 拒绝 `$point_id`+`match.any`）；`swap_aliases` 400（本机 Qdrant 1.15.4 untagged enum 解析失败）时回退 delete+create；alias 与遗留物理 collection 冲突自动清理后重试。
 - 重写 `docs/nexus-technology-selection-comparison.md`，将 NEXUS 定位为 AI 研发提效与决策辅助平台，按企业知识助手、研发协作助手、代码上下文助手和编码执行 Agent 分层比较 Glean、Rovo、Copilot、Sourcegraph、Qoder、DeepWiki 及国内同类产品，明确自建与复用边界。
 
 - Phase 2 核对收口：错误/降级/超时治理基础设施（7 阶段稳定 warning code、核心失败 503 + `outcome=FAILED`、非关键失败 DEGRADED 保留候选、零命中 NO_RESULTS、SSE warning/error 事件、MCP DEGRADED）经代码核对与既有测试确认齐备；新增 `docs/retrieval-status-contract.md` 作为状态语义与 warning code 的权威注册表（REST/SSE/MCP 三入口映射 + 15 个稳定 code + 安全约束）。
