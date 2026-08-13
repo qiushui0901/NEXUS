@@ -49,3 +49,4 @@ data/requirement-snapshots/
 # Python bytecode caches
 __pycache__/
 *.py[cod]
+data/code-annotation-cache/

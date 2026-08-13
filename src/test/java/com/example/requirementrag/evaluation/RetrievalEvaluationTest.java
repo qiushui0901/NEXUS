@@ -30,7 +30,7 @@ class RetrievalEvaluationTest {
 
     private static final String SHIGUANG_DATASET = "evaluation/retrieval-eval-shiguang-v1.jsonl";
     private static final String SHIGUANG_SHA256 =
-            "1ff996579588bfc5b859b5a483427c255325265b211e452af5eaff6471a61b18";
+            "ac9fbc906ed28a593597e6fa03fbe1dcd4091cc7d610190d0f5d0dbbae6494c8";
 
     @Test
     void frozenShiguangGoldenSetHasFormalSizeProfilesCategoriesAndStableLabels() throws Exception {
@@ -51,6 +51,12 @@ class RetrievalEvaluationTest {
         assertEquals(cases.size(), cases.stream().map(RetrievalEvaluationCase::query).distinct().count());
         assertTrue(cases.stream().allMatch(value -> value.projectId().equals("shiguang-eval")));
         assertTrue(cases.stream().allMatch(value -> value.tags().contains("shiguang-real")));
+        List<RetrievalEvaluationCase> codeCases = cases.stream()
+                .filter(value -> !value.goldCode().isEmpty()).toList();
+        assertEquals(42, codeCases.size());
+        for (String platformTerm : List.of("开发计划", "构建 Wiki", "BGE", "Qdrant", "Embedding", "误召回")) {
+            assertTrue(codeCases.stream().noneMatch(value -> value.query().contains(platformTerm)), platformTerm);
+        }
         assertTrue(cases.stream().flatMap(value -> value.goldCode().stream()).allMatch(gold -> {
             String path = RetrievalEvaluationDataset.normalizePath(gold.filePath());
             return !path.startsWith("/") && !path.startsWith("../")
