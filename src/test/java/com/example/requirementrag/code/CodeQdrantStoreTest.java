@@ -262,10 +262,125 @@ class CodeQdrantStoreTest {
 
         CodeQdrantStore.ScopedSearchResult result = store.searchWithClassScope(
                 "test-code", "在 HeroService 中由哪个方法实现？", "demo",
-                List.of("src/Alpha.java", "src/Beta.java"), 10);
+                List.of("src/Alpha.java", "src/Beta.java"), null, 10);
 
         assertThat(result.global()).isEmpty();
         assertThat(result.classScoped()).isEmpty();
+        server.verify();
+    }
+
+    @Test
+    void classScopedSearchBackfillsWhenGlobalLacksTheRequestedSymbol() throws Exception {
+        org.springframework.web.client.RestClient.Builder builder = org.springframework.web.client.RestClient.builder();
+        org.springframework.test.web.client.MockRestServiceServer server =
+                org.springframework.test.web.client.MockRestServiceServer.bindTo(builder).build();
+        org.springframework.web.client.RestClient client = builder.build();
+        com.example.requirementrag.config.RagProperties props =
+                mock(com.example.requirementrag.config.RagProperties.class);
+        when(props.retrieval()).thenReturn(new com.example.requirementrag.config.RagProperties.Retrieval(
+                50, 50, 40, 20, 10, false, 1_000, 3, 3, 30_000,
+                -1, -1, -1, -1, null, null, null, true, 3));
+        com.example.requirementrag.retrieval.EmbeddingBatcher batcher =
+                mock(com.example.requirementrag.retrieval.EmbeddingBatcher.class);
+        when(batcher.embedAll(any())).thenReturn(List.of(new float[2]));
+
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/collections/test-code")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{}", org.springframework.http.MediaType.APPLICATION_JSON));
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/collections/test-code")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\":{\"config\":{\"params\":{\"vectors\":{\"dense\":{\"size\":2}}}}}",
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+        // 全局查询返回目标类的另一个方法 dig——目标符号 harvest 未命中，不得走快速路径
+        String digPoint = "{\"id\":\"p1\",\"payload\":{\"projectId\":\"demo\",\"commitSha\":\"abc\","
+                + "\"filePath\":\"src/Alpha.java\",\"symbolType\":\"method\",\"symbolName\":\"dig\","
+                + "\"startLine\":4,\"endLine\":6,\"text\":\"void dig() {}\",\"contentHash\":\"h1\"}}";
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/points/query")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\":{\"points\":[" + digPoint + "]}}", org.springframework.http.MediaType.APPLICATION_JSON));
+        // 类范围查询补召回：返回目标符号 harvest
+        String harvestPoint = "{\"id\":\"p2\",\"payload\":{\"projectId\":\"demo\",\"commitSha\":\"abc\","
+                + "\"filePath\":\"src/Alpha.java\",\"symbolType\":\"method\",\"symbolName\":\"harvest\","
+                + "\"startLine\":9,\"endLine\":11,\"text\":\"void harvest() {}\",\"contentHash\":\"h2\"}}";
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/points/query")))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath(
+                        "$.prefetch[0].filter.must[1].match.any[0]").value("src/Alpha.java"))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\":{\"points\":[" + harvestPoint + "]}}", org.springframework.http.MediaType.APPLICATION_JSON));
+
+        CodeQdrantStore store = new CodeQdrantStore(client,
+                mock(org.springframework.ai.embedding.EmbeddingModel.class),
+                batcher,
+                new com.example.requirementrag.retrieval.SparseVectorizer(),
+                props, null);
+
+        CodeQdrantStore.ScopedSearchResult result = store.searchWithClassScope(
+                "test-code", "查找 AlphaService.harvest 的实现位置。", "demo",
+                List.of("src/Alpha.java"), "harvest", 10);
+
+        // 目标符号经类内补召回进入最终结果，符号命中加权使其置顶
+        assertThat(result.classScoped()).extracting(CodeChunk::symbolName).startsWith("harvest");
+        assertThat(result.candidates()).extracting(CodeChunk::id).containsExactly("p1", "p2");
+        server.verify();
+    }
+
+    @Test
+    void classScopedSearchKeepsGlobalOrderWhenClassScopeCannotSupplyTheRequestedSymbol() throws Exception {
+        org.springframework.web.client.RestClient.Builder builder = org.springframework.web.client.RestClient.builder();
+        org.springframework.test.web.client.MockRestServiceServer server =
+                org.springframework.test.web.client.MockRestServiceServer.bindTo(builder).build();
+        org.springframework.web.client.RestClient client = builder.build();
+        com.example.requirementrag.config.RagProperties props =
+                mock(com.example.requirementrag.config.RagProperties.class);
+        when(props.retrieval()).thenReturn(new com.example.requirementrag.config.RagProperties.Retrieval(
+                50, 50, 40, 20, 10, false, 1_000, 3, 3, 30_000,
+                -1, -1, -1, -1, null, null, null, true, 3));
+        com.example.requirementrag.retrieval.EmbeddingBatcher batcher =
+                mock(com.example.requirementrag.retrieval.EmbeddingBatcher.class);
+        when(batcher.embedAll(any())).thenReturn(List.of(new float[2]));
+
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/collections/test-code")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{}", org.springframework.http.MediaType.APPLICATION_JSON));
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/collections/test-code")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\":{\"config\":{\"params\":{\"vectors\":{\"dense\":{\"size\":2}}}}}",
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+        String digPoint = "{\"id\":\"p1\",\"payload\":{\"projectId\":\"demo\",\"commitSha\":\"abc\","
+                + "\"filePath\":\"src/Alpha.java\",\"symbolType\":\"method\",\"symbolName\":\"dig\","
+                + "\"startLine\":4,\"endLine\":6,\"text\":\"void dig() {}\",\"contentHash\":\"h1\"}}";
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/points/query")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\":{\"points\":[" + digPoint + "]}}", org.springframework.http.MediaType.APPLICATION_JSON));
+        // 类范围查询返回的候选不含目标符号（解析器误把业务文本标识符当方法名）→ 不做并集扰动
+        String seedPoint = "{\"id\":\"p2\",\"payload\":{\"projectId\":\"demo\",\"commitSha\":\"abc\","
+                + "\"filePath\":\"src/Alpha.java\",\"symbolType\":\"method\",\"symbolName\":\"seed\","
+                + "\"startLine\":9,\"endLine\":11,\"text\":\"void seed() {}\",\"contentHash\":\"h2\"}}";
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/points/query")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\":{\"points\":[" + seedPoint + "]}}", org.springframework.http.MediaType.APPLICATION_JSON));
+
+        CodeQdrantStore store = new CodeQdrantStore(client,
+                mock(org.springframework.ai.embedding.EmbeddingModel.class),
+                batcher,
+                new com.example.requirementrag.retrieval.SparseVectorizer(),
+                props, null);
+
+        CodeQdrantStore.ScopedSearchResult result = store.searchWithClassScope(
+                "test-code", "在 AlphaService 中由哪个方法实现？", "demo",
+                List.of("src/Alpha.java"), "viewAddHeroes", 10);
+
+        // 类内无法提供目标符号：保持全局精排（方法优先），不被并集扰动
+        assertThat(result.classScoped()).extracting(CodeChunk::symbolName).startsWith("dig");
+        assertThat(result.candidates()).extracting(CodeChunk::id).containsExactly("p1");
         server.verify();
     }
 
@@ -315,7 +430,7 @@ class CodeQdrantStoreTest {
 
         CodeQdrantStore.ScopedSearchResult result = store.searchWithClassScope(
                 "test-code", "在 AlphaService 中由哪个方法实现？", "demo",
-                List.of("src/Alpha.java"), 10);
+                List.of("src/Alpha.java"), null, 10);
 
         // 方法优先：dig 前置于容器类 chunk；且全局候选归因与最终结果来自同一次检索
         assertThat(result.classScoped()).extracting(CodeChunk::symbolName).containsExactly("dig", "Alpha");

@@ -14,6 +14,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -158,7 +159,7 @@ class CodeExactChannelTest {
         CodeChunk classHit = chunk("c-1", "HeroService.java", "save", 4, "public void save() {}");
         CodeChunk hybrid = chunk("h-1", "OtherService.java", "run", 10, "void run() {}");
         when(qdrantStore.searchWithClassScope(anyString(), anyString(), eq("test"),
-                eq(List.of("HeroService.java")), eq(10)))
+                eq(List.of("HeroService.java")), nullable(String.class), eq(10)))
                 .thenReturn(new CodeQdrantStore.ScopedSearchResult(
                         List.of(hybrid), List.of(classHit, hybrid), List.of(classHit, hybrid)));
 
@@ -174,7 +175,7 @@ class CodeExactChannelTest {
         // 显式路径查询：类限定范围必须直接用查询中的路径（而非类名查到的 HeroService.java）；
         // stub 只匹配 [src/HeroService.java]，若走类名查找会得到 ["HeroService.java"] 而无法命中该 stub
         when(qdrantStore.searchWithClassScope(anyString(), anyString(), eq("test"),
-                eq(List.of("src/HeroService.java")), eq(10)))
+                eq(List.of("src/HeroService.java")), nullable(String.class), eq(10)))
                 .thenReturn(new CodeQdrantStore.ScopedSearchResult(
                         List.of(classHit), List.of(classHit), List.of(classHit)));
 
@@ -186,7 +187,7 @@ class CodeExactChannelTest {
     @Test
     void fallsBackToHybridWhenClassScopeResolutionFails() {
         when(qdrantStore.searchWithClassScope(anyString(), anyString(), eq("test"),
-                eq(List.of("HeroService.java")), eq(10))).thenReturn(null);
+                eq(List.of("HeroService.java")), nullable(String.class), eq(10))).thenReturn(null);
         CodeChunk hybrid = chunk("h-1", "HeroService.java", "save", 4, "public void save() {}");
         when(qdrantStore.hybridSearch(anyString(), anyString(), eq("test"), eq(10)))
                 .thenReturn(List.of(hybrid));
@@ -279,11 +280,14 @@ class CodeExactChannelTest {
         CodeQdrantStore.CodeSearchTrace trace =
                 service.searchTrace("查找 HeroService.save 的实现位置。", "test", 10);
 
-        // ranked 必须与生产 search() 一致（精确通道置顶在首位），candidates 仍为混合检索归因
+        // ranked 必须与生产 search() 一致（精确通道置顶在首位）；
+        // candidates 包含精确命中（并入候选池头部），与混合检索中的同符号候选去重
         assertThat(trace.ranked()).isNotEmpty();
         assertThat(trace.ranked().get(0).id()).isNotEqualTo("h-1");
         assertThat(trace.ranked().get(0).symbolName()).isEqualTo("save");
-        assertThat(trace.candidates()).extracting(CodeChunk::id).containsExactly("h-1");
+        assertThat(trace.candidates()).hasSize(1);
+        assertThat(trace.candidates().get(0).symbolName()).isEqualTo("save");
+        assertThat(trace.candidates().get(0).id()).isNotEqualTo("h-1");
         // 单次检索：candidates 与 ranked 来自同一次 hybridSearchTrace，不得再独立调用 hybridSearch
         verify(qdrantStore, times(1)).hybridSearchTrace(anyString(), anyString(), eq("test"), eq(10));
         verify(qdrantStore, never()).hybridSearch(anyString(), anyString(), eq("test"), eq(10));

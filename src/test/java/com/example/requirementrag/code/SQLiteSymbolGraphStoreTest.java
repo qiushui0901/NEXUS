@@ -113,10 +113,10 @@ class SQLiteSymbolGraphStoreTest {
         store.replaceSnapshot(new CodeScanner.ScanResult("demo", "abc", 2, List.of(),
                 List.of(clazz, method, otherClass, sameNameOtherFile), List.of(), List.of()));
 
-        assertThat(store.findExactSymbols("demo", "abc", "VipService", "receiveGift", 10))
+        assertThat(store.findExactSymbols("demo", "abc", "VipService", "receiveGift", null, 10))
                 .extracting(CodeSymbol::id).containsExactly("m-1");
-        assertThat(store.findExactSymbols("demo", "abc", "VipService", "missing", 10)).isEmpty();
-        assertThat(store.findExactSymbols("demo", "abc", "Missing", "receiveGift", 10)).isEmpty();
+        assertThat(store.findExactSymbols("demo", "abc", "VipService", "missing", null, 10)).isEmpty();
+        assertThat(store.findExactSymbols("demo", "abc", "Missing", "receiveGift", null, 10)).isEmpty();
     }
 
     @Test
@@ -132,7 +132,7 @@ class SQLiteSymbolGraphStoreTest {
         store.replaceSnapshot(new CodeScanner.ScanResult("demo", "abc", 1, List.of(),
                 List.of(clazz, first, second), List.of(), List.of()));
 
-        assertThat(store.findExactSymbols("demo", "abc", "ItemService", "canAdd", 10))
+        assertThat(store.findExactSymbols("demo", "abc", "ItemService", "canAdd", null, 10))
                 .extracting(CodeSymbol::id).containsExactly("m-1", "m-2");
     }
 
@@ -150,9 +150,37 @@ class SQLiteSymbolGraphStoreTest {
         store.replaceSnapshot(new CodeScanner.ScanResult("demo", "abc", 1, List.of(),
                 List.of(outerA, outerB, fooOfB), List.of(), List.of()));
 
-        assertThat(store.findExactSymbols("demo", "abc", "OuterA", "foo", 10)).isEmpty();
-        assertThat(store.findExactSymbols("demo", "abc", "OuterB", "foo", 10))
+        assertThat(store.findExactSymbols("demo", "abc", "OuterA", "foo", null, 10)).isEmpty();
+        assertThat(store.findExactSymbols("demo", "abc", "OuterB", "foo", null, 10))
                 .extracting(CodeSymbol::id).containsExactly("m-b");
+    }
+
+    @Test
+    void filtersExactSymbolsByExplicitFilePathForSameNameClassesAcrossModules() throws Exception {
+        SQLiteSymbolGraphStore store = new SQLiteSymbolGraphStore(
+                Files.createTempDirectory("nexus-graph-pathfilter-").toString());
+        CodeSymbol clazzA = new CodeSymbol("cls-a", "demo", "abc", "java", "class",
+                "demo.VipService", "VipService", "module-a/src/VipService.java", 3, 20, false, false);
+        CodeSymbol methodA = new CodeSymbol("m-a", "demo", "abc", "java", "method",
+                "demo.VipService.receiveGift", "receiveGift", "module-a/src/VipService.java", 8, 12, false, false);
+        CodeSymbol clazzB = new CodeSymbol("cls-b", "demo", "abc", "java", "class",
+                "demo.VipService", "VipService", "module-b/src/VipService.java", 3, 20, false, false);
+        CodeSymbol methodB = new CodeSymbol("m-b", "demo", "abc", "java", "method",
+                "demo.VipService.receiveGift", "receiveGift", "module-b/src/VipService.java", 8, 12, false, false);
+        store.replaceSnapshot(new CodeScanner.ScanResult("demo", "abc", 2, List.of(),
+                List.of(clazzA, methodA, clazzB, methodB), List.of(), List.of()));
+
+        // 无路径：两处同名符号都返回（稳定顺序）；带显式路径：只返回对应文件（精确与后缀均可）
+        assertThat(store.findExactSymbols("demo", "abc", "VipService", "receiveGift", null, 10))
+                .extracting(CodeSymbol::id).containsExactly("m-a", "m-b");
+        assertThat(store.findExactSymbols("demo", "abc", "VipService", "receiveGift",
+                "module-b/src/VipService.java", 10))
+                .extracting(CodeSymbol::id).containsExactly("m-b");
+        assertThat(store.findExactSymbols("demo", "abc", "VipService", "receiveGift",
+                "src/VipService.java", 10))
+                .extracting(CodeSymbol::id).containsExactly("m-a", "m-b");
+        assertThat(store.findExactSymbols("demo", "abc", "VipService", "receiveGift",
+                "unknown/VipService.java", 10)).isEmpty();
     }
 
     @Test

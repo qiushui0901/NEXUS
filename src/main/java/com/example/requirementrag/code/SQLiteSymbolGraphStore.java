@@ -121,10 +121,14 @@ public class SQLiteSymbolGraphStore {
     /**
      * 精确符号查找：类名与方法名同时匹配（类符号与方法符号同文件，且方法限定名以「类限定名.方法名」结尾，
      * 保证方法确实属于目标类——同一文件存在内部类/多个类时不会把 OuterB.foo 当成 OuterA.foo）。
+     * filePath 非空时追加路径过滤（精确或后缀匹配），多模块同名类/同名方法场景下按查询中的显式路径区分。
      * 同名重载会返回多行（按文件路径与起始行稳定排序），由调用方决定置顶策略。
      */
     public List<CodeSymbol> findExactSymbols(String projectId, String commitSha, String className,
-                                             String symbolName, int limit) {
+                                             String symbolName, String filePath, int limit) {
+        String pathClause = filePath == null || filePath.isBlank()
+                ? ""
+                : " and (s.file_path=? or s.file_path like '%/' || ?)";
         String sql = """
                 select s.* from code_symbol s
                 join code_symbol c on c.project_id=s.project_id and c.commit_sha=s.commit_sha
@@ -132,14 +136,20 @@ public class SQLiteSymbolGraphStore {
                   and s.qualified_name = c.qualified_name || '.' || s.simple_name
                 where s.project_id=? and s.commit_sha=? and s.simple_name=? and c.simple_name=?
                   and s.kind not in ('class','interface','enum','record')
+                """ + pathClause + """
                 order by s.file_path, s.start_line limit ?
                 """;
         try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setString(1, projectId);
-            statement.setString(2, commitSha);
-            statement.setString(3, symbolName);
-            statement.setString(4, className);
-            statement.setInt(5, limit);
+            int index = 1;
+            statement.setString(index++, projectId);
+            statement.setString(index++, commitSha);
+            statement.setString(index++, symbolName);
+            statement.setString(index++, className);
+            if (!pathClause.isBlank()) {
+                statement.setString(index++, filePath);
+                statement.setString(index++, filePath);
+            }
+            statement.setInt(index, limit);
             try (ResultSet result = statement.executeQuery()) {
                 return symbols(result);
             }

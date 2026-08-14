@@ -76,7 +76,14 @@
   - 查询中的显式文件路径参与召回与重排：`classScopedHits` 在解析到 `filePath` 时直接以该文件为类限定范围（不受同名类 `classFilePaths(...,8)` 截断影响）；`candidateScore`/`exactMatchLevel` 增加文件路径精确命中信号（+0.60）；新增同名类多文件路径区分回归测试与显式路径限定范围测试。
   - Trace 候选池与实际重排输入对齐：并集路径的 `ScopedSearchResult.candidates` 返回并集（实际重排输入），CODE_CANDIDATE_RECALL_MISS / CODE_RERANK_LOSS 归因不再失真。
   - git 子进程加固：`gitShow`/`gitHead` 合并错误流单流消费（防 stderr 写满死锁）+ `waitFor(5s)` 超时后 `destroyForcibly`。
-  - 第三轮修复对评测集行为中性：E7 与 E6 零排名变化（Recall@1 93.6% / Recall@10 99.6% / MRR 0.9596），全量 409 测试通过。
+  - 第三轮修复对评测集行为中性：E7 与 E6 零排名变化（Recall@1 93.6% / Recall@10 99.6% / MRR 0.9596），全量测试通过。
+- 评审整改（第四轮）：
+  - 类限定快速路径按目标符号判断：给出目标符号名时，仅当该符号已出现在全局目标类方法中才走快速路径，否则类内补召回（并集符号命中加权置顶）；类内候选无法提供目标符号（解析器误把业务文本标识符当方法名）时不做并集扰动，回退全局精排。
+  - 精确符号通道使用查询中的显式文件路径：`findExactSymbols` 增加文件路径过滤（精确/后缀匹配），多模块同名类同名方法场景按路径区分；新增同名符号路径过滤测试。
+  - git 输出异步消费：`gitOutput` 在后台线程读取输出 + 合并错误流，`waitFor(5s)` 超时强杀真正生效（子进程不关流也不会阻塞）。
+  - Trace 候选池并入精确命中：`candidates = 精确命中 + 混合候选去重`，与最终 ranked 输入一致，raw rank / rank movement / CODE_RERANK_LOSS 归因不失真。
+  - 文档行尾空格清理（`git diff --check` 通过）。
+  - 第四轮修复对评测集行为中性：E9 与 E7 零排名变化（Recall@1 93.6% / Recall@10 99.6% / MRR 0.9596），全量 412 测试通过。
 - 代码语义标注补标：标注模型由不可路由的 `claude-opus-5`（网关 Vertex AI 404）切为 `ANNOTATION_MODEL=gpt-5.6-sol`；清理重索引新增 140 个文件的降级静态标注缓存条目（磁盘 2920 条按 chunk 哈希剔除 + Qdrant live 按文件范围删除），重索引后 11 个核心业务文件（33 个 chunk）用 gpt-5.6-sol 完成中文业务语义补标（含 `BuildKillRankHandler.handle` 等），非核心文件保持静态标注（设计如此）。补标后评测 E5：Recall@1 88.6% / Recall@10 99.6% / MRR 0.9202，与 E4 持平无回归。
 - 评审整改（代码检索改进落地后）：
   - 类限定检索的 Qdrant 过滤格式：多值 filePath 匹配由 `match.value` 数组改为 `match.any`（Qdrant 多值匹配的文档语义；实测本机 Qdrant 1.15.4 对 `match.value` 数组返回 400，此前通道静默回退从未生效），新增请求体断言测试（含 `match.value` 不存在断言）与守卫快速路径测试（全局已含类方法时不发起类内查询）。

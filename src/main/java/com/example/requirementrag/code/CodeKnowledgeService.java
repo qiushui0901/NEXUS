@@ -158,7 +158,7 @@ public class CodeKnowledgeService {
             if (!exactHits.isEmpty()) {
                 SearchOutcome hybrid = hybridOnly(collection, query, resolvedProject, resolvedLimit, collectTrace);
                 List<CodeChunk> ranked = mergeExact(exactHits, hybrid.ranked(), resolvedLimit);
-                return new SearchOutcome(ranked, traceOf(hybrid, ranked));
+                return new SearchOutcome(ranked, traceOf(hybrid, ranked, exactHits));
             }
         }
 
@@ -184,16 +184,26 @@ public class CodeKnowledgeService {
         return new SearchOutcome(store.hybridSearch(collection, query, projectId, limit), null);
     }
 
-    /** 将混合检索 trace 的候选归因替换为最终精排结果（ranked 与 candidates 仍来自同一次检索）。 */
-    private CodeQdrantStore.CodeSearchTrace traceOf(SearchOutcome hybrid, List<CodeChunk> ranked) {
+    /**
+     * 将混合检索 trace 的候选归因替换为最终精排结果；精确命中候选并入候选池头部，
+     * 保证 candidates 与最终 ranked 的输入一致（raw rank / rank movement 归因不失真）。
+     */
+    private CodeQdrantStore.CodeSearchTrace traceOf(SearchOutcome hybrid, List<CodeChunk> ranked,
+                                                    List<CodeChunk> exactHits) {
         if (hybrid.trace() == null) {
             return null;
         }
-        return new CodeQdrantStore.CodeSearchTrace(hybrid.trace().candidates(), ranked,
+        List<CodeChunk> candidates = new ArrayList<>(exactHits);
+        for (CodeChunk candidate : hybrid.trace().candidates()) {
+            if (candidates.stream().noneMatch(existing -> sameSymbol(existing, candidate))) {
+                candidates.add(candidate);
+            }
+        }
+        return new CodeQdrantStore.CodeSearchTrace(candidates, ranked,
                 hybrid.trace().denseCandidates(), hybrid.trace().sparseCandidates());
     }
 
-    /** 精确符号通道：SQLite 精确查找 + 从仓库源码构建 chunk；任何一步失败只影响该命中，不阻断整体检索。 */
+    /** 精确符号通道：SQLite 精确查找（含查询中显式文件路径过滤）+ 从仓库源码构建 chunk；任何一步失败只影响该命中，不阻断整体检索。 */
     private List<CodeChunk> exactSymbolHits(String projectId, CodeQueryAnalyzer.ParsedCodeQuery parsed, int limit) {
         try {
             String commitSha = graphStore.latestCommit(projectId);
@@ -201,7 +211,7 @@ public class CodeKnowledgeService {
                 return List.of();
             }
             List<CodeSymbol> symbols = graphStore.findExactSymbols(projectId, commitSha,
-                    parsed.className(), parsed.symbolName(), limit);
+                    parsed.className(), parsed.symbolName(), parsed.filePath(), limit);
             List<CodeChunk> hits = new ArrayList<>();
             for (CodeSymbol symbol : symbols) {
                 CodeChunk chunk = chunkFromSymbol(projectId, symbol, parsed.className());
@@ -241,7 +251,7 @@ public class CodeKnowledgeService {
                 }
             }
             CodeQdrantStore.ScopedSearchResult scoped = store.searchWithClassScope(
-                    liveCollection(projectId), query, projectId, classFiles, limit);
+                    liveCollection(projectId), query, projectId, classFiles, parsed.symbolName(), limit);
             if (scoped == null) {
                 return null;
             }
@@ -343,53 +353,54 @@ public class CodeKnowledgeService {
 
     /**
      * git show commit:path 读取文件内容；git 失败、文件在该 commit 不存在或超时返回 null。
-     * 输出合并到 stdout 单流消费（避免 stderr 写满死锁），并带超时兜底。
      */
     private String gitShow(Path repoRoot, String commitSha, String relativePath) {
-        try {
-            Process process = new ProcessBuilder("git", "show", commitSha + ":" + relativePath)
-                    .directory(repoRoot.toFile())
-                    .redirectErrorStream(true)
-                    .start();
-            byte[] output = process.getInputStream().readAllBytes();
-            if (!process.waitFor(GIT_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                process.destroyForcibly();
-                log.warn("git show 超时，放弃精确源码读取: {}", relativePath);
-                return null;
-            }
-            if (process.exitValue() != 0) {
-                return null;
-            }
-            return new String(output, StandardCharsets.UTF_8);
-        }
-        catch (IOException exception) {
-            return null;
-        }
-        catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
-            return null;
-        }
+        String output = gitOutput(repoRoot, List.of("git", "show", commitSha + ":" + relativePath));
+        return output == null ? null : output;
     }
 
     /** git rev-parse HEAD；git 不可用或超时时返回 null。 */
     private String gitHead(Path repoRoot) {
+        String output = gitOutput(repoRoot, List.of("git", "rev-parse", "HEAD"));
+        return output == null ? null : output.trim();
+    }
+
+    /**
+     * 有界执行 git 命令：输出在后台线程异步消费（子进程不关闭输出流或写满管道时，主线程仍可按时超时强杀），
+     * 合并错误流到 stdout 单流读取；退出码非 0 或超时返回 null。
+     */
+    private String gitOutput(Path repoRoot, List<String> command) {
+        Process process = null;
         try {
-            Process process = new ProcessBuilder("git", "rev-parse", "HEAD")
+            process = new ProcessBuilder(command)
                     .directory(repoRoot.toFile())
                     .redirectErrorStream(true)
                     .start();
-            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-            if (!process.waitFor(GIT_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                process.destroyForcibly();
+            Process running = process;
+            java.util.concurrent.CompletableFuture<String> output = java.util.concurrent.CompletableFuture
+                    .supplyAsync(() -> {
+                        try (java.io.InputStream in = running.getInputStream()) {
+                            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                        }
+                        catch (IOException exception) {
+                            return "";
+                        }
+                    });
+            if (!running.waitFor(GIT_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                running.destroyForcibly();
                 return null;
             }
-            return process.exitValue() == 0 && !output.isBlank() ? output : null;
+            String result = output.get(GIT_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            return running.exitValue() == 0 ? result : null;
         }
-        catch (IOException exception) {
-            return null;
-        }
-        catch (InterruptedException exception) {
-            Thread.currentThread().interrupt();
+        catch (IOException | InterruptedException | java.util.concurrent.ExecutionException
+               | java.util.concurrent.TimeoutException exception) {
+            if (exception instanceof InterruptedException) {
+                Thread.currentThread().interrupt();
+            }
+            if (process != null && process.isAlive()) {
+                process.destroyForcibly();
+            }
             return null;
         }
     }

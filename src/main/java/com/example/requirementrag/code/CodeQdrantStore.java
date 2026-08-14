@@ -338,13 +338,17 @@ public class CodeQdrantStore {
      * 类名限定召回：只在指定类文件范围内做混合检索，用于「在 XxxService 中由哪个方法实现」类查询。
      * 与全局混合检索共用一次向量计算（embedding 是主要延迟）。
      *
-     * <p>策略：先做全局检索（与纯混合检索完全一致）。若全局精排结果中已包含目标类的方法/构造器，
-     * 视为全局答案已足够，直接返回全局结果并做方法优先稳定重排（快速路径，不发起类内查询）——
-     * 查询点名类本体时，容器类 chunk 不是答案，方法/构造器前置；否则做类文件范围内查询并把类内候选
-     * 作为并集补齐（全局顺序优先、类内只补召回），统一结构重排后同样方法优先。</p>
+     * <p>策略：先做全局检索（与纯混合检索完全一致）。仅当全局精排结果已足够回答查询时才走快速路径：
+     * 目标符号名未给出时要求全局已含目标类的方法/构造器；给出目标符号名时还要求该符号出现在
+     * 全局目标类方法中（否则全局只有同名/近似方法的错误答案，必须走类内补召回）。
+     * 快速路径返回前做目标类方法优先稳定重排——查询点名类本体时，容器类 chunk 不是答案；
+     * 否则做类文件范围内查询并把类内候选作为并集补齐（全局顺序优先、类内只补召回），
+     * 统一结构重排后同样方法优先。</p>
+     *
+     * @param targetSymbolName 查询解析出的方法名（可能为 null，类名限定查询无方法名）
      */
     public ScopedSearchResult searchWithClassScope(String collection, String query, String projectId,
-                                                   List<String> classFiles, int limit) {
+                                                   List<String> classFiles, String targetSymbolName, int limit) {
         ensureCollection(collection);
         float[] dense = embeddingBatcher.embedAll(List.of(query)).get(0);
         float[] desc = descVector(collection, query);
@@ -359,14 +363,18 @@ public class CodeQdrantStore {
         List<CodeChunk> global = rerankCandidatesInternal(query, globalRerankInput, limit,
                 properties.retrieval().resolvedCodeQueryExpansionEnabled(),
                 properties.retrieval().resolvedCodeStructuralRerankEnabled());
-        if (hasClassMethod(global, classFiles)) {
+        if (answersQuery(global, classFiles, targetSymbolName)) {
             return new ScopedSearchResult(global, methodFirst(global, classFiles, limit), globalCandidates);
         }
 
         List<CodeChunk> classCandidates = fusedCandidates(collection, dense, desc, sparse, projectId,
                 candidateLimit, prefetchLimit, classFiles);
-        if (classCandidates.isEmpty()) {
-            // 类文件在索引中无任何 chunk：无需并集与方法优先，直接返回全局精排
+        if (classCandidates.isEmpty() || !suppliesTargetSymbol(classCandidates, classFiles, targetSymbolName)) {
+            // 类内无法提供目标符号（如解析器误把业务文本中的标识符当方法名，或类文件无索引）：
+            // 类内并集只会扰动排序而无召回收益，按无符号类名限定处理（快速路径或纯全局精排）
+            if (answersQuery(global, classFiles, null)) {
+                return new ScopedSearchResult(global, methodFirst(global, classFiles, limit), globalCandidates);
+            }
             return new ScopedSearchResult(global, global, globalCandidates);
         }
         List<CodeChunk> union = unionCandidates(globalCandidates, classCandidates);
@@ -379,10 +387,31 @@ public class CodeQdrantStore {
         return new ScopedSearchResult(global, methodFirst(unionRanked, classFiles, limit), union);
     }
 
-    /** 精排结果中是否已包含目标类文件范围内的方法/构造器 chunk。 */
-    private static boolean hasClassMethod(List<CodeChunk> ranked, List<String> classFiles) {
-        return ranked.stream().anyMatch(chunk -> classFiles.contains(chunk.filePath())
+    /**
+     * 全局精排结果是否已足以回答查询：目标符号名给出时必须命中该符号的目标类方法；
+     * 未给出时（类名限定查询）要求至少存在目标类方法/构造器。
+     */
+    private static boolean answersQuery(List<CodeChunk> ranked, List<String> classFiles, String targetSymbolName) {
+        boolean hasClassMethod = ranked.stream().anyMatch(chunk -> classFiles.contains(chunk.filePath())
                 && ("method".equals(chunk.symbolType()) || "constructor".equals(chunk.symbolType())));
+        if (!hasClassMethod) {
+            return false;
+        }
+        if (targetSymbolName == null || targetSymbolName.isBlank()) {
+            return true;
+        }
+        return ranked.stream().anyMatch(chunk -> classFiles.contains(chunk.filePath())
+                && targetSymbolName.equalsIgnoreCase(chunk.symbolName()));
+    }
+
+    /** 类内候选池是否包含目标符号（targetSymbolName 为 null 时视为可提供）。 */
+    private static boolean suppliesTargetSymbol(List<CodeChunk> classCandidates, List<String> classFiles,
+                                                String targetSymbolName) {
+        if (targetSymbolName == null || targetSymbolName.isBlank()) {
+            return true;
+        }
+        return classCandidates.stream().anyMatch(chunk -> classFiles.contains(chunk.filePath())
+                && targetSymbolName.equalsIgnoreCase(chunk.symbolName()));
     }
 
     /** 候选并集：全局 RRF 候选顺序优先，类内候选按 filePath+symbolName+startLine 去重后补齐（只补召回，不覆盖全局顺序）。 */
