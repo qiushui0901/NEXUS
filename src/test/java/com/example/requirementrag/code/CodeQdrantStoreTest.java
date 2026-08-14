@@ -119,6 +119,211 @@ class CodeQdrantStoreTest {
     }
 
     @Test
+    void structuralRerankPromotesClassNameAndMethodNameMatch() {
+        CodeChunk noise = chunk("src/main/java/com/acme/Alpha.java", "alpha");
+        CodeChunk target = chunk("src/main/java/com/acme/service/VipService.java", "receiveGift");
+        CodeChunk sameMethodOtherClass = chunk("src/main/java/com/acme/service/GiftService.java", "receiveGift");
+
+        assertThat(CodeQdrantStore.rerankCandidates(
+                "查找 VipService.receiveGift 的实现位置。",
+                List.of(noise, sameMethodOtherClass, target), 3, true, true))
+                .startsWith(target);
+    }
+
+    @Test
+    void structuralRerankPromotesClassNameOnlyMatchForClassScopedQueries() {
+        CodeChunk noise = chunk("src/main/java/com/acme/Alpha.java", "alpha");
+        CodeChunk sameClassMethod = chunk("src/main/java/com/acme/service/FarmService.java", "dig");
+
+        assertThat(CodeQdrantStore.rerankCandidates(
+                "在 FarmService 中由哪个方法实现？", List.of(noise, sameClassMethod), 2, true, true))
+                .startsWith(sameClassMethod);
+    }
+
+    @Test
+    void structuralRerankKeepsLegacyBehaviorWhenStructuralSignalsDisabled() {
+        CodeChunk first = chunk("src/main/java/com/acme/Alpha.java", "alpha");
+        CodeChunk target = chunk("src/main/java/com/acme/service/VipService.java", "receiveGift");
+
+        // 旧规则：查询只含类名时不做类名提升，保持原始名次；启用结构信号后类内方法被提升
+        assertThat(CodeQdrantStore.rerankCandidates(
+                "在 VipService 中由哪个方法实现？", List.of(first, target), 2, true, false))
+                .startsWith(first);
+        assertThat(CodeQdrantStore.rerankCandidates(
+                "在 VipService 中由哪个方法实现？", List.of(first, target), 2, true, true))
+                .startsWith(target);
+    }
+
+    @Test
+    void structuralRerankBoostsExplicitFilePathMatchesOverSameNameClassFiles() {
+        CodeChunk sameNameOtherFile = chunk("src/other/HeroService.java", "save", "o-1");
+        CodeChunk targetFile = chunk("src/main/java/com/acme/HeroService.java", "save", "t-1");
+
+        // 同名类在两个文件：查询显式给出路径时，路径命中者必须置前（无路径信号时按 RRF 名次）
+        assertThat(CodeQdrantStore.rerankCandidates(
+                "解释 src/main/java/com/acme/HeroService.java 中 HeroService 的实现",
+                List.of(sameNameOtherFile, targetFile), 2, true, true))
+                .startsWith(targetFile);
+    }
+
+    @Test
+    void methodFirstPromotesOnlyTargetClassMethodsAheadOfContainerChunks() {
+        CodeChunk clazz = new CodeChunk("c-1", "demo", "abc",
+                "src/main/java/com/acme/service/FarmService.java", "class", "FarmService",
+                1, 10, "class FarmService {}", "hash", "java");
+        CodeChunk method = chunk("src/main/java/com/acme/service/FarmService.java", "dig", "m-1");
+        CodeChunk file = new CodeChunk("f-1", "demo", "abc",
+                "src/main/java/com/acme/service/FarmService.java", "file", "FarmService.java",
+                1, 10, "file chunk", "hash", "java");
+
+        assertThat(CodeQdrantStore.methodFirst(
+                List.of(clazz, file, method), List.of("src/main/java/com/acme/service/FarmService.java"), 3))
+                .extracting(CodeChunk::id).containsExactly("m-1", "c-1", "f-1");
+    }
+
+    @Test
+    void methodFirstDoesNotPromoteMethodsOfUnrelatedClasses() {
+        CodeChunk unrelatedMethod = chunk("src/OtherService.java", "run", "u-1");
+        CodeChunk targetClass = new CodeChunk("c-1", "demo", "abc",
+                "src/FarmService.java", "class", "FarmService",
+                1, 10, "class FarmService {}", "hash", "java");
+        CodeChunk targetMethod = chunk("src/FarmService.java", "dig", "m-1");
+
+        // 无关类方法保持原有相对位置，不因 methodFirst 被提权；目标类方法仍前置于容器 chunk
+        assertThat(CodeQdrantStore.methodFirst(
+                List.of(unrelatedMethod, targetClass, targetMethod), List.of("src/FarmService.java"), 3))
+                .extracting(CodeChunk::id).containsExactly("m-1", "u-1", "c-1");
+    }
+
+    @Test
+    void unionCandidatesKeepsGlobalOrderAndBackfillsClassScopeOnly() {
+        CodeChunk globalA = chunk("src/A.java", "run", "g-a");
+        CodeChunk globalB = chunk("src/FarmService.java", "dig", "g-b");
+        CodeChunk duplicate = chunk("src/FarmService.java", "dig", "g-b");
+        CodeChunk backfill = chunk("src/FarmService.java", "harvest", "c-1");
+
+        assertThat(CodeQdrantStore.unionCandidates(
+                List.of(globalA, globalB), List.of(duplicate, backfill)))
+                .extracting(CodeChunk::id)
+                .containsExactly("g-a", "g-b", "c-1");
+    }
+
+    @Test
+    void classScopedQueryUsesMatchAnyForMultiValueFileScopeFilter() throws Exception {
+        org.springframework.web.client.RestClient.Builder builder = org.springframework.web.client.RestClient.builder();
+        org.springframework.test.web.client.MockRestServiceServer server =
+                org.springframework.test.web.client.MockRestServiceServer.bindTo(builder).build();
+        org.springframework.web.client.RestClient client = builder.build();
+        com.example.requirementrag.config.RagProperties props =
+                mock(com.example.requirementrag.config.RagProperties.class);
+        when(props.retrieval()).thenReturn(new com.example.requirementrag.config.RagProperties.Retrieval(
+                50, 50, 40, 20, 10, false, 1_000, 3, 3, 30_000,
+                -1, -1, -1, -1, null, null, null, true, 3));
+        com.example.requirementrag.retrieval.EmbeddingBatcher batcher =
+                mock(com.example.requirementrag.retrieval.EmbeddingBatcher.class);
+        when(batcher.embedAll(any())).thenReturn(List.of(new float[2]));
+
+        // ensureCollection 探测 + desc_dense 能力探测（无 desc_dense → 仅 dense+sparse 两路预取）
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/collections/test-code")))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.method(
+                        org.springframework.http.HttpMethod.GET))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{}", org.springframework.http.MediaType.APPLICATION_JSON));
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/collections/test-code")))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.method(
+                        org.springframework.http.HttpMethod.GET))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\":{\"config\":{\"params\":{\"vectors\":{\"dense\":{\"size\":2}}}}}",
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+        // 全局查询（无文件范围过滤）
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/points/query")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\":{\"points\":[]}}", org.springframework.http.MediaType.APPLICATION_JSON));
+        // 类范围查询：filter 必须使用 match.any 且不得出现 match.value 数组
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/points/query")))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath(
+                        "$.prefetch[0].filter.must[1].match.any[0]").value("src/Alpha.java"))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath(
+                        "$.prefetch[0].filter.must[1].match.any[1]").value("src/Beta.java"))
+                .andExpect(org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath(
+                        "$.prefetch[0].filter.must[1].match.value").doesNotExist())
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\":{\"points\":[]}}", org.springframework.http.MediaType.APPLICATION_JSON));
+
+        CodeQdrantStore store = new CodeQdrantStore(client,
+                mock(org.springframework.ai.embedding.EmbeddingModel.class),
+                batcher,
+                new com.example.requirementrag.retrieval.SparseVectorizer(),
+                props, null);
+
+        CodeQdrantStore.ScopedSearchResult result = store.searchWithClassScope(
+                "test-code", "在 HeroService 中由哪个方法实现？", "demo",
+                List.of("src/Alpha.java", "src/Beta.java"), 10);
+
+        assertThat(result.global()).isEmpty();
+        assertThat(result.classScoped()).isEmpty();
+        server.verify();
+    }
+
+    @Test
+    void classScopedSearchSkipsSecondQueryWhenGlobalAlreadyHasAClassMethod() throws Exception {
+        org.springframework.web.client.RestClient.Builder builder = org.springframework.web.client.RestClient.builder();
+        org.springframework.test.web.client.MockRestServiceServer server =
+                org.springframework.test.web.client.MockRestServiceServer.bindTo(builder).build();
+        org.springframework.web.client.RestClient client = builder.build();
+        com.example.requirementrag.config.RagProperties props =
+                mock(com.example.requirementrag.config.RagProperties.class);
+        when(props.retrieval()).thenReturn(new com.example.requirementrag.config.RagProperties.Retrieval(
+                50, 50, 40, 20, 10, false, 1_000, 3, 3, 30_000,
+                -1, -1, -1, -1, null, null, null, true, 3));
+        com.example.requirementrag.retrieval.EmbeddingBatcher batcher =
+                mock(com.example.requirementrag.retrieval.EmbeddingBatcher.class);
+        when(batcher.embedAll(any())).thenReturn(List.of(new float[2]));
+
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/collections/test-code")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{}", org.springframework.http.MediaType.APPLICATION_JSON));
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/collections/test-code")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\":{\"config\":{\"params\":{\"vectors\":{\"dense\":{\"size\":2}}}}}",
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+        // 全局查询返回类容器 chunk（RRF 首位）+ 类内方法 chunk → 快速路径，不得再发起类内查询，
+        // 且返回前必须做方法优先稳定重排（容器类 chunk 不是方法类查询的答案）
+        String containerPoint = "{\"id\":\"p1\",\"payload\":{\"projectId\":\"demo\",\"commitSha\":\"abc\","
+                + "\"filePath\":\"src/Alpha.java\",\"symbolType\":\"class\",\"symbolName\":\"Alpha\","
+                + "\"startLine\":1,\"endLine\":9,\"text\":\"class Alpha {}\",\"contentHash\":\"h1\"}}";
+        String methodPoint = "{\"id\":\"p2\",\"payload\":{\"projectId\":\"demo\",\"commitSha\":\"abc\","
+                + "\"filePath\":\"src/Alpha.java\",\"symbolType\":\"method\",\"symbolName\":\"dig\","
+                + "\"startLine\":4,\"endLine\":6,\"text\":\"void dig() {}\",\"contentHash\":\"h2\"}}";
+        server.expect(org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                        org.hamcrest.Matchers.endsWith("/points/query")))
+                .andRespond(org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                        "{\"result\":{\"points\":[" + containerPoint + "," + methodPoint + "]}}",
+                        org.springframework.http.MediaType.APPLICATION_JSON));
+
+        CodeQdrantStore store = new CodeQdrantStore(client,
+                mock(org.springframework.ai.embedding.EmbeddingModel.class),
+                batcher,
+                new com.example.requirementrag.retrieval.SparseVectorizer(),
+                props, null);
+
+        CodeQdrantStore.ScopedSearchResult result = store.searchWithClassScope(
+                "test-code", "在 AlphaService 中由哪个方法实现？", "demo",
+                List.of("src/Alpha.java"), 10);
+
+        // 方法优先：dig 前置于容器类 chunk；且全局候选归因与最终结果来自同一次检索
+        assertThat(result.classScoped()).extracting(CodeChunk::symbolName).containsExactly("dig", "Alpha");
+        assertThat(result.candidates()).extracting(CodeChunk::id).containsExactly("p1", "p2");
+        server.verify();
+    }
+
+    @Test
     void codeSearchTraceDefensivelyCopiesBothStages() {
         CodeChunk candidate = chunk("src/main/java/com/acme/Alpha.java", "alpha");
         CodeChunk ranked = chunk("src/main/java/com/acme/Beta.java", "beta");

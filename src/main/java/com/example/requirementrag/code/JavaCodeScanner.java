@@ -257,13 +257,11 @@ public class JavaCodeScanner {
         return Math.max(1, high + 1);
     }
 
-    /** 按配置的 includes/excludes（相对路径包含匹配）判断文件是否参与扫描。 */
+    /** 按配置的 includes/excludes（相对路径匹配，语义见 {@link CodePathFilter}）判断文件是否参与扫描。 */
     private boolean include(Path root, Path file, RagProperties.Code config) {
         String relative = "/" + normalize(root.relativize(file).toString());
-        if (config.excludes().stream().anyMatch(relative::contains)) {
-            return false;
-        }
-        return config.includes().isEmpty() || config.includes().stream().anyMatch(relative::contains);
+        return !CodePathFilter.excluded(relative, config.excludes())
+                && CodePathFilter.included(relative, config.includes());
     }
 
     /** 读取仓库当前 HEAD commit SHA，失败时返回 "unknown"。 */

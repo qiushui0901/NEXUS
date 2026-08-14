@@ -40,6 +40,7 @@ public class CodeKnowledgeService {
     private final CodeSemanticAnnotator annotator;
     private final CodeIndexLockService indexLockService;
     private final AnnotationCacheStore annotationCacheStore;
+    private final CodeQueryAnalyzer queryAnalyzer;
 
     @Autowired
     public CodeKnowledgeService(RagProperties properties, ProjectRegistry projectRegistry,
@@ -47,7 +48,8 @@ public class CodeKnowledgeService {
                                 SQLiteSymbolGraphStore graphStore,
                                 CodeSemanticAnnotator annotator,
                                 CodeIndexLockService indexLockService,
-                                AnnotationCacheStore annotationCacheStore) {
+                                AnnotationCacheStore annotationCacheStore,
+                                CodeQueryAnalyzer queryAnalyzer) {
         this.properties = properties;
         this.projectRegistry = projectRegistry;
         this.scanner = scanner;
@@ -56,13 +58,14 @@ public class CodeKnowledgeService {
         this.annotator = annotator;
         this.indexLockService = indexLockService;
         this.annotationCacheStore = annotationCacheStore;
+        this.queryAnalyzer = queryAnalyzer;
     }
 
     /** Compatibility constructor for pre-0.7 unit callers. */
     CodeKnowledgeService(RagProperties properties, ProjectRegistry projectRegistry,
                          JavaCodeScanner scanner, CodeQdrantStore store) {
         this(properties, projectRegistry, legacy(scanner), store, null, null, new CodeIndexLockService(),
-                null);
+                null, new CodeQueryAnalyzer());
     }
 
     /** 扫描默认配置仓库并替换写入 Qdrant。 */
@@ -120,18 +123,275 @@ public class CodeKnowledgeService {
 
     /** 语义搜索代码 chunk。 */
     public List<CodeChunk> search(String query, String projectId, Integer limit) {
-        String resolvedProject = projectId == null || projectId.isBlank() ? properties.code().projectId() : projectId;
-        int resolvedLimit = Math.min(Math.max(limit == null ? 10 : limit, 1), 50);
-        String collection = liveCollection(resolvedProject);
-        return store.hybridSearch(collection, query, resolvedProject, resolvedLimit);
+        return searchInternal(query, projectId, limit, false).ranked();
     }
 
-    /** 返回代码 RRF 候选与最终精排结果，仅用于有界离线诊断。 */
+    /**
+     * 返回代码 RRF 候选与最终精排结果，仅用于有界离线诊断。
+     * candidates/ranked 来自同一次检索执行（精确符号/类名限定通道与混合检索共用一次向量计算），
+     * dense/sparse 归因仅在纯混合检索路径上有值。
+     */
     public CodeQdrantStore.CodeSearchTrace searchTrace(String query, String projectId, Integer limit) {
+        return searchInternal(query, projectId, limit, true).trace();
+    }
+
+    /** 检索结果 + 可选诊断 trace（同一次检索执行，保证归因一致）。 */
+    private record SearchOutcome(List<CodeChunk> ranked, CodeQdrantStore.CodeSearchTrace trace) {
+    }
+
+    /** 生产检索编排：精确符号通道 → 类名限定召回 → 混合检索；collectTrace 时附带同次检索的候选归因。 */
+    private SearchOutcome searchInternal(String query, String projectId, Integer limit, boolean collectTrace) {
         String resolvedProject = projectId == null || projectId.isBlank() ? properties.code().projectId() : projectId;
         int resolvedLimit = Math.min(Math.max(limit == null ? 10 : limit, 1), 50);
         String collection = liveCollection(resolvedProject);
-        return store.hybridSearchTrace(collection, query, resolvedProject, resolvedLimit);
+
+        if (graphStore == null) {
+            return hybridOnly(collection, query, resolvedProject, resolvedLimit, collectTrace);
+        }
+        CodeQueryAnalyzer.ParsedCodeQuery parsed = queryAnalyzer == null
+                ? CodeQueryAnalyzer.ParsedCodeQuery.GENERIC : queryAnalyzer.parse(query);
+
+        // 通道一：精确符号快速通道（类名+方法名）——唯一/多重载命中都置于语义候选之前，无命中回退。
+        if (parsed.kind() == CodeQueryAnalyzer.QueryKind.EXACT_SYMBOL
+                && properties.retrieval().resolvedCodeExactSymbolEnabled()) {
+            List<CodeChunk> exactHits = exactSymbolHits(resolvedProject, parsed, resolvedLimit);
+            if (!exactHits.isEmpty()) {
+                SearchOutcome hybrid = hybridOnly(collection, query, resolvedProject, resolvedLimit, collectTrace);
+                List<CodeChunk> ranked = mergeExact(exactHits, hybrid.ranked(), resolvedLimit);
+                return new SearchOutcome(ranked, traceOf(hybrid, ranked));
+            }
+        }
+
+        // 通道二：类名限定召回（类名存在但精确通道未命中）——类内召回补齐后统一结构重排的结果。
+        if (parsed.hasClassName() && properties.retrieval().resolvedCodeClassScopedEnabled()) {
+            SearchOutcome classScoped = classScopedHits(resolvedProject, query, parsed, resolvedLimit, collectTrace);
+            if (classScoped != null) {
+                return classScoped;
+            }
+        }
+
+        return hybridOnly(collection, query, resolvedProject, resolvedLimit, collectTrace);
+    }
+
+    /** 纯混合检索路径：collectTrace 时用 hybridSearchTrace（单次检索含候选归因），否则直接返回精排。 */
+    private SearchOutcome hybridOnly(String collection, String query, String projectId, int limit,
+                                     boolean collectTrace) {
+        if (collectTrace) {
+            CodeQdrantStore.CodeSearchTrace trace =
+                    store.hybridSearchTrace(collection, query, projectId, limit);
+            return new SearchOutcome(trace.ranked(), trace);
+        }
+        return new SearchOutcome(store.hybridSearch(collection, query, projectId, limit), null);
+    }
+
+    /** 将混合检索 trace 的候选归因替换为最终精排结果（ranked 与 candidates 仍来自同一次检索）。 */
+    private CodeQdrantStore.CodeSearchTrace traceOf(SearchOutcome hybrid, List<CodeChunk> ranked) {
+        if (hybrid.trace() == null) {
+            return null;
+        }
+        return new CodeQdrantStore.CodeSearchTrace(hybrid.trace().candidates(), ranked,
+                hybrid.trace().denseCandidates(), hybrid.trace().sparseCandidates());
+    }
+
+    /** 精确符号通道：SQLite 精确查找 + 从仓库源码构建 chunk；任何一步失败只影响该命中，不阻断整体检索。 */
+    private List<CodeChunk> exactSymbolHits(String projectId, CodeQueryAnalyzer.ParsedCodeQuery parsed, int limit) {
+        try {
+            String commitSha = graphStore.latestCommit(projectId);
+            if (commitSha == null) {
+                return List.of();
+            }
+            List<CodeSymbol> symbols = graphStore.findExactSymbols(projectId, commitSha,
+                    parsed.className(), parsed.symbolName(), limit);
+            List<CodeChunk> hits = new ArrayList<>();
+            for (CodeSymbol symbol : symbols) {
+                CodeChunk chunk = chunkFromSymbol(projectId, symbol, parsed.className());
+                if (chunk != null && hits.stream().noneMatch(existing ->
+                        existing.filePath().equals(chunk.filePath())
+                                && existing.symbolName().equals(chunk.symbolName())
+                                && existing.startLine() == chunk.startLine())) {
+                    hits.add(chunk);
+                }
+            }
+            return hits;
+        }
+        catch (RuntimeException exception) {
+            log.warn("精确符号通道失败，回退混合检索: {}", exception.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 类名限定召回：解析类文件范围后在类范围内做并集检索；范围未知或检索失败时返回 null。 */
+    private SearchOutcome classScopedHits(String projectId, String query,
+                                          CodeQueryAnalyzer.ParsedCodeQuery parsed, int limit,
+                                          boolean collectTrace) {
+        try {
+            String commitSha = graphStore.latestCommit(projectId);
+            if (commitSha == null) {
+                return null;
+            }
+            List<String> classFiles;
+            if (parsed.filePath() != null) {
+                // 查询给出显式文件路径：直接以该文件为类限定范围，不受同名类截断影响
+                classFiles = List.of(parsed.filePath());
+            }
+            else {
+                classFiles = graphStore.classFilePaths(projectId, commitSha, parsed.className(), 8);
+                if (classFiles.isEmpty()) {
+                    return null;
+                }
+            }
+            CodeQdrantStore.ScopedSearchResult scoped = store.searchWithClassScope(
+                    liveCollection(projectId), query, projectId, classFiles, limit);
+            if (scoped == null) {
+                return null;
+            }
+            CodeQdrantStore.CodeSearchTrace trace = collectTrace
+                    ? new CodeQdrantStore.CodeSearchTrace(scoped.candidates(), scoped.classScoped(),
+                    List.of(), List.of())
+                    : null;
+            return new SearchOutcome(scoped.classScoped(), trace);
+        }
+        catch (RuntimeException exception) {
+            log.warn("类名限定召回失败，回退混合检索: {}", exception.getMessage());
+            return null;
+        }
+    }
+
+    /** 精确命中置顶：先放全部精确命中（稳定顺序），再放混合检索结果（去掉重复），截断到 limit。 */
+    private List<CodeChunk> mergeExact(List<CodeChunk> exactHits, List<CodeChunk> hybrid, int limit) {
+        List<CodeChunk> merged = new ArrayList<>(exactHits);
+        for (CodeChunk candidate : hybrid) {
+            boolean duplicate = merged.stream().anyMatch(existing -> sameSymbol(existing, candidate));
+            if (!duplicate) {
+                merged.add(candidate);
+            }
+            if (merged.size() >= limit) {
+                break;
+            }
+        }
+        return merged.size() <= limit ? List.copyOf(merged) : merged.subList(0, limit);
+    }
+
+    /** 同一符号判定：filePath + symbolName + startLine 一致视为重复候选。 */
+    private boolean sameSymbol(CodeChunk left, CodeChunk right) {
+        return left.filePath().equals(right.filePath())
+                && left.symbolName().equals(right.symbolName())
+                && left.startLine() == right.startLine();
+    }
+
+    /** 从符号图命中构建源码 chunk（精确通道专用）：按快照 commit 读取对应版本源码，确定性构造。 */
+    private CodeChunk chunkFromSymbol(String projectId, CodeSymbol symbol, String className) {
+        try {
+            List<String> lines = snapshotSourceLines(projectId, symbol.commitSha(), symbol.filePath());
+            if (lines == null) {
+                return null;
+            }
+            int start = Math.max(1, Math.min(symbol.startLine(), lines.size()));
+            int end = Math.min(lines.size(), Math.max(symbol.endLine(), start));
+            StringBuilder text = new StringBuilder();
+            for (int line = start; line <= end; line++) {
+                text.append(lines.get(line - 1)).append('\n');
+            }
+            String source = text.toString().strip();
+            if (source.isEmpty()) {
+                return null;
+            }
+            String seed = "graph:" + projectId + ":" + symbol.commitSha() + ":" + symbol.filePath() + ":"
+                    + symbol.simpleName() + ":" + start;
+            String id = java.util.UUID.nameUUIDFromBytes(seed.getBytes(StandardCharsets.UTF_8)).toString();
+            return new CodeChunk(id, projectId, symbol.commitSha(), symbol.filePath(), symbol.kind(),
+                    symbol.simpleName(), start, end, source, CodeQdrantStore.sourceHash(source),
+                    symbol.language(), className, "", "", "", "", List.of(), List.of(), List.of(), List.of(),
+                    "", List.of(), List.of());
+        }
+        catch (RuntimeException exception) {
+            log.warn("精确符号源码读取失败 {}:{}: {}", projectId, symbol.filePath(), exception.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 读取快照 commit 下的文件内容：优先 git show（与索引版本严格一致，工作区后续增删行不影响截取）；
+     * git 不可用或读取失败时，仅当工作区 HEAD 与快照 commit 一致才回退读工作区文件，否则返回 null（放弃该命中）。
+     */
+    private List<String> snapshotSourceLines(String projectId, String commitSha, String filePath) {
+        String repositoryPath = resolveRepositoryPath(projectId);
+        Path root = Path.of(repositoryPath).toAbsolutePath().normalize();
+        String text = gitShow(root, commitSha, filePath);
+        if (text == null) {
+            String head = gitHead(root);
+            if (head == null || !head.equals(commitSha)) {
+                return null;
+            }
+            try {
+                Path file = root.resolve(filePath).normalize().toRealPath();
+                if (!file.startsWith(root.toRealPath())) {
+                    return null;
+                }
+                text = Files.readString(file, StandardCharsets.UTF_8);
+            }
+            catch (IOException exception) {
+                log.warn("精确符号工作区读取失败 {}:{}: {}", projectId, filePath, exception.getMessage());
+                return null;
+            }
+        }
+        return text.lines().toList();
+    }
+
+    /** git 子进程超时：本地仓库 git show/rev-parse 正常在毫秒级，超时视为异常放弃。 */
+    private static final java.time.Duration GIT_TIMEOUT = java.time.Duration.ofSeconds(5);
+
+    /**
+     * git show commit:path 读取文件内容；git 失败、文件在该 commit 不存在或超时返回 null。
+     * 输出合并到 stdout 单流消费（避免 stderr 写满死锁），并带超时兜底。
+     */
+    private String gitShow(Path repoRoot, String commitSha, String relativePath) {
+        try {
+            Process process = new ProcessBuilder("git", "show", commitSha + ":" + relativePath)
+                    .directory(repoRoot.toFile())
+                    .redirectErrorStream(true)
+                    .start();
+            byte[] output = process.getInputStream().readAllBytes();
+            if (!process.waitFor(GIT_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                process.destroyForcibly();
+                log.warn("git show 超时，放弃精确源码读取: {}", relativePath);
+                return null;
+            }
+            if (process.exitValue() != 0) {
+                return null;
+            }
+            return new String(output, StandardCharsets.UTF_8);
+        }
+        catch (IOException exception) {
+            return null;
+        }
+        catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
+    /** git rev-parse HEAD；git 不可用或超时时返回 null。 */
+    private String gitHead(Path repoRoot) {
+        try {
+            Process process = new ProcessBuilder("git", "rev-parse", "HEAD")
+                    .directory(repoRoot.toFile())
+                    .redirectErrorStream(true)
+                    .start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            if (!process.waitFor(GIT_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                process.destroyForcibly();
+                return null;
+            }
+            return process.exitValue() == 0 && !output.isBlank() ? output : null;
+        }
+        catch (IOException exception) {
+            return null;
+        }
+        catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
     }
 
     /** 同时检索当前项目与同组对端（不同 side）项目的代码 chunk。 */

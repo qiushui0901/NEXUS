@@ -29,6 +29,16 @@
 - 新增 `AnnotationCacheStore`：代码语义标注结果按项目磁盘持久化（JSONL 追加），全量索引与失败重试时磁盘缓存优先、live 与旧物理 collection 缓存补漏，避免重复调用 LLM 标注。
 - 完成封神需求文档与代码评测集的 LightRAG/NEXUS 对比复测，补充 NEXUS 的 Recall@1/5/10、MRR@10、平均首命中排名、空召回率、P50/P95 延迟及可复现评测报告。
 - 新增 `docs/fengshen-code-retrieval-three-way-comparison.md`，汇总 LightRAG、NEXUS、RAGFlow 的封神代码召回、排序、延迟、数据质量与选型分析。
+- 按 `docs/code-recall-at1-improvement-plan.md` 实施代码检索 Recall@1 改进并完成评测（含两轮评审整改）：基线 A3（新索引+开关全关）Recall@1 64.0% / MRR 0.764 → 实验 E6（开关全开·最终）**Recall@1 93.6%（468/500）/ Recall@5 99.6% / Recall@10 99.6% / MRR 0.9596**（+29.6pp / +0.196；SYMBOL 与 BUSINESS_TERM Recall@1 均为 100%；185 条排名变化中 157 条升至 Top1、9 条从 Top1 掉至 2-5 位——类内语义排序的代价，Recall@5 仍 +7.4pp；P50 334ms / P95 436ms 达标；报告 `target/fengshen-retrieval/nexus-code-report-{A3,E6}.json` + 对比脚本 `tools/compare-code-reports.py`）：
+  - 新增 `CodeQueryAnalyzer`：确定性解析查询中的 `ClassName.methodName`、引号内方法名、「在 X 中/应召回 X 的」类名句式与显式 Java 文件路径，输出 `ParsedCodeQuery`（EXACT_SYMBOL / CLASS_SCOPED / GENERIC），不调用 LLM。
+  - 新增精确符号快速通道：`SQLiteSymbolGraphStore.findExactSymbols`（类符号与方法符号同文件连接查询）命中时按行范围从仓库源文件确定性构建 chunk 并置顶，混合检索结果按 `filePath+symbolName+startLine` 去重追加，保证 Recall@10 不退化；SQLite 缺失或异常自动回退混合检索。
+  - 新增类名限定召回：`SQLiteSymbolGraphStore.classFilePaths` 解析类文件范围后执行 payload `filePath` 范围过滤的 Qdrant 混合检索（`CodeQdrantStore.classScopedSearch`），类内命中置顶，服务「在 XxxService 中由哪个方法实现」类查询。
+  - 结构化重排增强（`CodeQdrantStore`）：类名命中 +0.80、方法名精确命中 +0.50、完整 `ClassName.methodName` 命中合计 +1.50、文件名与类名一致 +0.50；稳定排序键增加 `exactMatchLevel`（2=类+方法/1=仅类/0=无）、filePath、startLine；`toChunk` 补反序列化 payload `className`。
+  - 新增消融开关：`app.rag.retrieval.code-exact-symbol-enabled` / `code-class-scoped-enabled` / `code-structural-rerank-enabled`（默认开启，纳入检索指纹），支持基线 A 与实验 B-F 的独立关闭对比；类名限定召回带守卫式并集：全局精排已含目标类方法时快速路径直接返回（单次查询），否则类文件范围查询补召回（全局顺序优先）并统一重排 + 方法/构造器优先于容器类 chunk。
+  - 收益归因（评审整改后实测）：E4 相对 A2 的 +25.4pp Recall@1 主要来自精确符号通道（97 条连续 `Class.method` + 26 条引号方法名置顶）与结构化重排增强；类名限定召回通道在评测集上因守卫规则基本不触发，定位为真实场景的召回保险，深层语义排序（2 条类内语义难题）留待 BGE 重排阶段。
+  - 评测数据核查：500 条评测 = 125 个唯一目标 × 4 模板；全部查询含 className、410 条含 symbolName；151 条排序失败中 97 条含完整 `ClassName.methodName`；确诊 8 条查询（2 个目标）因默认排除规则 `/build/` 的子串匹配误伤包目录名为 `build` 的 127 个源码文件而缺失，已从默认排除列表移除 `/build/` 并全量重索引修复。
+  - 新增单元测试：`CodeQueryAnalyzerTest`、`CodeExactChannelTest`（钉位/重载稳定排序/回退/开关/类名限定/图异常降级/快照版本源码/dirty-worktree）、`SQLiteSymbolGraphStoreTest`（精确查找/同文件双类/类文件路径）、`CodeQdrantStoreTest`（结构重排增强与旧行为兼容/方法优先稳定重排/并集/守卫快速路径/`match.any` 请求体断言）、`CodePathFilterTest`，全量 409 测试通过。
+
 
 ### Changed
 
@@ -53,6 +63,27 @@
 - 完整验证固化为机器可读产物：`tools/verify-report.sh` 以 JDK 17 运行不跳过 Enforcer 的 `mvnw verify`，聚合 surefire 报告并输出 `docs/verification/<version>-<commit>.json` 与 `latest.json`（测试数、JaCoCo 结果、jar、commit）；`tools/module-loop-verify.sh` 增加失败清理（trap 恢复分支与符号图）与 dirty worktree / 分支防护。
 ### Fixed
 
+- 修复默认排除规则误伤：`application.yml` 默认 `exclude-path-substrings` 移除 `/build/`——排除匹配是路径子串匹配，`/build/` 会把包目录名为 `build` 的源码文件一并排除（封神仓库实测误伤 127 个 Java 文件，含评测目标 `BuildKillRankHandler`、`BuildPluginCommon`，对应 8 条评测查询全部召回失败）；移除后全量重索引覆盖 2139/2139 文件。
+- 修复结构重排消融开关未接入生产路径：`code-structural-rerank-enabled=false` 此前不影响实际重排（调用点硬编码开启），已接入全部重排调用点，基线 A 与实验 E 的消融对比成立。
+- 修复 OpenAI 网关上游强制 `encoding_format`：嵌入请求补显式 `encoding-format: float`（`OPENAI_EMBEDDING_ENCODING_FORMAT` 可覆盖）；缺失时网关 400、应用 5 次退避重试导致单查询 55s+，实测修复后恢复正常延迟。
+- 评审整改（第二轮）：
+  - 类限定快速路径补方法优先：全局结果已含目标类方法时的快速路径返回前统一执行 `methodFirst`（容器类 chunk 不再压过方法答案），Recall@1 88.6% → 93.6%（该轮其余为嵌入后端变更的排序漂移）。
+  - `CodePathFilter` 区分文件规则与目录规则：文件规则（如 `/简历.md`、`/Generated.java`）在源码树内同样生效；新增 `/src/.../简历.md` 类回归测试。
+  - `tools/compare-code-reports.py` 仓库根目录由 `__file__` 推导，不再硬编码本机路径。
+  - `searchTrace()` 与生产 `search()` 同一次检索：`ScopedSearchResult` 携带同次检索的候选归因，candidates/ranked 不再来自两次独立检索；新增单次检索断言（trace 路径不得重复调用混合检索）。
+- 评审整改（第三轮）：
+  - `methodFirst` 只提升目标类文件范围内的方法/构造器：无关类方法不再被误提权，保持原有相对顺序；新增「无关类方法领先不被提权」回归测试。
+  - 查询中的显式文件路径参与召回与重排：`classScopedHits` 在解析到 `filePath` 时直接以该文件为类限定范围（不受同名类 `classFilePaths(...,8)` 截断影响）；`candidateScore`/`exactMatchLevel` 增加文件路径精确命中信号（+0.60）；新增同名类多文件路径区分回归测试与显式路径限定范围测试。
+  - Trace 候选池与实际重排输入对齐：并集路径的 `ScopedSearchResult.candidates` 返回并集（实际重排输入），CODE_CANDIDATE_RECALL_MISS / CODE_RERANK_LOSS 归因不再失真。
+  - git 子进程加固：`gitShow`/`gitHead` 合并错误流单流消费（防 stderr 写满死锁）+ `waitFor(5s)` 超时后 `destroyForcibly`。
+  - 第三轮修复对评测集行为中性：E7 与 E6 零排名变化（Recall@1 93.6% / Recall@10 99.6% / MRR 0.9596），全量 409 测试通过。
+- 代码语义标注补标：标注模型由不可路由的 `claude-opus-5`（网关 Vertex AI 404）切为 `ANNOTATION_MODEL=gpt-5.6-sol`；清理重索引新增 140 个文件的降级静态标注缓存条目（磁盘 2920 条按 chunk 哈希剔除 + Qdrant live 按文件范围删除），重索引后 11 个核心业务文件（33 个 chunk）用 gpt-5.6-sol 完成中文业务语义补标（含 `BuildKillRankHandler.handle` 等），非核心文件保持静态标注（设计如此）。补标后评测 E5：Recall@1 88.6% / Recall@10 99.6% / MRR 0.9202，与 E4 持平无回归。
+- 评审整改（代码检索改进落地后）：
+  - 类限定检索的 Qdrant 过滤格式：多值 filePath 匹配由 `match.value` 数组改为 `match.any`（Qdrant 多值匹配的文档语义；实测本机 Qdrant 1.15.4 对 `match.value` 数组返回 400，此前通道静默回退从未生效），新增请求体断言测试（含 `match.value` 不存在断言）与守卫快速路径测试（全局已含类方法时不发起类内查询）。
+  - 精确符号查找增加所属类约束：`findExactSymbols` 类-方法连接增加 `s.qualified_name = c.qualified_name || '.' || s.simple_name`，同文件多类（内部类/多类文件）不再把 OuterB.foo 当 OuterA.foo 置顶；实测 125/125 评测目标覆盖不变，新增同文件双类回归测试。
+  - 精确通道源码读取改为快照版本：`git show <commitSha>:<filePath>` 优先（与索引严格一致），git 不可用或失败时仅当工作区 HEAD 与快照一致才回退读工作区，否则放弃该命中；新增 dirty-worktree 回归测试。
+  - `searchTrace()` 的 ranked 与生产 `search()` 对齐（含精确符号与类名限定通道），candidates/dense/sparse 仍为混合检索归因，内置评测不再只反映混合检索链路。
+  - 排除规则误伤修复改为源码树感知的 `CodePathFilter`（根锚定 + `/src/` 前缀模式 + 目录型模式仅命中源码树外路径段），恢复 `/build/` 默认排除项（Gradle 产物仍排除、源码包目录 `build` 不再误伤），两个扫描器共用同一规则并新增语义测试。
 - 增量索引部分失败重试时，从待删除旧 ID 中排除本次新 chunk ID，避免重试删除已成功写入的新数据；删除数量改为实际清理数，并增加真实 Git commit 回归测试。
 - 审查整改（0.8.5 系统边界与数据正确性）：
   - **认证 fail-closed**：新增 `AuthProperties`（`app.rag.auth.identity-header` / `default-admin-allowed`）与 `UserContextResolver`；REST 拦截器与 MCP 身份过滤器统一解析可信身份，缺少网关头或默认管理员被禁时返回 401；`application-production.yml` 默认禁止默认管理员（直连应用端口不能以管理员执行写操作）；本地开发保持默认管理员模式。

@@ -56,6 +56,7 @@ public class CodeQdrantStore {
     private final SparseVectorizer sparseVectorizer;
     private final RagProperties properties;
     private final BgeReranker bgeReranker;
+    private final CodeQueryAnalyzer queryAnalyzer;
     private final Set<String> initializedCollections = ConcurrentHashMap.newKeySet();
     private final Set<String> descDenseChecked = ConcurrentHashMap.newKeySet();
     private final Set<String> descDenseCollections = ConcurrentHashMap.newKeySet();
@@ -72,12 +73,22 @@ public class CodeQdrantStore {
     public CodeQdrantStore(RestClient qdrantRestClient, EmbeddingModel embeddingModel,
                            EmbeddingBatcher embeddingBatcher, SparseVectorizer sparseVectorizer,
                            RagProperties properties, BgeReranker bgeReranker) {
+        this(qdrantRestClient, embeddingModel, embeddingBatcher, sparseVectorizer, properties, bgeReranker,
+                new CodeQueryAnalyzer());
+    }
+
+    /** 注入可选 BGE 重排器与查询解析器；查询解析器为 null 时结构化重排信号不生效。 */
+    public CodeQdrantStore(RestClient qdrantRestClient, EmbeddingModel embeddingModel,
+                           EmbeddingBatcher embeddingBatcher, SparseVectorizer sparseVectorizer,
+                           RagProperties properties, BgeReranker bgeReranker,
+                           CodeQueryAnalyzer queryAnalyzer) {
         this.client = qdrantRestClient;
         this.embeddingModel = embeddingModel;
         this.embeddingBatcher = embeddingBatcher;
         this.sparseVectorizer = sparseVectorizer;
         this.properties = properties;
         this.bgeReranker = bgeReranker;
+        this.queryAnalyzer = queryAnalyzer;
     }
 
     /** 替换某个项目的全部代码 chunk。使用默认 collection。 */
@@ -298,10 +309,11 @@ public class CodeQdrantStore {
         int candidateLimit = Math.max(limit * resolvedCandidateMultiplier(), MIN_CANDIDATE_LIMIT);
         int prefetchLimit = candidateLimit * CANDIDATE_MULTIPLIER;
         List<CodeChunk> candidates = fusedCandidates(collection, dense, desc, sparse, projectId,
-                candidateLimit, prefetchLimit);
+                candidateLimit, prefetchLimit, null);
         List<CodeChunk> rerankInput = codeBgeRerankEnabled() ? semanticRerank(query, candidates) : candidates;
-        List<CodeChunk> ranked = rerankCandidates(query, rerankInput, limit,
-                properties.retrieval().resolvedCodeQueryExpansionEnabled());
+        List<CodeChunk> ranked = rerankCandidatesInternal(query, rerankInput, limit,
+                properties.retrieval().resolvedCodeQueryExpansionEnabled(),
+                properties.retrieval().resolvedCodeStructuralRerankEnabled());
         return new CodeSearchTrace(candidates, ranked,
                 prefetchOnly(collection, dense, projectId, prefetchLimit),
                 prefetchOnly(collection, sparse, projectId, prefetchLimit));
@@ -315,10 +327,107 @@ public class CodeQdrantStore {
         SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorizeCode(query);
         int candidateLimit = Math.max(limit * resolvedCandidateMultiplier(), MIN_CANDIDATE_LIMIT);
         List<CodeChunk> candidates = fusedCandidates(collection, dense, desc, sparse, projectId,
-                candidateLimit, candidateLimit * CANDIDATE_MULTIPLIER);
+                candidateLimit, candidateLimit * CANDIDATE_MULTIPLIER, null);
         List<CodeChunk> rerankInput = codeBgeRerankEnabled() ? semanticRerank(query, candidates) : candidates;
-        return rerankCandidates(query, rerankInput, limit,
-                properties.retrieval().resolvedCodeQueryExpansionEnabled());
+        return rerankCandidatesInternal(query, rerankInput, limit,
+                properties.retrieval().resolvedCodeQueryExpansionEnabled(),
+                properties.retrieval().resolvedCodeStructuralRerankEnabled());
+    }
+
+    /**
+     * 类名限定召回：只在指定类文件范围内做混合检索，用于「在 XxxService 中由哪个方法实现」类查询。
+     * 与全局混合检索共用一次向量计算（embedding 是主要延迟）。
+     *
+     * <p>策略：先做全局检索（与纯混合检索完全一致）。若全局精排结果中已包含目标类的方法/构造器，
+     * 视为全局答案已足够，直接返回全局结果并做方法优先稳定重排（快速路径，不发起类内查询）——
+     * 查询点名类本体时，容器类 chunk 不是答案，方法/构造器前置；否则做类文件范围内查询并把类内候选
+     * 作为并集补齐（全局顺序优先、类内只补召回），统一结构重排后同样方法优先。</p>
+     */
+    public ScopedSearchResult searchWithClassScope(String collection, String query, String projectId,
+                                                   List<String> classFiles, int limit) {
+        ensureCollection(collection);
+        float[] dense = embeddingBatcher.embedAll(List.of(query)).get(0);
+        float[] desc = descVector(collection, query);
+        SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorizeCode(query);
+        int candidateLimit = Math.max(limit * resolvedCandidateMultiplier(), MIN_CANDIDATE_LIMIT);
+        int prefetchLimit = candidateLimit * CANDIDATE_MULTIPLIER;
+
+        List<CodeChunk> globalCandidates = fusedCandidates(collection, dense, desc, sparse, projectId,
+                candidateLimit, prefetchLimit, null);
+        List<CodeChunk> globalRerankInput = codeBgeRerankEnabled()
+                ? semanticRerank(query, globalCandidates) : globalCandidates;
+        List<CodeChunk> global = rerankCandidatesInternal(query, globalRerankInput, limit,
+                properties.retrieval().resolvedCodeQueryExpansionEnabled(),
+                properties.retrieval().resolvedCodeStructuralRerankEnabled());
+        if (hasClassMethod(global, classFiles)) {
+            return new ScopedSearchResult(global, methodFirst(global, classFiles, limit), globalCandidates);
+        }
+
+        List<CodeChunk> classCandidates = fusedCandidates(collection, dense, desc, sparse, projectId,
+                candidateLimit, prefetchLimit, classFiles);
+        if (classCandidates.isEmpty()) {
+            // 类文件在索引中无任何 chunk：无需并集与方法优先，直接返回全局精排
+            return new ScopedSearchResult(global, global, globalCandidates);
+        }
+        List<CodeChunk> union = unionCandidates(globalCandidates, classCandidates);
+        List<CodeChunk> unionRerankInput = codeBgeRerankEnabled()
+                ? semanticRerank(query, union) : union;
+        List<CodeChunk> unionRanked = rerankCandidatesInternal(query, unionRerankInput, limit,
+                properties.retrieval().resolvedCodeQueryExpansionEnabled(),
+                properties.retrieval().resolvedCodeStructuralRerankEnabled());
+        // candidates = 实际重排输入的并集候选池（含类内补齐），保证归因与精排同源
+        return new ScopedSearchResult(global, methodFirst(unionRanked, classFiles, limit), union);
+    }
+
+    /** 精排结果中是否已包含目标类文件范围内的方法/构造器 chunk。 */
+    private static boolean hasClassMethod(List<CodeChunk> ranked, List<String> classFiles) {
+        return ranked.stream().anyMatch(chunk -> classFiles.contains(chunk.filePath())
+                && ("method".equals(chunk.symbolType()) || "constructor".equals(chunk.symbolType())));
+    }
+
+    /** 候选并集：全局 RRF 候选顺序优先，类内候选按 filePath+symbolName+startLine 去重后补齐（只补召回，不覆盖全局顺序）。 */
+    static List<CodeChunk> unionCandidates(List<CodeChunk> global, List<CodeChunk> classScoped) {
+        java.util.Map<String, CodeChunk> seen = new LinkedHashMap<>();
+        for (CodeChunk chunk : global == null ? List.<CodeChunk>of() : global) {
+            seen.putIfAbsent(candidateKey(chunk), chunk);
+        }
+        for (CodeChunk chunk : classScoped == null ? List.<CodeChunk>of() : classScoped) {
+            seen.putIfAbsent(candidateKey(chunk), chunk);
+        }
+        return List.copyOf(seen.values());
+    }
+
+    private static String candidateKey(CodeChunk chunk) {
+        return chunk.filePath() + '\n' + chunk.symbolName() + '\n' + chunk.startLine();
+    }
+
+    /**
+     * 类名限定召回结果：全局混合检索精排、最终结果（目标类方法优先，可能含类内召回补齐）、
+     * 以及本次检索的实际重排输入候选池（供离线诊断归因，与最终结果来自同一次检索）。
+     */
+    public record ScopedSearchResult(List<CodeChunk> global, List<CodeChunk> classScoped,
+                                     List<CodeChunk> candidates) {
+    }
+
+    /**
+     * 稳定地把目标类文件范围内的方法/构造器 chunk 移到其余候选之前（其余顺序不变，类名限定召回专用）。
+     * 只提升目标类内的方法：其他类的方法与容器 chunk 保持原有相对顺序，避免无关类方法被误提权。
+     */
+    static List<CodeChunk> methodFirst(List<CodeChunk> ranked, List<String> classFiles, int limit) {
+        List<CodeChunk> classMethods = new ArrayList<>();
+        List<CodeChunk> others = new ArrayList<>();
+        for (CodeChunk chunk : ranked) {
+            if (classFiles.contains(chunk.filePath())
+                    && ("method".equals(chunk.symbolType()) || "constructor".equals(chunk.symbolType()))) {
+                classMethods.add(chunk);
+            }
+            else {
+                others.add(chunk);
+            }
+        }
+        List<CodeChunk> merged = new ArrayList<>(classMethods);
+        merged.addAll(others);
+        return merged.size() <= limit ? List.copyOf(merged) : merged.subList(0, limit);
     }
 
     /** 业务语义检索向量：意图别名增强后的查询文本嵌入；collection 不支持 desc_dense 时返回 null。 */
@@ -331,18 +440,22 @@ public class CodeQdrantStore {
         return embeddingBatcher.embedAll(List.of(descQuery)).get(0);
     }
 
-    /** 执行 dense+desc+sparse 三预取 + RRF 融合查询，返回候选代码 chunk。desc 路仅在 collection 支持时启用。 */
+    /** 执行 dense+desc+sparse 三预取 + RRF 融合查询，返回候选代码 chunk。desc 路仅在 collection 支持时启用。
+     *  fileScope 非空时追加文件路径范围过滤（仅类名限定召回使用）。 */
     private List<CodeChunk> fusedCandidates(String collection, float[] dense, float[] desc,
                                             SparseVectorizer.SparseVector sparse, String projectId,
-                                            int candidateLimit, int prefetchLimit) {
+                                            int candidateLimit, int prefetchLimit, List<String> fileScope) {
+        Map<String, Object> projectFilter = fileScope == null || fileScope.isEmpty()
+                ? filter(projectId)
+                : fileScopeFilter(projectId, fileScope);
         Map<String, Object> body = new LinkedHashMap<>();
         List<Map<String, Object>> prefetches = new ArrayList<>();
-        prefetches.add(Map.of("query", dense, "using", "dense", "limit", prefetchLimit, "filter", filter(projectId)));
+        prefetches.add(Map.of("query", dense, "using", "dense", "limit", prefetchLimit, "filter", projectFilter));
         if (desc != null && supportsDescDense(collection)) {
-            prefetches.add(Map.of("query", desc, "using", "desc_dense", "limit", prefetchLimit, "filter", filter(projectId)));
+            prefetches.add(Map.of("query", desc, "using", "desc_dense", "limit", prefetchLimit, "filter", projectFilter));
         }
         prefetches.add(Map.of("query", Map.of("indices", sparse.indices(), "values", sparse.values()),
-                "using", "sparse", "limit", prefetchLimit, "filter", filter(projectId)));
+                "using", "sparse", "limit", prefetchLimit, "filter", projectFilter));
         body.put("prefetch", prefetches);
         body.put("query", Map.of("fusion", "rrf"));
         body.put("limit", candidateLimit);
@@ -700,40 +813,104 @@ public class CodeQdrantStore {
 
     /**
      * 在有限 RRF 候选池内做确定性结构重排。原始名次仍是主信号，仅对明确的符号词和代码角色意图加分。
+     * 兼容入口：不启用 0.8.5 结构化重排增强信号（旧行为），供既有单元测试与消融基线使用。
      */
     static List<CodeChunk> rerankCandidates(String query, List<CodeChunk> candidates, int limit) {
-        return rerankCandidates(query, candidates, limit, true);
+        return rerankCandidates(query, candidates, limit, true, false);
     }
 
-    /** 在有限 RRF 候选池内做确定性结构重排：原始名次仍是主信号，仅对明确的符号词和代码角色意图加分。 */
+    /**
+     * 在有限 RRF 候选池内做确定性结构重排：原始名次仍是主信号，对符号词与代码角色意图加分；
+     * structural 为 true 时追加类名/限定名/文件名精确匹配信号（0.8.5 增强）。
+     */
+    static List<CodeChunk> rerankCandidates(String query, List<CodeChunk> candidates, int limit,
+                                            boolean queryExpansionEnabled, boolean structural) {
+        CodeQueryAnalyzer analyzer = new CodeQueryAnalyzer();
+        return rerankCandidates(query, candidates, limit, queryExpansionEnabled, structural, analyzer);
+    }
+
+    /** 实例路径：复用注入的查询解析器，避免重复构造。 */
+    private List<CodeChunk> rerankCandidatesInternal(String query, List<CodeChunk> candidates, int limit,
+                                                     boolean queryExpansionEnabled, boolean structural) {
+        CodeQueryAnalyzer analyzer = queryAnalyzer == null ? new CodeQueryAnalyzer() : queryAnalyzer;
+        return rerankCandidates(query, candidates, limit, queryExpansionEnabled, structural, analyzer);
+    }
+
     private static List<CodeChunk> rerankCandidates(String query, List<CodeChunk> candidates, int limit,
-                                                     boolean queryExpansionEnabled) {
+                                                    boolean queryExpansionEnabled, boolean structural,
+                                                    CodeQueryAnalyzer analyzer) {
         if (candidates.isEmpty() || limit <= 0) {
             return List.of();
         }
         String rankingQuery = queryExpansionEnabled ? expandQuery(query) : query;
+        CodeQueryAnalyzer.ParsedCodeQuery parsed = structural ? analyzer.parse(query)
+                : CodeQueryAnalyzer.ParsedCodeQuery.GENERIC;
         List<RankedCodeChunk> ranked = new ArrayList<>(candidates.size());
         for (int index = 0; index < candidates.size(); index++) {
             CodeChunk chunk = candidates.get(index);
-            ranked.add(new RankedCodeChunk(chunk, index, candidateScore(rankingQuery, chunk, index, candidates.size())));
+            ranked.add(new RankedCodeChunk(chunk, index, candidateScore(rankingQuery, parsed, chunk, index,
+                    candidates.size(), structural), exactMatchLevel(chunk, parsed, structural)));
         }
         return ranked.stream()
                 .sorted(Comparator.comparingDouble(RankedCodeChunk::score).reversed()
-                        .thenComparingInt(RankedCodeChunk::originalRank))
+                        .thenComparing(RankedCodeChunk::exactMatchLevel, Comparator.reverseOrder())
+                        .thenComparingInt(RankedCodeChunk::originalRank)
+                        .thenComparing(chunk -> safeText(chunk.chunk().filePath()))
+                        .thenComparingInt(chunk -> chunk.chunk().startLine()))
                 .limit(Math.min(limit, ranked.size()))
                 .map(RankedCodeChunk::chunk)
                 .toList();
     }
 
-    /** 结构打分：以 RRF 原始名次为基础分，对符号名命中、服务实现/控制器/测试等代码角色意图加权。 */
-    private static double candidateScore(String query, CodeChunk chunk, int index, int candidateCount) {
+    /** 结构打分：以 RRF 原始名次为基础分，对符号名命中、类名/限定名命中、服务实现/控制器/测试等代码角色意图加权。 */
+    private static double candidateScore(String query, CodeQueryAnalyzer.ParsedCodeQuery parsed,
+                                         CodeChunk chunk, int index, int candidateCount, boolean structural) {
         String normalizedQuery = safeText(query).toLowerCase(java.util.Locale.ROOT);
         String normalizedSymbol = safeText(chunk.symbolName()).toLowerCase(java.util.Locale.ROOT);
         String symbolTerms = splitIdentifier(chunk.symbolName()).toLowerCase(java.util.Locale.ROOT);
         String path = safeText(chunk.filePath()).toLowerCase(java.util.Locale.ROOT);
+        String chunkClass = chunkClassName(chunk);
         double score = 1.0 - (0.30 * index / Math.max(candidateCount - 1.0, 1.0));
+        int exactMatchLevel = 0;
 
-        if (!normalizedSymbol.isBlank() && compact(normalizedQuery).contains(compact(normalizedSymbol))) {
+        String parsedClassName = structural ? parsed.className() : null;
+        String parsedSymbolName = structural ? parsed.symbolName() : null;
+        boolean classNameMatch = parsedClassName != null
+                && (parsedClassName.equalsIgnoreCase(chunkClass)
+                || parsedClassName.equalsIgnoreCase(safeText(chunk.className())));
+        boolean symbolNameMatch = parsedSymbolName != null
+                && parsedSymbolName.equalsIgnoreCase(normalizedSymbol);
+        boolean filePathMatch = structural && parsed.filePath() != null
+                && (safeText(chunk.filePath()).equalsIgnoreCase(parsed.filePath())
+                || safeText(chunk.filePath()).toLowerCase(java.util.Locale.ROOT)
+                .endsWith("/" + parsed.filePath().toLowerCase(java.util.Locale.ROOT)));
+
+        if (structural) {
+            if (classNameMatch) {
+                score += 0.80;
+                exactMatchLevel = 1;
+            }
+            if (symbolNameMatch) {
+                score += 0.50;
+                if (classNameMatch) {
+                    score += 0.20; // 完整 ClassName.methodName 命中合计 +1.50
+                    exactMatchLevel = 2;
+                }
+            }
+            if (filePathMatch) {
+                score += 0.60; // 查询显式给出文件路径：同名类场景下精确区分文件
+                if (exactMatchLevel == 0) {
+                    exactMatchLevel = 1;
+                }
+            }
+            if (!classNameMatch && parsedClassName != null
+                    && fileNameWithoutExtension(chunk).equalsIgnoreCase(parsedClassName)) {
+                score += 0.50; // 文件名与类名一致
+            }
+        }
+        if (!symbolNameMatch && !normalizedSymbol.isBlank()
+                && compact(normalizedQuery).contains(compact(normalizedSymbol))) {
+            // 旧规则兜底：查询含完整方法名（含解析器未提取到的全小写方法名如 handle）
             score += 0.50;
         }
         int matchedTerms = 0;
@@ -771,6 +948,39 @@ public class CodeQdrantStore {
             score += 0.04;
         }
         return score;
+    }
+
+    /** 类名信号：payload className 优先，缺失时回退文件基名（Java 类文件基名即类名）。 */
+    private static String chunkClassName(CodeChunk chunk) {
+        String className = safeText(chunk.className());
+        return className.isBlank() ? fileNameWithoutExtension(chunk) : className;
+    }
+
+    /** 候选与解析查询的精确匹配层级：2=类名+方法名、1=仅类名或文件路径精确命中、0=无。 */
+    private static int exactMatchLevel(CodeChunk chunk, CodeQueryAnalyzer.ParsedCodeQuery parsed, boolean structural) {
+        if (!structural || parsed.kind() == CodeQueryAnalyzer.QueryKind.GENERIC) {
+            return 0;
+        }
+        boolean classNameMatch = parsed.className() != null
+                && parsed.className().equalsIgnoreCase(chunkClassName(chunk));
+        boolean symbolNameMatch = parsed.symbolName() != null
+                && parsed.symbolName().equalsIgnoreCase(safeText(chunk.symbolName()));
+        boolean filePathMatch = parsed.filePath() != null
+                && (safeText(chunk.filePath()).equalsIgnoreCase(parsed.filePath())
+                || safeText(chunk.filePath()).toLowerCase(java.util.Locale.ROOT)
+                .endsWith("/" + parsed.filePath().toLowerCase(java.util.Locale.ROOT)));
+        if (classNameMatch && symbolNameMatch) {
+            return 2;
+        }
+        return (classNameMatch || filePathMatch) ? 1 : 0;
+    }
+
+    private static String fileNameWithoutExtension(CodeChunk chunk) {
+        String filePath = safeText(chunk.filePath());
+        int slash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+        String base = slash >= 0 ? filePath.substring(slash + 1) : filePath;
+        int dot = base.lastIndexOf('.');
+        return dot > 0 ? base.substring(0, dot) : base;
     }
 
     /** 内置中英文意图别名，classpath 中的 code-query-aliases.json 可追加或覆盖。 */
@@ -854,7 +1064,7 @@ public class CodeQdrantStore {
         return value.replaceAll("[^\\p{L}\\p{N}]", "");
     }
 
-    private record RankedCodeChunk(CodeChunk chunk, int originalRank, double score) {
+    private record RankedCodeChunk(CodeChunk chunk, int originalRank, double score, int exactMatchLevel) {
     }
 
     private static String codeRole(String filePath, String symbolType, String symbolName) {
@@ -976,6 +1186,13 @@ public class CodeQdrantStore {
         return Map.of("must", List.of(Map.of("key", "projectId", "match", Map.of("value", projectId))));
     }
 
+    /** 文件范围过滤：projectId 精确匹配 + filePath 命中任一目标文件（Qdrant 多值匹配使用 match.any）。 */
+    private Map<String, Object> fileScopeFilter(String projectId, List<String> filePaths) {
+        return Map.of("must", List.of(
+                Map.of("key", "projectId", "match", Map.of("value", projectId)),
+                Map.of("key", "filePath", "match", Map.of("any", filePaths))));
+    }
+
     private Map<String, Object> fileFilter(String projectId, String filePath) {
         return Map.of("must", List.of(
                 Map.of("key", "projectId", "match", Map.of("value", projectId)),
@@ -989,14 +1206,16 @@ public class CodeQdrantStore {
         return list(points).stream().map(this::toChunk).toList();
     }
 
-    /** 将 Qdrant 返回的点负载反序列化为 CodeChunk；language 为空时按文件路径后缀推断。 */
+    /** 将 Qdrant 返回的点负载反序列化为 CodeChunk；language 为空时按文件路径后缀推断，className 随载荷保留。 */
     private CodeChunk toChunk(Object raw) {
         Map<String, Object> point = map(raw);
         Map<String, Object> p = map(point.get("payload"));
         return new CodeChunk(String.valueOf(point.get("id")), string(p, "projectId"), string(p, "commitSha"),
                 string(p, "filePath"), string(p, "symbolType"), string(p, "symbolName"),
                 integer(p, "startLine"), integer(p, "endLine"), string(p, "text"), string(p, "contentHash"),
-                language(p));
+                language(p), string(p, "className"), string(p, "module"), string(p, "layer"),
+                string(p, "businessDescCn"), string(p, "businessDescEn"), List.of(), List.of(), List.of(),
+                List.of(), "", List.of(), List.of());
     }
 
     private void sleepMillis(long millis) {

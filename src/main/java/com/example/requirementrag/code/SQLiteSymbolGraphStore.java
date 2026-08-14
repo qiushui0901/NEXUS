@@ -118,6 +118,63 @@ public class SQLiteSymbolGraphStore {
         }
     }
 
+    /**
+     * 精确符号查找：类名与方法名同时匹配（类符号与方法符号同文件，且方法限定名以「类限定名.方法名」结尾，
+     * 保证方法确实属于目标类——同一文件存在内部类/多个类时不会把 OuterB.foo 当成 OuterA.foo）。
+     * 同名重载会返回多行（按文件路径与起始行稳定排序），由调用方决定置顶策略。
+     */
+    public List<CodeSymbol> findExactSymbols(String projectId, String commitSha, String className,
+                                             String symbolName, int limit) {
+        String sql = """
+                select s.* from code_symbol s
+                join code_symbol c on c.project_id=s.project_id and c.commit_sha=s.commit_sha
+                  and c.file_path=s.file_path and c.kind in ('class','interface','enum','record')
+                  and s.qualified_name = c.qualified_name || '.' || s.simple_name
+                where s.project_id=? and s.commit_sha=? and s.simple_name=? and c.simple_name=?
+                  and s.kind not in ('class','interface','enum','record')
+                order by s.file_path, s.start_line limit ?
+                """;
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, projectId);
+            statement.setString(2, commitSha);
+            statement.setString(3, symbolName);
+            statement.setString(4, className);
+            statement.setInt(5, limit);
+            try (ResultSet result = statement.executeQuery()) {
+                return symbols(result);
+            }
+        }
+        catch (SQLException exception) {
+            throw new IllegalStateException("Unable to find exact graph symbols", exception);
+        }
+    }
+
+    /**
+     * 返回指定类名的类符号（含接口/枚举）所在文件路径列表，用于类名限定召回。
+     * 同名类分布在多个文件时按文件路径稳定排序。
+     */
+    public List<String> classFilePaths(String projectId, String commitSha, String className, int limit) {
+        String sql = """
+                select distinct file_path from code_symbol
+                where project_id=? and commit_sha=? and simple_name=? and kind in ('class','interface','enum','record')
+                order by file_path limit ?
+                """;
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, projectId);
+            statement.setString(2, commitSha);
+            statement.setString(3, className);
+            statement.setInt(4, limit);
+            try (ResultSet result = statement.executeQuery()) {
+                List<String> paths = new ArrayList<>();
+                while (result.next()) paths.add(result.getString(1));
+                return paths;
+            }
+        }
+        catch (SQLException exception) {
+            throw new IllegalStateException("Unable to find class file paths", exception);
+        }
+    }
+
     /** 返回符号的入向（inbound=true，谁调用它）或出向（inbound=false，它调用谁）调用关系。 */
     public List<CodeRelation> relations(String projectId, String commitSha, String symbolId,
                                         boolean inbound, int limit) {

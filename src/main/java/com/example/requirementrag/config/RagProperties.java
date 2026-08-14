@@ -159,13 +159,16 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
             Boolean codeQueryExpansionEnabled,
             Boolean codeBgeRerankEnabled,
             Integer codeCandidateMultiplier,
-            Double llmRerankSkipGap
+            Double llmRerankSkipGap,
+            Boolean codeExactSymbolEnabled,
+            Boolean codeClassScopedEnabled,
+            Boolean codeStructuralRerankEnabled
     ) {
         @ConstructorBinding
         public Retrieval {
         }
 
-        /** 兼容构造器：未配置 LLM 重排跳过阈值。 */
+        /** 兼容构造器：未配置 LLM 重排跳过阈值与代码检索增强开关。 */
         public Retrieval(int denseTopK, int sparseTopK, int hybridTopK, int bgeTopK, int llmTopK,
                          boolean llmRerankEnabled, long branchTimeoutMs, int parallelism,
                          int circuitBreakerFailureThreshold, long circuitBreakerOpenMs,
@@ -178,7 +181,25 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
                     parallelism, circuitBreakerFailureThreshold, circuitBreakerOpenMs,
                     resultCacheTtlSeconds, resultCacheMaxEntries, embeddingCacheTtlSeconds,
                     embeddingCacheMaxEntries, childFirstRerankEnabled, enrichedBgePassageEnabled,
-                    codeQueryExpansionEnabled, codeBgeRerankEnabled, codeCandidateMultiplier, null);
+                    codeQueryExpansionEnabled, codeBgeRerankEnabled, codeCandidateMultiplier, null,
+                    null, null, null);
+        }
+
+        /** 兼容构造器：未配置代码检索增强开关（保留旧版含 LLM 重排跳过阈值的签名）。 */
+        public Retrieval(int denseTopK, int sparseTopK, int hybridTopK, int bgeTopK, int llmTopK,
+                         boolean llmRerankEnabled, long branchTimeoutMs, int parallelism,
+                         int circuitBreakerFailureThreshold, long circuitBreakerOpenMs,
+                         long resultCacheTtlSeconds, int resultCacheMaxEntries,
+                         long embeddingCacheTtlSeconds, int embeddingCacheMaxEntries,
+                         Boolean childFirstRerankEnabled, Boolean enrichedBgePassageEnabled,
+                         Boolean codeQueryExpansionEnabled, Boolean codeBgeRerankEnabled,
+                         Integer codeCandidateMultiplier, Double llmRerankSkipGap) {
+            this(denseTopK, sparseTopK, hybridTopK, bgeTopK, llmTopK, llmRerankEnabled, branchTimeoutMs,
+                    parallelism, circuitBreakerFailureThreshold, circuitBreakerOpenMs,
+                    resultCacheTtlSeconds, resultCacheMaxEntries, embeddingCacheTtlSeconds,
+                    embeddingCacheMaxEntries, childFirstRerankEnabled, enrichedBgePassageEnabled,
+                    codeQueryExpansionEnabled, codeBgeRerankEnabled, codeCandidateMultiplier,
+                    llmRerankSkipGap, null, null, null);
         }
 
         /** BGE 重排候选数，未配置或 ≤0 时默认 20。 */
@@ -264,6 +285,21 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
             return codeCandidateMultiplier == null || codeCandidateMultiplier <= 0 ? 3 : codeCandidateMultiplier;
         }
 
+        /** 0.8.5 默认启用精确符号快速通道（SQLite 类名+方法名精确查找置顶）；显式 false 回退纯混合检索。 */
+        public boolean resolvedCodeExactSymbolEnabled() {
+            return codeExactSymbolEnabled == null || codeExactSymbolEnabled;
+        }
+
+        /** 0.8.5 默认启用类名限定召回（类文件范围过滤检索）；显式 false 关闭。 */
+        public boolean resolvedCodeClassScopedEnabled() {
+            return codeClassScopedEnabled == null || codeClassScopedEnabled;
+        }
+
+        /** 0.8.5 默认启用结构化重排增强信号（类名/限定名/文件路径匹配）；显式 false 保持旧重排规则。 */
+        public boolean resolvedCodeStructuralRerankEnabled() {
+            return codeStructuralRerankEnabled == null || codeStructuralRerankEnabled;
+        }
+
         /** 检索关键参数的指纹字符串，配置变化时指纹随之改变，用于相关缓存失效判断。 */
         public String fingerprint() {
             return denseTopK + ":" + sparseTopK + ":" + hybridTopK + ":" + resolvedBgeTopK()
@@ -273,7 +309,10 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
                     + ":" + resolvedCodeQueryExpansionEnabled()
                     + ":" + resolvedCodeBgeRerankEnabled()
                     + ":" + resolvedCodeCandidateMultiplier()
-                    + ":" + resolvedLlmRerankSkipGap();
+                    + ":" + resolvedLlmRerankSkipGap()
+                    + ":" + resolvedCodeExactSymbolEnabled()
+                    + ":" + resolvedCodeClassScopedEnabled()
+                    + ":" + resolvedCodeStructuralRerankEnabled();
         }
     }
 

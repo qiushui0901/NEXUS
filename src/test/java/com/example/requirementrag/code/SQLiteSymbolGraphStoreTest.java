@@ -98,6 +98,79 @@ class SQLiteSymbolGraphStoreTest {
                 .containsExactlyInAnyOrder("save", "dynamicTarget");
     }
 
+    @Test
+    void findsExactSymbolsByClassNameAndSymbolNameInTheSameFile() throws Exception {
+        SQLiteSymbolGraphStore store = new SQLiteSymbolGraphStore(
+                Files.createTempDirectory("nexus-graph-exact-").toString());
+        CodeSymbol clazz = new CodeSymbol("cls-1", "demo", "abc", "java", "class",
+                "demo.VipService", "VipService", "src/VipService.java", 3, 40, false, false);
+        CodeSymbol method = new CodeSymbol("m-1", "demo", "abc", "java", "method",
+                "demo.VipService.receiveGift", "receiveGift", "src/VipService.java", 8, 12, false, false);
+        CodeSymbol otherClass = new CodeSymbol("cls-2", "demo", "abc", "java", "class",
+                "demo.OtherService", "OtherService", "src/OtherService.java", 3, 20, false, false);
+        CodeSymbol sameNameOtherFile = new CodeSymbol("m-2", "demo", "abc", "java", "method",
+                "demo.OtherService.receiveGift", "receiveGift", "src/OtherService.java", 5, 8, false, false);
+        store.replaceSnapshot(new CodeScanner.ScanResult("demo", "abc", 2, List.of(),
+                List.of(clazz, method, otherClass, sameNameOtherFile), List.of(), List.of()));
+
+        assertThat(store.findExactSymbols("demo", "abc", "VipService", "receiveGift", 10))
+                .extracting(CodeSymbol::id).containsExactly("m-1");
+        assertThat(store.findExactSymbols("demo", "abc", "VipService", "missing", 10)).isEmpty();
+        assertThat(store.findExactSymbols("demo", "abc", "Missing", "receiveGift", 10)).isEmpty();
+    }
+
+    @Test
+    void findsExactSymbolsKeepingStableOrderAcrossOverloads() throws Exception {
+        SQLiteSymbolGraphStore store = new SQLiteSymbolGraphStore(
+                Files.createTempDirectory("nexus-graph-overload-").toString());
+        CodeSymbol clazz = new CodeSymbol("cls-1", "demo", "abc", "java", "class",
+                "demo.ItemService", "ItemService", "src/ItemService.java", 3, 60, false, false);
+        CodeSymbol first = new CodeSymbol("m-1", "demo", "abc", "java", "method",
+                "demo.ItemService.canAdd", "canAdd", "src/ItemService.java", 8, 12, false, false);
+        CodeSymbol second = new CodeSymbol("m-2", "demo", "abc", "java", "method",
+                "demo.ItemService.canAdd", "canAdd", "src/ItemService.java", 30, 34, false, false);
+        store.replaceSnapshot(new CodeScanner.ScanResult("demo", "abc", 1, List.of(),
+                List.of(clazz, first, second), List.of(), List.of()));
+
+        assertThat(store.findExactSymbols("demo", "abc", "ItemService", "canAdd", 10))
+                .extracting(CodeSymbol::id).containsExactly("m-1", "m-2");
+    }
+
+    @Test
+    void requiresMethodToBelongToTheQueriedClassWhenMultipleClassesShareOneFile() throws Exception {
+        SQLiteSymbolGraphStore store = new SQLiteSymbolGraphStore(
+                Files.createTempDirectory("nexus-graph-multiclass-").toString());
+        // OuterA 与 OuterB 同文件；foo 是 OuterB 的方法，查询 OuterA.foo 不得命中
+        CodeSymbol outerA = new CodeSymbol("cls-a", "demo", "abc", "java", "class",
+                "demo.OuterA", "OuterA", "src/OuterA.java", 3, 20, false, false);
+        CodeSymbol outerB = new CodeSymbol("cls-b", "demo", "abc", "java", "class",
+                "demo.OuterB", "OuterB", "src/OuterA.java", 22, 40, false, false);
+        CodeSymbol fooOfB = new CodeSymbol("m-b", "demo", "abc", "java", "method",
+                "demo.OuterB.foo", "foo", "src/OuterA.java", 25, 28, false, false);
+        store.replaceSnapshot(new CodeScanner.ScanResult("demo", "abc", 1, List.of(),
+                List.of(outerA, outerB, fooOfB), List.of(), List.of()));
+
+        assertThat(store.findExactSymbols("demo", "abc", "OuterA", "foo", 10)).isEmpty();
+        assertThat(store.findExactSymbols("demo", "abc", "OuterB", "foo", 10))
+                .extracting(CodeSymbol::id).containsExactly("m-b");
+    }
+
+    @Test
+    void listsClassFilePathsForClassScopedRecall() throws Exception {
+        SQLiteSymbolGraphStore store = new SQLiteSymbolGraphStore(
+                Files.createTempDirectory("nexus-graph-classpaths-").toString());
+        CodeSymbol clazz = new CodeSymbol("cls-1", "demo", "abc", "java", "class",
+                "demo.FarmService", "FarmService", "src/FarmService.java", 3, 60, false, false);
+        CodeSymbol method = new CodeSymbol("m-1", "demo", "abc", "java", "method",
+                "demo.FarmService.dig", "dig", "src/FarmService.java", 8, 12, false, false);
+        store.replaceSnapshot(new CodeScanner.ScanResult("demo", "abc", 1, List.of(),
+                List.of(clazz, method), List.of(), List.of()));
+
+        assertThat(store.classFilePaths("demo", "abc", "FarmService", 10))
+                .containsExactly("src/FarmService.java");
+        assertThat(store.classFilePaths("demo", "abc", "Missing", 10)).isEmpty();
+    }
+
     private CodeSymbol symbol(String id, String qualified, String simple, int start, int end) {
         return new CodeSymbol(id, "demo", "abc", "java", "method", qualified, simple,
                 "src/Caller.java", start, end, false, false);

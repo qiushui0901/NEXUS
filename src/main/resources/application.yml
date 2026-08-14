@@ -36,6 +36,8 @@ spring:
         timeout: ${OPENAI_EMBEDDING_READ_TIMEOUT:20s}
         options:
           model: ${OPENAI_EMBEDDING_MODEL:text-embedding-v4}
+          # 网关上游强制要求显式 encoding_format（缺失返回 400），显式 float 兼容标准 OpenAI 语义
+          encoding-format: ${OPENAI_EMBEDDING_ENCODING_FORMAT:float}
     retry:
       max-attempts: ${OPENAI_RETRY_MAX_ATTEMPTS:5}
       backoff:
@@ -153,6 +155,9 @@ app:
       embedding-cache-max-entries: ${EMBEDDING_CACHE_MAX_ENTRIES:10000}
       code-bge-rerank-enabled: ${CODE_BGE_RERANK_ENABLED:false}
       code-candidate-multiplier: ${CODE_CANDIDATE_MULTIPLIER:3}
+      code-exact-symbol-enabled: ${CODE_EXACT_SYMBOL_ENABLED:true}
+      code-class-scoped-enabled: ${CODE_CLASS_SCOPED_ENABLED:true}
+      code-structural-rerank-enabled: ${CODE_STRUCTURAL_RERANK_ENABLED:true}
     knowledge:
       bootstrap-enabled: ${KNOWLEDGE_BOOTSTRAP_ENABLED:false}
       zip-path: ${KNOWLEDGE_ZIP_PATH:}
