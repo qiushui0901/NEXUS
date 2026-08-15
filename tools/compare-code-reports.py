@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """对比两组封神代码检索评测报告（如基线 A 与实验 E），输出指标与逐模式差异。"""
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -20,6 +21,9 @@ def metrics(cases):
     top5 = sum(1 for r in ranks if r is not None and r <= 5)
     top10 = sum(1 for r in ranks if r is not None and r <= 10)
     mrr = sum(1 / r for r in ranks if r is not None) / total
+    # 二值相关性 nDCG@10：唯一相关项理想排在第 1 位（IDCG=1），
+    # DCG = 1/log2(rank+1)（rank≤10），否则 0。
+    ndcg = sum((1 / math.log2(r + 1)) if (r is not None and r <= 10) else 0.0 for r in ranks) / total
     latencies = sorted(c["latencyMs"] for c in cases.values())
     p50 = latencies[len(latencies) // 2]
     p95 = latencies[int(len(latencies) * 0.95) - 1] if len(latencies) >= 20 else latencies[-1]
@@ -29,6 +33,7 @@ def metrics(cases):
         "recall@5": f"{top5}/{total} = {top5 / total:.4f}",
         "recall@10": f"{top10}/{total} = {top10 / total:.4f}",
         "mrr@10": round(mrr, 4),
+        "ndcg@10": round(ndcg, 4),
         "p50_ms": p50,
         "p95_ms": p95,
         "not_in_top10": total - top10,
@@ -62,7 +67,7 @@ def main():
     bm = metrics(base)
     em = metrics(exp)
     print(f"{'metric':<14}{'baseline':>24}{'experiment':>24}")
-    for key in ["total", "recall@1", "recall@5", "recall@10", "mrr@10", "p50_ms", "p95_ms", "not_in_top10"]:
+    for key in ["total", "recall@1", "recall@5", "recall@10", "mrr@10", "ndcg@10", "p50_ms", "p95_ms", "not_in_top10"]:
         print(f"{key:<14}{str(bm[key]):>24}{str(em[key]):>24}")
     print()
     print("per query mode (baseline -> experiment):")
