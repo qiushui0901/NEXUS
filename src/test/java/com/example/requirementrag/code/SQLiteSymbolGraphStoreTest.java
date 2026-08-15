@@ -184,6 +184,33 @@ class SQLiteSymbolGraphStoreTest {
     }
 
     @Test
+    void pathFilterTreatsUnderscoresLiterallyInsteadOfAsLikeWildcards() throws Exception {
+        SQLiteSymbolGraphStore store = new SQLiteSymbolGraphStore(
+                Files.createTempDirectory("nexus-graph-wildcard-").toString());
+        CodeSymbol clazzDash = new CodeSymbol("cls-1", "demo", "abc", "java", "class",
+                "demo.VipService", "VipService", "module-a/src/VipService.java", 3, 20, false, false);
+        CodeSymbol methodDash = new CodeSymbol("m-1", "demo", "abc", "java", "method",
+                "demo.VipService.receiveGift", "receiveGift", "module-a/src/VipService.java", 8, 12, false, false);
+        CodeSymbol clazzUnderscore = new CodeSymbol("cls-2", "demo", "abc", "java", "class",
+                "demo.VipService", "VipService", "module_a/src/VipService.java", 3, 20, false, false);
+        CodeSymbol methodUnderscore = new CodeSymbol("m-2", "demo", "abc", "java", "method",
+                "demo.VipService.receiveGift", "receiveGift", "module_a/src/VipService.java", 8, 12, false, false);
+        store.replaceSnapshot(new CodeScanner.ScanResult("demo", "abc", 2, List.of(),
+                List.of(clazzDash, methodDash, clazzUnderscore, methodUnderscore), List.of(), List.of()));
+
+        // `_` 必须按字面量比较：module_a 的路径不得误命中 module-a
+        assertThat(store.findExactSymbols("demo", "abc", "VipService", "receiveGift",
+                "module_a/src/VipService.java", 10))
+                .extracting(CodeSymbol::id).containsExactly("m-2");
+        assertThat(store.resolveFilePaths("demo", "abc", "module_a/src/VipService.java", 10))
+                .containsExactly("module_a/src/VipService.java");
+        // 后缀解析返回真实完整路径（含 module 前缀）
+        assertThat(store.resolveFilePaths("demo", "abc", "src/VipService.java", 10))
+                .containsExactly("module-a/src/VipService.java", "module_a/src/VipService.java");
+        assertThat(store.resolveFilePaths("demo", "abc", "unknown/VipService.java", 10)).isEmpty();
+    }
+
+    @Test
     void listsClassFilePathsForClassScopedRecall() throws Exception {
         SQLiteSymbolGraphStore store = new SQLiteSymbolGraphStore(
                 Files.createTempDirectory("nexus-graph-classpaths-").toString());

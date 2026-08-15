@@ -241,8 +241,10 @@ public class CodeKnowledgeService {
             }
             List<String> classFiles;
             if (parsed.filePath() != null) {
-                // 查询给出显式文件路径：直接以该文件为类限定范围，不受同名类截断影响
-                classFiles = List.of(parsed.filePath());
+                // 查询给出显式文件路径：先经符号图把（可能不完整的）路径解析为真实完整路径，
+                // Qdrant 侧 filePath 需要完整值精确匹配；解析失败时退回原始路径做兜底尝试
+                List<String> resolved = graphStore.resolveFilePaths(projectId, commitSha, parsed.filePath(), 8);
+                classFiles = resolved.isEmpty() ? List.of(parsed.filePath()) : resolved;
             }
             else {
                 classFiles = graphStore.classFilePaths(projectId, commitSha, parsed.className(), 8);
@@ -367,30 +369,35 @@ public class CodeKnowledgeService {
 
     /**
      * 有界执行 git 命令：输出在后台线程异步消费（子进程不关闭输出流或写满管道时，主线程仍可按时超时强杀），
-     * 合并错误流到 stdout 单流读取；退出码非 0 或超时返回 null。
+     * 合并错误流到 stdout 单流读取。等待进程与收集输出共用同一超时 deadline（总耗时上限 = GIT_TIMEOUT）；
+     * finally 中先销毁进程（关闭管道使读取线程解除阻塞）再取消读取任务，避免遗留公共线程池阻塞任务。
      */
     private String gitOutput(Path repoRoot, List<String> command) {
         Process process = null;
+        java.util.concurrent.CompletableFuture<String> output = null;
         try {
             process = new ProcessBuilder(command)
                     .directory(repoRoot.toFile())
                     .redirectErrorStream(true)
                     .start();
             Process running = process;
-            java.util.concurrent.CompletableFuture<String> output = java.util.concurrent.CompletableFuture
-                    .supplyAsync(() -> {
-                        try (java.io.InputStream in = running.getInputStream()) {
-                            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
-                        }
-                        catch (IOException exception) {
-                            return "";
-                        }
-                    });
+            output = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try (java.io.InputStream in = running.getInputStream()) {
+                    return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+                }
+                catch (IOException exception) {
+                    return "";
+                }
+            });
+            long deadline = System.nanoTime() + GIT_TIMEOUT.toNanos();
             if (!running.waitFor(GIT_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                running.destroyForcibly();
                 return null;
             }
-            String result = output.get(GIT_TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) {
+                return null;
+            }
+            String result = output.get(remaining, java.util.concurrent.TimeUnit.NANOSECONDS);
             return running.exitValue() == 0 ? result : null;
         }
         catch (IOException | InterruptedException | java.util.concurrent.ExecutionException
@@ -398,10 +405,15 @@ public class CodeKnowledgeService {
             if (exception instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
+            return null;
+        }
+        finally {
             if (process != null && process.isAlive()) {
                 process.destroyForcibly();
             }
-            return null;
+            if (output != null) {
+                output.cancel(true);
+            }
         }
     }
 

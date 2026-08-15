@@ -83,7 +83,12 @@
   - git 输出异步消费：`gitOutput` 在后台线程读取输出 + 合并错误流，`waitFor(5s)` 超时强杀真正生效（子进程不关流也不会阻塞）。
   - Trace 候选池并入精确命中：`candidates = 精确命中 + 混合候选去重`，与最终 ranked 输入一致，raw rank / rank movement / CODE_RERANK_LOSS 归因不失真。
   - 文档行尾空格清理（`git diff --check` 通过）。
-  - 第四轮修复对评测集行为中性：E9 与 E7 零排名变化（Recall@1 93.6% / Recall@10 99.6% / MRR 0.9596），全量 412 测试通过。
+  - 第四轮修复对评测集行为中性：E9 与 E7 零排名变化（Recall@1 93.6% / Recall@10 99.6% / MRR 0.9596），全量测试通过。
+- 评审整改（第五轮）：
+  - SQLite 路径过滤不再用 LIKE：改为确定性后缀比较 `substr(file_path, -length(?)) = ?`，`_`/`%` 不再被当作通配符误命中；新增 `module_a` vs `module-a` 字面量回归测试。
+  - 精确通道与类限定通道路径语义统一：新增 `resolveFilePaths` 把查询中的（可能不完整的）路径先解析为符号库中的真实完整路径再进 Qdrant 完整值匹配，解析失败回退原始路径；新增后缀解析测试。
+  - git 超时统一 deadline：等待进程与收集输出共用同一 5s deadline（总耗时上限不再接近 10s），finally 先销毁进程（关管道解除读取阻塞）再取消读取任务，避免遗留公共线程池阻塞任务。
+  - 第五轮修复对评测集行为中性：E10 与 E9 零排名变化（Recall@1 93.6% / Recall@10 99.6% / MRR 0.9596 / P95 455.6ms），全量 414 测试通过。
 - 代码语义标注补标：标注模型由不可路由的 `claude-opus-5`（网关 Vertex AI 404）切为 `ANNOTATION_MODEL=gpt-5.6-sol`；清理重索引新增 140 个文件的降级静态标注缓存条目（磁盘 2920 条按 chunk 哈希剔除 + Qdrant live 按文件范围删除），重索引后 11 个核心业务文件（33 个 chunk）用 gpt-5.6-sol 完成中文业务语义补标（含 `BuildKillRankHandler.handle` 等），非核心文件保持静态标注（设计如此）。补标后评测 E5：Recall@1 88.6% / Recall@10 99.6% / MRR 0.9202，与 E4 持平无回归。
 - 评审整改（代码检索改进落地后）：
   - 类限定检索的 Qdrant 过滤格式：多值 filePath 匹配由 `match.value` 数组改为 `match.any`（Qdrant 多值匹配的文档语义；实测本机 Qdrant 1.15.4 对 `match.value` 数组返回 400，此前通道静默回退从未生效），新增请求体断言测试（含 `match.value` 不存在断言）与守卫快速路径测试（全局已含类方法时不发起类内查询）。

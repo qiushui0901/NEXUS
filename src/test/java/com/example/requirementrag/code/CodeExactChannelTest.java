@@ -172,7 +172,7 @@ class CodeExactChannelTest {
     @Test
     void explicitFilePathScopesClassSearchToThatFile() {
         CodeChunk classHit = chunk("c-1", "src/HeroService.java", "save", 4, "public void save() {}");
-        // 显式路径查询：类限定范围必须直接用查询中的路径（而非类名查到的 HeroService.java）；
+        // 显式路径查询：符号库中该路径解析失败时退回原始路径兜底；
         // stub 只匹配 [src/HeroService.java]，若走类名查找会得到 ["HeroService.java"] 而无法命中该 stub
         when(qdrantStore.searchWithClassScope(anyString(), anyString(), eq("test"),
                 eq(List.of("src/HeroService.java")), nullable(String.class), eq(10)))
@@ -180,6 +180,39 @@ class CodeExactChannelTest {
                         List.of(classHit), List.of(classHit), List.of(classHit)));
 
         List<CodeChunk> results = service.search("解释 src/HeroService.java 中 HeroService 的实现", "test", 10);
+
+        assertThat(results).extracting(CodeChunk::id).containsExactly("c-1");
+    }
+
+    @Test
+    void explicitFilePathIsResolvedToTheRealFullPathBeforeClassScopedSearch() throws Exception {
+        // 单独快照：真实文件路径带 module 前缀，查询只给后缀路径
+        SQLiteSymbolGraphStore graph = new SQLiteSymbolGraphStore(temp.resolve("graph-pathres").toString());
+        CodeSymbol clazz = new CodeSymbol("cls-1", "test", commitSha, "java", "class",
+                "demo.HeroService", "HeroService", "module/src/HeroService.java", 3, 8, false, false);
+        graph.replaceSnapshot(new CodeScanner.ScanResult("test", commitSha, 1, List.of(),
+                List.of(clazz), List.of(), List.of()));
+        RagProperties properties = mock(RagProperties.class);
+        when(properties.code()).thenReturn(new RagProperties.Code(
+                "test", repository.toString(), "test-code", List.of(), List.of(), 1_000_000));
+        when(properties.retrieval()).thenReturn(retrieval);
+        ProjectRegistry registry = mock(ProjectRegistry.class);
+        when(registry.require("test")).thenReturn(new RagProperties.ProjectConfig(
+                "test", "Test", "test", "server", "req", "test-code", repository.toString(),
+                null, null, List.of(), List.of(), 1_000_000));
+        CodeKnowledgeService pathService = new CodeKnowledgeService(properties, registry,
+                mock(CodeScanner.class), qdrantStore, graph, mock(CodeSemanticAnnotator.class),
+                new CodeIndexLockService(), null, new CodeQueryAnalyzer());
+
+        CodeChunk classHit = chunk("c-1", "module/src/HeroService.java", "save", 4, "public void save() {}");
+        // 后缀路径必须先经符号图解析成真实完整路径再进 Qdrant 过滤
+        when(qdrantStore.searchWithClassScope(anyString(), anyString(), eq("test"),
+                eq(List.of("module/src/HeroService.java")), nullable(String.class), eq(10)))
+                .thenReturn(new CodeQdrantStore.ScopedSearchResult(
+                        List.of(classHit), List.of(classHit), List.of(classHit)));
+
+        List<CodeChunk> results = pathService.search(
+                "解释 src/HeroService.java 中 HeroService 的实现", "test", 10);
 
         assertThat(results).extracting(CodeChunk::id).containsExactly("c-1");
     }
