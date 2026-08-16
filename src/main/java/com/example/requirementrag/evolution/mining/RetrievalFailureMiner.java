@@ -35,6 +35,10 @@ public class RetrievalFailureMiner {
     public List<EvaluationCandidate> mine(List<RetrievalExperience> experiences) {
         Map<String, List<RetrievalExperience>> groups = new LinkedHashMap<>();
         for (RetrievalExperience experience : experiences) {
+            if (experience.queryPreview() == null || experience.queryPreview().isBlank()) {
+                // query preview 关闭时无法形成可评测的真实 query，跳过，避免把哈希当查询
+                continue;
+            }
             for (FailureRule rule : rules) {
                 if (rule.predicate().test(experience)) {
                     String key = experience.queryHash() + "|" + rule.failureType().name()
@@ -44,8 +48,16 @@ public class RetrievalFailureMiner {
                 }
             }
         }
+        List<EvaluationCandidate> existing = candidateStore.findAll();
+        java.util.Set<String> existingKeys = new java.util.HashSet<>();
+        for (EvaluationCandidate candidate : existing) {
+            existingKeys.add(dedupKey(candidate));
+        }
         List<EvaluationCandidate> created = new ArrayList<>();
         for (Map.Entry<String, List<RetrievalExperience>> entry : groups.entrySet()) {
+            if (existingKeys.contains(entry.getKey())) {
+                continue;
+            }
             List<RetrievalExperience> cluster = entry.getValue();
             RetrievalExperience first = cluster.get(0);
             FailureType failureType = classify(first);
@@ -59,17 +71,24 @@ public class RetrievalFailureMiner {
                     first.queryPreview(),
                     failureType,
                     failureReason(first, failureType),
-                    predictedRelevantIds(first),
+                    safe(first.indexVersion()),
+                    List.of(),
                     priority(cluster.size(), failureType, first),
                     ReviewStatus.DRAFT,
                     null,
                     null
             );
             candidateStore.save(candidate);
+            existingKeys.add(entry.getKey());
             created.add(candidate);
         }
         log.info("Failure miner created {} candidates from {} experiences", created.size(), experiences.size());
         return List.copyOf(created);
+    }
+
+    private static String dedupKey(EvaluationCandidate candidate) {
+        return candidate.queryHash() + "|" + candidate.failureType().name()
+                + "|" + safe(candidate.indexVersion());
     }
 
     private static List<FailureRule> defaultRules() {
@@ -106,10 +125,6 @@ public class RetrievalFailureMiner {
     private static String failureReason(RetrievalExperience experience, FailureType failureType) {
         String reason = experience.reflectionReasonCode();
         return reason == null || reason.isBlank() ? failureType.name() : reason;
-    }
-
-    private static List<String> predictedRelevantIds(RetrievalExperience experience) {
-        return experience.finalRanking();
     }
 
     private static double priority(int occurrenceCount, FailureType failureType, RetrievalExperience experience) {

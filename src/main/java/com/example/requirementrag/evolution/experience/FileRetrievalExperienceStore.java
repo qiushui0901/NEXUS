@@ -40,15 +40,17 @@ public class FileRetrievalExperienceStore implements RetrievalExperienceStore {
     }
 
     @Override
-    public void append(RetrievalExperience experience) {
+    public boolean append(RetrievalExperience experience) {
         try {
             Files.createDirectories(root);
             Path file = root.resolve(DAY.format(experience.occurredAt()) + ".jsonl");
             String line = objectMapper.writeValueAsString(experience) + System.lineSeparator();
             Files.writeString(file, line, StandardCharsets.UTF_8,
                     java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            return true;
         } catch (IOException exception) {
             log.warn("Unable to append retrieval experience; writing is isolated from retrieval", exception);
+            return false;
         }
     }
 

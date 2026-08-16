@@ -70,6 +70,15 @@
 - 完整验证固化为机器可读产物：`tools/verify-report.sh` 以 JDK 17 运行不跳过 Enforcer 的 `mvnw verify`，聚合 surefire 报告并输出 `docs/verification/<version>-<commit>.json` 与 `latest.json`（测试数、JaCoCo 结果、jar、commit）；`tools/module-loop-verify.sh` 增加失败清理（trap 恢复分支与符号图）与 dirty worktree / 分支防护。
 ### Fixed
 
+- 自进化 RAG M1-M4 评审整改（策略隔离/门禁/评测集可信度/关闭开关/去重/不可变版本/指标真实性）：
+  - 离线实验真正隔离基线与候选策略：`AgenticOrchestrator` 新增 `execute(request, policy)` 显式策略入口，`AgenticRetrievalPolicyExecutor` 把 policy 传入编排器，实验不再共用同一个 active 策略。
+  - 策略审批接入 Promotion Gate：`PolicyLifecycleService.approve` 必须提供匹配候选策略的离线实验报告且通过 `PolicyPromotionGate`；状态机限制 `DRAFT→EVALUATING→APPROVED/REJECTED→ACTIVE`，`EvolutionController.approve` 增加 `experimentId` 参数。
+  - 失败挖掘不再把失败检索结果当 gold：Miner 生成候选时 `predictedRelevantIds` 为空；审核 API 支持人工修正 `relevantIds`/`queryPreview`；发布前强制 APPROVED 候选必须包含真实 query 和人工确认的 relevant IDs；无 query preview 的经验不再生成候选（避免 SHA-256 哈希当查询）。
+  - `evolution.enabled=false` 完全忽略 active policy：`PolicyDrivenRetrievalStrategySelector` 与 `AgenticOrchestrator` 均在 evolution 关闭时不读取 `active.json`，磁盘残留 active 不再影响线上检索。
+  - 实验重复次数/失败率真实化：`EvolutionExperimentRunner` 按 `repetitions` 实际重复执行，执行器返回 `SUCCESS/DEGRADED/FAILED` 状态，报告统计 failed/degraded rate；`ExperimentManifest` 增加基线/候选 policyId。
+  - Miner 与已有候选去重：候选增加 `indexVersion`，按 `queryHash+failureType+indexVersion` 与候选库全局去重，每日调度不再重复膨胀候选库。
+  - 版本不可变与原子引用：`EvaluationDatasetRegistry.publish` 拒绝覆盖已存在版本；`RetrievalPolicyRegistry.save` 拒绝覆盖同版本不同内容；active 引用改为临时文件 + 原子替换。
+  - 经验采集指标真实化：Recorder 使用自定义拒绝处理器统计 dropped；`FileRetrievalExperienceStore.append` 返回写入结果，Recorder 仅在成功时增加 written、失败时增加 write_failures，不再静默吞掉磁盘异常。
 - 修复默认排除规则误伤：`application.yml` 默认 `exclude-path-substrings` 移除 `/build/`——排除匹配是路径子串匹配，`/build/` 会把包目录名为 `build` 的源码文件一并排除（封神仓库实测误伤 127 个 Java 文件，含评测目标 `BuildKillRankHandler`、`BuildPluginCommon`，对应 8 条评测查询全部召回失败）；移除后全量重索引覆盖 2139/2139 文件。
 - 修复结构重排消融开关未接入生产路径：`code-structural-rerank-enabled=false` 此前不影响实际重排（调用点硬编码开启），已接入全部重排调用点，基线 A 与实验 E 的消融对比成立。
 - 修复 OpenAI 网关上游强制 `encoding_format`：嵌入请求补显式 `encoding-format: float`（`OPENAI_EMBEDDING_ENCODING_FORMAT` 可覆盖）；缺失时网关 400、应用 5 次退避重试导致单查询 55s+，实测修复后恢复正常延迟。

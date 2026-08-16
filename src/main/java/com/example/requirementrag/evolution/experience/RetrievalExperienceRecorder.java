@@ -37,6 +37,7 @@ public class RetrievalExperienceRecorder {
     private final ExecutorService executor;
     private final MeterRegistry meterRegistry;
     private final AtomicLong dropped = new AtomicLong();
+    private final AtomicLong writeFailures = new AtomicLong();
 
     public RetrievalExperienceRecorder(RagProperties properties, ObjectMapper objectMapper,
                                        MeterRegistry meterRegistry) {
@@ -56,7 +57,11 @@ public class RetrievalExperienceRecorder {
                     thread.setDaemon(true);
                     return thread;
                 },
-                new ThreadPoolExecutor.DiscardPolicy());
+                (runnable, pool) -> {
+                    dropped.incrementAndGet();
+                    meterRegistry.counter("nexus.evolution.experience.dropped").increment();
+                    log.debug("Experience recording queue is full; dropping event");
+                });
     }
 
     /** 异步记录一条经验事件；未启用或采样未命中时直接返回。 */
@@ -70,8 +75,13 @@ public class RetrievalExperienceRecorder {
         RetrievalExperience sanitized = sanitize(experience);
         try {
             executor.execute(() -> {
-                store.append(sanitized);
-                meterRegistry.counter("nexus.evolution.experience.written").increment();
+                boolean written = store.append(sanitized);
+                if (written) {
+                    meterRegistry.counter("nexus.evolution.experience.written").increment();
+                } else {
+                    writeFailures.incrementAndGet();
+                    meterRegistry.counter("nexus.evolution.experience.write_failures").increment();
+                }
             });
         } catch (RuntimeException exception) {
             dropped.incrementAndGet();

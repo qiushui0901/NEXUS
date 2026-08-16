@@ -15,7 +15,8 @@ import java.util.List;
  * @param queryPreview         查询预览（可能为空）
  * @param failureType          失败类型
  * @param failureReason        人类可读的失败原因
- * @param predictedRelevantIds 候选预测的相关 ID，需人工确认
+ * @param indexVersion         来源索引版本，用于去重
+ * @param predictedRelevantIds 人工确认后的相关 ID；未被审核前应为空
  * @param priorityScore        确定性优先级分数
  * @param reviewStatus         审核状态
  * @param reviewer             审核人
@@ -28,6 +29,7 @@ public record EvaluationCandidate(
         String queryPreview,
         FailureType failureType,
         String failureReason,
+        String indexVersion,
         List<String> predictedRelevantIds,
         double priorityScore,
         ReviewStatus reviewStatus,
@@ -35,6 +37,7 @@ public record EvaluationCandidate(
         Instant reviewedAt
 ) {
     public EvaluationCandidate {
+        indexVersion = indexVersion == null || indexVersion.isBlank() ? "unknown" : indexVersion;
         predictedRelevantIds = predictedRelevantIds == null ? List.of() : List.copyOf(predictedRelevantIds);
         reviewStatus = reviewStatus == null ? ReviewStatus.DRAFT : reviewStatus;
     }

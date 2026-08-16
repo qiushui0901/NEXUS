@@ -3,6 +3,7 @@ package com.example.requirementrag.retrieval.agentic;
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.evolution.experience.EvolutionTrace;
 import com.example.requirementrag.evolution.experience.RetrievalExperienceRecorder;
+import com.example.requirementrag.evolution.policy.PolicyDrivenRetrievalStrategySelector;
 import com.example.requirementrag.evolution.policy.RetrievalPolicy;
 import com.example.requirementrag.evolution.policy.RetrievalPolicyRegistry;
 import com.example.requirementrag.model.ChunkRecord;
@@ -98,31 +99,44 @@ public class AgenticOrchestrator {
     }
 
     /**
-     * 执行一次编排检索。
+     * 执行一次编排检索，使用当前激活策略（若 evolution 启用且存在 active policy）。
      *
      * @param request 检索请求
      * @return 编排结果：证据充分时按最后状态交付，不足/失败时降级交付并附编排警告
      */
     public RagOutcome<RetrievalBundle> execute(RetrievalRequest request) {
+        return execute(request, null);
+    }
+
+    /**
+     * 使用显式策略执行一次编排检索；用于离线实验隔离基线与候选策略。
+     * 传入 {@code policyOverride} 时忽略 active.json，完全按该策略的参数执行。
+     *
+     * @param request        检索请求
+     * @param policyOverride 实验指定的策略；为 null 时走生产路径（受 evolution.enabled 控制）
+     * @return 编排结果
+     */
+    public RagOutcome<RetrievalBundle> execute(RetrievalRequest request, RetrievalPolicy policyOverride) {
         long startedNanos = System.nanoTime();
         EvolutionTrace trace = experienceRecorder == null ? null : EvolutionTrace.start(request,
-                activePolicyVersion(), configHash(), indexVersion(), null);
+                activePolicyVersion(policyOverride), configHash(), indexVersion(), null);
         StrategyResult merged = null;
         List<RagWarning> orchestrationWarnings = new ArrayList<>();
         List<String> degradedStages = new ArrayList<>();
-        int effectiveMaxHops = policyMaxHops() == null ? maxHops : policyMaxHops();
+        Integer configuredMaxHops = policyMaxHops(policyOverride);
+        int effectiveMaxHops = configuredMaxHops == null ? maxHops : configuredMaxHops;
         for (int hop = 0; hop < effectiveMaxHops; hop++) {
             long hopStartedNanos = System.nanoTime();
             RetrievalStrategy defaultStrategy = strategies.get(Math.min(hop, strategies.size() - 1));
             RetrievalStrategy strategy = hop == 0
-                    ? selector.select(strategies, request).orElseGet(() -> strategies.get(0))
+                    ? selectInitialStrategy(request, policyOverride)
                     : RetrievalStrategySelector.byName(strategies, "hybrid").orElseGet(() -> defaultStrategy);
             StrategyResult current = strategy.execute(request);
             if (merged != null) {
                 current = merge(merged, current);
             }
             EvidenceReflector.ReflectionResult reflection = reflector.evaluate(current,
-                    policyMinRequirementHits());
+                    policyMinRequirementHits(policyOverride));
             if (trace != null) {
                 trace.recordHop(hop, strategy.name(), current == null ? null : current.bundle(),
                         reflection, System.nanoTime() - hopStartedNanos);
@@ -153,6 +167,14 @@ public class AgenticOrchestrator {
         record(trace, finalOutcome, effectiveMaxHops, orchestrationWarnings, merged == null ? List.of()
                 : merged.diagnostics(), degradedStages, startedNanos);
         return finalOutcome;
+    }
+
+    private RetrievalStrategy selectInitialStrategy(RetrievalRequest request, RetrievalPolicy policyOverride) {
+        if (policyOverride != null) {
+            return PolicyDrivenRetrievalStrategySelector.forPolicy(policyOverride)
+                    .select(strategies, request).orElseGet(() -> strategies.get(0));
+        }
+        return selector.select(strategies, request).orElseGet(() -> strategies.get(0));
     }
 
     /** 合并两跳证据：需求/正文/代码分别按值去重（record equals），保留先到者顺序。 */
@@ -230,28 +252,34 @@ public class AgenticOrchestrator {
                 : properties.retrieval().fingerprint();
     }
 
-    private Integer policyMinRequirementHits() {
-        RetrievalPolicy policy = activePolicy();
+    private Integer policyMinRequirementHits(RetrievalPolicy policyOverride) {
+        RetrievalPolicy policy = activePolicy(policyOverride);
         if (policy == null || policy.thresholds() == null) {
             return null;
         }
         return policy.thresholds().get("reflector.min-requirement-hits");
     }
 
-    private Integer policyMaxHops() {
-        RetrievalPolicy policy = activePolicy();
+    private Integer policyMaxHops(RetrievalPolicy policyOverride) {
+        RetrievalPolicy policy = activePolicy(policyOverride);
         if (policy == null || policy.thresholds() == null) {
             return null;
         }
         return policy.thresholds().get("orchestrator.max-hops");
     }
 
-    private String activePolicyVersion() {
-        RetrievalPolicy policy = activePolicy();
+    private String activePolicyVersion(RetrievalPolicy policyOverride) {
+        RetrievalPolicy policy = activePolicy(policyOverride);
         return policy == null ? BASELINE_POLICY_VERSION : policy.version();
     }
 
-    private RetrievalPolicy activePolicy() {
+    private RetrievalPolicy activePolicy(RetrievalPolicy policyOverride) {
+        if (policyOverride != null) {
+            return policyOverride;
+        }
+        if (properties == null || !properties.evolution().enabled()) {
+            return null;
+        }
         return policyRegistry == null ? null : policyRegistry.active();
     }
 

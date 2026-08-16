@@ -16,8 +16,7 @@ import java.util.List;
 /**
  * 基于 {@link AgenticOrchestrator} 的策略执行器。
  * <p>
- * 当前版本策略参数尚未完全注入编排器，先提供可运行的检索执行入口；
- * M4 的 PolicyDriven 选择器接入后，本执行器会把 policy 上下文传给编排器。
+ * 显式把 policy 传给编排器，保证基线与候选策略在离线实验中真正隔离。
  * </p>
  */
 @Component
@@ -30,12 +29,16 @@ public class AgenticRetrievalPolicyExecutor implements RetrievalPolicyExecutor {
     }
 
     @Override
-    public List<String> execute(EvaluationCase evalCase, RetrievalPolicy policy) {
+    public ExecutionResult execute(EvaluationCase evalCase, RetrievalPolicy policy,
+                                   long randomSeed, int repetition) {
         RetrievalRequest request = new RetrievalRequest(evalCase.query(), RetrievalProfile.DEVELOPMENT_PLAN,
                 evalCase.projectId(), null, evalCase.version(), 10);
-        RagOutcome<RetrievalBundle> outcome = orchestrator.execute(request);
+        RagOutcome<RetrievalBundle> outcome = orchestrator.execute(request, policy);
+        if (outcome == null || outcome.status() == null) {
+            return new ExecutionResult(List.of(), "FAILED");
+        }
         List<String> ids = new ArrayList<>();
-        if (outcome != null && outcome.data() != null) {
+        if (outcome.data() != null) {
             RetrievalBundle bundle = outcome.data();
             for (ChunkRecord chunk : bundle.requirementEvidence()) {
                 ids.add(chunk.id());
@@ -44,6 +47,6 @@ public class AgenticRetrievalPolicyExecutor implements RetrievalPolicyExecutor {
                 ids.add(chunk.id());
             }
         }
-        return List.copyOf(ids);
+        return new ExecutionResult(List.copyOf(ids), outcome.status().name());
     }
 }

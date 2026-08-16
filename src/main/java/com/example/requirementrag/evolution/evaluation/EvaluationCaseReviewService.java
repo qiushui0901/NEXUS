@@ -35,16 +35,41 @@ public class EvaluationCaseReviewService {
         return candidateStore.findAll();
     }
 
+    /** 仅做状态转换，不修改候选内容。 */
     public EvaluationCandidate transition(String candidateId, ReviewStatus target, String reviewer) {
+        return updateAndTransition(candidateId, target, null, null, reviewer);
+    }
+
+    /**
+     * 审核并允许人工修正候选内容。
+     *
+     * @param relevantIds 人工确认的相关 ID；传 null 表示不修改
+     * @param queryPreview 人工修正的查询原文；传 null 表示不修改
+     */
+    public EvaluationCandidate updateAndTransition(String candidateId, ReviewStatus target,
+                                                   List<String> relevantIds, String queryPreview,
+                                                   String reviewer) {
         EvaluationCandidate current = require(candidateId);
         EnumSet<ReviewStatus> allowed = TRANSITIONS.getOrDefault(current.reviewStatus(), EnumSet.noneOf(ReviewStatus.class));
         if (!allowed.contains(target)) {
             throw new IllegalArgumentException("非法候选状态转换: " + current.reviewStatus() + " -> " + target);
         }
+        List<String> resolvedRelevantIds = relevantIds == null
+                ? current.predictedRelevantIds() : List.copyOf(relevantIds);
+        String resolvedQueryPreview = queryPreview == null || queryPreview.isBlank()
+                ? current.queryPreview() : queryPreview.trim();
+        if (target == ReviewStatus.APPROVED) {
+            if (resolvedQueryPreview == null || resolvedQueryPreview.isBlank()) {
+                throw new IllegalArgumentException("APPROVED 候选必须包含真实查询文本");
+            }
+            if (resolvedRelevantIds.isEmpty()) {
+                throw new IllegalArgumentException("APPROVED 候选必须包含人工确认的 relevant IDs");
+            }
+        }
         EvaluationCandidate updated = new EvaluationCandidate(
                 current.candidateId(), current.sourceExperienceId(), current.queryHash(),
-                current.queryPreview(), current.failureType(), current.failureReason(),
-                current.predictedRelevantIds(), current.priorityScore(), target,
+                resolvedQueryPreview, current.failureType(), current.failureReason(),
+                current.indexVersion(), resolvedRelevantIds, current.priorityScore(), target,
                 reviewer == null || reviewer.isBlank() ? "system" : reviewer, Instant.now());
         candidateStore.save(updated);
         return updated;
@@ -58,11 +83,19 @@ public class EvaluationCaseReviewService {
         if (approved.isEmpty()) {
             throw new IllegalArgumentException("没有 APPROVED 候选可发布");
         }
+        for (EvaluationCandidate candidate : approved) {
+            if (candidate.queryPreview() == null || candidate.queryPreview().isBlank()) {
+                throw new IllegalArgumentException("候选 " + candidate.candidateId() + " 缺少真实查询文本，不能发布");
+            }
+            if (candidate.predictedRelevantIds().isEmpty()) {
+                throw new IllegalArgumentException("候选 " + candidate.candidateId() + " 缺少人工确认的 relevant IDs，不能发布");
+            }
+        }
         String datasetVersion = version == null || version.isBlank()
                 ? "ds-" + Instant.now().toEpochMilli() : version.trim();
         EvaluationDataset previous = datasetRegistry.active();
         List<EvaluationCase> cases = approved.stream()
-                .map(c -> new EvaluationCase(c.candidateId(), text(c.queryPreview(), c.queryHash()),
+                .map(c -> new EvaluationCase(c.candidateId(), c.queryPreview(),
                         null, null, c.predictedRelevantIds()))
                 .toList();
         EvaluationDataset dataset = new EvaluationDataset(datasetVersion, cases, Instant.now(),
@@ -84,9 +117,5 @@ public class EvaluationCaseReviewService {
             throw new IllegalArgumentException("评测候选不存在: " + candidateId);
         }
         return candidate;
-    }
-
-    private static String text(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
     }
 }

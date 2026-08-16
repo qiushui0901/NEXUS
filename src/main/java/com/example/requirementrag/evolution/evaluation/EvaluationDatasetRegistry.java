@@ -34,8 +34,12 @@ public class EvaluationDatasetRegistry {
         try {
             Files.createDirectories(root);
             Path file = root.resolve(safeVersion(dataset.version()) + ".json");
-            Files.writeString(file, objectMapper.writerWithDefaultPrettyPrinter()
-                    .writeValueAsString(dataset) + System.lineSeparator(), StandardCharsets.UTF_8);
+            if (Files.exists(file)) {
+                throw new IllegalArgumentException("数据集版本已存在，不可覆盖: " + dataset.version());
+            }
+            String content = objectMapper.writerWithDefaultPrettyPrinter()
+                    .writeValueAsString(dataset) + System.lineSeparator();
+            writeAtomically(file, content);
             writeActive(dataset.version());
         } catch (IOException exception) {
             throw new IllegalStateException("评测数据集发布失败", exception);
@@ -91,10 +95,24 @@ public class EvaluationDatasetRegistry {
 
     private void writeActive(String version) {
         try {
+            Files.createDirectories(root);
             Path activeFile = root.resolve(ACTIVE_FILE);
-            Files.writeString(activeFile, version + System.lineSeparator(), StandardCharsets.UTF_8);
+            writeAtomically(activeFile, version + System.lineSeparator());
         } catch (IOException exception) {
             throw new IllegalStateException("评测数据集 active 引用写入失败", exception);
+        }
+    }
+
+    private void writeAtomically(Path target, String content) throws IOException {
+        Path temp = target.resolveSibling(target.getFileName() + ".tmp");
+        Files.writeString(temp, content, StandardCharsets.UTF_8);
+        try {
+            Files.move(temp, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (java.nio.file.AtomicMoveNotSupportedException exception) {
+            Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(temp);
         }
     }
 

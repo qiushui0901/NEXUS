@@ -58,14 +58,16 @@ public class EvolutionController {
     @RequiresPermission(Permission.WRITE)
     @PostMapping("/candidates/{candidateId}/review")
     public EvaluationCandidate review(@PathVariable String candidateId,
-                                      @RequestParam String action, HttpServletRequest request) {
-        ReviewStatus target = switch (action.toLowerCase()) {
+                                      @RequestBody ReviewCandidateRequest request, HttpServletRequest httpRequest) {
+        ReviewStatus target = switch (request.action().toLowerCase()) {
             case "submit" -> ReviewStatus.IN_REVIEW;
             case "approve" -> ReviewStatus.APPROVED;
             case "reject" -> ReviewStatus.REJECTED;
-            default -> throw new IllegalArgumentException("Unsupported review action: " + action);
+            default -> throw new IllegalArgumentException("Unsupported review action: " + request.action());
         };
-        return reviewService.transition(candidateId, target, accessGuard.currentUser(request).username());
+        return reviewService.updateAndTransition(candidateId, target,
+                request.relevantIds(), request.queryPreview(),
+                accessGuard.currentUser(httpRequest).username());
     }
 
     @RequiresPermission(Permission.PUBLIC_READ)
@@ -123,8 +125,9 @@ public class EvolutionController {
 
     @RequiresPermission(Permission.OPERATE)
     @PostMapping("/policies/{policyId}/{version}/approve")
-    public RetrievalPolicy approvePolicy(@PathVariable String policyId, @PathVariable String version) {
-        return policyLifecycleService.approve(policyId, version);
+    public RetrievalPolicy approvePolicy(@PathVariable String policyId, @PathVariable String version,
+                                         @RequestParam String experimentId) {
+        return policyLifecycleService.approve(policyId, version, experimentId);
     }
 
     @RequiresPermission(Permission.OPERATE)
@@ -175,6 +178,14 @@ public class EvolutionController {
             String modelVersion,
             Long randomSeed,
             Integer repetitions
+    ) {
+    }
+
+    /** 候选审核请求体：action 为 submit/approve/reject，relevantIds/queryPreview 可人工修正。 */
+    public record ReviewCandidateRequest(
+            String action,
+            List<String> relevantIds,
+            String queryPreview
     ) {
     }
 }

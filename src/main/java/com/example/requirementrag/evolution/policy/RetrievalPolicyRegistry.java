@@ -34,8 +34,16 @@ public class RetrievalPolicyRegistry {
         try {
             Files.createDirectories(root);
             Path file = root.resolve(fileName(policy.policyId(), policy.version()));
-            Files.writeString(file, objectMapper.writerWithDefaultPrettyPrinter()
-                    .writeValueAsString(policy) + System.lineSeparator(), StandardCharsets.UTF_8);
+            if (Files.exists(file)) {
+                RetrievalPolicy existing = read(file);
+                if (!sameImmutableContent(existing, policy)) {
+                    throw new IllegalArgumentException("策略版本已存在且内容不同，不可覆盖: "
+                            + policy.policyId() + " " + policy.version());
+                }
+            }
+            String content = objectMapper.writerWithDefaultPrettyPrinter()
+                    .writeValueAsString(policy) + System.lineSeparator();
+            writeAtomically(file, content);
         } catch (IOException exception) {
             throw new IllegalStateException("检索策略写入失败", exception);
         }
@@ -102,9 +110,30 @@ public class RetrievalPolicyRegistry {
         try {
             Files.createDirectories(root);
             Path activeFile = root.resolve(ACTIVE_FILE);
-            Files.writeString(activeFile, ref + System.lineSeparator(), StandardCharsets.UTF_8);
+            writeAtomically(activeFile, ref + System.lineSeparator());
         } catch (IOException exception) {
             throw new IllegalStateException("检索策略 active 引用写入失败", exception);
+        }
+    }
+
+    private boolean sameImmutableContent(RetrievalPolicy left, RetrievalPolicy right) {
+        return left.selectorRules().equals(right.selectorRules())
+                && left.rankingWeights().equals(right.rankingWeights())
+                && left.thresholds().equals(right.thresholds())
+                && left.featureFlags().equals(right.featureFlags())
+                && java.util.Objects.equals(left.parentVersion(), right.parentVersion());
+    }
+
+    private void writeAtomically(Path target, String content) throws IOException {
+        Path temp = target.resolveSibling(target.getFileName() + ".tmp");
+        Files.writeString(temp, content, StandardCharsets.UTF_8);
+        try {
+            Files.move(temp, target, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (java.nio.file.AtomicMoveNotSupportedException exception) {
+            Files.move(temp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } finally {
+            Files.deleteIfExists(temp);
         }
     }
 

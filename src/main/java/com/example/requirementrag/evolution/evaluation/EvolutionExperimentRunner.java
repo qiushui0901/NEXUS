@@ -38,23 +38,19 @@ public class EvolutionExperimentRunner {
                                 long randomSeed, int repetitions) {
         String experimentId = "exp-" + UUID.randomUUID().toString().substring(0, 8);
         ExperimentManifest manifest = new ExperimentManifest(experimentId,
+                baseline == null ? null : baseline.policyId(),
                 baseline == null ? null : baseline.version(),
+                candidate == null ? null : candidate.policyId(),
                 candidate == null ? null : candidate.version(),
                 dataset.version(), indexVersion, modelVersion, randomSeed, repetitions, java.time.Instant.now());
+        int effectiveRepetitions = Math.max(1, repetitions);
         List<ExperimentReport.CaseResult> baselineCases = new ArrayList<>();
         List<ExperimentReport.CaseResult> candidateCases = new ArrayList<>();
         for (EvaluationCase evalCase : dataset.cases()) {
-            long start = System.nanoTime();
-            List<String> baselineIds = policyExecutor.execute(evalCase, baseline);
-            long baselineMs = (System.nanoTime() - start) / 1_000_000;
-            baselineCases.add(RetrievalMetrics.caseResult(evalCase.caseId(), evalCase.query(),
-                    baselineIds, evalCase.relevantIds(), baselineMs, "SUCCESS"));
-
-            start = System.nanoTime();
-            List<String> candidateIds = policyExecutor.execute(evalCase, candidate);
-            long candidateMs = (System.nanoTime() - start) / 1_000_000;
-            candidateCases.add(RetrievalMetrics.caseResult(evalCase.caseId(), evalCase.query(),
-                    candidateIds, evalCase.relevantIds(), candidateMs, "SUCCESS"));
+            for (int repetition = 1; repetition <= effectiveRepetitions; repetition++) {
+                baselineCases.add(runOnce(evalCase, baseline, randomSeed, repetition, "baseline"));
+                candidateCases.add(runOnce(evalCase, candidate, randomSeed, repetition, "candidate"));
+            }
         }
         ExperimentReport.MetricSummary baselineSummary = summarize(baselineCases);
         ExperimentReport.MetricSummary candidateSummary = summarize(candidateCases);
@@ -66,6 +62,28 @@ public class EvolutionExperimentRunner {
                 candidateSummary, passedGate);
         save(report);
         return report;
+    }
+
+    private ExperimentReport.CaseResult runOnce(EvaluationCase evalCase, RetrievalPolicy policy,
+                                                 long randomSeed, int repetition, String label) {
+        long start = System.nanoTime();
+        String status = "SUCCESS";
+        List<String> ids;
+        try {
+            RetrievalPolicyExecutor.ExecutionResult result =
+                    policyExecutor.execute(evalCase, policy, randomSeed, repetition);
+            ids = result.ids();
+            status = result.status();
+        } catch (RuntimeException exception) {
+            log.warn("Experiment {} failed for case {} ({}): {}", label, evalCase.caseId(),
+                    repetition, exception.toString());
+            ids = List.of();
+            status = "FAILED";
+        }
+        long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+        String caseId = evalCase.caseId() + "#" + repetition;
+        return RetrievalMetrics.caseResult(caseId, evalCase.query(), ids, evalCase.relevantIds(),
+                elapsedMs, status);
     }
 
     private ExperimentReport.MetricSummary summarize(List<ExperimentReport.CaseResult> cases) {
@@ -104,14 +122,39 @@ public class EvolutionExperimentRunner {
         );
     }
 
+    /** 按实验 ID 读取已保存的报告；不存在时返回 null。 */
+    public ExperimentReport find(String experimentId) {
+        if (experimentId == null || experimentId.isBlank()) {
+            return null;
+        }
+        Path file = reportRoot.resolve(safeId(experimentId) + ".json");
+        if (!Files.isRegularFile(file)) {
+            return null;
+        }
+        try {
+            return objectMapper.readValue(Files.readAllBytes(file), ExperimentReport.class);
+        } catch (IOException exception) {
+            log.warn("Unable to read experiment report {}", experimentId, exception);
+            return null;
+        }
+    }
+
     private void save(ExperimentReport report) {
         try {
             Files.createDirectories(reportRoot);
-            Path file = reportRoot.resolve(report.manifest().experimentId() + ".json");
+            Path file = reportRoot.resolve(safeId(report.manifest().experimentId()) + ".json");
             Files.writeString(file, objectMapper.writerWithDefaultPrettyPrinter()
                     .writeValueAsString(report) + System.lineSeparator(), StandardCharsets.UTF_8);
         } catch (IOException exception) {
             log.warn("Unable to save experiment report", exception);
         }
+    }
+
+    private String safeId(String value) {
+        String normalized = value == null || value.isBlank() ? "unknown" : value.trim();
+        if (!normalized.matches("[A-Za-z0-9._-]{1,128}") || normalized.contains("..")) {
+            throw new IllegalArgumentException("experiment id contains unsafe characters");
+        }
+        return normalized;
     }
 }

@@ -34,11 +34,16 @@ class RetrievalFailureMinerTest {
     }
 
     private RetrievalExperience degraded(String id, String queryHash) {
+        return degraded(id, queryHash, "query", List.of());
+    }
+
+    private RetrievalExperience degraded(String id, String queryHash, String preview,
+                                         List<String> finalRanking) {
         return new RetrievalExperience(
                 RetrievalExperience.SCHEMA_VERSION, id, Instant.now(), "demo", "requirements", "5.1",
-                queryHash, "query", "DEVELOPMENT_PLAN", "hybrid", List.of("hybrid"), 1,
+                queryHash, preview, "DEVELOPMENT_PLAN", "hybrid", List.of("hybrid"), 1,
                 List.of(new RetrievalExperience.HopSnapshot(0, "hybrid", "INSUFFICIENT", "BELOW_MIN_HITS", 1)),
-                List.of(), List.of(), List.of(), "INSUFFICIENT", "BELOW_MIN_HITS",
+                List.of(), finalRanking, List.of(), "INSUFFICIENT", "BELOW_MIN_HITS",
                 "DEGRADED", List.of("ORCHESTRATION_INSUFFICIENT_EVIDENCE"), List.of(), 100, null,
                 List.of(), null, "baseline-v1", "cfg", "idx", null);
     }
@@ -54,6 +59,42 @@ class RetrievalFailureMinerTest {
         assertThat(candidates).hasSize(1);
         assertThat(candidates.get(0).failureType()).isEqualTo(FailureType.DEGRADED_RESULT);
         assertThat(candidates.get(0).reviewStatus()).isEqualTo(ReviewStatus.DRAFT);
+        assertThat(store.findAll()).hasSize(1);
+    }
+
+    @Test
+    void doesNotUseFailureRankingAsGold() {
+        EvaluationCandidateStore store = new EvaluationCandidateStore(new ObjectMapper().findAndRegisterModules(), properties());
+        RetrievalFailureMiner miner = new RetrievalFailureMiner(store);
+
+        List<EvaluationCandidate> candidates = miner.mine(List.of(
+                degraded("e1", "q1", "query", List.of("wrong-id"))));
+
+        assertThat(candidates).hasSize(1);
+        assertThat(candidates.get(0).predictedRelevantIds()).isEmpty();
+    }
+
+    @Test
+    void skipsExperiencesWithoutQueryPreview() {
+        EvaluationCandidateStore store = new EvaluationCandidateStore(new ObjectMapper().findAndRegisterModules(), properties());
+        RetrievalFailureMiner miner = new RetrievalFailureMiner(store);
+
+        List<EvaluationCandidate> candidates = miner.mine(List.of(
+                degraded("e1", "q1", null, List.of("id"))));
+
+        assertThat(candidates).isEmpty();
+        assertThat(store.findAll()).isEmpty();
+    }
+
+    @Test
+    void deduplicatesCandidatesAcrossRuns() {
+        EvaluationCandidateStore store = new EvaluationCandidateStore(new ObjectMapper().findAndRegisterModules(), properties());
+        RetrievalFailureMiner miner = new RetrievalFailureMiner(store);
+
+        miner.mine(List.of(degraded("e1", "q1")));
+        List<EvaluationCandidate> second = miner.mine(List.of(degraded("e2", "q1")));
+
+        assertThat(second).isEmpty();
         assertThat(store.findAll()).hasSize(1);
     }
 }

@@ -43,7 +43,7 @@ class EvaluationCaseReviewServiceTest {
         EvaluationCaseReviewService service = new EvaluationCaseReviewService(candidateStore, datasetRegistry);
 
         candidateStore.save(new EvaluationCandidate("c1", "e1", "qhash", "query", FailureType.NO_HIT,
-                "no hit", List.of("r1"), 1.0, ReviewStatus.APPROVED, "reviewer", null));
+                "no hit", "idx", List.of("r1"), 1.0, ReviewStatus.APPROVED, "reviewer", null));
 
         EvaluationDataset dataset = service.publishApproved("ds-1");
 
@@ -60,9 +60,41 @@ class EvaluationCaseReviewServiceTest {
         EvaluationCaseReviewService service = new EvaluationCaseReviewService(candidateStore, datasetRegistry);
 
         candidateStore.save(new EvaluationCandidate("c1", "e1", "qhash", "query", FailureType.NO_HIT,
-                "no hit", List.of("r1"), 1.0, ReviewStatus.DRAFT, null, null));
+                "no hit", "idx", List.of("r1"), 1.0, ReviewStatus.DRAFT, null, null));
 
         assertThatThrownBy(() -> service.transition("c1", ReviewStatus.PUBLISHED, "reviewer"))
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void approvalRequiresHumanConfirmedRelevantIds() {
+        EvaluationCandidateStore candidateStore = new EvaluationCandidateStore(new ObjectMapper().findAndRegisterModules(), properties());
+        EvaluationDatasetRegistry datasetRegistry = new EvaluationDatasetRegistry(new ObjectMapper().findAndRegisterModules(), properties());
+        EvaluationCaseReviewService service = new EvaluationCaseReviewService(candidateStore, datasetRegistry);
+
+        candidateStore.save(new EvaluationCandidate("c1", "e1", "qhash", "query", FailureType.NO_HIT,
+                "no hit", "idx", List.of(), 1.0, ReviewStatus.IN_REVIEW, "reviewer", null));
+
+        assertThatThrownBy(() -> service.updateAndTransition("c1", ReviewStatus.APPROVED,
+                List.of(), null, "reviewer"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("relevant IDs");
+    }
+
+    @Test
+    void reviewerCanSetRelevantIdsBeforePublish() {
+        EvaluationCandidateStore candidateStore = new EvaluationCandidateStore(new ObjectMapper().findAndRegisterModules(), properties());
+        EvaluationDatasetRegistry datasetRegistry = new EvaluationDatasetRegistry(new ObjectMapper().findAndRegisterModules(), properties());
+        EvaluationCaseReviewService service = new EvaluationCaseReviewService(candidateStore, datasetRegistry);
+
+        candidateStore.save(new EvaluationCandidate("c1", "e1", "qhash", "query", FailureType.NO_HIT,
+                "no hit", "idx", List.of(), 1.0, ReviewStatus.IN_REVIEW, "reviewer", null));
+
+        service.updateAndTransition("c1", ReviewStatus.APPROVED, List.of("gold-1"), null, "reviewer");
+        EvaluationDataset dataset = service.publishApproved("ds-1");
+
+        assertThat(dataset.cases()).hasSize(1);
+        assertThat(dataset.cases().get(0).relevantIds()).containsExactly("gold-1");
+        assertThat(dataset.cases().get(0).query()).isEqualTo("query");
     }
 }
