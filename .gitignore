@@ -50,3 +50,6 @@ data/requirement-snapshots/
 __pycache__/
 *.py[cod]
 data/code-annotation-cache/
+
+# Self-evolving RAG runtime artifacts
+data/evolution/

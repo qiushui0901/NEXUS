@@ -40,6 +40,13 @@ public class EvidenceReflector {
      *         NOT_RETRIEVABLE（核心失败，应降级交付）
      */
     public ReflectionResult evaluate(StrategyResult result) {
+        return evaluate(result, minRequirementHits);
+    }
+
+    /** 使用外部策略阈值评估结果；阈值为 null 或 <0 时使用当前实例默认值。 */
+    public ReflectionResult evaluate(StrategyResult result, Integer minRequirementHitsOverride) {
+        int effectiveMinHits = minRequirementHitsOverride == null || minRequirementHitsOverride < 0
+                ? minRequirementHits : minRequirementHitsOverride;
         if (result == null || result.status() == RagOutcomeStatus.FAILED) {
             return new ReflectionResult(ReflectionVerdict.NOT_RETRIEVABLE, "CORE_STAGE_FAILED");
         }
@@ -47,7 +54,7 @@ public class EvidenceReflector {
                 && result.bundle().profile().usesRequirementEvidence();
         if (needsRequirements) {
             int hits = result.requirementHitCount();
-            if (hits < minRequirementHits) {
+            if (hits < effectiveMinHits) {
                 return new ReflectionResult(ReflectionVerdict.INSUFFICIENT, "BELOW_MIN_HITS");
             }
             if (hits >= MIN_UNIQUE_PARENTS && uniqueParents(result) < MIN_UNIQUE_PARENTS) {

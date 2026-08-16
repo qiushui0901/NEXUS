@@ -12,10 +12,11 @@ import java.util.List;
 @ConfigurationProperties("app.rag")
 public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval,
                              Knowledge knowledge, Review review, Code code,
-                             List<ProjectConfig> projects) {
+                             List<ProjectConfig> projects, Evolution evolution) {
 
     public RagProperties {
         projects = projects == null ? List.of() : projects;
+        evolution = evolution == null ? Evolution.disabled() : evolution;
     }
 
     /** 评审问题数量相关配置。 */
@@ -376,6 +377,48 @@ public record RagProperties(Qdrant qdrant, Bge bge, Llm llm, Retrieval retrieval
         public Knowledge toKnowledge() {
             return new Knowledge(bootstrapEnabled, zipPath, xlsxPath,
                     documentId, version, zipFolderPrefix, xlsxSheetPrefix, minHtmlBytes);
+        }
+    }
+
+    /** 自进化 RAG 配置。默认全部关闭，关闭时保持现有检索行为。 */
+    public record Evolution(
+            boolean enabled,
+            boolean experienceRecordingEnabled,
+            double successSampleRate,
+            double failureSampleRate,
+            int queueCapacity,
+            boolean queryPreviewEnabled,
+            int retentionDays,
+            String experienceRootPath,
+            String candidateRootPath,
+            String datasetRootPath,
+            String policyRootPath
+    ) {
+        @ConstructorBinding
+        public Evolution {
+            if (successSampleRate < 0 || successSampleRate > 1) {
+                throw new IllegalArgumentException("successSampleRate must be between 0 and 1");
+            }
+            if (failureSampleRate < 0 || failureSampleRate > 1) {
+                throw new IllegalArgumentException("failureSampleRate must be between 0 and 1");
+            }
+            queueCapacity = queueCapacity <= 0 ? 1_000 : queueCapacity;
+            retentionDays = retentionDays <= 0 ? 30 : retentionDays;
+            experienceRootPath = text(experienceRootPath, "data/evolution/experiences");
+            candidateRootPath = text(candidateRootPath, "data/evolution/candidates");
+            datasetRootPath = text(datasetRootPath, "data/evolution/datasets");
+            policyRootPath = text(policyRootPath, "data/evolution/policies");
+        }
+
+        /** 默认关闭配置。 */
+        public static Evolution disabled() {
+            return new Evolution(false, false, 0.1, 1.0, 1_000, false, 30,
+                    "data/evolution/experiences", "data/evolution/candidates",
+                    "data/evolution/datasets", "data/evolution/policies");
+        }
+
+        private static String text(String value, String fallback) {
+            return value == null || value.isBlank() ? fallback : value.trim();
         }
     }
 }

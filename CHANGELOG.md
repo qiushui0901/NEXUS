@@ -24,6 +24,13 @@
 
 ### Added
 
+- 新增自进化 RAG M1-M4 受控闭环（`docs/self-evolving-rag-implementation-plan.md`）：新增 `evolution` 模块，打通在线经验采集、失败挖掘、人工审核评测集、离线实验、策略注册表与 Promotion Gate；默认关闭，不改变现有检索行为。
+  - 经验采集：`RetrievalExperienceRecorder` + JSONL `FileRetrievalExperienceStore`，`AgenticOrchestrator` 逐 hop 记录策略/候选/反思/状态/版本，异步写入、采样、脱敏、失败隔离。
+  - 失败挖掘：`RetrievalFailureMiner` 按稳定 `FailureType` 从经验事件生成待审核候选，按 queryHash+failureType+indexVersion 聚类去重。
+  - 评测集演进：`EvaluationCaseReviewService` 候选状态机（DRAFT→IN_REVIEW→APPROVED/REJECTED→PUBLISHED/ROLLED_BACK），`EvaluationDatasetRegistry` 发布不可变数据集版本并支持回滚。
+  - 离线实验：`EvolutionExperimentRunner` + `RetrievalMetrics` 在同一数据集上运行基线和候选策略，输出 Recall/MRR/nDCG/延迟报告。
+  - 策略治理：`RetrievalPolicyRegistry`、`PolicyLifecycleService`、`PolicyPromotionGate`、`PolicyDrivenRetrievalStrategySelector`，参数 allowlist 校验、不可变版本、原子激活引用。
+  - REST：`EvolutionController` 提供候选审核、数据集、策略与实验 API。
 - 新增 `docs/nexus-0.8.5-development-roadmap.md`，规划全系统 RAG 加固：统一检索与重排、错误降级与超时、跨 REST/SSE/MCP 的证据闭环、代码索引可回滚升级、大文档 Map-Reduce 与全链路质量门。
 - 新增 `docs/nexus-open-source-rag-engine-comparison.md`，基于 GitHub 最新数据对比 RAGFlow、LlamaIndex、LightRAG、GraphRAG、PageIndex、Graphiti、Haystack、RAG-Anything、R2R 等核心 RAG 引擎，并给出 NEXUS 的集成与选型建议。
 - 新增 `AnnotationCacheStore`：代码语义标注结果按项目磁盘持久化（JSONL 追加），全量索引与失败重试时磁盘缓存优先、live 与旧物理 collection 缓存补漏，避免重复调用 LLM 标注。

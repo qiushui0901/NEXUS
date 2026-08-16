@@ -110,6 +110,18 @@ app:
     max-response-characters: ${MCP_MAX_RESPONSE_CHARACTERS:120000}
   rag:
     code-graph-root-path: ${CODE_GRAPH_ROOT_PATH:data/code-graph}
+    evolution:
+      enabled: ${EVOLUTION_ENABLED:false}
+      experience-recording-enabled: ${EVOLUTION_EXPERIENCE_RECORDING_ENABLED:false}
+      success-sample-rate: ${EVOLUTION_SUCCESS_SAMPLE_RATE:0.1}
+      failure-sample-rate: ${EVOLUTION_FAILURE_SAMPLE_RATE:1.0}
+      queue-capacity: ${EVOLUTION_QUEUE_CAPACITY:1000}
+      query-preview-enabled: ${EVOLUTION_QUERY_PREVIEW_ENABLED:false}
+      retention-days: ${EVOLUTION_RETENTION_DAYS:30}
+      experience-root-path: ${EVOLUTION_EXPERIENCE_ROOT_PATH:data/evolution/experiences}
+      candidate-root-path: ${EVOLUTION_CANDIDATE_ROOT_PATH:data/evolution/candidates}
+      dataset-root-path: ${EVOLUTION_DATASET_ROOT_PATH:data/evolution/datasets}
+      policy-root-path: ${EVOLUTION_POLICY_ROOT_PATH:data/evolution/policies}
     qdrant:
       base-url: ${QDRANT_URL:http://localhost:6333}
       collection: ${QDRANT_COLLECTION:requirement_chunks}

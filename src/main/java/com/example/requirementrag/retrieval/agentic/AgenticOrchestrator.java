@@ -1,5 +1,10 @@
 package com.example.requirementrag.retrieval.agentic;
 
+import com.example.requirementrag.config.RagProperties;
+import com.example.requirementrag.evolution.experience.EvolutionTrace;
+import com.example.requirementrag.evolution.experience.RetrievalExperienceRecorder;
+import com.example.requirementrag.evolution.policy.RetrievalPolicy;
+import com.example.requirementrag.evolution.policy.RetrievalPolicyRegistry;
 import com.example.requirementrag.model.ChunkRecord;
 import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.RagOutcome;
@@ -9,6 +14,7 @@ import com.example.requirementrag.model.RagWarning;
 import com.example.requirementrag.retrieval.agentic.EvidenceReflector.ReflectionVerdict;
 import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
 import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -33,23 +39,52 @@ public class AgenticOrchestrator {
 
     private static final String STAGE = "agentic.orchestrate";
 
+    private static final String BASELINE_POLICY_VERSION = "baseline-v1";
+
     private final List<RetrievalStrategy> strategies;
     private final EvidenceReflector reflector;
     private final RetrievalStrategySelector selector;
     private final int maxHops;
+    private final RetrievalExperienceRecorder experienceRecorder;
+    private final RagProperties properties;
+    private final RetrievalPolicyRegistry policyRegistry;
 
     @Autowired
+    public AgenticOrchestrator(List<RetrievalStrategy> strategies, EvidenceReflector reflector,
+                               RetrievalStrategySelector selector,
+                               ObjectProvider<RetrievalExperienceRecorder> experienceRecorderProvider,
+                               ObjectProvider<RagProperties> propertiesProvider,
+                               ObjectProvider<RetrievalPolicyRegistry> policyRegistryProvider) {
+        this(strategies, reflector, selector, DEFAULT_MAX_HOPS,
+                experienceRecorderProvider.getIfAvailable(), propertiesProvider.getIfAvailable(),
+                policyRegistryProvider.getIfAvailable());
+    }
+
     public AgenticOrchestrator(List<RetrievalStrategy> strategies, EvidenceReflector reflector) {
         this(strategies, reflector, new RetrievalStrategySelector.RuleBasedRetrievalStrategySelector(),
-                DEFAULT_MAX_HOPS);
+                DEFAULT_MAX_HOPS, null, null, null);
     }
 
     public AgenticOrchestrator(List<RetrievalStrategy> strategies, EvidenceReflector reflector, int maxHops) {
-        this(strategies, reflector, new RetrievalStrategySelector.RuleBasedRetrievalStrategySelector(), maxHops);
+        this(strategies, reflector, new RetrievalStrategySelector.RuleBasedRetrievalStrategySelector(),
+                maxHops, null, null, null);
     }
 
     public AgenticOrchestrator(List<RetrievalStrategy> strategies, EvidenceReflector reflector,
                                RetrievalStrategySelector selector, int maxHops) {
+        this(strategies, reflector, selector, maxHops, null, null, null);
+    }
+
+    public AgenticOrchestrator(List<RetrievalStrategy> strategies, EvidenceReflector reflector,
+                               RetrievalStrategySelector selector, int maxHops,
+                               RetrievalExperienceRecorder experienceRecorder, RagProperties properties) {
+        this(strategies, reflector, selector, maxHops, experienceRecorder, properties, null);
+    }
+
+    public AgenticOrchestrator(List<RetrievalStrategy> strategies, EvidenceReflector reflector,
+                               RetrievalStrategySelector selector, int maxHops,
+                               RetrievalExperienceRecorder experienceRecorder, RagProperties properties,
+                               RetrievalPolicyRegistry policyRegistry) {
         if (strategies == null || strategies.isEmpty()) {
             throw new IllegalArgumentException("at least one retrieval strategy required");
         }
@@ -57,6 +92,9 @@ public class AgenticOrchestrator {
         this.reflector = reflector;
         this.selector = selector;
         this.maxHops = Math.max(1, maxHops);
+        this.experienceRecorder = experienceRecorder;
+        this.properties = properties;
+        this.policyRegistry = policyRegistry;
     }
 
     /**
@@ -66,9 +104,15 @@ public class AgenticOrchestrator {
      * @return 编排结果：证据充分时按最后状态交付，不足/失败时降级交付并附编排警告
      */
     public RagOutcome<RetrievalBundle> execute(RetrievalRequest request) {
+        long startedNanos = System.nanoTime();
+        EvolutionTrace trace = experienceRecorder == null ? null : EvolutionTrace.start(request,
+                activePolicyVersion(), configHash(), indexVersion(), null);
         StrategyResult merged = null;
         List<RagWarning> orchestrationWarnings = new ArrayList<>();
-        for (int hop = 0; hop < maxHops; hop++) {
+        List<String> degradedStages = new ArrayList<>();
+        int effectiveMaxHops = policyMaxHops() == null ? maxHops : policyMaxHops();
+        for (int hop = 0; hop < effectiveMaxHops; hop++) {
+            long hopStartedNanos = System.nanoTime();
             RetrievalStrategy defaultStrategy = strategies.get(Math.min(hop, strategies.size() - 1));
             RetrievalStrategy strategy = hop == 0
                     ? selector.select(strategies, request).orElseGet(() -> strategies.get(0))
@@ -77,21 +121,38 @@ public class AgenticOrchestrator {
             if (merged != null) {
                 current = merge(merged, current);
             }
-            EvidenceReflector.ReflectionResult reflection = reflector.evaluate(current);
+            EvidenceReflector.ReflectionResult reflection = reflector.evaluate(current,
+                    policyMinRequirementHits());
+            if (trace != null) {
+                trace.recordHop(hop, strategy.name(), current == null ? null : current.bundle(),
+                        reflection, System.nanoTime() - hopStartedNanos);
+            }
+            if (current != null && current.status() == RagOutcomeStatus.DEGRADED) {
+                degradedStages.add(strategy.name());
+            }
             ReflectionVerdict verdict = reflection.verdict();
             if (verdict == ReflectionVerdict.CONFIDENT) {
-                return deliver(current, orchestrationWarnings, hop + 1, false);
+                RagOutcome<RetrievalBundle> outcome = deliver(current, orchestrationWarnings, hop + 1, false);
+                record(trace, outcome, hop + 1, orchestrationWarnings, current == null ? List.of()
+                        : current.diagnostics(), degradedStages, startedNanos);
+                return outcome;
             }
             if (verdict == ReflectionVerdict.NOT_RETRIEVABLE) {
                 orchestrationWarnings.add(new RagWarning(STAGE, "ORCHESTRATION_NOT_RETRIEVABLE",
                         "检索核心阶段失败，降级交付已有结果", hop + 1));
-                return deliver(current, orchestrationWarnings, hop + 1, true);
+                RagOutcome<RetrievalBundle> outcome = deliver(current, orchestrationWarnings, hop + 1, true);
+                record(trace, outcome, hop + 1, orchestrationWarnings, current == null ? List.of()
+                        : current.diagnostics(), degradedStages, startedNanos);
+                return outcome;
             }
             orchestrationWarnings.add(insufficientWarning(hop + 1,
                     "需求证据命中不足，已触发补检（第 " + (hop + 2) + " 跳）"));
             merged = current;
         }
-        return deliver(merged, orchestrationWarnings, maxHops, true);
+        RagOutcome<RetrievalBundle> finalOutcome = deliver(merged, orchestrationWarnings, effectiveMaxHops, true);
+        record(trace, finalOutcome, effectiveMaxHops, orchestrationWarnings, merged == null ? List.of()
+                : merged.diagnostics(), degradedStages, startedNanos);
+        return finalOutcome;
     }
 
     /** 合并两跳证据：需求/正文/代码分别按值去重（record equals），保留先到者顺序。 */
@@ -152,5 +213,53 @@ public class AgenticOrchestrator {
 
     private RagWarning insufficientWarning(int hop, String message) {
         return new RagWarning(STAGE, "ORCHESTRATION_INSUFFICIENT_EVIDENCE", message, hop);
+    }
+
+    private void record(EvolutionTrace trace, RagOutcome<RetrievalBundle> outcome, int hops,
+                        List<RagWarning> warnings, List<RagStageDiagnostic> diagnostics,
+                        List<String> degradedStages, long startedNanos) {
+        if (trace == null || experienceRecorder == null) {
+            return;
+        }
+        experienceRecorder.recordAsync(trace.finish(outcome, hops, elapsedMillis(startedNanos),
+                warnings, diagnostics, degradedStages));
+    }
+
+    private String configHash() {
+        return properties == null || properties.retrieval() == null ? "unknown"
+                : properties.retrieval().fingerprint();
+    }
+
+    private Integer policyMinRequirementHits() {
+        RetrievalPolicy policy = activePolicy();
+        if (policy == null || policy.thresholds() == null) {
+            return null;
+        }
+        return policy.thresholds().get("reflector.min-requirement-hits");
+    }
+
+    private Integer policyMaxHops() {
+        RetrievalPolicy policy = activePolicy();
+        if (policy == null || policy.thresholds() == null) {
+            return null;
+        }
+        return policy.thresholds().get("orchestrator.max-hops");
+    }
+
+    private String activePolicyVersion() {
+        RetrievalPolicy policy = activePolicy();
+        return policy == null ? BASELINE_POLICY_VERSION : policy.version();
+    }
+
+    private RetrievalPolicy activePolicy() {
+        return policyRegistry == null ? null : policyRegistry.active();
+    }
+
+    private String indexVersion() {
+        return "unknown";
+    }
+
+    private long elapsedMillis(long startedNanos) {
+        return (System.nanoTime() - startedNanos) / 1_000_000;
     }
 }
