@@ -115,16 +115,20 @@ public class KnowledgeManagementController {
         Page<KnowledgeBaseView> allDb = projectIds.isEmpty()
                 ? new Page<>(List.of(), 0, size, 0)
                 : store.listBasesForProjects(projectIds, status, type, query, 0, 10_000);
-        Set<String> dbProjectIds = new HashSet<>();
+        Set<String> dbBaseIds = new HashSet<>();
         for (KnowledgeBaseView base : allDb.items()) {
-            dbProjectIds.add(base.projectId());
+            dbBaseIds.add(base.id());
         }
         List<KnowledgeBaseView> merged = new ArrayList<>(allDb.items());
         for (RagProperties.ProjectConfig project : projects) {
-            if (dbProjectIds.contains(project.id())) continue;
-            KnowledgeBaseView synthetic = syntheticIfVisible(project, status, type, query);
-            if (synthetic != null) {
-                merged.add(synthetic);
+            for (BaseType candidateType : List.of(BaseType.REQUIREMENT, BaseType.CODE)) {
+                if (type != null && type != candidateType) continue;
+                String candidateId = project.id() + ":" + candidateType.name().toLowerCase();
+                if (dbBaseIds.contains(candidateId)) continue;
+                KnowledgeBaseView synthetic = syntheticIfVisible(project, status, candidateType, query);
+                if (synthetic != null) {
+                    merged.add(synthetic);
+                }
             }
         }
         int from = Math.min(page * Math.max(1, size), merged.size());
@@ -134,34 +138,36 @@ public class KnowledgeManagementController {
 
     private KnowledgeBaseView syntheticIfVisible(RagProperties.ProjectConfig project,
                                                  SummaryStatus status, BaseType type, String query) {
-        if (type != null && type != BaseType.REQUIREMENT) return null;
+        if (type != null && type != BaseType.REQUIREMENT && type != BaseType.CODE) return null;
         if (status != null && status != SummaryStatus.READY) return null;
-        String collection = project.requirementCollection();
+        String collection = collectionFor(project, type);
         if (collection == null || collection.isBlank()) return null;
         long points = qdrantStore.countPointsIfAvailable(collection);
         if (points <= 0) return null;
-        KnowledgeBaseView base = syntheticBase(project, collection, points);
+        KnowledgeBaseView base = syntheticBase(project, collection, type, points);
         if (!matchesQuery(base, query)) return null;
         return base;
     }
 
-    private KnowledgeBaseView syntheticBase(RagProperties.ProjectConfig project) {
-        String collection = project.requirementCollection();
+    private KnowledgeBaseView syntheticBase(RagProperties.ProjectConfig project, BaseType type) {
+        String collection = collectionFor(project, type);
         if (collection == null || collection.isBlank()) return null;
         long points = qdrantStore.countPointsIfAvailable(collection);
-        return points > 0 ? syntheticBase(project, collection, points) : null;
+        return points > 0 ? syntheticBase(project, collection, type, points) : null;
     }
 
     private KnowledgeBaseView syntheticBase(RagProperties.ProjectConfig project,
-                                            String collection, long points) {
-        String version = project.knowledge() == null ? null : project.knowledge().version();
+                                            String collection, BaseType type, long points) {
+        String suffix = type == BaseType.CODE ? "code" : "requirement";
+        SourceType source = type == BaseType.CODE ? SourceType.GITLAB : SourceType.ZIP;
+        String version = type == BaseType.CODE ? null : (project.knowledge() == null ? null : project.knowledge().version());
         return new KnowledgeBaseView(
-                project.id() + ":requirement",
+                project.id() + ":" + suffix,
                 project.id(),
                 project.name() == null || project.name().isBlank() ? project.id() : project.name(),
-                BaseType.REQUIREMENT,
+                type,
                 collection,
-                SourceType.ZIP,
+                source,
                 SummaryStatus.READY,
                 null,
                 version,
@@ -172,6 +178,21 @@ public class KnowledgeManagementController {
                 null,
                 null,
                 null);
+    }
+
+    private String collectionFor(RagProperties.ProjectConfig project, BaseType type) {
+        return type == BaseType.CODE ? project.codeCollection() : project.requirementCollection();
+    }
+
+    private BaseType typeFromBaseId(String id) {
+        int index = id == null ? -1 : id.lastIndexOf(':');
+        if (index < 0) return null;
+        String suffix = id.substring(index + 1).toLowerCase();
+        return switch (suffix) {
+            case "code" -> BaseType.CODE;
+            case "requirement" -> BaseType.REQUIREMENT;
+            default -> null;
+        };
     }
 
     private boolean matchesQuery(KnowledgeBaseView base, String query) {
@@ -327,10 +348,11 @@ public class KnowledgeManagementController {
             return base;
         } catch (IllegalArgumentException exception) {
             String projectId = projectIdFromBaseId(id);
+            BaseType baseType = typeFromBaseId(id);
             RagProperties.ProjectConfig project = projectRegistry.find(projectId).orElse(null);
-            if (project != null) {
+            if (project != null && baseType != null) {
                 accessGuard.requireProjectAccess(request, project.id());
-                KnowledgeBaseView synthetic = syntheticBase(project);
+                KnowledgeBaseView synthetic = syntheticBase(project, baseType);
                 if (synthetic != null) return synthetic;
             }
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "知识管理资源不存在");

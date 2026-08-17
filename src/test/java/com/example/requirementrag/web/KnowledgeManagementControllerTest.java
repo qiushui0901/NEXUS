@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.knowledge.KnowledgeBootstrapService;
+import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.BaseType;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.ChunkView;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.EntityStatus;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.KnowledgeBaseView;
@@ -244,6 +245,47 @@ class KnowledgeManagementControllerTest {
                 .andExpect(jsonPath("$.projectId").value("orders"))
                 .andExpect(jsonPath("$.status").value("READY"))
                 .andExpect(jsonPath("$.chunkCount").value(81));
+    }
+
+    @Test
+    void listShowsCodeIndexWhenStateStoreEmptyAndTypeFilterIsCode() throws Exception {
+        RagProperties.ProjectConfig orders = mock(RagProperties.ProjectConfig.class);
+        when(orders.id()).thenReturn("orders");
+        when(orders.name()).thenReturn("订单需求");
+        when(orders.requirementCollection()).thenReturn("requirement_chunks");
+        when(orders.codeCollection()).thenReturn("code_chunks");
+        when(projectRegistry.all()).thenReturn(List.of(orders));
+        when(accessGuard.currentUser(any())).thenReturn(UserContext.defaultAdmin());
+        when(store.listBasesForProjects(List.of("orders"), null, BaseType.CODE, null, 0, 10_000))
+                .thenReturn(new com.example.requirementrag.knowledge.management.KnowledgeManagementModels.Page<>(
+                        List.of(), 0, 50, 0));
+        when(qdrantStore.countPointsIfAvailable("code_chunks")).thenReturn(567L);
+
+        mvc.perform(get("/api/knowledge-bases").param("type", "CODE"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].projectId").value("orders"))
+                .andExpect(jsonPath("$.items[0].type").value("CODE"))
+                .andExpect(jsonPath("$.items[0].chunkCount").value(567));
+    }
+
+    @Test
+    void getFallsBackToCodeIndexWhenStateStoreMissing() throws Exception {
+        RagProperties.ProjectConfig orders = mock(RagProperties.ProjectConfig.class);
+        when(orders.id()).thenReturn("orders");
+        when(orders.name()).thenReturn("订单需求");
+        when(orders.codeCollection()).thenReturn("code_chunks");
+        when(store.requireBase("orders:code"))
+                .thenThrow(new IllegalArgumentException("knowledge base not found"));
+        when(projectRegistry.find("orders")).thenReturn(Optional.of(orders));
+        when(qdrantStore.countPointsIfAvailable("code_chunks")).thenReturn(567L);
+
+        mvc.perform(get("/api/knowledge-bases/orders:code"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.projectId").value("orders"))
+                .andExpect(jsonPath("$.type").value("CODE"))
+                .andExpect(jsonPath("$.status").value("READY"))
+                .andExpect(jsonPath("$.chunkCount").value(567));
     }
 
     private KnowledgeBaseView base(String id, String projectId) {
