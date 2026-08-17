@@ -601,6 +601,18 @@ public class CodeQdrantStore {
     /** 统计项目代码 chunk 数。 */
     public long countProject(String collection, String projectId) {
         ensureCollection(collection);
+        return countProjectWithoutInitialization(collection, projectId);
+    }
+
+    /**
+     * 监控专用的快速只读计数，不创建 collection、不执行可用性重试。
+     * 调用方负责把不可用异常转换为降级状态。
+     */
+    public long countProjectIfAvailable(String collection, String projectId) {
+        return countProjectWithoutInitialization(collection, projectId);
+    }
+
+    private long countProjectWithoutInitialization(String collection, String projectId) {
         Map<String, Object> response = client.post().uri("/collections/{collection}/points/count", collection)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("filter", filter(projectId)))

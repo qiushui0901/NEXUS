@@ -152,11 +152,11 @@ public class MonitorController {
     /** 安全统计版本分块数，Qdrant 不可用时返回 0。 */
     private long safeCount(String collection, String documentId, String version) {
         try {
-            return store.countVersion(collection, documentId, version);
+            return store.countVersionIfAvailable(collection, documentId, version);
         }
         catch (RuntimeException exception) {
-            log.warn("Monitor could not count requirement chunks for document {} version {}",
-                    documentId, version, exception);
+            log.debug("Monitor requirement count unavailable document={} version={} exceptionType={}",
+                    documentId, version, exception.getClass().getSimpleName());
             return 0L;
         }
     }

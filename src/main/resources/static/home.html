@@ -1,21 +1,118 @@
 <!doctype html>
 <html lang="zh-CN">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>NEXUS · 版本化知识平台</title>
-<style>
-:root{--ink:#10251e;--muted:#617069;--green:#17684f;--line:#ddd6c8;--paper:#f7f3ea;--card:#fffdf8;--warn:#a66512;--bad:#a33d32}*{box-sizing:border-box}body{margin:0;color:var(--ink);background:radial-gradient(circle at 85% 5%,#e4eee7 0,transparent 30%),var(--paper);font-family:Inter,"PingFang SC","Microsoft YaHei",sans-serif}header{height:82px;padding:0 5vw;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);background:#fffdf9cc;backdrop-filter:blur(12px)}.brand{font:800 30px Georgia,serif;letter-spacing:4px}.tag{color:var(--muted)}main{max-width:1180px;margin:auto;padding:72px 28px}.eyebrow{color:var(--green);font-weight:800;letter-spacing:2px}.hero{display:grid;grid-template-columns:1.5fr 1fr;gap:40px;align-items:end}.hero h1{font:800 clamp(42px,6vw,78px)/1.04 Georgia,"Songti SC",serif;margin:15px 0}.hero p{font-size:19px;line-height:1.8;color:var(--muted)}.overall{padding:24px;border:1px solid var(--line);border-radius:22px;background:var(--card);box-shadow:0 20px 50px #223a2d12}.overall strong{display:block;font-size:30px;margin-top:8px}.ready{color:var(--green)}.degraded{color:var(--warn)}.bad{color:var(--bad)}.modules{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:18px;margin:48px 0}.module{display:block;min-height:220px;padding:28px;border:1px solid var(--line);border-radius:22px;background:var(--card);text-decoration:none;color:inherit;transition:.2s}.module:hover{transform:translateY(-4px);border-color:var(--green);box-shadow:0 18px 45px #173f3018}.module .num{color:var(--green);font:700 14px Georgia}.module h2{font-size:26px;margin:35px 0 12px}.module p{color:var(--muted);line-height:1.7}.section-title{display:flex;justify-content:space-between;align-items:center;margin-top:42px}.section-title button{border:1px solid var(--line);border-radius:12px;background:var(--card);padding:10px 16px;cursor:pointer}.status-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.status{padding:18px;border:1px solid var(--line);border-radius:16px;background:#fffdfa}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:8px;background:var(--bad)}.dot.on{background:var(--green)}.status small{display:block;color:var(--muted);margin:9px 0 0}.projects{margin-top:18px}.project{padding:22px;border:1px solid var(--line);border-radius:18px;background:var(--card);margin-bottom:12px}.metrics{display:flex;gap:24px;flex-wrap:wrap;color:var(--muted)}.project code{color:var(--green);word-break:break-all}.warning{color:var(--warn);margin-top:10px}.error{padding:16px;border-left:4px solid var(--bad);background:#fff0ed;color:var(--bad)}@media(max-width:1050px){.modules{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:800px){.hero,.modules,.status-grid{grid-template-columns:1fr}header .tag{display:none}main{padding-top:42px}}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>NEXUS · 运行总览</title>
+  <link rel="stylesheet" href="/assets/design-tokens.css">
+  <link rel="stylesheet" href="/assets/app-shell.css">
+  <link rel="stylesheet" href="/assets/components.css">
+  <link rel="stylesheet" href="/assets/responsive.css">
+  <style>
+    *{box-sizing:border-box}body{margin:0}.overview-grid{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(280px,.7fr);gap:16px}.overview-panel{padding:18px}.panel-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.panel-head h2{margin:0;font-size:18px}.panel-head span{color:var(--nx-muted);font-size:12px}.attention-list,.quick-list,.service-line,.project-list{display:grid;gap:8px}.attention-item{min-height:52px;padding:10px 12px;display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:10px;border:1px solid var(--nx-line);border-radius:6px;background:var(--nx-surface-raised)}.attention-mark{width:26px;height:26px;display:grid;place-items:center;border-radius:50%;font-weight:800}.attention-mark.warn{color:var(--nx-warning);background:var(--nx-warning-soft)}.attention-mark.bad{color:var(--nx-danger);background:var(--nx-danger-soft)}.attention-mark.active{color:var(--nx-info);background:var(--nx-info-soft)}.attention-item strong,.attention-item small{display:block}.attention-item small{margin-top:2px;color:var(--nx-muted);font-size:12px}.attention-item a{color:var(--nx-action);font-size:12px;font-weight:700;text-decoration:none}.quick-list{grid-template-columns:1fr 1fr}.quick-list a{min-height:48px;padding:0 12px;display:flex;align-items:center;gap:9px;color:var(--nx-ink);border:1px solid var(--nx-line);border-radius:6px;text-decoration:none;font-weight:700}.quick-list a:hover{color:var(--nx-action);border-color:var(--nx-action)}.service-line{grid-template-columns:repeat(3,minmax(0,1fr));margin:16px 0}.service{padding:12px 14px;display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--nx-surface);border:1px solid var(--nx-line);border-radius:6px}.service-name{display:flex;align-items:center;gap:8px;font-weight:700}.service-dot{width:8px;height:8px;border-radius:50%;background:var(--nx-danger)}.service-dot.on{background:var(--nx-action)}.service small{color:var(--nx-muted);font-size:12px}.project-list{border:1px solid var(--nx-line);background:var(--nx-surface)}.project-row{min-height:64px;padding:10px 14px;display:grid;grid-template-columns:minmax(180px,1.2fr) repeat(3,minmax(90px,.5fr)) minmax(150px,.8fr);align-items:center;gap:12px;border-bottom:1px solid var(--nx-line)}.project-row:last-child{border-bottom:0}.project-row strong,.project-row small{display:block}.project-row small{color:var(--nx-muted);font-size:12px}.project-row code{overflow:hidden;color:var(--nx-action);font:12px var(--nx-font-mono);text-overflow:ellipsis}.overview-error{margin-top:16px}.last-refresh{color:var(--nx-muted);font-size:12px}@media(max-width:900px){.overview-grid{grid-template-columns:1fr}.service-line{grid-template-columns:1fr}.project-row{grid-template-columns:1fr 1fr}.project-row code{grid-column:1/-1}}@media(max-width:767px){.quick-list{grid-template-columns:1fr}.project-row{grid-template-columns:1fr}.attention-item{grid-template-columns:auto minmax(0,1fr)}.attention-item a{grid-column:2}}
+  </style>
 </head>
-<body><header><div><span class="brand">NEXUS</span> <span class="tag">版本化需求、代码和测试知识平台</span></div><a href="/monitor" style="color:var(--green)">代码工作台</a></header>
-<main><section class="hero"><div><div class="eyebrow">PROJECT KNOWLEDGE OPERATING SYSTEM</div><h1>让每个版本<br>都可阅读、可追溯</h1><p>统一浏览版本需求、代码证据、测试状态和 Wiki。即使 AI 依赖暂时不可用，已发布的知识仍然可以独立访问。</p></div><div class="overall"><span>当前运行状态</span><strong id="overall">正在检查…</strong><small id="overallHint">正在读取本机服务和知识数据</small></div></section>
-<section class="modules"><a class="module" href="/knowledge"><span class="num">01</span><h2>知识库</h2><p>检查文档、分块、处理阶段和检索效果。</p></a><a class="module" href="/settings/gitlab"><span class="num">02</span><h2>GitLab</h2><p>接入代码仓库并查看同步、Webhook 和索引版本。</p></a><a class="module" href="/wiki"><span class="num">03</span><h2>浏览 Wiki</h2><p>按项目和版本阅读需求、代码结构、测试说明与证据。</p></a><a class="module" href="/versions"><span class="num">04</span><h2>版本中心</h2><p>比较两个版本的需求、代码、测试和 Wiki 变化。</p></a><a class="module" href="/monitor"><span class="num">05</span><h2>代码工作台</h2><p>建立代码索引，检索代码并生成带证据的开发分析。</p></a></section>
-<div class="section-title"><h2>本机能力状态</h2><button onclick="loadStatus()">重新检查</button></div><div id="services" class="status-grid"></div><div id="projects" class="projects"></div><div id="error"></div>
+<body>
+<div data-nexus-shell data-page="home"></div>
+<main class="nx-page">
+  <div class="nx-page-heading">
+    <div>
+      <h1>运行总览</h1>
+      <p>查看知识、代码和集成链路的当前状态，优先处理失败与待更新项。</p>
+    </div>
+    <button id="refresh" type="button">↻ 刷新状态</button>
+  </div>
+
+  <section class="nx-stat-strip" aria-label="运行汇总">
+    <div class="nx-stat"><span>项目</span><strong id="projectCount">—</strong></div>
+    <div class="nx-stat"><span>就绪</span><strong id="readyCount">—</strong></div>
+    <div class="nx-stat"><span>处理中</span><strong id="runningCount">—</strong></div>
+    <div class="nx-stat"><span>需要关注</span><strong id="failedCount">—</strong></div>
+  </section>
+
+  <div class="overview-grid">
+    <section class="nx-panel overview-panel">
+      <div class="panel-head"><h2>需要处理</h2><span id="attentionCount">正在读取</span></div>
+      <div id="attention" class="attention-list">
+        <div class="nx-empty"><strong>正在检查运行状态</strong><span>已有内容保持可用，状态会在后台更新。</span></div>
+      </div>
+    </section>
+    <aside class="nx-panel overview-panel">
+      <div class="panel-head"><h2>快速操作</h2><span>常用任务</span></div>
+      <div class="quick-list">
+        <a href="/settings/gitlab/new"><span>＋</span>接入 GitLab</a>
+        <a href="/knowledge"><span>↻</span>管理知识库</a>
+        <a href="/knowledge"><span>⌕</span>测试检索</a>
+        <a href="/monitor"><span>⌘</span>打开代码工作台</a>
+      </div>
+    </aside>
+  </div>
+
+  <div id="services" class="service-line" aria-label="服务状态"></div>
+
+  <section>
+    <div class="panel-head"><h2>项目状态</h2><span id="lastRefresh" class="last-refresh">尚未刷新</span></div>
+    <div id="projects" class="project-list">
+      <div class="nx-empty"><strong>正在读取项目</strong><span>项目状态将在这里集中展示。</span></div>
+    </div>
+    <div id="error" class="overview-error"></div>
+  </section>
 </main>
+
+<script src="/assets/error-normalizer.js"></script>
+<script src="/assets/api-client.js"></script>
+<script src="/assets/app-shell.js"></script>
 <script>
-const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-const headers=()=>{const key=localStorage.getItem('nexusApiKey');return key?{'X-API-Key':key}:{}};
-async function loadStatus(){document.getElementById('error').innerHTML='';try{const r=await fetch('/api/runtime/status',{headers:headers()});if(!r.ok)throw new Error('status');const d=await r.json();render(d)}catch(e){document.getElementById('overall').textContent='无法读取状态';document.getElementById('overall').className='bad';document.getElementById('overallHint').textContent='应用接口不可用，但仍可尝试进入知识库和版本中心';document.getElementById('error').innerHTML='<p class="error">状态检查失败，请确认 NEXUS 已完整启动。</p>'}}
-function render(d){const o=document.getElementById('overall');o.textContent=d.state==='READY'?'全部就绪':d.state==='DEGRADED'?'部分能力可用':'尚未就绪';o.className=d.state==='READY'?'ready':d.state==='DEGRADED'?'degraded':'bad';document.getElementById('overallHint').textContent=d.coreReady?'代码检索核心依赖已连接':'Wiki 和版本浏览可用，代码检索依赖尚未完整连接';document.getElementById('services').innerHTML=(d.services||[]).map(s=>`<div class="status"><b><i class="dot ${s.available?'on':''}"></i>${esc(s.name)}</b><small>${esc(s.message)}${s.required?' · 必需':' · 可降级'}</small></div>`).join('');document.getElementById('projects').innerHTML=(d.projects||[]).map(p=>`<div class="project"><h3>${esc(p.projectName||p.projectId)} · ${esc(p.version||'未设置版本')}</h3><div class="metrics"><span>需求 ${p.requirementChunks}</span><span>代码 ${p.codeChunks}</span><span>Wiki 版本 ${p.wikiVersions}</span><span>仓库 ${p.repositoryAvailable?'可读取':'不可用'}</span></div><p>代码集合：<code>${esc(p.codeCollection||'未配置')}</code></p>${(p.warnings||[]).map(w=>`<div class="warning">${esc(w)}</div>`).join('')}</div>`).join('')}
+const escapeText=value=>String(value??"").replace(/[&<>'"]/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[char]));
+
+function attentionItems(data){
+  const items=[];
+  for(const project of data.projects||[]){
+    for(const warning of project.warnings||[]){
+      items.push({tone:"bad",mark:"!",title:project.projectName||project.projectId,detail:warning,href:"/monitor?projectId="+encodeURIComponent(project.projectId)});
+    }
+    if(!project.repositoryAvailable){
+      items.push({tone:"warn",mark:"!",title:project.projectName||project.projectId,detail:"代码仓库当前不可读取",href:"/settings/gitlab"});
+    }
+  }
+  for(const service of data.services||[]){
+    if(!service.available){
+      items.push({tone:service.required?"bad":"warn",mark:service.required?"!":"△",title:service.name,detail:service.message+(service.required?" · 必需":" · 可降级"),href:"/actuator/health"});
+    }
+  }
+  return items.slice(0,8);
+}
+
+function render(data){
+  const projects=data.projects||[];
+  const services=data.services||[];
+  const issues=attentionItems(data);
+  document.getElementById("projectCount").textContent=projects.length;
+  document.getElementById("readyCount").textContent=projects.filter(project=>project.repositoryAvailable&&!project.warnings?.length).length;
+  document.getElementById("runningCount").textContent=data.state==="DEGRADED"?1:0;
+  document.getElementById("failedCount").textContent=issues.length;
+  document.getElementById("attentionCount").textContent=issues.length?issues.length+" 项":"当前无待处理项";
+  document.getElementById("attention").innerHTML=issues.length?issues.map(item=>`<div class="attention-item"><span class="attention-mark ${item.tone}">${item.mark}</span><div><strong>${escapeText(item.title)}</strong><small>${escapeText(item.detail)}</small></div><a href="${escapeText(item.href)}">查看</a></div>`).join(""):'<div class="nx-empty"><strong>当前无待处理项</strong><span>知识、代码和依赖状态均未报告异常。</span></div>';
+  document.getElementById("services").innerHTML=services.map(service=>`<div class="service"><span class="service-name"><i class="service-dot ${service.available?"on":""}"></i>${escapeText(service.name)}</span><small>${service.available?"可用":service.required?"不可用":"可降级"}</small></div>`).join("");
+  document.getElementById("projects").innerHTML=projects.length?projects.map(project=>`<article class="project-row"><div><strong>${escapeText(project.projectName||project.projectId)}</strong><small>${escapeText(project.version||"未设置版本")}</small></div><div><small>需求</small><strong>${project.requirementChunks||0}</strong></div><div><small>代码</small><strong>${project.codeChunks||0}</strong></div><div><small>Wiki 版本</small><strong>${project.wikiVersions||0}</strong></div><code title="${escapeText(project.codeCollection||"未配置")}">代码集合：${escapeText(project.codeCollection||"未配置")}</code></article>`).join(""):'<div class="nx-empty"><strong>尚无可访问项目</strong><span>先配置项目或接入 GitLab 仓库。</span></div>';
+  document.getElementById("lastRefresh").textContent="最近刷新 "+new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"});
+}
+
+async function loadStatus(){
+  document.getElementById("error").innerHTML="";
+  try{
+    render(await NexusApi.request("/api/runtime/status"));
+  }catch(error){
+    const safe=NexusErrors.normalize(error,"运行状态服务暂时不可用");
+    document.getElementById("error").innerHTML=`<div class="nx-error"><strong>${escapeText(safe.message)}</strong><span>${escapeText(safe.action)}</span><button type="button" onclick="loadStatus()">重试</button></div>`;
+    NexusNotice.show(safe.message,"error");
+  }
+}
+
+document.getElementById("refresh").addEventListener("click",loadStatus);
+window.addEventListener("nexus:connection-changed",loadStatus);
 loadStatus();
-</script></body></html>
+</script>
+</body>
+</html>

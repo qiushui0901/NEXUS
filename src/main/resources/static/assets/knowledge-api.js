@@ -1,38 +1,8 @@
 (function (global) {
-  function headers(json) {
-    const key = localStorage.getItem("nexusApiKey");
-    return Object.assign(
-      json ? {"Content-Type": "application/json"} : {},
-      key ? {"X-API-Key": key} : {}
-    );
-  }
-
-  async function request(path, options) {
-    const response = await fetch(path, Object.assign({}, options, {
-      headers: Object.assign({}, headers(Boolean(options && options.body)), options && options.headers)
-    }));
-    if (!response.ok) {
-      let detail = "请求失败";
-      try {
-        const body = await response.json();
-        detail = body.detail || body.message || detail;
-      } catch (_) {
-        detail = response.statusText || detail;
-      }
-      const error = new Error(detail);
-      error.status = response.status;
-      throw error;
-    }
-    return response.status === 204 ? null : response.json();
-  }
+  const request = global.NexusApi.request;
 
   function query(params) {
-    const values = new URLSearchParams();
-    Object.entries(params || {}).forEach(([key, value]) => {
-      if (value !== undefined && value !== null && value !== "") values.set(key, value);
-    });
-    const text = values.toString();
-    return text ? "?" + text : "";
+    return global.NexusApi.query(params);
   }
 
   global.KnowledgeApi = {

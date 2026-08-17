@@ -1,0 +1,76 @@
+:root {
+  color-scheme: light;
+  --nx-canvas: #f4f6f5;
+  --nx-surface: #ffffff;
+  --nx-surface-subtle: #eef2f0;
+  --nx-surface-raised: #f9fbfa;
+  --nx-ink: #17211f;
+  --nx-muted: #66716d;
+  --nx-faint: #8b9692;
+  --nx-line: #d6ddda;
+  --nx-line-strong: #b8c3bf;
+  --nx-action: #0b6b5b;
+  --nx-action-hover: #085748;
+  --nx-info: #286b9e;
+  --nx-warning: #9a650b;
+  --nx-danger: #b14545;
+  --nx-success-soft: #e4f2ee;
+  --nx-info-soft: #e8f1f8;
+  --nx-warning-soft: #fbf0d8;
+  --nx-danger-soft: #f8e8e8;
+  --nx-code-canvas: #071018;
+  --nx-code-surface: #0d1a25;
+  --nx-code-line: #254057;
+  --nx-code-ink: #e9f2f5;
+  --nx-space-1: 4px;
+  --nx-space-2: 8px;
+  --nx-space-3: 12px;
+  --nx-space-4: 16px;
+  --nx-space-6: 24px;
+  --nx-space-8: 32px;
+  --nx-radius-panel: 6px;
+  --nx-radius-dialog: 8px;
+  --nx-control-height: 36px;
+  --nx-touch-target: 40px;
+  --nx-shell-height: 56px;
+  --nx-content-max: 1440px;
+  --nx-shadow-dialog: 0 18px 52px rgba(23, 33, 31, 0.18);
+  --nx-font-ui: Inter, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --nx-font-reading: "Songti SC", "STSong", serif;
+  --nx-font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+html {
+  background: var(--nx-canvas);
+}
+
+body {
+  color: var(--nx-ink);
+  background: var(--nx-canvas);
+  font-family: var(--nx-font-ui);
+  letter-spacing: 0;
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  letter-spacing: 0;
+}
+
+:focus-visible {
+  outline: 3px solid rgba(40, 107, 158, 0.28);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

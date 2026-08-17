@@ -29,7 +29,7 @@
     components:{StatusBadge,EmptyState,LoadingState,Breadcrumb,PageControls},
     data() {
       return {
-        view:"bases", loading:false, actionBusy:false, notice:null,
+        view:"bases", loading:false, actionBusy:false, stageCollapsed:false,
         bases:[], documents:[], chunks:[], latestRun:null,
         selectedBase:null, selectedDocument:null, selectedChunk:null,
         basePage:{page:0,size:50,total:0}, documentPage:{page:0,size:50,total:0}, chunkPage:{page:0,size:50,total:0},
@@ -90,12 +90,13 @@
       async openDocument(doc){this.selectedDocument=doc;this.view="document";this.pushPath(`/knowledge/${encodeURIComponent(this.selectedBase.id)}/documents/${encodeURIComponent(doc.id)}`);await this.loadChunks(0);},
       openRetrieval(){this.view="retrieval";this.retrieval.version=this.selectedBase.publishedRevision||"";this.pushPath(`/knowledge/${encodeURIComponent(this.selectedBase.id)}/retrieval`);this.clearPoll();},
       async openChunk(chunk){try{this.selectedChunk=await api.chunk(this.selectedBase.id,chunk.chunkId);}catch(error){this.showError(error);}},
+      async copyText(value,message){if(!value)return;await navigator.clipboard.writeText(value);NexusNotice.show(message,"success");},
       goHome(){this.view="bases";this.selectedBase=null;this.selectedDocument=null;this.selectedChunk=null;this.pushPath("/knowledge");this.loadBases(this.basePage.page);},
       async refresh(){if(this.view==="bases")return this.loadBases(this.basePage.page);if(this.view==="documents")return this.loadDocuments(this.documentPage.page);if(this.view==="document")return this.loadChunks(this.chunkPage.page);},
       async rebuildBase(){await this.action(()=>api.rebuild(this.selectedBase.id),"已提交知识库重建任务");},
       async retryDocument(doc){await this.action(()=>api.retryDocument(this.selectedBase.id,doc.id),"已提交文档重试任务");},
       async retryChunk(chunk){await this.action(()=>api.retryChunk(this.selectedBase.id,chunk.chunkId),"已按文档范围提交重试任务");this.selectedChunk=null;},
-      async action(operation,message){this.actionBusy=true;try{await operation();this.notice={type:"success",message};await this.refresh();}catch(error){this.showError(error);}finally{this.actionBusy=false;}},
+      async action(operation,message){this.actionBusy=true;try{await operation();NexusNotice.show(message,"success");await this.refresh();}catch(error){this.showError(error);}finally{this.actionBusy=false;}},
       async runRetrieval(){if(!this.retrieval.query)return;this.retrieval.loading=true;this.retrieval.response=null;try{this.retrieval.response=await api.retrieval(this.selectedBase.id,{query:this.retrieval.query,version:this.retrieval.version||null,limit:this.retrieval.limit});}catch(error){this.showError(error);}finally{this.retrieval.loading=false;}},
       statusLabel:status.label,
       typeLabel(value){return {REQUIREMENT:"需求",CODE:"代码",WIKI:"Wiki"}[value]||value;},
@@ -112,7 +113,7 @@
       padChunk(chunk){return String(chunk.parentOrder*1000+chunk.childOrder+1).padStart(4,"0");},
       pushPath(path){history.pushState({}, "", path);},
       syncRoute(){},
-      showError(error){this.failedPolls++;this.notice={type:"error",message:error.message||"读取知识管理状态失败"};this.schedulePoll();},
+      showError(error){this.failedPolls++;const safe=NexusErrors.normalize(error,"读取知识管理状态失败");NexusNotice.show(safe.message,"error");this.schedulePoll();},
       clearPoll(){if(this.pollTimer)clearTimeout(this.pollTimer);this.pollTimer=null;},
       schedulePoll(){
         this.clearPoll();if(document.hidden)return;

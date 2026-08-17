@@ -34,6 +34,17 @@ class RagConfigValidatorTest {
     }
 
     @Test
+    void rejectsEmbeddingModelWithInlineComment() {
+        MockEnvironment env = new MockEnvironment();
+        env.setProperty("spring.ai.openai.embedding.options.model", "text-embedding-v4  # API embedding");
+
+        assertThatThrownBy(() -> new RagConfigValidator(valid(), env).validate())
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("不能包含空白字符")
+                .hasMessageContaining("行内注释");
+    }
+
+    @Test
     void rejectsInvalidTopKRelationship() {
         RagProperties invalid = new RagProperties(
                 valid().qdrant(), valid().bge(), valid().llm(),

@@ -847,8 +847,14 @@
       *,*:before,*:after { scroll-behavior:auto !important; transition:none !important; animation:none !important; }
     }
   </style>
+  <link rel="stylesheet" href="/assets/design-tokens.css">
+  <link rel="stylesheet" href="/assets/app-shell.css">
+  <link rel="stylesheet" href="/assets/components.css">
+  <link rel="stylesheet" href="/assets/responsive.css">
+  <link rel="stylesheet" href="/assets/monitor-workbench.css">
 </head>
-<body>
+<body class="monitor-page">
+<div data-nexus-shell data-page="monitor"></div>
 <div id="app">
   <header class="workbench-header">
     <div class="workbench-brand"><strong>NEXUS</strong><span>代码理解工作台</span></div>
@@ -860,8 +866,6 @@
         需求 {{ currentProject.requirementChunks }} 块 · 代码 {{ currentProject.codeChunks }} 块
       </span>
     </div>
-    <input v-model="apiKey" @change="saveApiKey" type="password" placeholder="API Key" title="启用认证时填写 X-API-Key"
-      style="width:120px;font-size:11px;padding:4px 8px;border-radius:8px;background:var(--card2);border:1px solid var(--line);color:var(--text);" />
     <nav class="intent-strip" aria-label="需求类型">
       <button data-intent="graph" :class="['intent-button', intentTab === 'graph' ? 'active':'']" @click="selectIntent('graph')">理解代码</button>
       <button data-intent="plan" :class="['intent-button', intentTab === 'plan' ? 'active':'']" @click="selectIntent('plan')">开发方案</button>
@@ -896,7 +900,13 @@
     <section class="main">
       <section v-if="activeTab === 'graph'" class="panel graph-panel">
         <div class="graph-workbench">
-          <div style="display:grid; gap:10px; min-width:0;">
+          <nav class="mobile-workbench-tabs" aria-label="移动端工作区">
+            <button :class="{active:mobilePane==='graph'}" @click="mobilePane='graph'">图谱</button>
+            <button :class="{active:mobilePane==='rail'&&sidebarTab==='info'}" @click="mobilePane='rail';sidebarTab='info'">信息</button>
+            <button :class="{active:mobilePane==='rail'&&sidebarTab==='files'}" @click="mobilePane='rail';sidebarTab='files'">文件</button>
+            <button :class="{active:mobilePane==='rail'&&sidebarTab==='evidence'}" @click="mobilePane='rail';sidebarTab='evidence'">证据</button>
+          </nav>
+          <div :class="['graph-pane',mobilePane==='graph'?'mobile-active':'']">
             <div class="graph-zone">
               <div class="graph-floating-tools">
                 <button class="icon" @click="zoomOut" aria-label="缩小">−</button>
@@ -932,10 +942,11 @@
             </div>
           </div>
 
-          <aside class="right-rail">
+          <aside :class="['right-rail',mobilePane==='rail'?'mobile-active':'']">
             <div class="rail-tabs">
               <button :class="['rail-tab', sidebarTab === 'info' ? 'active':'']" @click="sidebarTab = 'info'">信息</button>
               <button :class="['rail-tab', sidebarTab === 'files' ? 'active':'']" @click="sidebarTab = 'files'">文件</button>
+              <button :class="['rail-tab', sidebarTab === 'evidence' ? 'active':'']" @click="sidebarTab = 'evidence'">证据</button>
             </div>
 
             <div v-if="sidebarTab === 'info'" class="rail-body">
@@ -1022,6 +1033,17 @@
                   </button>
                   <p v-if="!fileNodes.length" class="empty-state">搜索后可在这里查看相关代码文件。</p>
                 </div>
+              </section>
+            </div>
+            <div v-else class="rail-body evidence-panel">
+              <section>
+                <h2>证据</h2>
+                <p>{{ evidenceReferences.length }} 条可回查证据</p>
+                <button v-for="reference in evidenceReferences" :key="reference.id" class="evidence-row" @click="openEvidence(reference.id)">
+                  <strong>{{ reference.title || reference.id }}</strong>
+                  <small>{{ reference.source || reference.filePath || reference.type }}</small>
+                </button>
+                <p v-if="!evidenceReferences.length" class="empty-state">运行检索或生成开发方案后，可在这里查看证据。</p>
               </section>
             </div>
           </aside>
@@ -1289,6 +1311,9 @@
   <div class="toast" v-if="toast">{{ toast }}</div>
 </div>
 
+<script src="/assets/error-normalizer.js"></script>
+<script src="/assets/api-client.js"></script>
+<script src="/assets/app-shell.js"></script>
 <script>
 const { createApp } = Vue;
 
@@ -1296,6 +1321,7 @@ createApp({
   data() {
     return {
       busy:false,
+      refreshing:false,
       toast:'',
       toastTimer:null,
       projects:[],
@@ -1335,6 +1361,7 @@ createApp({
       planAbortController:null,
       selectedNode:null,
       sidebarTab:'info',
+      mobilePane:'graph',
       activeTourIndex:null,
       pathOnly:false,
       focusNodeId:null,
@@ -1344,6 +1371,7 @@ createApp({
       sourceFullscreen:false,
       evidenceDrawerOpen:false,
       evidenceReference:null,
+      connectionHandler:null,
       refreshTimer:null,
       svg:{ width:1500, height:900 },
       graphZoom:0.62,
@@ -1374,6 +1402,9 @@ createApp({
   computed:{
     currentProject() {
       return this.projects.find(p => p.id === this.currentProjectId);
+    },
+    evidenceReferences() {
+      return this.plan.evidenceReferences || [];
     },
     activeTabMeta() {
       return this.tabs.find(tab => tab.value === this.activeTab) || this.tabs[0];
@@ -1603,15 +1634,21 @@ createApp({
     }
   },
   async mounted() {
+    this.connectionHandler = () => {
+      this.apiKey = NexusApi.apiKey();
+      this.refreshAll();
+    };
+    window.addEventListener('nexus:connection-changed', this.connectionHandler);
     await this.loadProjects();
     await this.refreshAll();
-    this.refreshTimer = setInterval(this.refreshAll, 2500);
+    this.scheduleRefresh();
     document.addEventListener('keydown', this.handleKeyDown);
   },
   beforeUnmount() {
     clearInterval(this.refreshTimer);
     this.cancelPlanStream();
     document.removeEventListener('keydown', this.handleKeyDown);
+    window.removeEventListener('nexus:connection-changed', this.connectionHandler);
   },
   methods:{
     selectIntent(tab) {
@@ -1668,14 +1705,14 @@ createApp({
       return headers;
     },
     async api(path, options = {}) {
-      const response = await fetch(path, {
+      return NexusApi.request(path, {
         ...options,
         headers: this.authHeaders(options.headers || {})
       });
-      if (!response.ok) throw new Error(await response.text());
-      return response.json();
     },
     async refreshAll() {
+      if (this.refreshing) return;
+      this.refreshing = true;
       try {
         const projectQuery = this.currentProjectId ? '?projectId=' + encodeURIComponent(this.currentProjectId) : '';
         const [status, rag, codeIndex] = await Promise.all([
@@ -1697,7 +1734,17 @@ createApp({
         }
       } catch (error) {
         this.showToast('状态刷新失败：' + error.message);
+      } finally {
+        this.refreshing = false;
       }
+    },
+    scheduleRefresh() {
+      if (this.refreshTimer) clearTimeout(this.refreshTimer);
+      const delay = this.status.qdrant === 'UP' ? 5000 : 15000;
+      this.refreshTimer = setTimeout(async () => {
+        await this.refreshAll();
+        this.scheduleRefresh();
+      }, delay);
     },
     async smartSearch() {
       await this.runCurrentIntent();
@@ -1706,7 +1753,7 @@ createApp({
       await this.run('图谱已更新', async () => {
         const data = await this.api('/api/code/graph', {
           method:'POST',
-          headers:{ 'content-type':'application/json' },
+          headers:{ 'Content-Type':'application/json' },
           body:JSON.stringify({ query:this.query, projectId:this.currentProjectId, view:this.graphMode, crossSide:true, limit:24 })
         });
         this.graph = { layers:[], tour:[], nodes:[], edges:[], hits:[], ...data };
@@ -1734,7 +1781,7 @@ createApp({
       try {
         const data = await this.api('/api/code/graph', {
           method:'POST',
-          headers:{ 'content-type':'application/json' },
+          headers:{ 'Content-Type':'application/json' },
           body:JSON.stringify({ query:this.query, projectId:this.currentProjectId, view:'flow', crossSide:true, limit:24 })
         });
         this.planGraph = { nodes:data.nodes || [], edges:data.edges || [], loading:false, error:'' };
@@ -1784,7 +1831,7 @@ createApp({
       try {
         const response = await fetch('/api/assistant/development-plan/stream', {
           method:'POST',
-          headers:this.authHeaders({ 'content-type':'application/json', 'accept':'text/event-stream' }),
+          headers:this.authHeaders({ 'Content-Type':'application/json', 'Accept':'text/event-stream' }),
           signal:controller.signal,
           body:JSON.stringify({
             query:this.query,
@@ -1794,7 +1841,10 @@ createApp({
             limit:8
           })
         });
-        if (!response.ok || !response.body) throw new Error(await response.text());
+        if (!response.ok || !response.body) {
+          const raw = await response.text();
+          throw new Error(NexusErrors.normalize({message:raw}, '开发方案生成服务暂时不可用').message);
+        }
         const reader = response.body.getReader();
         const decoder = new TextDecoder('utf-8');
         let buffer = '';
@@ -1981,7 +2031,7 @@ createApp({
       await this.run('评审链路完成', async () => {
         await this.api('/api/requirements/reviews', {
           method:'POST',
-          headers:{ 'content-type':'application/json' },
+          headers:{ 'Content-Type':'application/json' },
           body:JSON.stringify({ ...this.review, projectId:this.currentProjectId })
         });
         await this.refreshAll();
@@ -2416,7 +2466,7 @@ createApp({
       }
     },
     showToast(message) {
-      this.toast = message;
+      this.toast = NexusErrors.plainText(message) || '操作未完成';
       clearTimeout(this.toastTimer);
       this.toastTimer = setTimeout(() => this.toast = '', 3200);
     }

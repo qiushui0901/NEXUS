@@ -14,7 +14,7 @@
 6. [代码索引与智能分析](#6-代码索引与智能分析)
 7. [开发方案与引用](#7-开发方案与引用)
 8. [Wiki 与版本知识](#8-wiki-与版本知识)
-9. [版本对比](#9-版本对比)
+9. [历史版本比较接口（兼容）](#9-历史版本比较接口兼容)
 10. [冲突检测与监控](#10-冲突检测与监控)
 11. [MCP 客户端](#11-mcp-客户端)
 12. [数据与 Git 边界](#12-数据与-git-边界)
@@ -91,7 +91,6 @@ Compose 会拉起 NEXUS、Qdrant、Prometheus、Grafana。请将仓库挂载或�
 | 知识库管理 | http://localhost:8080/knowledge |
 | GitLab 管理 | http://localhost:8080/settings/gitlab |
 | Wiki | http://localhost:8080/wiki |
-| 版本中心 | http://localhost:8080/versions |
 | 监控 | http://localhost:8080/monitor |
 
 已有生成文件时，Wiki 浏览可不依赖 Qdrant / Ollama / BGE。代码检索与 LLM 方案需要相应依赖（或进入显式降级）。
@@ -288,7 +287,7 @@ python3 tools/build-requirement-snapshots.py
 
 ---
 
-## 9. 版本对比
+## 9. 历史版本比较接口（兼容）
 
 ```text
 PUT  /api/versions/manifests
@@ -297,7 +296,7 @@ GET  /api/versions/manifests/{version}?projectId=...
 GET  /api/versions/compare?projectId=...&fromVersion=...&toVersion=...
 ```
 
-版本中心结合 Wiki 索引与可选档案，展示需求 / 代码 / 测试 / Wiki 差异。每个来源标记为 `AVAILABLE` 或 `NOT_AVAILABLE`。缺失数据不得渲染成「无变化」。
+版本比较不再是 0.9.0 的核心产品入口。旧 `/versions` 页面与以下 API 继续保留，供已有集成和历史数据使用；缺失数据仍不得渲染成「无变化」。
 
 ---
 
@@ -372,7 +371,30 @@ Cursor / Codex / stdio 桥接完整说明见 [mcp-quickstart.md](mcp-quickstart.
 超出上下文预算时按模块轮转保留代表块并输出 `CONTEXT_TRUNCATED` 警告（省略块数、
 覆盖模块数），不再静默丢弃后部模块。
 
-## 14. 当前限制
+## 14. 0.9.0 统一工作台
+
+NEXUS 0.9.0 将 GitLab 自动接入、知识管理和五个核心页面合并为同一个“知识与代码运营工作台”：
+
+- `/`：运行总览，优先显示依赖异常、项目问题和快速操作；
+- `/knowledge`：知识库、文档、阶段、分块和检索测试；
+- `/settings/gitlab`：GitLab 项目接入、同步任务、Webhook 与版本偏离；
+- `/wiki`：版本化需求、代码、测试知识阅读；
+- `/monitor`：代码图谱、开发方案、文件与证据。
+
+所有核心页面共享同一顶部导航。移动端点击左上角菜单可进入总览、知识库、Wiki、代码和 GitLab。
+
+API Key 不再分别出现在各页面头部。点击右上角“连接”打开连接设置；Key 仍只保存在当前浏览器的 `localStorage.nexusApiKey`，不会进入 URL。GitLab PAT 和 Webhook Secret 不进入该设置，仍只在接入向导当前页面内存中短暂存在。
+
+页面间跳转会尽量保留 `projectId` 和 `version`：
+
+```text
+/wiki?projectId=fengshen&version=5.1
+/monitor?projectId=fengshen&version=5.1
+```
+
+代码工作台使用统一浅色工作区，通过低对比网格和有限的节点语义色呈现图谱。390px 移动端通过“图谱 / 信息 / 文件 / 证据”切换，不同时压缩展示画布与侧栏。
+
+## 15. 当前限制
 
 细节见 [nexus-improvement-roadmap.md](nexus-improvement-roadmap.md)。摘要：
 

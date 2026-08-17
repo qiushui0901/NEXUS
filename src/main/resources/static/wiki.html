@@ -4,6 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NEXUS · 版本化知识库</title>
+  <link rel="stylesheet" href="/assets/design-tokens.css">
+  <link rel="stylesheet" href="/assets/app-shell.css">
+  <link rel="stylesheet" href="/assets/components.css">
+  <link rel="stylesheet" href="/assets/responsive.css">
+  <link rel="stylesheet" href="/assets/reading-workbench.css">
   <style>
     :root {
       --ink: #14251f;
@@ -128,22 +133,19 @@
     @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; transition: none !important; } }
   </style>
 </head>
-<body>
-<a href="/knowledge" style="position:fixed;right:18px;top:18px;z-index:30;padding:8px 12px;border:1px solid #d7dfdc;background:#fff;color:#17684f;text-decoration:none;border-radius:6px">管理知识库</a>
+<body class="wiki-page">
+<div data-nexus-shell data-page="wiki"></div>
 <div class="app">
-  <header>
-    <div class="brand"><strong>NEXUS</strong><span>版本化需求 · 代码 · 测试知识库</span></div>
+  <div class="wiki-context-controls">
+    <strong class="wiki-context-title">版本化需求 · 代码 · 测试知识库</strong>
     <div class="selectors">
       <select id="projectSelect" aria-label="项目"></select>
       <select id="versionSelect" aria-label="版本"></select>
     </div>
-    <div class="header-spacer"></div>
-    <input id="apiKey" class="api-key" type="password" placeholder="API Key" title="启用认证时填写">
-    <a class="header-link" href="/versions">版本中心</a>
-    <a class="header-link" href="/monitor">代码工作台</a>
-  </header>
+    <div class="wiki-mobile-actions"><button id="showDirectory" type="button">返回目录</button><button id="showEvidence" type="button">查看证据</button></div>
+  </div>
   <div class="layout">
-    <aside>
+    <aside id="directory">
       <div class="eyebrow">Knowledge map</div>
       <div class="panel-title">版本功能目录</div>
       <input id="search" class="search" type="search" placeholder="搜索需求、规则或说明">
@@ -159,7 +161,9 @@
     <section class="right" id="right"><div class="empty">选择一个功能查看版本、完整度和证据。</div></section>
   </div>
 </div>
-<div id="statusbar" class="statusbar" hidden></div>
+<script src="/assets/error-normalizer.js"></script>
+<script src="/assets/api-client.js"></script>
+<script src="/assets/app-shell.js"></script>
 <script>
 const requested = {
   projectId: new URLSearchParams(location.search).get('projectId') || '',
@@ -182,24 +186,13 @@ const labels = {
   MISSING_IMPLEMENTATION: '缺少实现', UNDOCUMENTED_IMPLEMENTATION: '缺少需求', REJECTED: '已驳回'
 };
 function headers() {
-  const key = $('apiKey').value.trim();
-  return key ? {'X-API-Key': key} : {};
+  return {};
 }
 async function api(path, options = {}) {
-  const response = await fetch(path, {...options, headers: {...headers(), ...(options.headers || {})}});
-  if (!response.ok) {
-    let detail = '请求失败';
-    try { detail = (await response.json()).detail || detail; } catch {}
-    throw new Error(detail);
-  }
-  return response.json();
+  return NexusApi.request(path, {...options, headers: {...headers(), ...(options.headers || {})}});
 }
 function notice(text) {
-  const bar = $('statusbar');
-  bar.textContent = text;
-  bar.hidden = false;
-  clearTimeout(notice.timer);
-  notice.timer = setTimeout(() => bar.hidden = true, 2800);
+  NexusNotice.show(text, 'info');
 }
 function params(values) { return new URLSearchParams(values).toString(); }
 function normalizePage(raw) {
@@ -475,11 +468,12 @@ $('search').oninput = event => { state.query = event.target.value; renderList();
 $('categoryFilter').onchange = event => { state.category = event.target.value; renderList(); };
 $('statusFilter').onchange = event => { state.status = event.target.value; renderList(); };
 $('generate').onclick = generate;
-$('apiKey').value = localStorage.getItem('nexusApiKey') || '';
-$('apiKey').onchange = event => localStorage.setItem('nexusApiKey', event.target.value.trim());
+$('showDirectory').onclick = () => $('directory').classList.toggle('mobile-open');
+$('showEvidence').onclick = () => $('right').classList.toggle('mobile-open');
 loadProjects().catch(error => {
-  $('main').innerHTML = `<div class="empty">${esc(error.message)}</div>`;
-  notice(error.message);
+  const safe = NexusErrors.normalize(error, '版本知识加载失败');
+  $('main').innerHTML = `<div class="empty">${esc(safe.message)}<br>${esc(safe.action)}</div>`;
+  NexusNotice.show(safe.message, 'error');
 });
 </script>
 </body>

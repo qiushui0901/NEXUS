@@ -77,10 +77,10 @@ public class ProjectController {
             String docId = project.knowledge().documentId();
             String version = project.knowledge().version();
             if (collection == null || docId == null || version == null) return 0L;
-            return documentStore.countVersion(collection, docId, version);
+            return documentStore.countVersionIfAvailable(collection, docId, version);
         } catch (RuntimeException exception) {
-            log.warn("Unable to count requirement chunks for project {}; reporting zero",
-                    project.id(), exception);
+            log.debug("Requirement count unavailable project={} exceptionType={}",
+                    project.id(), exception.getClass().getSimpleName());
             return 0L;
         }
     }
@@ -90,10 +90,10 @@ public class ProjectController {
         try {
             String collection = project.codeCollection();
             if (collection == null) return 0L;
-            return codeStore.countProject(collection, project.id());
+            return codeStore.countProjectIfAvailable(collection, project.id());
         } catch (RuntimeException exception) {
-            log.warn("Unable to count code chunks for project {}; reporting zero",
-                    project.id(), exception);
+            log.debug("Code count unavailable project={} exceptionType={}",
+                    project.id(), exception.getClass().getSimpleName());
             return 0L;
         }
     }

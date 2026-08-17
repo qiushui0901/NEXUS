@@ -1,0 +1,321 @@
+.nexus-app-shell {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  color: var(--nx-ink);
+  background: rgba(255, 255, 255, 0.97);
+  border-bottom: 1px solid var(--nx-line);
+}
+
+.nexus-app-bar {
+  min-height: var(--nx-shell-height);
+  max-width: var(--nx-content-max);
+  margin: 0 auto;
+  padding: 0 var(--nx-space-6);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--nx-space-6);
+}
+
+.nexus-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: max-content;
+  color: var(--nx-ink);
+  text-decoration: none;
+  font-weight: 800;
+}
+
+.nexus-brand-mark {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: var(--nx-ink);
+  font: 700 11px/1 var(--nx-font-mono);
+}
+
+.nexus-brand-version {
+  color: var(--nx-muted);
+  font: 600 12px/1 var(--nx-font-mono);
+}
+
+.nexus-primary-nav {
+  min-width: 0;
+  height: var(--nx-shell-height);
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.nexus-primary-nav a {
+  min-width: max-content;
+  padding: 0 var(--nx-space-3);
+  display: flex;
+  align-items: center;
+  color: var(--nx-muted);
+  border-bottom: 2px solid transparent;
+  text-decoration: none;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.nexus-primary-nav a:hover,
+.nexus-primary-nav a[aria-current="page"] {
+  color: var(--nx-ink);
+  border-color: var(--nx-action);
+}
+
+.nexus-shell-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--nx-space-2);
+}
+
+.nexus-shell-button,
+.nexus-menu-button {
+  min-width: var(--nx-touch-target);
+  height: var(--nx-touch-target);
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--nx-ink);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--nx-radius-panel);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.nexus-shell-button:hover,
+.nexus-menu-button:hover {
+  background: var(--nx-surface-subtle);
+  border-color: var(--nx-line);
+}
+
+.nexus-menu-button {
+  display: none;
+  font-size: 19px;
+}
+
+.nexus-health-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--nx-faint);
+}
+
+.nexus-health-dot.ready {
+  background: var(--nx-action);
+}
+
+.nexus-health-dot.failed {
+  background: var(--nx-danger);
+}
+
+.nexus-context-bar {
+  min-height: 34px;
+  padding: 0 var(--nx-space-6);
+  display: flex;
+  align-items: center;
+  gap: var(--nx-space-2);
+  color: var(--nx-muted);
+  background: var(--nx-surface-raised);
+  border-top: 1px solid #edf0ef;
+  font-size: 12px;
+}
+
+.nexus-context-inner {
+  width: min(100%, var(--nx-content-max));
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: var(--nx-space-2);
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.nexus-context-inner strong {
+  color: var(--nx-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nexus-context-separator {
+  color: var(--nx-line-strong);
+}
+
+.nexus-mobile-drawer {
+  position: fixed;
+  inset: var(--nx-shell-height) 0 auto 0;
+  z-index: 110;
+  display: none;
+  padding: var(--nx-space-3) var(--nx-space-4) var(--nx-space-4);
+  background: var(--nx-surface);
+  border-bottom: 1px solid var(--nx-line);
+  box-shadow: var(--nx-shadow-dialog);
+}
+
+.nexus-mobile-drawer.open {
+  display: grid;
+  gap: var(--nx-space-2);
+}
+
+.nexus-mobile-drawer a {
+  min-height: var(--nx-touch-target);
+  padding: 0 var(--nx-space-3);
+  display: flex;
+  align-items: center;
+  color: var(--nx-ink);
+  border-radius: var(--nx-radius-panel);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.nexus-mobile-drawer a[aria-current="page"],
+.nexus-mobile-drawer a:hover {
+  color: var(--nx-action);
+  background: var(--nx-success-soft);
+}
+
+.nexus-connection-dialog {
+  width: min(460px, calc(100vw - 32px));
+  padding: 0;
+  color: var(--nx-ink);
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-line);
+  border-radius: var(--nx-radius-dialog);
+  box-shadow: var(--nx-shadow-dialog);
+}
+
+.nexus-connection-dialog::backdrop {
+  background: rgba(23, 33, 31, 0.38);
+}
+
+.nexus-dialog-head,
+.nexus-dialog-body,
+.nexus-dialog-actions {
+  padding: var(--nx-space-4) var(--nx-space-6);
+}
+
+.nexus-dialog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--nx-line);
+}
+
+.nexus-dialog-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.nexus-dialog-body {
+  display: grid;
+  gap: var(--nx-space-3);
+}
+
+.nexus-dialog-body label {
+  display: grid;
+  gap: 6px;
+  color: var(--nx-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.nexus-dialog-body input {
+  width: 100%;
+  height: var(--nx-control-height);
+  padding: 0 10px;
+  color: var(--nx-ink);
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-line-strong);
+  border-radius: var(--nx-radius-panel);
+  font-size: 14px;
+}
+
+.nexus-dialog-body p {
+  margin: 0;
+  color: var(--nx-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.nexus-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--nx-space-2);
+  border-top: 1px solid var(--nx-line);
+}
+
+.nexus-dialog-actions button {
+  min-height: var(--nx-control-height);
+  padding: 0 var(--nx-space-4);
+  border: 1px solid var(--nx-line);
+  border-radius: var(--nx-radius-panel);
+  background: var(--nx-surface);
+  cursor: pointer;
+}
+
+.nexus-dialog-actions .primary {
+  color: #fff;
+  background: var(--nx-action);
+  border-color: var(--nx-action);
+}
+
+.nexus-notice-region {
+  position: fixed;
+  top: calc(var(--nx-shell-height) + 12px);
+  right: var(--nx-space-6);
+  z-index: 130;
+  width: min(420px, calc(100vw - 32px));
+  display: grid;
+  gap: var(--nx-space-2);
+  pointer-events: none;
+}
+
+.nexus-notice {
+  min-height: 48px;
+  padding: var(--nx-space-3);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+  color: var(--nx-ink);
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-line);
+  border-left: 4px solid var(--nx-info);
+  border-radius: var(--nx-radius-panel);
+  box-shadow: var(--nx-shadow-dialog);
+  pointer-events: auto;
+}
+
+.nexus-notice.error {
+  border-left-color: var(--nx-danger);
+}
+
+.nexus-notice.success {
+  border-left-color: var(--nx-action);
+}
+
+.nexus-notice-message {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.nexus-notice button {
+  padding: 2px 5px;
+  border: 0;
+  background: transparent;
+  color: var(--nx-muted);
+  cursor: pointer;
+}

@@ -5,34 +5,19 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>NEXUS · 知识库管理</title>
+  <link rel="stylesheet" href="/assets/design-tokens.css">
+  <link rel="stylesheet" href="/assets/app-shell.css">
+  <link rel="stylesheet" href="/assets/components.css">
+  <link rel="stylesheet" href="/assets/responsive.css">
   <link rel="stylesheet" href="/assets/knowledge-app.css">
 </head>
 <body>
+<div data-nexus-shell data-page="knowledge"></div>
 <div id="app" v-cloak>
-  <header class="topbar">
-    <a class="brand" href="/"><span class="brand-mark">NX</span><span>NEXUS</span></a>
-    <nav aria-label="主导航">
-      <a class="active" href="/knowledge">知识库</a>
-      <a href="/settings/gitlab">GitLab</a>
-      <a href="/wiki">Wiki</a>
-      <a href="/versions">版本中心</a>
-      <a href="/monitor">代码工作台</a>
-    </nav>
-    <button class="icon-button" type="button" title="刷新" aria-label="刷新" @click="refresh">
-      <span aria-hidden="true">↻</span>
-    </button>
-  </header>
-
   <main>
-    <div v-if="notice" class="notice" :class="notice.type" role="status">
-      <span>{{ notice.message }}</span>
-      <button type="button" aria-label="关闭提示" @click="notice=null">×</button>
-    </div>
-
     <section v-if="view==='bases'" class="workspace">
       <div class="page-heading">
         <div>
-          <p class="kicker">KNOWLEDGE OPERATIONS</p>
           <h1>知识库</h1>
           <p>查看已发布索引、正在处理的文档和需要重试的失败项。</p>
         </div>
@@ -66,7 +51,7 @@
         </label>
       </div>
 
-      <div class="table-shell">
+      <div class="table-shell nx-desktop-table">
         <table>
           <thead><tr><th>名称</th><th>类型</th><th>状态</th><th>文档 / 分块</th><th>当前版本</th><th>最近更新</th><th><span class="sr-only">操作</span></th></tr></thead>
           <tbody>
@@ -82,6 +67,15 @@
           </tr>
           </tbody>
         </table>
+        <empty-state v-if="!loading && visibleBases.length===0" title="没有匹配的知识库" message="调整筛选条件，或等待项目完成首次知识导入。"></empty-state>
+        <loading-state v-if="loading"></loading-state>
+      </div>
+      <div class="nx-mobile-records">
+        <article v-for="base in visibleBases" :key="base.id" class="nx-record">
+          <div class="nx-record-head"><button class="link-button strong" @click="openBase(base)">{{ base.name }}</button><status-badge :status="base.status"></status-badge></div>
+          <div class="nx-record-meta"><span>{{ typeLabel(base.type) }} · {{ base.projectId }}</span><span>{{ base.documentCount }} 文档 / {{ base.chunkCount }} 分块</span><code>{{ base.publishedRevision || '未发布' }}</code></div>
+          <div class="nx-record-actions"><button type="button" @click="openBase(base)">查看文档 →</button></div>
+        </article>
         <empty-state v-if="!loading && visibleBases.length===0" title="没有匹配的知识库" message="调整筛选条件，或等待项目完成首次知识导入。"></empty-state>
         <loading-state v-if="loading"></loading-state>
       </div>
@@ -111,7 +105,7 @@
         <label>状态<select v-model="filters.documentStatus" @change="loadDocuments(0)"><option value="">全部状态</option><option v-for="item in entityStatusOptions" :value="item">{{ statusLabel(item) }}</option></select></label>
         <label class="search-field"><span>搜索</span><input v-model.trim="filters.documentQuery" type="search" placeholder="文件名、路径或错误码" @change="loadDocuments(0)"></label>
       </div>
-      <div class="table-shell">
+      <div class="table-shell nx-desktop-table">
         <table>
           <thead><tr><th>文档</th><th>状态</th><th>处理阶段</th><th>分块</th><th>耗时</th><th>更新时间</th><th><span class="sr-only">操作</span></th></tr></thead>
           <tbody>
@@ -127,6 +121,15 @@
         <empty-state v-if="!loading && visibleDocuments.length===0" title="没有匹配的文档" message="运行中的导入会在发现文件后显示在这里。"></empty-state>
         <loading-state v-if="loading"></loading-state>
       </div>
+      <div class="nx-mobile-records">
+        <article v-for="doc in visibleDocuments" :key="doc.id" class="nx-record">
+          <div class="nx-record-head"><button class="link-button strong path" @click="openDocument(doc)">{{ doc.sourcePath }}</button><status-badge :status="doc.status"></status-badge></div>
+          <div class="nx-record-meta"><span>{{ stageLabel(doc.phase) }}</span><span>{{ doc.chunkCount }} 分块<span v-if="doc.excludedChunkCount"> · {{doc.excludedChunkCount}} 排除</span></span><span>{{ relativeTime(doc.updatedAt) }}</span></div>
+          <div class="nx-record-actions"><button v-if="doc.status==='FAILED'" class="danger" @click="retryDocument(doc)">重试</button><button @click="openDocument(doc)">查看详情 →</button></div>
+        </article>
+        <empty-state v-if="!loading && visibleDocuments.length===0" title="没有匹配的文档" message="运行中的导入会在发现文件后显示在这里。"></empty-state>
+        <loading-state v-if="loading"></loading-state>
+      </div>
       <page-controls :page="documentPage.page" :size="documentPage.size" :total="documentPage.total" @change="loadDocuments"></page-controls>
     </section>
 
@@ -136,9 +139,9 @@
         <div><h1 class="path-title">{{ selectedDocument.sourcePath }}</h1><p>版本 {{ selectedDocument.revision || '未标记' }} · {{ selectedDocument.chunkCount }} 个分块</p></div>
         <button type="button" :disabled="actionBusy" @click="retryDocument(selectedDocument)"><span aria-hidden="true">↻</span> 重试文档</button>
       </div>
-      <div class="document-layout">
-        <aside class="stage-panel">
-          <div class="panel-heading"><h2>处理过程</h2><status-badge :status="selectedDocument.status"></status-badge></div>
+      <div class="document-layout" :class="{'stages-collapsed':stageCollapsed}">
+        <aside class="stage-panel" :class="{collapsed:stageCollapsed}">
+          <div class="panel-heading"><h2>处理过程</h2><div class="button-row"><status-badge :status="selectedDocument.status"></status-badge><button class="icon-button" type="button" :title="stageCollapsed?'展开阶段':'折叠阶段'" @click="stageCollapsed=!stageCollapsed">{{stageCollapsed?'→':'←'}}</button></div></div>
           <ol class="stage-rail">
             <li v-for="stage in stages" :class="stageClass(stage)">
               <span class="stage-dot" aria-hidden="true">{{ stageGlyph(stage) }}</span>
@@ -161,7 +164,7 @@
             <button v-for="chunk in visibleChunks" :key="chunk.chunkId" class="chunk-row" type="button" @click="openChunk(chunk)">
               <span class="chunk-order">#{{ padChunk(chunk) }}</span>
               <span class="chunk-main"><status-badge :status="chunk.status"></status-badge><strong>{{ chunk.parentId || '无父块' }}</strong><small>parent {{ chunk.parentOrder }} · child {{ chunk.childOrder }} · {{ shortHash(chunk.contentHash) }}</small></span>
-              <span class="chunk-flags"><span :class="{on:chunk.denseReady}">D</span><span :class="{on:chunk.sparseReady}">S</span><span :class="{on:chunk.qdrantVerified}">Q</span></span>
+              <span class="chunk-flags"><span title="稠密向量" :class="{on:chunk.denseReady}">稠密</span><span title="稀疏向量" :class="{on:chunk.sparseReady}">稀疏</span><span title="Qdrant 已验证" :class="{on:chunk.qdrantVerified}">验证</span></span>
               <span aria-hidden="true">→</span>
             </button>
             <empty-state v-if="!loading && visibleChunks.length===0" title="没有匹配的分块" message="分块生成后会按父子顺序显示。"></empty-state>
@@ -199,7 +202,7 @@
 
   <div v-if="selectedChunk" class="drawer-backdrop" @click.self="selectedChunk=null">
     <aside class="drawer" aria-modal="true" role="dialog" aria-labelledby="chunk-title">
-      <div class="drawer-header"><div><p class="kicker">CHUNK INSPECTOR</p><h2 id="chunk-title">{{ selectedChunk.chunkId }}</h2></div><button class="icon-button" type="button" aria-label="关闭" @click="selectedChunk=null">×</button></div>
+      <div class="drawer-header"><div><p class="kicker">分块检查</p><h2 id="chunk-title">{{ selectedChunk.chunkId }}</h2><button type="button" @click="copyText(selectedChunk.chunkId,'分块 ID 已复制')">复制完整 ID</button></div><button class="icon-button" type="button" aria-label="关闭" @click="selectedChunk=null">×</button></div>
       <status-badge :status="selectedChunk.status"></status-badge>
       <dl class="facts drawer-facts">
         <div><dt>父块</dt><dd><code>{{ selectedChunk.parentId }}</code></dd></div>
@@ -216,6 +219,9 @@
   </div>
 </div>
 <script src="/webjars/vue/3.5.13/dist/vue.global.prod.js"></script>
+<script src="/assets/error-normalizer.js"></script>
+<script src="/assets/api-client.js"></script>
+<script src="/assets/app-shell.js"></script>
 <script src="/assets/status-contract.js"></script>
 <script src="/assets/knowledge-api.js"></script>
 <script src="/assets/knowledge-app.js"></script>

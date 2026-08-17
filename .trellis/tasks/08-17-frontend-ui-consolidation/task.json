@@ -1,0 +1,30 @@
+{
+  "id": "frontend-ui-consolidation",
+  "name": "frontend-ui-consolidation",
+  "title": "前端界面统一与体验改进",
+  "description": "统一首页、知识库、GitLab、Wiki 和代码工作台，并与 GitLab/知识管理能力整合发布为 NEXUS 0.9.0；版本比较仅兼容保留",
+  "status": "in_progress",
+  "dev_type": "frontend",
+  "scope": "fullstack-static-ui",
+  "package": null,
+  "priority": "P1",
+  "creator": "qiushui",
+  "assignee": "qiushui",
+  "createdAt": "2026-08-17",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "docs/frontend-ui-consolidation-improvement-plan.md",
+    "src/main/resources/static",
+    "src/test/java/com/example/requirementrag/web"
+  ],
+  "notes": "",
+  "meta": {}
+}

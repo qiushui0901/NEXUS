@@ -327,6 +327,18 @@ public class QdrantHybridStore {
     /** 统计指定文档版本的分块数量。 */
     public long countVersion(String collection, String documentId, String version) {
         ensureCollection(collection);
+        return countVersionWithoutInitialization(collection, documentId, version);
+    }
+
+    /**
+     * 监控专用的快速只读计数，不创建 collection、不执行可用性重试。
+     * 调用方负责把不可用异常转换为降级状态。
+     */
+    public long countVersionIfAvailable(String collection, String documentId, String version) {
+        return countVersionWithoutInitialization(collection, documentId, version);
+    }
+
+    private long countVersionWithoutInitialization(String collection, String documentId, String version) {
         Map<String, Object> response = client.post().uri("/collections/{collection}/points/count", collection)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of("filter", filter(documentId, version)))

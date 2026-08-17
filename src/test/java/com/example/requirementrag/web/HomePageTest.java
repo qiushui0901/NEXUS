@@ -15,16 +15,17 @@ class HomePageTest {
                 .getContentAsString(StandardCharsets.UTF_8);
 
         assertThat(html)
-                .contains("版本化需求、代码和测试知识平台")
-                .contains("href=\"/knowledge\"")
-                .contains("href=\"/wiki\"")
-                .contains("href=\"/versions\"")
-                .contains("href=\"/monitor\"")
+                .contains("运行总览")
+                .contains("data-nexus-shell data-page=\"home\"")
+                .contains("/assets/design-tokens.css")
+                .contains("/assets/app-shell.js")
                 .contains("/api/runtime/status")
-                .contains("const esc=")
-                .contains("X-API-Key")
+                .contains("NexusApi.request")
                 .contains("可降级")
                 .contains("代码集合")
+                .doesNotContain("比较版本")
+                .doesNotContain("class=\"modules\"")
+                .doesNotContain("class=\"hero\"")
                 .doesNotContain("cdn.jsdelivr.net")
                 .doesNotContain("unpkg.com");
     }

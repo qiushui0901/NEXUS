@@ -1,6 +1,7 @@
 package com.example.requirementrag.web;
 
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.core.io.ClassPathResource;
 
 import java.nio.charset.StandardCharsets;
@@ -8,6 +9,9 @@ import java.nio.charset.StandardCharsets;
 import static org.assertj.core.api.Assertions.assertThat;
 
 class GitLabSettingsPageTest {
+
+    private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
+            .withUserConfiguration(GitLabSettingsPageController.class);
 
     @Test
     void exposesWorkbenchStatesWithoutLeakingSensitiveFields() throws Exception {
@@ -25,12 +29,16 @@ class GitLabSettingsPageTest {
                 .contains("@click=\"load\">重试")
                 .contains("任务时间线")
                 .contains("{{stepMarker(n)}}")
+                .contains("data-nexus-shell data-page=\"gitlab\"")
+                .contains("nx-mobile-records")
+                .contains("validation-checks")
+                .contains("advanced-fields")
                 .doesNotContain("{{n<step")
                 .doesNotContain("v-html")
                 .doesNotContain("cdn.jsdelivr.net")
                 .doesNotContain("unpkg.com");
         assertThat(app)
-                .contains("webhookSecret:null")
+                .contains("webhookSecret: null")
                 .contains("beforeUnmount")
                 .contains("clearInterval")
                 .contains("document.visibilityState")
@@ -38,6 +46,8 @@ class GitLabSettingsPageTest {
                 .contains("popstate")
                 .contains("openProject(this.selected,false)")
                 .contains("stepMarker(n){return n<this.step")
+                .contains("versionState(project)")
+                .contains("navigator.clipboard.writeText")
                 .doesNotContain("pending-secret")
                 .doesNotContain("localStorage.setItem")
                 .doesNotContain("innerHTML");
@@ -47,6 +57,7 @@ class GitLabSettingsPageTest {
                 .contains("/validate-project")
                 .contains("/projects/validate-config")
                 .contains("/webhook-secret/rotate")
+                .contains("NexusApi.request")
                 .doesNotContain("accessToken=")
                 .doesNotContain("webhookSecret=")
                 .doesNotContain("localStorage.setItem");
@@ -56,6 +67,24 @@ class GitLabSettingsPageTest {
     void routesGitLabSubpathsToTheSinglePageApplication() {
         GitLabSettingsPageController controller = new GitLabSettingsPageController();
         assertThat(controller.gitLabSettingsPage()).isEqualTo("forward:/gitlab-settings.html");
+    }
+
+    @Test
+    void keepsPageRouteAvailableWhenIntegrationBackendIsDisabled() {
+        contextRunner
+                .withPropertyValues(
+                        "app.rag.gitlab.enabled=false",
+                        "app.rag.gitlab.ui-enabled=true")
+                .run(context -> assertThat(context).hasSingleBean(GitLabSettingsPageController.class));
+    }
+
+    @Test
+    void hidesPageRouteWhenUiIsExplicitlyDisabled() {
+        contextRunner
+                .withPropertyValues(
+                        "app.rag.gitlab.enabled=true",
+                        "app.rag.gitlab.ui-enabled=false")
+                .run(context -> assertThat(context).doesNotHaveBean(GitLabSettingsPageController.class));
     }
 
     private String resource(String path) throws Exception {

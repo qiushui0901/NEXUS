@@ -5,29 +5,34 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="color-scheme" content="light">
   <title>NEXUS · GitLab 管理</title>
+  <link rel="stylesheet" href="/assets/design-tokens.css">
+  <link rel="stylesheet" href="/assets/app-shell.css">
+  <link rel="stylesheet" href="/assets/components.css">
+  <link rel="stylesheet" href="/assets/responsive.css">
   <link rel="stylesheet" href="/assets/knowledge-app.css">
 </head>
 <body>
+<div data-nexus-shell data-page="gitlab"></div>
 <div id="app" v-cloak>
-  <header class="topbar">
-    <a class="brand" href="/"><span class="brand-mark">NX</span><span>NEXUS</span></a>
-    <nav aria-label="主导航">
-      <a href="/knowledge">知识库</a><a class="active" href="/settings/gitlab">GitLab</a>
-      <a href="/wiki">Wiki</a><a href="/versions">版本中心</a><a href="/monitor">代码工作台</a>
-    </nav>
-    <button class="icon-button" type="button" title="刷新" aria-label="刷新" @click="refresh">↻</button>
-  </header>
   <main>
-    <div v-if="notice" class="notice" :class="notice.type" role="status"><span>{{notice.message}}</span><button @click="notice=null" aria-label="关闭">×</button></div>
-
     <section v-if="view==='list'" class="workspace">
-      <div class="page-heading"><div><p class="kicker">SOURCE OPERATIONS</p><h1>GitLab 项目</h1><p>接入代码仓库，观察同步任务，并确认当前索引版本。</p></div><button class="primary" @click="openWizard">＋ 接入 GitLab 项目</button></div>
+      <div class="page-heading"><div><h1>GitLab 项目</h1><p>接入代码仓库，观察同步任务，并确认当前索引版本。</p></div><button class="primary" @click="openWizard">＋ 接入 GitLab 项目</button></div>
       <div class="summary-strip"><div><span>已接入项目</span><strong>{{projects.length}}</strong></div><div><span>同步中</span><strong>{{runningCount}}</strong></div><div><span>版本偏离</span><strong>{{driftCount}}</strong></div><div><span>索引可用</span><strong>{{indexCount}}</strong></div></div>
       <div class="toolbar"><label>状态<select v-model="filter"><option value="">全部状态</option><option v-for="s in statuses" :value="s">{{statusLabel(s)}}</option></select></label><label class="search-field"><span>搜索</span><input v-model.trim="query" type="search" placeholder="项目、分支或 GitLab 路径"></label></div>
-      <div class="table-shell">
+      <div class="table-shell nx-desktop-table">
         <table><thead><tr><th>项目</th><th>分支</th><th>状态</th><th>索引 commit</th><th>目标 commit</th><th>最近成功</th><th><span class="sr-only">操作</span></th></tr></thead>
           <tbody><tr v-for="p in visibleProjects" :key="p.projectId"><td><button class="link-button strong" @click="openProject(p)">{{p.name}}</button><small>{{p.gitPath}}</small></td><td><code>{{p.branch}}</code></td><td><status-badge :status="p.status"></status-badge><small v-if="p.revisionDrift">存在版本偏离</small></td><td><code>{{shortSha(p.lastIndexedSha)}}</code><small v-if="p.status==='FAILED'&&p.indexAvailable">旧索引仍可用</small></td><td><code>{{shortSha(p.targetSha)}}</code></td><td>{{relativeTime(p.lastSuccessfulSyncAt)}}</td><td class="actions"><button class="icon-button" title="查看详情" @click="openProject(p)">→</button></td></tr></tbody>
         </table>
+        <div v-if="loading" class="loading-state"><span></span>正在加载 GitLab 项目</div>
+        <div v-if="!loading&&error" class="empty-state error-state"><strong>GitLab 项目加载失败</strong><p>{{error}}</p><button @click="load">重试</button></div>
+        <div v-if="!loading&&!error&&!visibleProjects.length" class="empty-state"><strong>尚无匹配项目</strong><p>接入项目后可在这里查看同步和索引状态。</p></div>
+      </div>
+      <div class="nx-mobile-records">
+        <article v-for="p in visibleProjects" :key="p.projectId" class="nx-record">
+          <div class="nx-record-head"><button class="link-button strong" @click="openProject(p)">{{p.name}}</button><status-badge :status="p.status"></status-badge></div>
+          <div class="nx-record-meta"><span>{{p.gitPath}} · {{p.branch}}</span><span>{{versionState(p)}}</span><code>{{shortSha(p.lastIndexedSha)}}<span v-if="p.revisionDrift"> → {{shortSha(p.targetSha)}}</span></code></div>
+          <div class="nx-record-actions"><button v-if="p.status==='FAILED'" @click="openProject(p)">查看原因</button><button @click="openProject(p)">查看项目 →</button></div>
+        </article>
         <div v-if="loading" class="loading-state"><span></span>正在加载 GitLab 项目</div>
         <div v-if="!loading&&error" class="empty-state error-state"><strong>GitLab 项目加载失败</strong><p>{{error}}</p><button @click="load">重试</button></div>
         <div v-if="!loading&&!error&&!visibleProjects.length" class="empty-state"><strong>尚无匹配项目</strong><p>接入项目后可在这里查看同步和索引状态。</p></div>
@@ -40,10 +45,10 @@
       <div class="wizard-layout">
         <ol class="wizard-steps"><li v-for="n in 5" :class="{current:n===step,done:n<step}"><span>{{stepMarker(n)}}</span>{{stepNames[n-1]}}</li></ol>
         <form class="form-panel" @submit.prevent="nextStep">
-          <template v-if="step===1"><h2>连接</h2><label>Clone URL<input v-model.trim="form.cloneUrl" required placeholder="https://gitlab.example.com/group/project.git"></label><label>Personal Access Token<input v-model="form.accessToken" required type="password" autocomplete="new-password"></label><label>目标分支<input v-model.trim="form.branch" required></label><button type="button" @click="testConnection" :disabled="busy">测试连接</button><p v-if="checks.connection" class="validation-ok">✓ {{checks.connection}}</p></template>
+          <template v-if="step===1"><h2>连接</h2><label>Clone URL<input v-model.trim="form.cloneUrl" required placeholder="https://gitlab.example.com/group/project.git"></label><label>Personal Access Token<input v-model="form.accessToken" required type="password" autocomplete="new-password"></label><label>目标分支<input v-model.trim="form.branch" required></label><button type="button" @click="testConnection" :disabled="busy">测试连接</button><ul v-if="checks.connection" class="validation-checks"><li>✓ 主机与凭据有效</li><li>✓ 仓库路径 {{checks.connection.repositoryPath}}</li><li>✓ 分支 HEAD {{shortSha(checks.connection.headSha)}}</li></ul></template>
           <template v-else-if="step===2"><h2>项目与分支</h2><label>项目 ID<input v-model.trim="form.projectId" required></label><label>GitLab 路径<input v-model.trim="form.gitPath" required placeholder="group/project"></label><div class="form-grid"><label>显示名称<input v-model.trim="form.name"></label><label>分组<input v-model.trim="form.group"></label><label>端类型<select v-model="form.side"><option value="server">服务端</option><option value="client">客户端</option></select></label></div></template>
-          <template v-else-if="step===3"><h2>索引配置</h2><label>需求 collection<input v-model.trim="form.requirementCollection" required></label><label>代码 collection<input v-model.trim="form.codeCollection" required></label></template>
-          <template v-else-if="step===4"><h2>Webhook</h2><label>Webhook Secret<input v-model="form.webhookSecret" required type="password" autocomplete="new-password"></label><button type="button" @click="generateSecret">生成 Secret</button><div class="callout"><strong>Webhook URL</strong><code>{{webhookPreview}}</code><p>GitLab 中选择 Push events，并保持 SSL verification 开启。</p></div></template>
+          <template v-else-if="step===3"><h2>索引配置</h2><p class="form-hint">collection 已按项目 ID 自动生成，通常无需修改。</p><details class="advanced-fields"><summary>高级设置</summary><label>需求 collection<input v-model.trim="form.requirementCollection" required></label><label>代码 collection<input v-model.trim="form.codeCollection" required></label></details></template>
+          <template v-else-if="step===4"><h2>Webhook</h2><label>Webhook Secret<div class="secret-field"><input v-model="form.webhookSecret" required :type="showWizardSecret?'text':'password'" autocomplete="new-password"><button type="button" @click="showWizardSecret=!showWizardSecret">{{showWizardSecret?'隐藏':'显示'}}</button><button type="button" @click="copyText(form.webhookSecret,'Secret 已复制')">复制</button></div></label><button type="button" @click="generateSecret">生成 Secret</button><div class="callout"><strong>Webhook URL</strong><code>{{webhookPreview}}</code><p>GitLab 中选择 Push events，并保持 SSL verification 开启。</p></div></template>
           <template v-else><h2>确认并创建</h2><dl class="facts"><div><dt>仓库</dt><dd>{{form.cloneUrl}}</dd></div><div><dt>项目</dt><dd>{{form.projectId}} · {{form.branch}}</dd></div><div><dt>GitLab 路径</dt><dd>{{form.gitPath}}</dd></div><div><dt>Collections</dt><dd>{{form.requirementCollection}} / {{form.codeCollection}}</dd></div></dl></template>
           <div class="form-actions"><button v-if="step>1" type="button" @click="step--">上一步</button><button class="primary" type="submit" :disabled="busy">{{step===5?'创建并开始同步':'下一步'}}</button></div>
         </form>
@@ -55,17 +60,20 @@
       <div v-else-if="error" class="empty-state error-state"><strong>GitLab 项目详情加载失败</strong><p>{{error}}</p><button @click="openProject(selected,false)">重试</button></div>
       <template v-else>
       <div class="breadcrumb"><button @click="goList">GitLab 项目</button><i>/</i><span>{{selected.name}}</span></div>
-      <div class="page-heading compact"><div><h1>{{selected.name}}</h1><p>{{selected.gitPath}} · {{selected.branch}}</p></div><div class="button-row"><button @click="sync" :disabled="busy||!selected.syncAvailable">↻ 同步</button><button v-if="selected.status==='FAILED'" @click="retry" :disabled="busy">重试</button><button class="danger" @click="disable" :disabled="busy||selected.status==='DISABLED'">停用</button></div></div>
+      <div class="page-heading compact"><div><h1>{{selected.name}}</h1><p>{{selected.gitPath}} · {{selected.branch}}</p></div><div class="button-row"><button class="primary" @click="sync" :disabled="busy||!selected.syncAvailable">↻ 同步</button><details class="action-menu"><summary>操作</summary><div><button v-if="selected.status==='FAILED'" @click="retry" :disabled="busy">重试失败任务</button><button class="danger" @click="disable" :disabled="busy||selected.status==='DISABLED'">停用项目</button></div></details></div></div>
       <div class="context-band"><status-badge :status="selected.status"></status-badge><span>索引 <code>{{shortSha(selected.lastIndexedSha)}}</code></span><span>目标 <code>{{shortSha(selected.targetSha)}}</code></span><span>{{selected.indexAvailable?'索引可用':'尚无可用索引'}}</span><span v-if="selected.revisionDrift">版本偏离</span></div>
       <div class="detail-grid">
-        <section class="plain-panel"><div class="panel-heading"><h2>同步任务时间线</h2><span>{{jobs.length}} 项</span></div><ol class="timeline"><li v-for="job in jobs" :key="job.id" @click="loadJob(job)"><span class="timeline-dot" :class="'tone-'+tone(job.status)">{{glyph(job.status)}}</span><div><strong>{{phaseLabel(job.phase)}}</strong><small>{{job.triggerType}} · {{relativeTime(job.startedAt)}} · {{job.errorCode||job.status}}</small></div></li></ol><div v-if="!jobs.length" class="empty-state"><strong>暂无同步任务</strong></div></section>
-        <aside class="plain-panel"><div class="panel-heading"><h2>Webhook</h2><status-badge :status="webhookBadge"></status-badge></div><dl class="facts"><div><dt>最近结果</dt><dd>{{webhook.message}}</dd></div><div><dt>接收时间</dt><dd>{{relativeTime(webhook.receivedAt)}}</dd></div><div><dt>目标 commit</dt><dd><code>{{shortSha(webhook.targetSha)}}</code></dd></div></dl><button @click="rotateSecret" :disabled="busy">轮换 Secret</button><div v-if="oneTimeSecret" class="secret-once"><strong>仅显示一次</strong><code>{{oneTimeSecret}}</code></div></aside>
+        <section class="plain-panel"><div class="panel-heading"><h2>同步任务时间线</h2><span>{{jobs.length}} 项</span></div><ol class="timeline"><li v-for="job in jobs" :key="job.id" @click="loadJob(job)"><span class="timeline-dot" :class="'tone-'+tone(job.status)">{{glyph(job.status)}}</span><div><strong>{{phaseLabel(job.phase)}}</strong><small>{{job.triggerType}} · {{relativeTime(job.startedAt)}} · {{shortSha(job.targetSha)}} · {{job.errorCode||job.status}}</small></div></li></ol><div v-if="!jobs.length" class="empty-state"><strong>暂无同步任务</strong></div></section>
+        <aside class="plain-panel"><div class="panel-heading"><h2>Webhook</h2><status-badge :status="webhookBadge"></status-badge></div><dl class="facts"><div><dt>最近结果</dt><dd>{{webhook.message}}</dd></div><div><dt>接收时间</dt><dd>{{relativeTime(webhook.receivedAt)}}</dd></div><div><dt>目标 commit</dt><dd><code>{{shortSha(webhook.targetSha)}}</code></dd></div></dl><button @click="rotateSecret" :disabled="busy">轮换 Secret</button><div v-if="oneTimeSecret" class="secret-once"><strong>仅显示一次</strong><div class="secret-field"><code>{{secretVisible?oneTimeSecret:'••••••••••••••••'}}</code><button @click="secretVisible=!secretVisible">{{secretVisible?'隐藏':'显示'}}</button><button @click="copyText(oneTimeSecret,'Secret 已复制')">复制</button></div></div></aside>
       </div>
       </template>
     </section>
   </main>
 </div>
 <script src="/webjars/vue/3.5.13/dist/vue.global.prod.js"></script>
+<script src="/assets/error-normalizer.js"></script>
+<script src="/assets/api-client.js"></script>
+<script src="/assets/app-shell.js"></script>
 <script src="/assets/status-contract.js"></script>
 <script src="/assets/gitlab-api.js"></script>
 <script src="/assets/gitlab-app.js"></script>

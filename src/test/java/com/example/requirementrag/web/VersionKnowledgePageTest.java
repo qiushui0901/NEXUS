@@ -23,9 +23,11 @@ class VersionKnowledgePageTest {
                 .contains("Wiki 变化")
                 .contains("没有真实执行快照")
                 .contains("const esc=")
-                .contains("X-API-Key")
-                .contains("localStorage.getItem('nexusApiKey')")
+                .contains("data-nexus-shell data-page=\"versions\"")
+                .contains("/assets/reading-workbench.css")
+                .contains("NexusApi.request")
                 .contains("/wiki?")
+                .doesNotContain("id=\"apiKey\"")
                 .doesNotContain("unpkg.com")
                 .doesNotContain("cdn.jsdelivr.net");
     }

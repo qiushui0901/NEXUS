@@ -10,6 +10,12 @@ set -euo pipefail
 WORKDIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$WORKDIR"
 
+if [ -n "$(git status --porcelain=v1 --untracked-files=all)" ]; then
+  echo "Refusing to generate a release verification report from a dirty workspace." >&2
+  echo "Commit, stash, or remove all staged, tracked, and untracked changes first." >&2
+  exit 3
+fi
+
 VERSION=$(python3 - "$WORKDIR/pom.xml" <<'PY'
 import sys
 import xml.etree.ElementTree as ET
@@ -35,7 +41,8 @@ fi
 
 VERIFY_LOG=$(mktemp)
 JAVA_VERSION_FILE=$(mktemp)
-trap 'rm -f "$VERIFY_LOG" "$JAVA_VERSION_FILE"' EXIT
+TEST_SUMMARY_FILE=$(mktemp)
+trap 'rm -f "$VERIFY_LOG" "$JAVA_VERSION_FILE" "$TEST_SUMMARY_FILE"' EXIT
 
 echo "verify with JDK 21 (Enforcer enabled)..."
 "$JDK_HOME/bin/java" -version 2>&1 | head -1 > "$JAVA_VERSION_FILE"
@@ -44,20 +51,41 @@ JAVA_HOME="$JDK_HOME" ./mvnw clean verify > "$VERIFY_LOG" 2>&1
 VERIFY_RC=$?
 set -e
 
-# 聚合 Surefire XML，避免依赖文本报告的格式。
-TEST_SUMMARY=$(python3 - <<'PY'
+# 聚合 Surefire XML。即使报告损坏，也要保留 Maven 原始退出码并生成失败报告。
+python3 - "$TEST_SUMMARY_FILE" <<'PY'
 import glob
+import json
+import sys
 import xml.etree.ElementTree as ET
 
 totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
-for path in glob.glob("target/surefire-reports/TEST-*.xml"):
-    root = ET.parse(path).getroot()
-    for key in totals:
-        totals[key] += int(root.attrib.get(key, 0))
-print(*(totals[key] for key in ("tests", "failures", "errors", "skipped")))
+paths = sorted(glob.glob("target/surefire-reports/TEST-*.xml"))
+parse_errors = []
+for path in paths:
+    try:
+        root = ET.parse(path).getroot()
+        for key in totals:
+            totals[key] += int(root.attrib.get(key, 0))
+    except (ET.ParseError, OSError, TypeError, ValueError) as exception:
+        parse_errors.append({
+            "file": path,
+            "errorType": type(exception).__name__,
+        })
+
+status = "PARSED"
+if not paths:
+    status = "MISSING"
+elif parse_errors:
+    status = "PARTIAL" if len(parse_errors) < len(paths) else "INVALID"
+
+with open(sys.argv[1], "w", encoding="utf-8") as output:
+    json.dump({
+        **totals,
+        "reportCount": len(paths),
+        "parseStatus": status,
+        "parseErrors": parse_errors,
+    }, output, ensure_ascii=False)
 PY
-)
-read -r TESTS FAILURES ERRORS SKIPPED <<< "$TEST_SUMMARY"
 
 COVERAGE=""
 if grep -q "All coverage checks have been met" "$VERIFY_LOG"; then COVERAGE="met"; fi
@@ -68,10 +96,7 @@ SUMMARY=$(python3 - \
   "$COMMIT" \
   "$VERSION" \
   "$JAVA_VERSION_FILE" \
-  "$TESTS" \
-  "$FAILURES" \
-  "$ERRORS" \
-  "$SKIPPED" \
+  "$TEST_SUMMARY_FILE" \
   "$COVERAGE" \
   "$JAR_BUILT" \
   "$VERIFY_RC" <<'PY'
@@ -84,15 +109,14 @@ import sys
     commit,
     version,
     java_version_file,
-    tests,
-    failures,
-    errors,
-    skipped,
+    test_summary_file,
     coverage,
     jar_built,
     verify_rc,
 ) = sys.argv[1:]
 exit_code = int(verify_rc)
+with open(test_summary_file, encoding="utf-8") as source:
+    test_summary = json.load(source)
 summary = {
     "schemaVersion": 1,
     "generatedAt": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -110,10 +134,13 @@ summary = {
     "enforcerSkipped": False,
     "java": open(java_version_file, encoding="utf-8").read().strip(),
     "tests": {
-        "run": int(tests),
-        "failures": int(failures),
-        "errors": int(errors),
-        "skipped": int(skipped),
+        "run": test_summary["tests"],
+        "failures": test_summary["failures"],
+        "errors": test_summary["errors"],
+        "skipped": test_summary["skipped"],
+        "reportCount": test_summary["reportCount"],
+        "parseStatus": test_summary["parseStatus"],
+        "parseErrors": test_summary["parseErrors"],
     },
     "jacocoCoverageCheck": coverage,
     "jarBuilt": jar_built,

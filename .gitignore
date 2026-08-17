@@ -33,6 +33,9 @@ tools/*.pid
 .codegraph/
 data/code-graph/
 
+# Local runtime SQLite databases
+data/*.db
+
 # Local Git worktrees
 .worktrees/
 

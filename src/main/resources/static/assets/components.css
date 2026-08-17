@@ -1,0 +1,147 @@
+.nx-page {
+  width: min(100%, var(--nx-content-max));
+  margin: 0 auto;
+  padding: var(--nx-space-8) var(--nx-space-6) 72px;
+}
+
+.nx-page-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--nx-space-6);
+  margin-bottom: var(--nx-space-6);
+}
+
+.nx-page-heading h1 {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.2;
+}
+
+.nx-page-heading p {
+  max-width: 760px;
+  margin: 6px 0 0;
+  color: var(--nx-muted);
+}
+
+.nx-stat-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  min-height: 56px;
+  margin-bottom: var(--nx-space-4);
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-line);
+}
+
+.nx-stat {
+  padding: 10px var(--nx-space-4);
+  border-right: 1px solid var(--nx-line);
+}
+
+.nx-stat:last-child {
+  border-right: 0;
+}
+
+.nx-stat span {
+  display: block;
+  color: var(--nx-muted);
+  font-size: 12px;
+}
+
+.nx-stat strong {
+  display: block;
+  margin-top: 2px;
+  font: 700 20px/1.2 var(--nx-font-mono);
+}
+
+.nx-panel {
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-line);
+  border-radius: var(--nx-radius-panel);
+}
+
+.nx-empty,
+.nx-error {
+  min-height: 160px;
+  padding: var(--nx-space-8);
+  display: grid;
+  place-content: center;
+  gap: var(--nx-space-2);
+  text-align: center;
+  color: var(--nx-muted);
+}
+
+.nx-empty strong,
+.nx-error strong {
+  color: var(--nx-ink);
+  font-size: 16px;
+}
+
+.nx-error {
+  color: var(--nx-danger);
+  background: var(--nx-danger-soft);
+}
+
+.nx-mobile-records {
+  display: none;
+}
+
+.nx-record {
+  padding: var(--nx-space-4);
+  display: grid;
+  gap: var(--nx-space-3);
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-line);
+  border-radius: var(--nx-radius-panel);
+}
+
+.nx-record-head,
+.nx-record-meta,
+.nx-record-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nx-space-3);
+}
+
+.nx-record-meta {
+  align-items: flex-start;
+  flex-wrap: wrap;
+  color: var(--nx-muted);
+  font-size: 12px;
+}
+
+.nx-record-actions {
+  justify-content: flex-end;
+}
+
+.nx-stage-ribbon {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(52px, 1fr));
+  align-items: center;
+  gap: 0;
+  overflow-x: auto;
+}
+
+.nx-stage-ribbon span {
+  min-height: 40px;
+  padding: 0 8px;
+  display: grid;
+  place-items: center;
+  position: relative;
+  color: var(--nx-muted);
+  border-top: 2px solid var(--nx-line);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.nx-stage-ribbon span.done {
+  color: var(--nx-action);
+  border-color: var(--nx-action);
+}
+
+.nx-stage-ribbon span.active {
+  color: var(--nx-info);
+  border-color: var(--nx-info);
+  font-weight: 700;
+}

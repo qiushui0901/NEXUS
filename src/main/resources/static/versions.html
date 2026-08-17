@@ -4,6 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>NEXUS · 版本中心</title>
+  <link rel="stylesheet" href="/assets/design-tokens.css">
+  <link rel="stylesheet" href="/assets/app-shell.css">
+  <link rel="stylesheet" href="/assets/components.css">
+  <link rel="stylesheet" href="/assets/responsive.css">
+  <link rel="stylesheet" href="/assets/reading-workbench.css">
   <style>
     :root{--ink:#15231e;--muted:#68736e;--paper:#f4f0e7;--card:#fffdf7;--line:#d9d2c4;--green:#215d4b;--mint:#dceae2;--gold:#9b651e;--red:#a33e3e;--blue:#315c8a;--shadow:0 16px 45px rgba(31,43,36,.08)}
     *{box-sizing:border-box}body{margin:0;color:var(--ink);background:var(--paper);font-family:"Avenir Next","PingFang SC","Microsoft YaHei",sans-serif}button,input,select{font:inherit}.app{min-height:100vh}
@@ -13,15 +18,9 @@
     @media(max-width:900px){.layout{grid-template-columns:250px minmax(0,1fr)}.cards{grid-template-columns:repeat(2,minmax(120px,1fr))}}@media(max-width:680px){header{height:auto;padding:12px 16px;flex-wrap:wrap}.api-key{display:none}.header-spacer{display:none}.layout{display:block}aside{border-right:0;border-bottom:1px solid var(--line)}main{padding:24px 16px}.timeline{grid-template-columns:repeat(2,minmax(0,1fr))}.columns{grid-template-columns:1fr}.cards{grid-template-columns:1fr 1fr}}
   </style>
 </head>
-<body>
+<body class="versions-page">
+<div data-nexus-shell data-page="versions"></div>
 <div class="app">
-  <header>
-    <div class="brand"><strong>NEXUS</strong><span>版本中心 · 多来源差异</span></div>
-    <div class="header-spacer"></div>
-    <a class="header-link" href="/wiki">进入知识库</a>
-    <a class="header-link" href="/monitor">代码工作台</a>
-    <input id="apiKey" class="api-key" type="password" placeholder="API Key" title="启用认证时填写">
-  </header>
   <div class="layout">
     <aside>
       <div class="eyebrow">Version timeline</div><div class="panel-title">选择比较范围</div>
@@ -35,16 +34,18 @@
     <main id="main"><div class="empty">正在加载版本中心…</div></main>
   </div>
 </div>
-<div id="statusbar" class="statusbar" hidden></div>
+<script src="/assets/error-normalizer.js"></script>
+<script src="/assets/api-client.js"></script>
+<script src="/assets/app-shell.js"></script>
 <script>
 const state={projects:[],manifests:[],projectId:'',fromVersion:'',toVersion:'',report:null,activeTab:'requirements'};
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>'"]/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 const params=values=>new URLSearchParams(values).toString();
 const labels={ADDED:'新增',MODIFIED:'修改',REMOVED:'删除',RENAMED:'重命名',AVAILABLE:'可用',NOT_AVAILABLE:'不可用',SUCCESS:'成功',DRAFT:'草稿',PUBLISHED:'已发布',FAILED:'失败',SKIPPED:'跳过',PASSED:'通过'};
-function headers(){const key=$('apiKey').value.trim();return key?{'X-API-Key':key}:{}}
-async function api(path,options={}){const response=await fetch(path,{...options,headers:{...headers(),...(options.headers||{})}});if(!response.ok){let detail='请求失败，请确认访问权限和服务状态。';try{detail=(await response.json()).detail||detail}catch{}throw new Error(detail)}return response.json()}
-function notice(text){const bar=$('statusbar');bar.textContent=text;bar.hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>bar.hidden=true,3200)}
+function headers(){return{}}
+async function api(path,options={}){return NexusApi.request(path,{...options,headers:{...headers(),...(options.headers||{})}})}
+function notice(text){NexusNotice.show(text,'info')}
 function optionHtml(values,selected){return values.map(value=>`<option value="${esc(value)}" ${value===selected?'selected':''}>${esc(value)}</option>`).join('')}
 function manifestFor(version){return state.manifests.find(item=>item.version===version)}
 function defaultVersions(){const target=state.manifests[0];if(!target)return {from:'',to:''};const base=state.manifests.find(item=>item.codeCommit&&item.codeCommit===target.baseCodeCommit);const fallback=state.manifests.find(item=>item.version!==target.version);return {to:target.version,from:base?.version||fallback?.version||''};}
@@ -61,8 +62,8 @@ function renderTests(source){const cases=source?.cases||[];const unavailable=sou
 function renderWiki(source){const pages=source?.pages||[];return availability(source,'目标或起始版本的 Wiki 索引缺失，其他来源的差异仍可使用。')+stats([['新增',source?.added],['修改',source?.modified],['删除',source?.removed]])+(pages.length?`<div class="detail-list">${pages.map(item=>{const version=item.type==='REMOVED'?state.report.fromVersion:state.report.toVersion;const link='/wiki?'+params({projectId:state.report.projectId,version,featureId:item.featureId});return `<article class="change"><div class="change-head"><span class="badge ${esc(item.type)}">${esc(changeLabel(item.type))}</span><code>${esc(item.title||item.featureId||'-')}</code></div><p>状态：${esc(item.beforeStatus||'—')} → ${esc(item.afterStatus||'—')}　·　证据变化：${esc(item.evidenceDelta??0)}　·　摘要${item.summaryChanged?'已变化':'未变化'}</p><a class="wiki-link" href="${esc(link)}">在 Wiki 中查看</a></article>`}).join('')}</div>`:'<div class="empty">没有可展示的 Wiki 页面变更。</div>')}
 function renderReport(){const report=state.report;if(!report)return;$('main').innerHTML=`<section class="report-head"><div class="eyebrow">Comparison report</div><h1>${esc(report.fromVersion)} → ${esc(report.toVersion)}</h1><p class="summary">同一项目的需求、代码、测试和 Wiki 以独立来源呈现；任一来源缺失时不会伪装成“没有变化”。</p><div class="meta"><span class="meta-pill">项目 ${esc(report.projectId)}</span><span class="meta-pill">生成于 ${esc(report.generatedAt||'-')}</span></div></section>${(report.warnings||[]).length?`<section class="warnings">${report.warnings.map(warning=>`<div class="warning">${esc(warning.code?`${warning.code}：`: '')}${esc(warning.message||warning)}</div>`).join('')}</section>`:''}<nav class="tabs">${[['requirements','需求变化'],['code','代码变化'],['tests','测试变化'],['wiki','Wiki 变化']].map(([id,label])=>`<button class="tab ${state.activeTab===id?'active':''}" data-tab="${id}">${label}</button>`).join('')}</nav><section id="tabContent"></section>`;$('main').querySelectorAll('[data-tab]').forEach(button=>button.onclick=()=>{state.activeTab=button.dataset.tab;renderReport()});const content=$('tabContent');const source={requirements:report.requirements,code:report.code,tests:report.tests,wiki:report.wiki}[state.activeTab];content.innerHTML=state.activeTab==='requirements'?renderRequirements(source):state.activeTab==='code'?renderCode(source):state.activeTab==='tests'?renderTests(source):renderWiki(source)}
 async function loadComparison(){if(!state.fromVersion||!state.toVersion||state.fromVersion===state.toVersion)return;state.activeTab='requirements';$('main').innerHTML='<div class="empty">正在汇总四类版本差异…</div>';try{state.report=await api('/api/versions/compare?'+params({projectId:state.projectId,fromVersion:state.fromVersion,toVersion:state.toVersion}));renderReport()}catch(error){$('main').innerHTML=`<div class="empty">${esc(error.message)}</div>`;notice(error.message)}}
-$('projectSelect').onchange=loadManifests;$('fromVersionSelect').onchange=event=>{state.fromVersion=event.target.value;setSelectors();loadComparison()};$('toVersionSelect').onchange=event=>{state.toVersion=event.target.value;setSelectors();renderTimeline();loadComparison()};$('compare').onclick=loadComparison;$('apiKey').value=localStorage.getItem('nexusApiKey')||'';$('apiKey').onchange=event=>localStorage.setItem('nexusApiKey',event.target.value.trim());
-loadProjects().catch(error=>{$('main').innerHTML=`<div class="empty">${esc(error.message)}</div>`;notice(error.message)});
+$('projectSelect').onchange=loadManifests;$('fromVersionSelect').onchange=event=>{state.fromVersion=event.target.value;setSelectors();loadComparison()};$('toVersionSelect').onchange=event=>{state.toVersion=event.target.value;setSelectors();renderTimeline();loadComparison()};$('compare').onclick=loadComparison;
+loadProjects().catch(error=>{const safe=NexusErrors.normalize(error,'版本中心加载失败');$('main').innerHTML=`<div class="empty">${esc(safe.message)}<br>${esc(safe.action)}</div>`;NexusNotice.show(safe.message,'error')});
 </script>
 </body>
 </html>

@@ -93,7 +93,7 @@ public class RuntimeStatusController {
     private long countRequirements(RagProperties.ProjectConfig project, List<String> warnings) {
         try {
             if (project.knowledge() == null) return 0;
-            return requirementStore.countVersion(project.requirementCollection(),
+            return requirementStore.countVersionIfAvailable(project.requirementCollection(),
                     project.knowledge().documentId(), project.knowledge().version());
         } catch (RuntimeException exception) {
             warnings.add("需求知识统计暂时不可用");
@@ -104,7 +104,7 @@ public class RuntimeStatusController {
     /** 统计项目代码分块数，失败时记录警告并返回 0。 */
     private long countCode(RagProperties.ProjectConfig project, List<String> warnings) {
         try {
-            return codeStore.countProject(project.codeCollection(), project.id());
+            return codeStore.countProjectIfAvailable(project.codeCollection(), project.id());
         } catch (RuntimeException exception) {
             warnings.add("代码索引统计暂时不可用");
             return 0;

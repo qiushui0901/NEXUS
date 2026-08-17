@@ -13,7 +13,7 @@
 
     <groupId>com.example</groupId>
     <artifactId>NEXUS</artifactId>
-    <version>0.8.6</version>
+    <version>0.9.0</version>
     <name>NEXUS</name>
     <description>Unified requirement and code knowledge service with Spring AI</description>
 

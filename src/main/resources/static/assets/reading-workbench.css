@@ -1,0 +1,330 @@
+.wiki-page,
+.versions-page {
+  margin: 0;
+  color: var(--nx-ink);
+  background: var(--nx-canvas);
+  font-family: var(--nx-font-ui);
+}
+
+.wiki-page .app,
+.versions-page .app {
+  min-height: calc(100vh - var(--nx-shell-height));
+}
+
+.wiki-context-controls {
+  min-height: 52px;
+  padding: 8px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--nx-surface);
+  border-bottom: 1px solid var(--nx-line);
+}
+
+.wiki-context-controls .selectors {
+  display: flex;
+  gap: 8px;
+}
+
+.wiki-context-title {
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.wiki-context-controls select {
+  min-width: 180px;
+  height: var(--nx-control-height);
+  padding: 0 10px;
+  color: var(--nx-ink);
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-line-strong);
+  border-radius: var(--nx-radius-panel);
+  font-size: 14px;
+}
+
+.wiki-mobile-actions {
+  display: none;
+  gap: 8px;
+}
+
+.wiki-page .layout {
+  grid-template-columns: 280px minmax(0, 1fr) 320px;
+  min-height: calc(100vh - 142px);
+}
+
+.wiki-page aside,
+.wiki-page .right {
+  min-width: 0;
+  padding: 20px;
+  background: var(--nx-surface-subtle);
+  border-color: var(--nx-line);
+}
+
+.wiki-page main {
+  padding: 28px clamp(22px, 4vw, 56px) 64px;
+  background: var(--nx-surface);
+}
+
+.wiki-page .eyebrow,
+.versions-page .eyebrow {
+  color: var(--nx-action);
+  font-size: 12px;
+  letter-spacing: 0;
+}
+
+.wiki-page .panel-title,
+.versions-page .panel-title {
+  font-family: var(--nx-font-ui);
+  font-size: 18px;
+}
+
+.wiki-page .page-item,
+.wiki-page .section,
+.wiki-page .source-card,
+.wiki-page .code-card,
+.wiki-page .metric,
+.wiki-page .relation,
+.wiki-page .evidence-mini {
+  border-color: var(--nx-line);
+  border-radius: var(--nx-radius-panel);
+  background: var(--nx-surface);
+  box-shadow: none;
+}
+
+.wiki-page .right > div,
+.wiki-page .evidence-mini,
+.wiki-page .evidence-mini strong,
+.wiki-page .evidence-mini small,
+.wiki-page .evidence-mini code {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.wiki-page .hero {
+  padding-bottom: 20px;
+}
+
+.wiki-page .hero h1 {
+  margin: 8px 0 12px;
+  font: 700 32px/1.22 var(--nx-font-reading);
+  letter-spacing: 0;
+}
+
+.wiki-page .summary {
+  color: #3f4b47;
+  font-size: 15px;
+  line-height: 1.75;
+}
+
+.wiki-page .badge,
+.versions-page .badge {
+  min-height: 24px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.wiki-page .counts,
+.wiki-page .page-item small,
+.wiki-page .section h2 span,
+.wiki-page .meta-pill,
+.wiki-page .source-card small,
+.wiki-page .code-card small,
+.wiki-page .metric small,
+.wiki-page .source-card code,
+.wiki-page .code-card code,
+.wiki-page .quality-note,
+.wiki-page .fact small,
+.wiki-page .relation strong,
+.wiki-page .relation small,
+.wiki-page .evidence-mini strong,
+.wiki-page .evidence-mini small,
+.wiki-page .evidence-mini code,
+.versions-page .field label,
+.versions-page .timeline-item small,
+.versions-page .meta-pill,
+.versions-page .stat small,
+.versions-page .change-head code,
+.versions-page .change-meta {
+  font-size: 12px;
+}
+
+.versions-page .layout {
+  display: block;
+  min-height: calc(100vh - var(--nx-shell-height));
+}
+
+.versions-page aside {
+  position: sticky;
+  top: 90px;
+  z-index: 5;
+  padding: 14px 24px;
+  display: grid;
+  grid-template-columns: minmax(150px, .7fr) repeat(3, minmax(150px, 1fr)) auto;
+  align-items: end;
+  gap: 12px;
+  background: var(--nx-surface);
+  border: 0;
+  border-bottom: 1px solid var(--nx-line);
+}
+
+.versions-page aside .eyebrow {
+  grid-column: 1;
+}
+
+.versions-page aside .panel-title {
+  grid-column: 1;
+  margin: 2px 0 0;
+}
+
+.versions-page .field {
+  margin: 0;
+}
+
+.versions-page .field label {
+  font-size: 12px;
+}
+
+.versions-page .field select,
+.versions-page .compare {
+  height: var(--nx-control-height);
+  border-radius: var(--nx-radius-panel);
+}
+
+.versions-page .compare {
+  width: auto;
+  min-width: 96px;
+  background: var(--nx-action);
+}
+
+.versions-page .hint {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+.versions-page .timeline {
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  margin: 0;
+}
+
+.versions-page .timeline-item,
+.versions-page .stat,
+.versions-page .section,
+.versions-page .empty,
+.versions-page .change {
+  border-color: var(--nx-line);
+  border-radius: var(--nx-radius-panel);
+  background: var(--nx-surface);
+  box-shadow: none;
+}
+
+.versions-page main {
+  width: min(100%, var(--nx-content-max));
+  margin: 0 auto;
+  padding: 28px 24px 64px;
+}
+
+.versions-page h1 {
+  margin: 6px 0 8px;
+  font: 700 28px/1.2 var(--nx-font-ui);
+  letter-spacing: 0;
+}
+
+@media (max-width: 1180px) {
+  .wiki-page .layout {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+
+  .wiki-page .right {
+    position: fixed;
+    inset: 90px 0 0 auto;
+    z-index: 80;
+    width: min(420px, 94vw);
+    display: none;
+    overflow: auto;
+    background: var(--nx-surface);
+    box-shadow: var(--nx-shadow-dialog);
+  }
+
+  .wiki-page .right.mobile-open {
+    display: block;
+  }
+}
+
+@media (max-width: 767px) {
+  .wiki-context-controls {
+    padding: 8px 16px;
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .wiki-context-title {
+    display: none;
+  }
+
+  .wiki-context-controls .selectors {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .wiki-context-controls select {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .wiki-mobile-actions {
+    display: flex;
+  }
+
+  .wiki-page .layout {
+    display: block;
+  }
+
+  .wiki-page aside {
+    position: fixed;
+    inset: 90px 0 0 0;
+    z-index: 75;
+    display: none;
+    overflow: auto;
+    background: var(--nx-surface);
+  }
+
+  .wiki-page aside.mobile-open {
+    display: block;
+  }
+
+  .wiki-page main {
+    padding: 24px 16px 64px;
+  }
+
+  .wiki-page .hero h1 {
+    font-size: 28px;
+  }
+
+  .versions-page aside {
+    position: static;
+    grid-template-columns: 1fr;
+    padding: 16px;
+  }
+
+  .versions-page aside .eyebrow,
+  .versions-page aside .panel-title,
+  .versions-page .hint,
+  .versions-page .timeline {
+    grid-column: auto;
+  }
+
+  .versions-page .timeline {
+    grid-template-columns: 1fr;
+    max-height: 240px;
+    overflow: auto;
+  }
+
+  .versions-page main {
+    padding: 24px 16px 64px;
+  }
+}

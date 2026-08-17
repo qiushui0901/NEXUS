@@ -130,6 +130,9 @@ public class RagConfigValidator {
         String embeddingModel = environment.getProperty("spring.ai.openai.embedding.options.model", "");
         if (blank(embeddingModel)) {
             errors.add("spring.ai.openai.embedding.options.model 不能为空（嵌入模型未配置）");
+        } else if (embeddingModel.chars().anyMatch(Character::isWhitespace)) {
+            errors.add("spring.ai.openai.embedding.options.model 不能包含空白字符；"
+                    + "请将 .env 行内注释移到独立行");
         }
     }
 

@@ -22,6 +22,8 @@ class KnowledgeManagementPageTest {
                 .contains("分块")
                 .contains("检索测试")
                 .contains("没有匹配的知识库")
+                .contains("data-nexus-shell data-page=\"knowledge\"")
+                .contains("nx-mobile-records")
                 .doesNotContain("v-html")
                 .doesNotContain("cdn.jsdelivr.net")
                 .doesNotContain("unpkg.com");
@@ -34,7 +36,7 @@ class KnowledgeManagementPageTest {
                 .doesNotContain("innerHTML");
         assertThat(api)
                 .contains("/api/knowledge-bases")
-                .contains("X-API-Key")
+                .contains("NexusApi.request")
                 .doesNotContain("accessToken")
                 .doesNotContain("webhookSecret");
     }

@@ -1,0 +1,117 @@
+@media (max-width: 1199px) {
+  .nexus-app-bar {
+    gap: var(--nx-space-4);
+  }
+
+  .nexus-primary-nav a {
+    padding: 0 9px;
+  }
+
+  .nexus-shell-button .label {
+    display: none;
+  }
+
+  .nx-stat-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .nx-stat:nth-child(2) {
+    border-right: 0;
+  }
+
+  .nx-stat:nth-child(-n + 2) {
+    border-bottom: 1px solid var(--nx-line);
+  }
+}
+
+@media (max-width: 767px) {
+  :root {
+    --nx-shell-height: 56px;
+  }
+
+  .nexus-app-bar {
+    padding: 0 var(--nx-space-4);
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: var(--nx-space-2);
+  }
+
+  .nexus-menu-button {
+    display: inline-flex;
+  }
+
+  .nexus-brand {
+    justify-self: start;
+  }
+
+  .nexus-brand-version {
+    display: none;
+  }
+
+  .nexus-primary-nav {
+    display: none;
+  }
+
+  .nexus-shell-button[data-connection-button] .label,
+  .nexus-shell-button[data-health-button] .label {
+    display: none;
+  }
+
+  .nexus-context-bar {
+    padding: 0 var(--nx-space-4);
+  }
+
+  .nexus-notice-region {
+    top: auto;
+    right: var(--nx-space-4);
+    bottom: max(var(--nx-space-4), env(safe-area-inset-bottom));
+    left: var(--nx-space-4);
+    width: auto;
+  }
+
+  .nx-page {
+    padding: var(--nx-space-6) var(--nx-space-4) 64px;
+  }
+
+  .nx-page-heading {
+    align-items: stretch;
+    flex-direction: column;
+    gap: var(--nx-space-4);
+  }
+
+  .nx-page-heading h1 {
+    font-size: 24px;
+  }
+
+  .nx-stat-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .nx-stat {
+    border-right: 0;
+    border-bottom: 1px solid var(--nx-line);
+  }
+
+  .nx-stat:last-child {
+    border-bottom: 0;
+  }
+
+  .nx-desktop-table {
+    display: none !important;
+  }
+
+  .nx-mobile-records {
+    display: grid;
+    gap: var(--nx-space-3);
+  }
+
+  .nx-stage-ribbon {
+    grid-template-columns: repeat(7, minmax(72px, 1fr));
+  }
+
+  button,
+  a,
+  input,
+  select {
+    min-height: var(--nx-touch-target);
+  }
+}

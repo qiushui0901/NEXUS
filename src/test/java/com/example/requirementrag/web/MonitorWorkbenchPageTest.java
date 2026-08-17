@@ -15,7 +15,27 @@ class MonitorWorkbenchPageTest {
                 "META-INF/resources/webjars/vue/3.5.13/dist/vue.global.prod.js").exists()).isTrue();
         String html = new ClassPathResource("static/monitor.html")
                 .getContentAsString(StandardCharsets.UTF_8);
-        assertThat(html).contains("nexusApiKey");
+        assertThat(html)
+                .contains("nexusApiKey")
+                .contains("data-nexus-shell data-page=\"monitor\"")
+                .contains("/assets/monitor-workbench.css")
+                .doesNotContain("placeholder=\"API Key\"");
+        String style = new ClassPathResource("static/assets/monitor-workbench.css")
+                .getContentAsString(StandardCharsets.UTF_8);
+        assertThat(style)
+                .contains("--bg: var(--nx-canvas)")
+                .contains("background: #f7faf9")
+                .contains(".monitor-page .node .node-card")
+                .contains("fill: rgba(255, 255, 255, .98)")
+                .contains(".monitor-page .graph-floating-tools .icon")
+                .contains(".monitor-page .plan-view .card")
+                .contains(".monitor-page .plan-view .topbar .primary")
+                .contains(".monitor-page .plan-chain-graph")
+                .contains(".monitor-page .plan-node.planned rect")
+                .contains("background: var(--nx-surface-subtle)")
+                .contains("fill: #e8f5f1")
+                .doesNotContain("background: var(--nx-code-canvas)")
+                .doesNotContain("background: linear-gradient(180deg,rgba(10,25,37");
     }
 
     @Test
@@ -27,6 +47,10 @@ class MonitorWorkbenchPageTest {
                 .contains("/api/code/index/start")
                 .contains("/api/code/index/status")
                 .contains("codeIndex:{ state:'IDLE'")
+                .contains("refreshing:false")
+                .contains("scheduleRefresh()")
+                .contains("this.status.qdrant === 'UP' ? 5000 : 15000")
+                .doesNotContain("setInterval(this.refreshAll, 2500)")
                 .contains("codeIndex.state === 'RUNNING'")
                 .contains("正在建立索引…")
                 .contains("原有可用索引不会因本次失败被删除")
@@ -44,12 +68,17 @@ class MonitorWorkbenchPageTest {
                 .contains("class=\"mode-strip\"")
                 .contains("class=\"search-strip\"")
                 .contains("class=\"rail-tabs\"")
+                .contains("class=\"mobile-workbench-tabs\"")
+                .contains("sidebarTab === 'evidence'")
+                .contains("mobilePane:'graph'")
                 .contains("项目导览")
                 .contains("开始导览")
                 .contains("引用组件")
                 .contains("sidebarTab === 'files'")
                 .contains("loadSource(file)")
                 .contains("v-bind=\"{ viewBox: graphViewBox }\"")
+                .contains("'Content-Type':'application/json'")
+                .doesNotContain("'content-type':'application/json'")
                 .contains("/api/assistant/development-plan/stream")
                 .contains("response.body.getReader()")
                 .contains("new AbortController()")

@@ -1,22 +1,5 @@
 (function (global) {
-  function headers(json) {
-    const key = localStorage.getItem("nexusApiKey");
-    return Object.assign(json ? {"Content-Type": "application/json"} : {}, key ? {"X-API-Key": key} : {});
-  }
-  async function request(path, options) {
-    const response = await fetch(path, Object.assign({}, options, {
-      headers: Object.assign({}, headers(Boolean(options && options.body)), options && options.headers)
-    }));
-    if (!response.ok) {
-      let detail = response.statusText || "请求失败";
-      try {
-        const body = await response.json();
-        detail = body.detail || body.message || detail;
-      } catch (_) {}
-      throw new Error(detail);
-    }
-    return response.status === 204 ? null : response.json();
-  }
+  const request = global.NexusApi.request;
   const root = "/api/integrations/gitlab";
   const project = id => root + "/projects/" + encodeURIComponent(id);
   global.GitLabApi = {
