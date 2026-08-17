@@ -23,6 +23,15 @@ git diff --check
 
 New behavior and bug fixes require regression tests. Error-handling changes must test both the public safe response and the internal status classification where practical.
 
+For a release verification report, run `./tools/verify-report.sh`. The script must:
+
+- execute `clean verify` with Enforcer enabled so stale `target/` reports cannot inflate test counts;
+- derive the project version from parsed `pom.xml`, not a fixed line number;
+- aggregate `target/surefire-reports/TEST-*.xml`, not human-readable console or text summaries;
+- write matching versioned and `latest.json` reports containing commit, JDK, test totals, JaCoCo, jar, and exit status.
+
+Do not report a release test count from a non-clean workspace. In August 2026, stale Surefire files overstated the suite by six tests even though the build itself was green.
+
 ## Repository Hygiene
 
 Never commit:

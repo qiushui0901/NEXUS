@@ -1,0 +1,31 @@
+{
+  "id": "evidence-citations",
+  "name": "evidence-citations",
+  "title": "证据级引用与回答可信度校验",
+  "description": "建立生成结论到本次需求与代码检索证据的可追溯引用、白名单校验和覆盖度评估",
+  "status": "completed",
+  "dev_type": "feature",
+  "scope": "backend+frontend",
+  "package": "single-repo",
+  "priority": "P1",
+  "creator": "qiushui",
+  "assignee": "qiushui",
+  "createdAt": "2026-07-16",
+  "completedAt": "2026-08-17",
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": "07-16-rag-system-hardening",
+  "relatedFiles": [
+    "src/main/java/com/example/requirementrag/evidence/",
+    "src/main/java/com/example/requirementrag/service/DevelopmentPlanService.java",
+    "src/main/java/com/example/requirementrag/service/DevelopmentPlanStreamService.java",
+    "src/main/resources/static/monitor.html"
+  ],
+  "notes": "",
+  "meta": {}
+}
