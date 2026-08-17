@@ -863,3 +863,36 @@ Phase 2-6 全部落地：341 测试 verify 全绿；状态契约注册表 + CONT
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: 建立真实 RAG 企业评测基线
+
+**Date**: 2026-08-17
+**Task**: 建立真实 RAG 企业评测基线
+**Branch**: `main`
+
+### Summary
+
+完成 v2 企业评测数据契约、24 条冻结数据集、Recall/MRR/nDCG/无结果准确率/降级率/P95 质量门、真实评测脚本与中文执行文档；全量 Maven verify 442 项测试通过并归档子任务。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `521beaf` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

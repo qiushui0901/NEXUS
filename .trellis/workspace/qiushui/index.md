@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 19
-- **Last Active**: 2026-08-10
+- **Total Sessions**: 20
+- **Last Active**: 2026-08-17
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~865 | Active |
+| `journal-1.md` | ~898 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 20 | 2026-08-17 | 建立真实 RAG 企业评测基线 | `521beaf` | `main` |
 | 19 | 2026-08-10 | 0.8.5 交付项 2-6：状态契约、证据闭环、AST shadow、大文档覆盖、质量门收口 | - | `main` |
 | 18 | 2026-08-10 | 0.8.5 交付项 1：评测基线与统一检索管线（Phase 0-1） | - | `main` |
 | 17 | 2026-08-10 | Module 闭环最终验证与验收产物固化（0.8.4） | - | `main` |
