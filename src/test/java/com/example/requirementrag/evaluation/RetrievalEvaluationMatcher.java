@@ -90,6 +90,50 @@ public final class RetrievalEvaluationMatcher {
         return null;
     }
 
+    public static double documentNdcgAt(
+            List<RetrievalEvaluationCase.GoldDocument> goldDocuments,
+            List<ChunkRecord> candidates,
+            int cutoff) {
+        if (goldDocuments.isEmpty()) {
+            return 0;
+        }
+        boolean[] matched = new boolean[goldDocuments.size()];
+        double dcg = 0;
+        for (int candidateIndex = 0; candidateIndex < Math.min(cutoff, candidates.size()); candidateIndex++) {
+            ChunkRecord candidate = candidates.get(candidateIndex);
+            for (int goldIndex = 0; goldIndex < goldDocuments.size(); goldIndex++) {
+                if (!matched[goldIndex] && matchesStrictest(goldDocuments.get(goldIndex), candidate)) {
+                    matched[goldIndex] = true;
+                    dcg += discountedGain(candidateIndex + 1);
+                    break;
+                }
+            }
+        }
+        return normalizedDcg(dcg, goldDocuments.size(), cutoff);
+    }
+
+    public static double codeNdcgAt(
+            List<RetrievalEvaluationCase.GoldCode> goldCode,
+            List<CodeChunk> candidates,
+            int cutoff) {
+        if (goldCode.isEmpty()) {
+            return 0;
+        }
+        boolean[] matched = new boolean[goldCode.size()];
+        double dcg = 0;
+        for (int candidateIndex = 0; candidateIndex < Math.min(cutoff, candidates.size()); candidateIndex++) {
+            CodeChunk candidate = candidates.get(candidateIndex);
+            for (int goldIndex = 0; goldIndex < goldCode.size(); goldIndex++) {
+                if (!matched[goldIndex] && matchesCode(goldCode.get(goldIndex), candidate)) {
+                    matched[goldIndex] = true;
+                    dcg += discountedGain(candidateIndex + 1);
+                    break;
+                }
+            }
+        }
+        return normalizedDcg(dcg, goldCode.size(), cutoff);
+    }
+
     public static CaseResult evaluate(RetrievalEvaluationCase c, List<ChunkRecord> documents, List<CodeChunk> code,
                                       long documentLatencyMs, long codeLatencyMs, long totalLatencyMs) {
         return evaluate(c, documents, code, documentLatencyMs, codeLatencyMs, totalLatencyMs,
@@ -133,6 +177,8 @@ public final class RetrievalEvaluationMatcher {
         Integer documentRerankedRank = stageDocumentRank(c, safeTrace.documentRerankedCandidates());
         Integer codeRawRank = stageCodeRank(c, safeTrace.codeRawCandidates());
         Integer codeRankedRank = stageCodeRank(c, safeTrace.codeRankedCandidates());
+        double documentNdcgAt10 = documentNdcgAt(c.goldDocuments(), finalDocuments, DEFAULT_CUTOFF);
+        double codeNdcgAt10 = codeNdcgAt(c.goldCode(), finalCode, DEFAULT_CUTOFF);
 
         boolean expectsDocuments = !c.goldDocuments().isEmpty();
         boolean expectsDocumentSections = c.goldDocuments().stream()
@@ -141,6 +187,8 @@ public final class RetrievalEvaluationMatcher {
                 .anyMatch(gold -> gold.childOrder() != null);
         boolean expectsCode = !c.goldCode().isEmpty();
         boolean failed = documentError != null || codeError != null;
+        boolean degraded = !safeWarnings.isEmpty() || safeDiagnostics.stream()
+                .anyMatch(diagnostic -> diagnostic.status() == RagOutcomeStatus.DEGRADED);
         boolean success = !failed && (c.expectedOutcome() == RetrievalEvaluationCase.ExpectedOutcome.NO_RESULTS
                 ? finalDocuments.isEmpty() && finalCode.isEmpty()
                 : (!expectsDocuments || documentRank != null) && (!expectsCode || codeRank != null));
@@ -170,7 +218,7 @@ public final class RetrievalEvaluationMatcher {
                 documentOrderChanged(safeTrace.documentRawCandidates(), finalDocuments),
                 codeRawRank, codeRankedRank, codeRank, rankMovement(codeRawRank, codeRank),
                 codeOrderChanged(safeTrace.codeRawCandidates(), finalCode),
-                success,
+                documentNdcgAt10, codeNdcgAt10, degraded, success,
                 safeTrace.documentTraceAvailable(), safeTrace.codeTraceAvailable(),
                 safeTrace.documentRawCandidates().size(), safeTrace.documentRerankCandidates().size(),
                 safeTrace.documentRerankedCandidates().size(), finalDocuments.size(),
@@ -190,6 +238,41 @@ public final class RetrievalEvaluationMatcher {
     private static Integer stageDocumentRank(RetrievalEvaluationCase c, List<ChunkRecord> candidates) {
         return c.goldDocuments().isEmpty() ? null
                 : firstDocumentRank(c.goldDocuments(), candidates, candidates.size());
+    }
+
+    private static boolean matchesStrictest(
+            RetrievalEvaluationCase.GoldDocument gold, ChunkRecord candidate) {
+        if (!gold.filename().equals(candidate.filename())) {
+            return false;
+        }
+        if (gold.childOrder() != null) {
+            return gold.parentOrder() == candidate.parentOrder()
+                    && gold.childOrder() == candidate.childOrder()
+                    && containsAll(candidate.childText(), gold.mustContain());
+        }
+        if (gold.parentOrder() != null) {
+            return gold.parentOrder() == candidate.parentOrder();
+        }
+        return true;
+    }
+
+    private static boolean matchesCode(RetrievalEvaluationCase.GoldCode gold, CodeChunk candidate) {
+        return gold.projectId().equals(candidate.projectId())
+                && RetrievalEvaluationDataset.normalizePath(gold.filePath()).equals(
+                RetrievalEvaluationDataset.normalizePath(candidate.filePath()))
+                && gold.symbolName().equals(candidate.symbolName());
+    }
+
+    private static double normalizedDcg(double dcg, int relevantItems, int cutoff) {
+        double ideal = 0;
+        for (int rank = 1; rank <= Math.min(relevantItems, cutoff); rank++) {
+            ideal += discountedGain(rank);
+        }
+        return ideal == 0 ? 0 : dcg / ideal;
+    }
+
+    private static double discountedGain(int rank) {
+        return 1d / (Math.log(rank + 1d) / Math.log(2d));
     }
 
     private static Integer strictestDocumentRank(
@@ -472,6 +555,9 @@ public final class RetrievalEvaluationMatcher {
             Integer codeRank,
             String codeRankMovement,
             boolean codeOrderChanged,
+            double documentNdcgAt10,
+            double codeNdcgAt10,
+            boolean degraded,
             boolean success,
             boolean documentTraceAvailable,
             boolean codeTraceAvailable,

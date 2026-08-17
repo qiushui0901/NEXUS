@@ -1,1 +1,3 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "遵循后端质量门、测试和可重复验证规范"}
+{"file": "docs/retrieval-evaluation-v2.md", "reason": "复用现有可信文档召回评测口径与冻结语料约束"}
+{"file": "docs/shiguang-evaluation.md", "reason": "复用拾光真实项目评测环境、脱敏边界与执行流程"}

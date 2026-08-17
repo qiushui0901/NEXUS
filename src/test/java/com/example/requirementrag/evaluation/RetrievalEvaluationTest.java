@@ -31,6 +31,10 @@ class RetrievalEvaluationTest {
     private static final String SHIGUANG_DATASET = "evaluation/retrieval-eval-shiguang-v1.jsonl";
     private static final String SHIGUANG_SHA256 =
             "ac9fbc906ed28a593597e6fa03fbe1dcd4091cc7d610190d0f5d0dbbae6494c8";
+    private static final String ENTERPRISE_DATASET = "evaluation/retrieval-eval-enterprise-v2.jsonl";
+    private static final String ENTERPRISE_COMMIT = "d29f32589c5bd7c190a23eb3a84f27f0069f312f";
+    private static final String ENTERPRISE_SHA256 =
+            "cb0bc61851faf1c3b2a694a6d25759f8044d727fbac4e1bfab328507aa9aa4f4";
 
     @Test
     void frozenShiguangGoldenSetHasFormalSizeProfilesCategoriesAndStableLabels() throws Exception {
@@ -140,6 +144,67 @@ class RetrievalEvaluationTest {
     }
 
     @Test
+    void preservesV1CompatibilityAndRejectsUnsupportedSchemaVersions() {
+        RetrievalEvaluationCase legacy = RetrievalEvaluationDataset.parse(
+                new StringReader(validCase("legacy-v1"))).getFirst();
+
+        assertNull(legacy.schemaVersion());
+        assertNull(legacy.queryType());
+        assertNull(legacy.sourceCommit());
+        assertNull(legacy.review());
+        assertNull(legacy.goldDocuments().getFirst().evidenceId());
+
+        assertInvalid(validCase("unsupported-schema")
+                        .replace("\"expectedOutcome\"", "\"schemaVersion\":3,\"expectedOutcome\""),
+                "line 1", "unsupported schemaVersion");
+    }
+
+    @Test
+    void v2RequiresQueryTypeCommitApprovedReviewAndIsoTimestamp() {
+        String valid = validV2Case("v2-contract");
+
+        assertInvalid(valid.replace("\"queryType\":\"BUSINESS_SEMANTIC\",", ""),
+                "schemaVersion 2 requires queryType");
+        assertInvalid(valid.replace(ENTERPRISE_COMMIT, "ABC"),
+                "40-character lowercase sourceCommit");
+        assertInvalid(valid.replace("\"status\":\"APPROVED\"", "\"status\":\"REJECTED\""),
+                "requires APPROVED review");
+        assertInvalid(valid.replace("\"reviewer\":\"qa-team\"", "\"reviewer\":\" \""),
+                "non-blank reviewer");
+        assertInvalid(valid.replace("2026-08-17T10:00:00+08:00", "not-a-timestamp"),
+                "ISO-8601 timestamp");
+    }
+
+    @Test
+    void v2RequiresExactUniqueEvidenceIds() {
+        assertInvalid(validV2Case("bad-evidence").replace(
+                        "requirement:project:1:5.1/example.html:*:*",
+                        "requirement:project:1:wrong.html:*:*"),
+                "evidenceId must equal");
+
+        String duplicateGold = "{\"filename\":\"5.1/example.html\","
+                + "\"mustContain\":[\"证据\"],"
+                + "\"evidenceId\":\"requirement:project:1:5.1/example.html:*:*\"}";
+        String duplicate = validV2Case("duplicate-evidence").replace(
+                "\"goldDocuments\":[" + duplicateGold + "]",
+                "\"goldDocuments\":[" + duplicateGold + "," + duplicateGold + "]");
+        assertInvalid(duplicate, "duplicate evidenceId");
+    }
+
+    @Test
+    void multiGoldNdcgUsesTheActualRelevantItemCount() {
+        List<RetrievalEvaluationCase.GoldDocument> gold = List.of(
+                new RetrievalEvaluationCase.GoldDocument("one.md", null, List.of()),
+                new RetrievalEvaluationCase.GoldDocument("two.md", null, List.of()));
+
+        double ndcg = RetrievalEvaluationMatcher.documentNdcgAt(
+                gold, List.of(chunk("one.md", 0, 0, "", "")), 10);
+
+        double ideal = 1.0 + 1.0 / (Math.log(3.0) / Math.log(2.0));
+        assertEquals(1.0 / ideal, ndcg, 0.000001);
+    }
+
+    @Test
     void legacyDocumentGoldUsesFileLevelMatchingWithoutContentAccumulation() {
         RetrievalEvaluationCase.GoldDocument gold = new RetrievalEvaluationCase.GoldDocument(
                 "5.1/福利-成长基金.html", null,
@@ -237,6 +302,16 @@ class RetrievalEvaluationTest {
         assertEquals(Path.of("target", "retrieval-evaluation", "0.8.2-document-v2"),
                 documentV2.outputDirectory());
         assertEquals("evaluation/retrieval-eval-document-v2.jsonl", documentV2.datasetResource());
+
+        RetrievalEvaluationSettings enterprise = RetrievalEvaluationSettings.from(Map.of(
+                RetrievalEvaluationSettings.MODE_ENV, "0.8.6-enterprise",
+                RetrievalEvaluationSettings.DATASET_ENV, ENTERPRISE_DATASET,
+                RetrievalEvaluationSettings.BASELINE_ENV,
+                "evaluation/retrieval-threshold-enterprise-v0.8.6.json"));
+        assertEquals(RetrievalEvaluationSettings.EvaluationMode.ENTERPRISE_0_8_6, enterprise.mode());
+        assertEquals(Path.of("target", "retrieval-evaluation", "0.8.6-enterprise"),
+                enterprise.outputDirectory());
+        assertEquals(ENTERPRISE_DATASET, enterprise.datasetResource());
     }
 
     @Test
@@ -353,6 +428,50 @@ class RetrievalEvaluationTest {
         assertTrue(report.markdown().contains("|File Recall@10|1.000|1/1|"));
         assertTrue(report.markdown().contains("|Child Recall@10|1.000|1/1|"));
         assertTrue(report.markdown().contains("|Code Recall@10|N/A|0/0|"));
+    }
+
+    @Test
+    void uniqueCaseDegradationUsesOneDeterministicExecutionPerCase() {
+        RetrievalEvaluationCase evaluationCase = documentCase("degraded-once", "gold.md", "gold");
+        RetrievalEvaluationMatcher.CaseResult first = RetrievalEvaluationMatcher.evaluate(
+                evaluationCase, List.of(chunk("gold.md", 0, 0, "", "gold")), List.of(), 1, 0, 1,
+                null, null, 1,
+                List.of(new RagWarning("retrieval", "DEPENDENCY_DEGRADED", "degraded", 1)),
+                List.of());
+        RetrievalEvaluationMatcher.CaseResult repeated = RetrievalEvaluationMatcher.evaluate(
+                evaluationCase, List.of(chunk("gold.md", 0, 0, "", "gold")), List.of(), 1, 0, 1,
+                null, null, 2, List.of(), List.of());
+
+        RetrievalEvaluationReport report = RetrievalEvaluationReport.create(
+                "dataset.jsonl", "0.8.6-enterprise", 0, 2, List.of(first, repeated));
+
+        assertEquals(2, report.summary().totalCases());
+        assertEquals(1, report.uniqueCaseSummary().totalCases());
+        assertEquals(1, report.uniqueCaseSummary().degradedCases());
+        assertEquals(1.0, report.uniqueCaseSummary().degradationRate());
+    }
+
+    @Test
+    void frozenEnterpriseDatasetHasAllQueryTypesApprovedProvenanceAndStableFingerprint() throws Exception {
+        List<RetrievalEvaluationCase> cases = RetrievalEvaluationDataset.loadResource(ENTERPRISE_DATASET);
+
+        assertEquals(24, cases.size());
+        assertEquals(24, cases.stream().map(RetrievalEvaluationCase::query).distinct().count());
+        assertEquals(Set.of(RetrievalEvaluationCase.QueryType.values()),
+                cases.stream().map(RetrievalEvaluationCase::queryType).collect(Collectors.toSet()));
+        assertTrue(cases.stream().allMatch(value -> Integer.valueOf(2).equals(value.schemaVersion())));
+        assertTrue(cases.stream().allMatch(value -> ENTERPRISE_COMMIT.equals(value.sourceCommit())));
+        assertTrue(cases.stream().allMatch(value -> value.review() != null
+                && value.review().status() == RetrievalEvaluationCase.ReviewStatus.APPROVED));
+        assertTrue(cases.stream().flatMap(value -> value.goldDocuments().stream())
+                .allMatch(gold -> gold.evidenceId() != null && gold.evidenceId().startsWith("requirement:")));
+        assertTrue(cases.stream().flatMap(value -> value.goldCode().stream())
+                .allMatch(gold -> gold.evidenceId() != null && gold.evidenceId().startsWith("code:")));
+
+        try (InputStream input = getClass().getClassLoader().getResourceAsStream(ENTERPRISE_DATASET)) {
+            assertTrue(input != null);
+            assertEquals(ENTERPRISE_SHA256, sha256(input.readAllBytes()));
+        }
     }
 
     @Test
@@ -486,6 +605,18 @@ class RetrievalEvaluationTest {
                 "\"projectId\":\"project\",\"documentId\":\"doc\",\"version\":\"1\"," +
                 "\"expectedOutcome\":\"HIT\",\"goldDocuments\":[{\"filename\":\"5.1/example.html\"," +
                 "\"mustContain\":[\"证据\"]}],\"goldCode\":[],\"tags\":[],\"notes\":\"ok\"}";
+    }
+
+    private static String validV2Case(String id) {
+        return "{\"id\":\"" + id + "\",\"query\":\"真实问题\",\"profile\":\"DEVELOPMENT_PLAN\","
+                + "\"projectId\":\"project\",\"documentId\":\"doc\",\"version\":\"1\","
+                + "\"expectedOutcome\":\"HIT\",\"goldDocuments\":[{\"filename\":\"5.1/example.html\","
+                + "\"mustContain\":[\"证据\"],"
+                + "\"evidenceId\":\"requirement:project:1:5.1/example.html:*:*\"}],"
+                + "\"goldCode\":[],\"tags\":[],\"notes\":\"ok\",\"schemaVersion\":2,"
+                + "\"queryType\":\"BUSINESS_SEMANTIC\",\"sourceCommit\":\"" + ENTERPRISE_COMMIT + "\","
+                + "\"review\":{\"status\":\"APPROVED\",\"reviewer\":\"qa-team\","
+                + "\"reviewedAt\":\"2026-08-17T10:00:00+08:00\"}}";
     }
 
     private static ChunkRecord chunk(String filename, int parentOrder, int childOrder,

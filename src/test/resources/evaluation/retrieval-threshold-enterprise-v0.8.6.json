@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "dataset": "evaluation/retrieval-eval-enterprise-v2.jsonl",
+  "minimum": {
+    "documentRecallAt10": 0.85,
+    "codeRecallAt10": 0.75,
+    "mrrAt10": 0.70,
+    "ndcgAt10": 0.75,
+    "noResultAccuracy": 0.90
+  },
+  "maximum": {
+    "degradationRate": 0.05,
+    "p95LatencyMs": 5000
+  }
+}

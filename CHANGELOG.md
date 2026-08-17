@@ -2,6 +2,7 @@
 
 ### Added
 
+- 新增真实 RAG 企业评测基线：版本化 JSONL v2 数据契约、24 条拾光冻结用例、稳定 evidence ID、人工审核与 Git commit provenance、nDCG@10/唯一用例降级率指标、版本化质量阈值和可执行发布门禁；提供 `tools/run-real-rag-evaluation.sh` 与简体中文执行指南，默认 CI 仅运行无外部依赖的契约和指标测试。
 - 新增 `docs/gitlab-project-integration-implementation-plan.md`，定义 GitLab 项目发现、受控仓库同步、异步索引、Webhook 幂等、权限与迁移方案。
 - 新增 NEXUS 企业化收口 Trellis 父子任务，拆分发布验证、真实 RAG 评测、GitLab 自动接入和多实例共享状态四条可独立验收的工作流。
 

@@ -241,6 +241,39 @@ VERSION_MANIFEST_ROOT_PATH=data/version-manifests
 REQUIREMENT_SNAPSHOT_ROOT_PATH=data/requirement-snapshots
 ```
 
+## Scenario: Enterprise real-RAG release evaluation
+
+### 1. Scope / Trigger
+
+- Trigger: changing retrieval evaluation datasets, matching, metrics, reports, thresholds, or the live
+  `RetrievalEvaluationIT` release gate.
+- The default CI suite validates contracts and metric logic without starting Qdrant, Embedding, BGE, or
+  a real repository. Live evaluation is opt-in and runs only when `RUN_RETRIEVAL_EVAL=true`.
+
+### 2. Dataset and provenance contracts
+
+- Enterprise JSONL uses `schemaVersion=2`. Every case has a supported `queryType`, a 40-character
+  lowercase Git `sourceCommit`, and an `APPROVED` review with non-blank reviewer and timestamp.
+- Every Gold label has a unique stable evidence ID. Requirement IDs use
+  `requirement:<project>:<version>:<filename>:<parent|*>:<child|*>`; code IDs use
+  `code:<project>:<40-char-commit>:<repository-relative-path>:<symbol>`.
+- Evidence IDs must not use absolute paths, transient vector point IDs, or runtime-generated values.
+- The frozen dataset SHA-256 is asserted by a unit test. Any content change requires human review and an
+  explicit SHA update in the same change.
+
+### 3. Metrics and quality gate
+
+- Recall, MRR, nDCG, no-result accuracy, and degradation rate use one observation per unique case so
+  repetitions do not inflate quality denominators. Repetitions remain part of latency statistics.
+- Multi-Gold nDCG matches each Gold at most once and evaluates the strictest available document identity.
+- The live quality gate reads a versioned threshold resource, evaluates all configured minimum and maximum
+  bounds, and reports all violations in one failure.
+- Any infrastructure failure is a hard gate failure independent of retrieval quality. The report must be
+  written before the gate throws so operators can distinguish dependency/configuration failure from quality
+  regression.
+- Live evaluation must bind a frozen dataset, repository commit, requirement corpus, index/model versions,
+  and threshold file. It must not silently build or mutate production indexes.
+
 ## Scenario: 0.8 bounded parallel retrieval and caches
 
 ### 1. Scope / Trigger

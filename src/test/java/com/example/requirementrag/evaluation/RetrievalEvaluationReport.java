@@ -154,14 +154,22 @@ public record RetrievalEvaluationReport(
                 summary.sectionHits(), summary.sectionCases());
         optionalMetric(table, "Child Recall@10", summary.childRecallAt10(),
                 summary.childHits(), summary.childCases());
+        optionalMetric(table, "Document Recall@10", summary.documentRecallAt10(),
+                summary.documentHits(), summary.documentCases());
         optionalMetric(table, "Code Recall@10", summary.codeRecallAt10(),
                 summary.codeHits(), summary.codeCases());
         table.append("|MRR@10|")
                 .append(optionalRate(summary.mrrAt10(), summary.reciprocalRankItems()))
                 .append('|').append(String.format(Locale.ROOT, "%.3f", summary.reciprocalRankSum()))
                 .append('/').append(summary.reciprocalRankItems()).append("|\n");
+        table.append("|nDCG@10|")
+                .append(optionalRate(summary.ndcgAt10(), summary.ndcgItems()))
+                .append('|').append(String.format(Locale.ROOT, "%.3f", summary.ndcgSum()))
+                .append('/').append(summary.ndcgItems()).append("|\n");
         optionalMetric(table, "No-result accuracy", summary.noResultAccuracy(),
                 summary.noResultHits(), summary.noResultCases());
+        optionalMetric(table, "Degradation rate", summary.degradationRate(),
+                summary.degradedCases(), summary.totalCases());
         table.append("\nUnique cases ").append(summary.totalCases())
                 .append("; failed ").append(summary.failedCases()).append(".\n\n");
         appendDocumentRecallCutoffs(table, summary);
@@ -284,26 +292,37 @@ public record RetrievalEvaluationReport(
     private static UniqueCaseSummary summarizeUniqueCases(
             List<RetrievalEvaluationMatcher.CaseResult> cases) {
         int failedCases = 0;
+        int documentCases = 0;
+        int documentHits = 0;
         int codeCases = 0;
         int codeHits = 0;
         int reciprocalRankItems = 0;
         double reciprocalRankSum = 0;
         int noResultCases = 0;
         int noResultHits = 0;
+        int degradedCases = 0;
+        int ndcgItems = 0;
+        double ndcgSum = 0;
 
         for (RetrievalEvaluationMatcher.CaseResult result : cases) {
             if (!result.success()) {
                 failedCases++;
             }
             if (result.expectsDocuments()) {
+                documentCases++;
                 reciprocalRankItems++;
+                ndcgItems++;
+                ndcgSum += result.documentNdcgAt10();
                 if (result.documentRank() != null) {
+                    documentHits++;
                     reciprocalRankSum += 1d / result.documentRank();
                 }
             }
             if (result.expectsCode()) {
                 codeCases++;
                 reciprocalRankItems++;
+                ndcgItems++;
+                ndcgSum += result.codeNdcgAt10();
                 if (result.codeRank() != null) {
                     codeHits++;
                     reciprocalRankSum += 1d / result.codeRank();
@@ -314,6 +333,9 @@ public record RetrievalEvaluationReport(
                 if (result.success()) {
                     noResultHits++;
                 }
+            }
+            if (result.degraded()) {
+                degradedCases++;
             }
         }
         RecallByCutoff fileRecall = recallByCutoff(cases,
@@ -329,12 +351,15 @@ public record RetrievalEvaluationReport(
                 || masksLowerCutoff(sectionRecall) || masksLowerCutoff(childRecall);
         return new UniqueCaseSummary(
                 cases.size(), failedCases,
+                documentCases, documentHits, rate(documentHits, documentCases),
                 fileRecall.cases(), fileRecall.hitsAt10(), fileRecall.recallAt10(),
                 sectionRecall.cases(), sectionRecall.hitsAt10(), sectionRecall.recallAt10(),
                 childRecall.cases(), childRecall.hitsAt10(), childRecall.recallAt10(),
                 codeCases, codeHits, rate(codeHits, codeCases),
                 reciprocalRankItems, reciprocalRankSum, rate(reciprocalRankSum, reciprocalRankItems),
+                ndcgItems, ndcgSum, rate(ndcgSum, ndcgItems),
                 noResultCases, noResultHits, rate(noResultHits, noResultCases),
+                degradedCases, rate(degradedCases, cases.size()),
                 fileRecall, sectionRecall, childRecall, top10MasksLowerCutoff);
     }
 
@@ -450,6 +475,9 @@ public record RetrievalEvaluationReport(
     public record UniqueCaseSummary(
             int totalCases,
             int failedCases,
+            int documentCases,
+            int documentHits,
+            double documentRecallAt10,
             int fileCases,
             int fileHits,
             double fileRecallAt10,
@@ -465,9 +493,14 @@ public record RetrievalEvaluationReport(
             int reciprocalRankItems,
             double reciprocalRankSum,
             double mrrAt10,
+            int ndcgItems,
+            double ndcgSum,
+            double ndcgAt10,
             int noResultCases,
             int noResultHits,
             double noResultAccuracy,
+            int degradedCases,
+            double degradationRate,
             RecallByCutoff fileRecallByCutoff,
             RecallByCutoff sectionRecallByCutoff,
             RecallByCutoff childRecallByCutoff,

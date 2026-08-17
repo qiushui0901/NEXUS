@@ -136,6 +136,11 @@ class RetrievalEvaluationIT {
                 && result.failureAttributions().isEmpty())) {
             throw new AssertionError("Every failed retrieval case must have a stage-level failure attribution");
         }
+        SETTINGS.baselineResource().ifPresent(resource -> {
+            RetrievalEvaluationQualityGate.Thresholds thresholds =
+                    RetrievalEvaluationQualityGate.loadResource(resource, objectMapper);
+            RetrievalEvaluationQualityGate.evaluate(report, thresholds).requirePassed();
+        });
     }
 
     private EvaluationRetrieval retrieve(RetrievalEvaluationCase evaluationCase, boolean collectTrace) {
