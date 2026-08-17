@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
+- **Total Sessions**: 22
 - **Last Active**: 2026-08-17
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~931 | Active |
+| `journal-1.md` | ~964 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-08-17 | RAGFlow 知识库与 GitLab 工作台 Review 收口 | `caae1e3` | `main` |
 | 21 | 2026-08-17 | GitLab 项目自动接入 | `b842338` | `main` |
 | 20 | 2026-08-17 | 建立真实 RAG 企业评测基线 | `521beaf` | `main` |
 | 19 | 2026-08-10 | 0.8.5 交付项 2-6：状态契约、证据闭环、AST shadow、大文档覆盖、质量门收口 | - | `main` |

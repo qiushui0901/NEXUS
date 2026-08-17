@@ -929,3 +929,36 @@ Phase 2-6 全部落地：341 测试 verify 全绿；状态契约注册表 + CONT
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: RAGFlow 知识库与 GitLab 工作台 Review 收口
+
+**Date**: 2026-08-17
+**Task**: RAGFlow 知识库与 GitLab 工作台 Review 收口
+**Branch**: `main`
+
+### Summary
+
+完成知识管理与 GitLab 可视化工作台，修复发布快照旧状态残留、停用项目同步任务未终结和 Qdrant 批次排除统计错误；494 项测试及覆盖率门禁通过。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `caae1e3` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
