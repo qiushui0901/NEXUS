@@ -896,3 +896,36 @@ Phase 2-6 全部落地：341 测试 verify 全绿；状态契约注册表 + CONT
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: GitLab 项目自动接入
+
+**Date**: 2026-08-17
+**Task**: GitLab 项目自动接入
+**Branch**: `main`
+
+### Summary
+
+完成 GitLab 私有项目自动接入、同步、Webhook 和增量索引能力
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b842338` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
