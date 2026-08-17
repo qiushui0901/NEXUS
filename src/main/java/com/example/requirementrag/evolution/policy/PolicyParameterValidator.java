@@ -11,22 +11,21 @@ public final class PolicyParameterValidator {
             "selector.code-intent-strategy"
     );
 
-    private static final Set<String> RANKING_WEIGHTS = Set.of(
-            "weights.dense",
-            "weights.sparse",
-            "weights.descDense"
-    );
+    /**
+     * 当前真正进入检索链路的参数白名单。
+     * <p>
+     * 未接入执行的参数（weights.*、retrieval.topK.*、rerank.bge-enabled 等）不允许注册，
+     * 避免“候选策略看起来不同、实际执行相同”的无效实验。
+     * </p>
+     */
+    private static final Set<String> RANKING_WEIGHTS = Set.of();
 
     private static final Set<String> THRESHOLDS = Set.of(
             "orchestrator.max-hops",
-            "reflector.min-requirement-hits",
-            "retrieval.topK.requirements",
-            "retrieval.topK.code"
+            "reflector.min-requirement-hits"
     );
 
-    private static final Set<String> FEATURE_FLAGS = Set.of(
-            "rerank.bge-enabled"
-    );
+    private static final Set<String> FEATURE_FLAGS = Set.of();
 
     private PolicyParameterValidator() {
     }

@@ -46,6 +46,10 @@ public class PolicyLifecycleService {
                                        java.util.Map<String, Integer> thresholds,
                                        java.util.Map<String, Boolean> featureFlags,
                                        String parentVersion) {
+        if (registry.find(policyId, version) != null) {
+            throw new IllegalArgumentException("策略版本已存在，不能重复创建: "
+                    + policyId + " " + version);
+        }
         RetrievalPolicy policy = new RetrievalPolicy(policyId, version, PolicyStatus.DRAFT,
                 selectorRules, rankingWeights, thresholds, featureFlags, parentVersion, null,
                 RetrievalPolicy.checksum(policyId, version, selectorRules, rankingWeights,
@@ -78,6 +82,22 @@ public class PolicyLifecycleService {
         if (!policyId.equals(manifest.candidatePolicyId())
                 || !version.equals(manifest.candidatePolicyVersion())) {
             throw new IllegalArgumentException("实验报告与候选策略不匹配");
+        }
+        if (manifest.baselinePolicyId() == null || manifest.baselinePolicyVersion() == null
+                || (manifest.baselinePolicyId().equals(policyId)
+                    && manifest.baselinePolicyVersion().equals(version))) {
+            throw new IllegalArgumentException("实验报告不能使用候选策略自身作为基线");
+        }
+        RetrievalPolicy active = registry.active();
+        if (active == null
+                || !active.policyId().equals(manifest.baselinePolicyId())
+                || !active.version().equals(manifest.baselinePolicyVersion())) {
+            throw new IllegalArgumentException("实验基线必须是当前 ACTIVE 策略");
+        }
+        if (isBlankOrUnknown(manifest.datasetVersion())
+                || isBlankOrUnknown(manifest.indexVersion())
+                || isBlankOrUnknown(manifest.modelVersion())) {
+            throw new IllegalArgumentException("实验报告必须绑定明确的数据集、索引和模型版本");
         }
         if (!promotionGate.passes(report)) {
             throw new IllegalArgumentException("策略未通过 Promotion Gate，不能批准");
@@ -112,6 +132,10 @@ public class PolicyLifecycleService {
                 current.checksum(), current.createdAt());
         registry.save(updated);
         return updated;
+    }
+
+    private static boolean isBlankOrUnknown(String value) {
+        return value == null || value.isBlank() || "unknown".equals(value);
     }
 
     private RetrievalPolicy require(String policyId, String version) {

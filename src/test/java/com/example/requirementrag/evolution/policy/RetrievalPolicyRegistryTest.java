@@ -49,9 +49,14 @@ class RetrievalPolicyRegistryTest {
         PolicyLifecycleService lifecycle = new PolicyLifecycleService(registry, new PolicyPromotionGate(), runner);
 
         lifecycle.createDraft("policy-a", "1", Map.of("selector.code-intent-strategy", "code"),
-                Map.of("weights.dense", 1.0), Map.of("orchestrator.max-hops", 2),
-                Map.of("rerank.bge-enabled", true), null);
+                Map.of(), Map.of("orchestrator.max-hops", 2), Map.of(), null);
         lifecycle.createDraft("baseline", "1", Map.of(), Map.of(), Map.of(), Map.of(), null);
+        RetrievalPolicy baselineDraft = registry.find("baseline", "1");
+        registry.save(new RetrievalPolicy(baselineDraft.policyId(), baselineDraft.version(),
+                PolicyStatus.APPROVED, baselineDraft.selectorRules(), baselineDraft.rankingWeights(),
+                baselineDraft.thresholds(), baselineDraft.featureFlags(), baselineDraft.parentVersion(),
+                null, baselineDraft.checksum(), baselineDraft.createdAt()));
+        registry.activate("baseline", "1");
         lifecycle.submitEvaluating("policy-a", "1");
 
         EvaluationDataset dataset = new EvaluationDataset("ds-1",
@@ -95,6 +100,52 @@ class RetrievalPolicyRegistryTest {
     }
 
     @Test
+    void rejectsApprovalWhenBaselineIsNotActive() {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        RetrievalPolicyRegistry registry = new RetrievalPolicyRegistry(mapper, properties());
+        RetrievalPolicyExecutor executor = (evalCase, policy, seed, repetition) ->
+                new RetrievalPolicyExecutor.ExecutionResult(List.of(), "SUCCESS");
+        EvolutionExperimentRunner runner = new EvolutionExperimentRunner(executor, mapper, properties());
+        PolicyLifecycleService lifecycle = new PolicyLifecycleService(registry, new PolicyPromotionGate(), runner);
+
+        lifecycle.createDraft("cand", "1", Map.of(), Map.of(), Map.of(), Map.of(), null);
+        lifecycle.createDraft("baseline", "1", Map.of(), Map.of(), Map.of(), Map.of(), null);
+        lifecycle.submitEvaluating("cand", "1");
+
+        EvaluationDataset dataset = new EvaluationDataset("ds-1",
+                List.of(new EvaluationCase("c1", "query", null, null, List.of())),
+                Instant.now(), null);
+        RetrievalPolicy baseline = registry.find("baseline", "1");
+        RetrievalPolicy candidate = registry.find("cand", "1");
+        ExperimentReport report = runner.run(dataset, baseline, candidate, "idx", "model", 1, 1);
+
+        assertThatThrownBy(() -> lifecycle.approve("cand", "1", report.manifest().experimentId()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("当前 ACTIVE");
+    }
+
+    @Test
+    void rejectsUnwiredPolicyParameters() {
+        RetrievalPolicyRegistry registry = new RetrievalPolicyRegistry(new ObjectMapper().findAndRegisterModules(), properties());
+        PolicyLifecycleService lifecycle = new PolicyLifecycleService(registry);
+
+        assertThatThrownBy(() -> lifecycle.createDraft("weights", "1", Map.of(),
+                Map.of("weights.dense", 1.0), Map.of(), Map.of(), null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Unsupported rankingWeights key");
+
+        assertThatThrownBy(() -> lifecycle.createDraft("topk", "1", Map.of(), Map.of(),
+                Map.of("retrieval.topK.code", 10), Map.of(), null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Unsupported thresholds key");
+
+        assertThatThrownBy(() -> lifecycle.createDraft("bge", "1", Map.of(), Map.of(), Map.of(),
+                Map.of("rerank.bge-enabled", true), null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Unsupported featureFlags key");
+    }
+
+    @Test
     void rejectsOverwritingVersionWithDifferentContent() {
         RetrievalPolicyRegistry registry = new RetrievalPolicyRegistry(new ObjectMapper().findAndRegisterModules(), properties());
         PolicyLifecycleService lifecycle = new PolicyLifecycleService(registry);
@@ -106,6 +157,6 @@ class RetrievalPolicyRegistryTest {
                 Map.of("selector.code-intent-strategy", "requirements"),
                 Map.of(), Map.of(), Map.of(), null))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("不可覆盖");
+                .hasMessageContaining("已存在");
     }
 }

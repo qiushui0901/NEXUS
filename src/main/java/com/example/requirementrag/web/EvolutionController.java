@@ -143,14 +143,33 @@ public class EvolutionController {
         if (dataset == null) {
             throw new IllegalArgumentException("数据集版本不存在: " + request.datasetVersion());
         }
+        RetrievalPolicy active = policyRegistry.active();
+        if (active == null) {
+            throw new IllegalArgumentException("当前没有 ACTIVE 基线策略，不能运行实验");
+        }
         RetrievalPolicy baseline = policyRegistry.find(request.baselinePolicyId(), request.baselinePolicyVersion());
         RetrievalPolicy candidate = policyRegistry.find(request.candidatePolicyId(), request.candidatePolicyVersion());
         if (baseline == null || candidate == null) {
             throw new IllegalArgumentException("基线或候选策略不存在");
         }
+        if (!active.policyId().equals(baseline.policyId())
+                || !active.version().equals(baseline.version())) {
+            throw new IllegalArgumentException("实验基线必须是当前 ACTIVE 策略");
+        }
+        if (baseline.policyId().equals(candidate.policyId())
+                && baseline.version().equals(candidate.version())) {
+            throw new IllegalArgumentException("候选策略不能与基线策略相同");
+        }
+        if (request.indexVersion() == null || request.indexVersion().isBlank()
+                || "unknown".equals(request.indexVersion())) {
+            throw new IllegalArgumentException("实验必须绑定明确的 indexVersion");
+        }
+        if (request.modelVersion() == null || request.modelVersion().isBlank()
+                || "unknown".equals(request.modelVersion())) {
+            throw new IllegalArgumentException("实验必须绑定明确的 modelVersion");
+        }
         return experimentRunner.run(dataset, baseline, candidate,
-                request.indexVersion() == null ? "unknown" : request.indexVersion(),
-                request.modelVersion() == null ? "unknown" : request.modelVersion(),
+                request.indexVersion(), request.modelVersion(),
                 request.randomSeed() == null ? 0 : request.randomSeed(),
                 request.repetitions() == null ? 1 : request.repetitions());
     }

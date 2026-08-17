@@ -24,7 +24,7 @@ public class RequirementsOnlyStrategy implements RetrievalStrategy {
     public StrategyResult execute(RetrievalRequest request) {
         RetrievalRequest reviewOnly = new RetrievalRequest(request.query(),
                 RetrievalProfile.REQUIREMENT_REVIEW, request.projectId(),
-                request.documentId(), request.version(), request.limit());
+                request.documentId(), request.version(), request.limit(), request.randomSeed());
         RagOutcome<RetrievalBundle> outcome = pipeline.execute(reviewOnly);
         return new StrategyResult("requirements", outcome.data(), outcome.status(),
                 outcome.warnings(), outcome.stageDiagnostics());

@@ -87,37 +87,45 @@ public class EvolutionExperimentRunner {
     }
 
     private ExperimentReport.MetricSummary summarize(List<ExperimentReport.CaseResult> cases) {
-        int n = cases.size();
+        // 质量指标每个 case 只取第一次执行（#1），repetition 只用于延迟与稳定性统计。
+        List<ExperimentReport.CaseResult> qualityCases = cases.stream()
+                .filter(result -> result.caseId().endsWith("#1"))
+                .toList();
+        int qualityN = qualityCases.isEmpty() ? cases.size() : qualityCases.size();
         double recall1 = 0;
         double recall5 = 0;
         double recall10 = 0;
         double mrr = 0;
         double ndcg = 0;
-        List<Long> latencies = new ArrayList<>();
-        int failed = 0;
-        int degraded = 0;
-        for (ExperimentReport.CaseResult result : cases) {
+        for (ExperimentReport.CaseResult result : qualityCases) {
             recall1 += result.recallAt1() ? 1 : 0;
             recall5 += result.recallAt5() ? 1 : 0;
             recall10 += result.recallAt10() ? 1 : 0;
             mrr += RetrievalMetrics.mrrAt10(result.predictedIds(), result.relevantIds());
             ndcg += RetrievalMetrics.ndcgAt10(result.predictedIds(), result.relevantIds());
+        }
+        int totalN = cases.size();
+        List<Long> latencies = new ArrayList<>();
+        int failed = 0;
+        int degraded = 0;
+        for (ExperimentReport.CaseResult result : cases) {
             latencies.add(result.latencyMs());
             if ("FAILED".equals(result.status())) failed++;
             if ("DEGRADED".equals(result.status())) degraded++;
         }
-        double divisor = n == 0 ? 1 : n;
+        double qualityDivisor = qualityN == 0 ? 1 : qualityN;
+        double stabilityDivisor = totalN == 0 ? 1 : totalN;
         return new ExperimentReport.MetricSummary(
-                recall1 / divisor,
-                recall5 / divisor,
-                recall10 / divisor,
-                mrr / divisor,
-                ndcg / divisor,
+                recall1 / qualityDivisor,
+                recall5 / qualityDivisor,
+                recall10 / qualityDivisor,
+                mrr / qualityDivisor,
+                ndcg / qualityDivisor,
                 RetrievalMetrics.percentile(latencies, 50),
                 RetrievalMetrics.percentile(latencies, 95),
                 RetrievalMetrics.percentile(latencies, 99),
-                failed / divisor,
-                degraded / divisor,
+                failed / stabilityDivisor,
+                degraded / stabilityDivisor,
                 0.0
         );
     }

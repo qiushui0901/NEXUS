@@ -4,7 +4,7 @@
 
 NEXUS 把分散的产品文档、Git 仓库与测试信号，整理成按**项目 + 版本**组织的知识服务。团队浏览同一套 Wiki；编码 Agent 通过 **MCP** 调用同一批事实，拿到带稳定编号的引用，而不是无法核对的模型空话。
 
-> 当前版本：`0.8.5-SNAPSHOT`  
+> 当前版本：`0.8.6`
 > 技术栈：Java 21 · Spring Boot 4.1 · Spring AI 2.0· Qdrant · Tree-sitter
 
 ---

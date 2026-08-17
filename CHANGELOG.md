@@ -20,7 +20,7 @@
 - 新增 `WikiStalenessService`：基于 Git commit（`git rev-parse HEAD` + 文件级 diff 命中页面代码入口）与需求内容哈希对比检测过期页面，只读计算、不覆盖已发布内容；`GitDiffService` 新增 `latestCommit`；对外暴露 `GET /api/wiki/staleness`。
 - 新增 `WikiStalenessServiceTest`（代码/需求/新鲜三场景）与管线合并、概览/模块页生成测试。
 
-## 0.8.5-SNAPSHOT — Planned
+## 0.8.6 — 2026-08-16
 
 ### Added
 
@@ -79,6 +79,12 @@
   - Miner 与已有候选去重：候选增加 `indexVersion`，按 `queryHash+failureType+indexVersion` 与候选库全局去重，每日调度不再重复膨胀候选库。
   - 版本不可变与原子引用：`EvaluationDatasetRegistry.publish` 拒绝覆盖已存在版本；`RetrievalPolicyRegistry.save` 拒绝覆盖同版本不同内容；active 引用改为临时文件 + 原子替换。
   - 经验采集指标真实化：Recorder 使用自定义拒绝处理器统计 dropped；`FileRetrievalExperienceStore.append` 返回写入结果，Recorder 仅在成功时增加 written、失败时增加 write_failures，不再静默吞掉磁盘异常。
+- 自进化 RAG 第二轮评审整改（策略参数有效性/门禁绑定/版本状态/质量指标/随机种子）：
+  - 未接入真实检索链路的策略参数（`weights.*`、`retrieval.topK.*`、`rerank.bge-enabled`）从 allowlist 移除，注册即拒绝，避免“候选看起来不同、实际执行相同”的无效实验。
+  - Promotion Gate 绑定基线：运行实验要求 baseline 必须是当前 ACTIVE 策略，且必须提供明确的 indexVersion/modelVersion；审批校验报告 baseline 为当前 ACTIVE、禁止候选与基线相同、数据集/索引/模型版本必须绑定。
+  - 策略版本生命周期防回退：`createDraft` 禁止重复创建已存在版本，ACTIVE/APPROVED 等版本不能被相同参数重新写回 DRAFT。
+  - 质量指标去重：`EvolutionExperimentRunner` 的 Recall/MRR/nDCG 只取每个 case 第一次执行（#1），repetition 仅用于延迟与 failed/degraded 稳定性统计。
+  - randomSeed/repetition 进入执行上下文：`RetrievalRequest` 增加 `randomSeed`，executor 将 seed+repetition 派生后传入检索请求并纳入结果缓存键，为可复现的随机检索/重排提供基础。
 - 修复默认排除规则误伤：`application.yml` 默认 `exclude-path-substrings` 移除 `/build/`——排除匹配是路径子串匹配，`/build/` 会把包目录名为 `build` 的源码文件一并排除（封神仓库实测误伤 127 个 Java 文件，含评测目标 `BuildKillRankHandler`、`BuildPluginCommon`，对应 8 条评测查询全部召回失败）；移除后全量重索引覆盖 2139/2139 文件。
 - 修复结构重排消融开关未接入生产路径：`code-structural-rerank-enabled=false` 此前不影响实际重排（调用点硬编码开启），已接入全部重排调用点，基线 A 与实验 E 的消融对比成立。
 - 修复 OpenAI 网关上游强制 `encoding_format`：嵌入请求补显式 `encoding-format: float`（`OPENAI_EMBEDDING_ENCODING_FORMAT` 可覆盖）；缺失时网关 400、应用 5 次退避重试导致单查询 55s+，实测修复后恢复正常延迟。

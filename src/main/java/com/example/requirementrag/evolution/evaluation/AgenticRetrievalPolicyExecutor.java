@@ -31,8 +31,11 @@ public class AgenticRetrievalPolicyExecutor implements RetrievalPolicyExecutor {
     @Override
     public ExecutionResult execute(EvaluationCase evalCase, RetrievalPolicy policy,
                                    long randomSeed, int repetition) {
+        // seed 与 repetition 都进入执行上下文：不同 seed/repetition 使用不同缓存键，
+        // 并为后续可能的随机检索/重排策略提供可复现的随机源。
+        long effectiveSeed = randomSeed * 31L + repetition;
         RetrievalRequest request = new RetrievalRequest(evalCase.query(), RetrievalProfile.DEVELOPMENT_PLAN,
-                evalCase.projectId(), null, evalCase.version(), 10);
+                evalCase.projectId(), null, evalCase.version(), 10, effectiveSeed);
         RagOutcome<RetrievalBundle> outcome = orchestrator.execute(request, policy);
         if (outcome == null || outcome.status() == null) {
             return new ExecutionResult(List.of(), "FAILED");

@@ -60,4 +60,31 @@ class EvolutionExperimentRunnerTest {
         assertThat(report.candidate().degradedRate()).isEqualTo(1.0);
         assertThat(report.baseline().degradedRate()).isZero();
     }
+
+    @Test
+    void qualityMetricsUseFirstRepetitionOnly() {
+        ObjectMapper mapper = new ObjectMapper().findAndRegisterModules();
+        RetrievalPolicy baseline = new RetrievalPolicy("base", "1", PolicyStatus.DRAFT,
+                Map.of(), Map.of(), Map.of(), Map.of(), null, null, "c", Instant.now());
+        RetrievalPolicy candidate = new RetrievalPolicy("cand", "1", PolicyStatus.DRAFT,
+                Map.of(), Map.of(), Map.of(), Map.of(), null, null, "c", Instant.now());
+        RetrievalPolicyExecutor executor = (evalCase, policy, seed, repetition) -> {
+            if (policy == baseline) {
+                return new RetrievalPolicyExecutor.ExecutionResult(List.of("gold"), "SUCCESS");
+            }
+            if (repetition == 1) {
+                return new RetrievalPolicyExecutor.ExecutionResult(List.of("gold"), "SUCCESS");
+            }
+            return new RetrievalPolicyExecutor.ExecutionResult(List.of("wrong"), "SUCCESS");
+        };
+        EvolutionExperimentRunner runner = new EvolutionExperimentRunner(executor, mapper, properties());
+        EvaluationDataset dataset = new EvaluationDataset("ds-1",
+                List.of(new EvaluationCase("c1", "query", null, null, List.of("gold"))),
+                Instant.now(), null);
+
+        ExperimentReport report = runner.run(dataset, baseline, candidate, "idx", "model", 42, 3);
+
+        assertThat(report.candidate().recallAt1()).isEqualTo(1.0);
+        assertThat(report.baseline().recallAt1()).isEqualTo(1.0);
+    }
 }
