@@ -23,6 +23,7 @@ import com.example.requirementrag.model.RagStageDiagnostic;
 import com.example.requirementrag.model.RagWarning;
 import com.example.requirementrag.model.UserContext;
 import com.example.requirementrag.model.UserRole;
+import com.example.requirementrag.retrieval.QdrantHybridStore;
 import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
 import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
 import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
@@ -36,6 +37,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -56,6 +58,7 @@ class KnowledgeManagementControllerTest {
     private ProjectAccessGuard accessGuard;
     private KnowledgeBootstrapService bootstrapService;
     private RetrievalPipeline retrievalPipeline;
+    private QdrantHybridStore qdrantStore;
     private KnowledgeManagementController controller;
     private MockMvc mvc;
 
@@ -66,8 +69,9 @@ class KnowledgeManagementControllerTest {
         accessGuard = mock(ProjectAccessGuard.class);
         bootstrapService = mock(KnowledgeBootstrapService.class);
         retrievalPipeline = mock(RetrievalPipeline.class);
+        qdrantStore = mock(QdrantHybridStore.class);
         controller = new KnowledgeManagementController(
-                store, projectRegistry, accessGuard, bootstrapService, retrievalPipeline);
+                store, projectRegistry, accessGuard, bootstrapService, retrievalPipeline, qdrantStore);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiExceptionHandler())
                 .build();
@@ -178,7 +182,7 @@ class KnowledgeManagementControllerTest {
         when(projectRegistry.all()).thenReturn(List.of(orders, payments));
         when(accessGuard.currentUser(any())).thenReturn(
                 new UserContext("reader", UserRole.READONLY, List.of("orders")));
-        when(store.listBasesForProjects(List.of("orders"), null, null, null, 0, 50))
+        when(store.listBasesForProjects(List.of("orders"), null, null, null, 0, 10_000))
                 .thenReturn(new com.example.requirementrag.knowledge.management.KnowledgeManagementModels.Page<>(
                         List.of(base("orders:requirement", "orders")), 0, 50, 1));
 
@@ -201,6 +205,45 @@ class KnowledgeManagementControllerTest {
         assertThat(KnowledgeManagementController.class
                 .getMethod("testRetrieval", String.class, RetrievalTestRequest.class, HttpServletRequest.class)
                 .getAnnotation(RequiresPermission.class).value()).isEqualTo(Permission.PUBLIC_READ);
+    }
+
+    @Test
+    void listShowsExistingQdrantKnowledgeWhenStateStoreIsEmpty() throws Exception {
+        RagProperties.ProjectConfig orders = mock(RagProperties.ProjectConfig.class);
+        when(orders.id()).thenReturn("orders");
+        when(orders.name()).thenReturn("订单需求");
+        when(orders.requirementCollection()).thenReturn("requirement_chunks");
+        when(projectRegistry.all()).thenReturn(List.of(orders));
+        when(accessGuard.currentUser(any())).thenReturn(UserContext.defaultAdmin());
+        when(store.listBasesForProjects(List.of("orders"), null, null, null, 0, 10_000))
+                .thenReturn(new com.example.requirementrag.knowledge.management.KnowledgeManagementModels.Page<>(
+                        List.of(), 0, 50, 0));
+        when(qdrantStore.countPointsIfAvailable("requirement_chunks")).thenReturn(81L);
+
+        mvc.perform(get("/api/knowledge-bases"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.items[0].projectId").value("orders"))
+                .andExpect(jsonPath("$.items[0].status").value("READY"))
+                .andExpect(jsonPath("$.items[0].chunkCount").value(81));
+    }
+
+    @Test
+    void getFallsBackToQdrantBackedSyntheticBaseWhenStateStoreMissing() throws Exception {
+        RagProperties.ProjectConfig orders = mock(RagProperties.ProjectConfig.class);
+        when(orders.id()).thenReturn("orders");
+        when(orders.name()).thenReturn("订单需求");
+        when(orders.requirementCollection()).thenReturn("requirement_chunks");
+        when(store.requireBase("orders:requirement"))
+                .thenThrow(new IllegalArgumentException("knowledge base not found"));
+        when(projectRegistry.find("orders")).thenReturn(Optional.of(orders));
+        when(qdrantStore.countPointsIfAvailable("requirement_chunks")).thenReturn(81L);
+
+        mvc.perform(get("/api/knowledge-bases/orders:requirement"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.projectId").value("orders"))
+                .andExpect(jsonPath("$.status").value("READY"))
+                .andExpect(jsonPath("$.chunkCount").value(81));
     }
 
     private KnowledgeBaseView base(String id, String projectId) {

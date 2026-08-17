@@ -349,6 +349,26 @@ public class QdrantHybridStore {
     }
 
     /**
+     * 知识管理页兜底用：快速读取指定 collection 的真实分块总数。
+     * 不创建 collection、不执行可用性重试；Qdrant 不存在或不可用时返回 0。
+     */
+    public long countPointsIfAvailable(String collection) {
+        try {
+            Map<String, Object> response = client.get().uri("/collections/{collection}", collection)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+            Map<String, Object> result = map(response == null ? null : response.get("result"));
+            return ((Number) result.getOrDefault("points_count", 0)).longValue();
+        } catch (HttpClientErrorException.NotFound exception) {
+            return 0L;
+        } catch (ResourceAccessException exception) {
+            return 0L;
+        } catch (RuntimeException exception) {
+            return 0L;
+        }
+    }
+
+    /**
      * 分页滚动获取指定文档版本的全部 payload。使用默认 collection。
      *
      * @param documentId 文档 ID

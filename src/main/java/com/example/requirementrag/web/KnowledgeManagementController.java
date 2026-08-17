@@ -1,6 +1,8 @@
 package com.example.requirementrag.web;
 
 import com.example.requirementrag.config.ProjectRegistry;
+import com.example.requirementrag.config.RagProperties;
+import com.example.requirementrag.retrieval.QdrantHybridStore;
 import com.example.requirementrag.knowledge.KnowledgeBootstrapService;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.ActionAccepted;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.BaseType;
@@ -13,6 +15,7 @@ import com.example.requirementrag.knowledge.management.KnowledgeManagementModels
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.RetrievalTestRequest;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.RetrievalTestResponse;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.RunView;
+import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.SourceType;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.Stage;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.StageEventView;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.SummaryStatus;
@@ -39,7 +42,10 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /** RAGFlow 风格知识管理接口：查询导入状态、触发重建并复用正式检索链路测试召回。 */
@@ -56,17 +62,20 @@ public class KnowledgeManagementController {
     private final ProjectAccessGuard accessGuard;
     private final KnowledgeBootstrapService bootstrapService;
     private final RetrievalPipeline retrievalPipeline;
+    private final QdrantHybridStore qdrantStore;
 
     public KnowledgeManagementController(SQLiteKnowledgeManagementStore store,
                                          ProjectRegistry projectRegistry,
                                          ProjectAccessGuard accessGuard,
                                          KnowledgeBootstrapService bootstrapService,
-                                         RetrievalPipeline retrievalPipeline) {
+                                         RetrievalPipeline retrievalPipeline,
+                                         QdrantHybridStore qdrantStore) {
         this.store = store;
         this.projectRegistry = projectRegistry;
         this.accessGuard = accessGuard;
         this.bootstrapService = bootstrapService;
         this.retrievalPipeline = retrievalPipeline;
+        this.qdrantStore = qdrantStore;
     }
 
     @RequiresPermission(Permission.PUBLIC_READ)
@@ -78,18 +87,106 @@ public class KnowledgeManagementController {
                                         @RequestParam(defaultValue = "0") int page,
                                         @RequestParam(defaultValue = "50") int size,
                                         HttpServletRequest request) {
+        List<RagProperties.ProjectConfig> projects = accessibleProjects(projectId, request);
+        return listBasesWithFallback(projects, status, type, query, page, size);
+    }
+
+    private List<RagProperties.ProjectConfig> accessibleProjects(String projectId,
+                                                                 HttpServletRequest request) {
         if (projectId != null && !projectId.isBlank()) {
             projectRegistry.require(projectId);
             accessGuard.requireProjectAccess(request, projectId);
-            return store.listBases(projectId, status, type, query, page, size);
+            return projectRegistry.find(projectId).stream().toList();
         }
         UserContext user = accessGuard.currentUser(request);
-        List<String> accessibleProjects = projectRegistry.all().stream()
-                .map(project -> project.id())
-                .filter(id -> id != null && !id.isBlank())
-                .filter(user::hasAccessTo)
+        return projectRegistry.all().stream()
+                .filter(project -> project.id() != null && !project.id().isBlank())
+                .filter(project -> user.hasAccessTo(project.id()))
                 .toList();
-        return store.listBasesForProjects(accessibleProjects, status, type, query, page, size);
+    }
+
+    private Page<KnowledgeBaseView> listBasesWithFallback(List<RagProperties.ProjectConfig> projects,
+                                                          SummaryStatus status, BaseType type,
+                                                          String query, int page, int size) {
+        List<String> projectIds = projects.stream()
+                .map(RagProperties.ProjectConfig::id)
+                .filter(id -> id != null && !id.isBlank())
+                .toList();
+        Page<KnowledgeBaseView> allDb = projectIds.isEmpty()
+                ? new Page<>(List.of(), 0, size, 0)
+                : store.listBasesForProjects(projectIds, status, type, query, 0, 10_000);
+        Set<String> dbProjectIds = new HashSet<>();
+        for (KnowledgeBaseView base : allDb.items()) {
+            dbProjectIds.add(base.projectId());
+        }
+        List<KnowledgeBaseView> merged = new ArrayList<>(allDb.items());
+        for (RagProperties.ProjectConfig project : projects) {
+            if (dbProjectIds.contains(project.id())) continue;
+            KnowledgeBaseView synthetic = syntheticIfVisible(project, status, type, query);
+            if (synthetic != null) {
+                merged.add(synthetic);
+            }
+        }
+        int from = Math.min(page * Math.max(1, size), merged.size());
+        int to = Math.min(from + Math.max(1, size), merged.size());
+        return new Page<>(merged.subList(from, to), page, size, merged.size());
+    }
+
+    private KnowledgeBaseView syntheticIfVisible(RagProperties.ProjectConfig project,
+                                                 SummaryStatus status, BaseType type, String query) {
+        if (type != null && type != BaseType.REQUIREMENT) return null;
+        if (status != null && status != SummaryStatus.READY) return null;
+        String collection = project.requirementCollection();
+        if (collection == null || collection.isBlank()) return null;
+        long points = qdrantStore.countPointsIfAvailable(collection);
+        if (points <= 0) return null;
+        KnowledgeBaseView base = syntheticBase(project, collection, points);
+        if (!matchesQuery(base, query)) return null;
+        return base;
+    }
+
+    private KnowledgeBaseView syntheticBase(RagProperties.ProjectConfig project) {
+        String collection = project.requirementCollection();
+        if (collection == null || collection.isBlank()) return null;
+        long points = qdrantStore.countPointsIfAvailable(collection);
+        return points > 0 ? syntheticBase(project, collection, points) : null;
+    }
+
+    private KnowledgeBaseView syntheticBase(RagProperties.ProjectConfig project,
+                                            String collection, long points) {
+        String version = project.knowledge() == null ? null : project.knowledge().version();
+        return new KnowledgeBaseView(
+                project.id() + ":requirement",
+                project.id(),
+                project.name() == null || project.name().isBlank() ? project.id() : project.name(),
+                BaseType.REQUIREMENT,
+                collection,
+                SourceType.ZIP,
+                SummaryStatus.READY,
+                null,
+                version,
+                0L,
+                0L,
+                0L,
+                points,
+                null,
+                null,
+                null);
+    }
+
+    private boolean matchesQuery(KnowledgeBaseView base, String query) {
+        if (query == null || query.isBlank()) return true;
+        String q = query.trim().toLowerCase();
+        return contains(base.name(), q) || contains(base.projectId(), q) || contains(base.collection(), q);
+    }
+
+    private boolean contains(String value, String query) {
+        return value != null && value.toLowerCase().contains(query);
+    }
+
+    private String projectIdFromBaseId(String id) {
+        int index = id == null ? -1 : id.lastIndexOf(':');
+        return index > 0 ? id.substring(0, index) : id;
     }
 
     @RequiresPermission(Permission.PUBLIC_READ)
@@ -223,10 +320,21 @@ public class KnowledgeManagementController {
     }
 
     private KnowledgeBaseView requireBase(String id, HttpServletRequest request) {
-        KnowledgeBaseView base = notFound(() -> store.requireBase(id));
-        projectRegistry.require(base.projectId());
-        accessGuard.requireProjectAccess(request, base.projectId());
-        return base;
+        try {
+            KnowledgeBaseView base = store.requireBase(id);
+            projectRegistry.require(base.projectId());
+            accessGuard.requireProjectAccess(request, base.projectId());
+            return base;
+        } catch (IllegalArgumentException exception) {
+            String projectId = projectIdFromBaseId(id);
+            RagProperties.ProjectConfig project = projectRegistry.find(projectId).orElse(null);
+            if (project != null) {
+                accessGuard.requireProjectAccess(request, project.id());
+                KnowledgeBaseView synthetic = syntheticBase(project);
+                if (synthetic != null) return synthetic;
+            }
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "知识管理资源不存在");
+        }
     }
 
     private RetrievalHit hit(int rank, ChunkRecord chunk) {
