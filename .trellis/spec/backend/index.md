@@ -20,6 +20,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 | [Retrieval and Version Knowledge](./retrieval-and-version-knowledge.md) | Unified evidence retrieval and reviewable version draft contracts | Active |
+| [GitLab Auto-Onboarding](./gitlab-auto-onboarding.md) | Dynamic projects, credential, sync queue, webhook, and indexing contracts | Active |
 
 ---
 

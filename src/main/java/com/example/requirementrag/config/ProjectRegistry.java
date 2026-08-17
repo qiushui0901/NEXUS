@@ -6,6 +6,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Collections;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * 多项目注册表：按 projectId 查找项目配置，解析对应的 Collection 名。
@@ -15,7 +17,9 @@ import java.util.Optional;
 public class ProjectRegistry {
 
     private final RagProperties properties;
-    private final Map<String, RagProperties.ProjectConfig> projectMap;
+    private final Map<String, RagProperties.ProjectConfig> staticProjects;
+    private final Map<String, RagProperties.ProjectConfig> dynamicProjects = new LinkedHashMap<>();
+    private final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
 
     /**
      * 按声明顺序构建 projectId → 项目配置映射，跳过空 id；
@@ -23,17 +27,18 @@ public class ProjectRegistry {
      */
     public ProjectRegistry(RagProperties properties) {
         this.properties = properties;
-        this.projectMap = new LinkedHashMap<>();
+        Map<String, RagProperties.ProjectConfig> configured = new LinkedHashMap<>();
         for (RagProperties.ProjectConfig project : properties.projects()) {
             if (project.id() == null || project.id().isBlank()) {
                 continue;
             }
-            projectMap.put(project.id(), project);
+            configured.put(project.id(), project);
         }
-        if (projectMap.isEmpty()) {
+        if (configured.isEmpty()) {
             RagProperties.ProjectConfig fallback = buildFallbackProject();
-            projectMap.put(fallback.id(), fallback);
+            configured.put(fallback.id(), fallback);
         }
+        this.staticProjects = Collections.unmodifiableMap(new LinkedHashMap<>(configured));
     }
 
     /**
@@ -45,7 +50,13 @@ public class ProjectRegistry {
         if (projectId == null || projectId.isBlank()) {
             return Optional.of(defaultProject());
         }
-        return Optional.ofNullable(projectMap.get(projectId));
+        lock.readLock().lock();
+        try {
+            RagProperties.ProjectConfig configured = staticProjects.get(projectId);
+            return Optional.ofNullable(configured != null ? configured : dynamicProjects.get(projectId));
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     /**
@@ -60,12 +71,19 @@ public class ProjectRegistry {
 
     /** 返回第一个注册的项目，作为未指定 projectId 时的默认项目。 */
     public RagProperties.ProjectConfig defaultProject() {
-        return projectMap.values().iterator().next();
+        return staticProjects.values().iterator().next();
     }
 
     /** 返回全部已注册项目（不可变列表，按注册顺序）。 */
     public List<RagProperties.ProjectConfig> all() {
-        return List.copyOf(projectMap.values());
+        lock.readLock().lock();
+        try {
+            Map<String, RagProperties.ProjectConfig> projects = new LinkedHashMap<>(staticProjects);
+            dynamicProjects.forEach(projects::putIfAbsent);
+            return List.copyOf(projects.values());
+        } finally {
+            lock.readLock().unlock();
+        }
     }
 
     /** 按 group 查找同一业务组的多个关联项目。 */
@@ -73,7 +91,7 @@ public class ProjectRegistry {
         if (group == null || group.isBlank()) {
             return List.of();
         }
-        return projectMap.values().stream()
+        return all().stream()
                 .filter(p -> group.equals(p.group()))
                 .toList();
     }
@@ -94,7 +112,7 @@ public class ProjectRegistry {
         if (collection == null || collection.isBlank()) {
             return Optional.empty();
         }
-        for (RagProperties.ProjectConfig project : projectMap.values()) {
+        for (RagProperties.ProjectConfig project : all()) {
             if (collection.equals(project.requirementCollection())) {
                 return Optional.of(project.id());
             }
@@ -117,12 +135,12 @@ public class ProjectRegistry {
         if (pathWithNamespace == null || pathWithNamespace.isBlank()) {
             return Optional.empty();
         }
-        for (RagProperties.ProjectConfig project : projectMap.values()) {
+        for (RagProperties.ProjectConfig project : all()) {
             if (pathWithNamespace.equals(project.gitPath())) {
                 return Optional.of(project.id());
             }
         }
-        for (RagProperties.ProjectConfig project : projectMap.values()) {
+        for (RagProperties.ProjectConfig project : all()) {
             if (pathWithNamespace.equals(project.id())) {
                 return Optional.of(project.id());
             }
@@ -130,12 +148,54 @@ public class ProjectRegistry {
         String repoName = pathWithNamespace.contains("/")
                 ? pathWithNamespace.substring(pathWithNamespace.lastIndexOf('/') + 1)
                 : pathWithNamespace;
-        for (RagProperties.ProjectConfig project : projectMap.values()) {
+        for (RagProperties.ProjectConfig project : all()) {
             if (repoName.equals(project.id())) {
                 return Optional.of(project.id());
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * 注册运行期项目。动态项目不能覆盖静态配置，也不能用不同配置覆盖已有动态项目。
+     *
+     * @return 新注册返回 true；相同配置已存在返回 false
+     */
+    public boolean registerDynamic(RagProperties.ProjectConfig project) {
+        if (project == null || project.id() == null || project.id().isBlank()) {
+            throw new IllegalArgumentException("动态项目 id 不能为空");
+        }
+        lock.writeLock().lock();
+        try {
+            if (staticProjects.containsKey(project.id())) {
+                throw new IllegalArgumentException("动态项目不能覆盖静态项目: " + project.id());
+            }
+            RagProperties.ProjectConfig existing = dynamicProjects.get(project.id());
+            if (existing != null && !existing.equals(project)) {
+                throw new IllegalArgumentException("动态项目已存在: " + project.id());
+            }
+            return dynamicProjects.putIfAbsent(project.id(), project) == null;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    /** 删除运行期项目；静态配置不受影响。 */
+    public boolean unregisterDynamic(String projectId) {
+        if (projectId == null || projectId.isBlank()) {
+            return false;
+        }
+        lock.writeLock().lock();
+        try {
+            return dynamicProjects.remove(projectId) != null;
+        } finally {
+            lock.writeLock().unlock();
+        }
+    }
+
+    /** 判断项目 id 是否来自启动时静态配置。 */
+    public boolean isStaticProject(String projectId) {
+        return projectId != null && staticProjects.containsKey(projectId);
     }
 
     /** 基于旧版单项目配置构造一个默认 ProjectConfig，保持向后兼容。 */

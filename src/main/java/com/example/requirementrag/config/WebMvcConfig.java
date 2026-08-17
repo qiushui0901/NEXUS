@@ -1,5 +1,6 @@
 package com.example.requirementrag.config;
 
+import com.example.requirementrag.integration.gitlab.GitLabIntegrationProperties;
 import com.example.requirementrag.web.ProjectAuthInterceptor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
@@ -11,7 +12,12 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  * 拦截 /api/**，放行监控状态、webhook 与 actuator 端点。
  */
 @Configuration
-@EnableConfigurationProperties({WikiProperties.class, VersioningProperties.class, AuthProperties.class})
+@EnableConfigurationProperties({
+        WikiProperties.class,
+        VersioningProperties.class,
+        AuthProperties.class,
+        GitLabIntegrationProperties.class
+})
 public class WebMvcConfig implements WebMvcConfigurer {
 
     private final ProjectAuthInterceptor projectAuthInterceptor;

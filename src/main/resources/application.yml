@@ -110,6 +110,13 @@ app:
     max-response-characters: ${MCP_MAX_RESPONSE_CHARACTERS:120000}
   rag:
     code-graph-root-path: ${CODE_GRAPH_ROOT_PATH:data/code-graph}
+    gitlab:
+      enabled: ${GITLAB_INTEGRATION_ENABLED:false}
+      repository-root-path: ${GITLAB_REPOSITORY_ROOT_PATH:data/gitlab-repositories}
+      database-path: ${GITLAB_DATABASE_PATH:data/gitlab-integration.db}
+      encryption-key: ${GITLAB_ENCRYPTION_KEY:}
+      git-timeout-seconds: ${GITLAB_GIT_TIMEOUT_SECONDS:120}
+      sync-threads: ${GITLAB_SYNC_THREADS:2}
     evolution:
       enabled: ${EVOLUTION_ENABLED:false}
       experience-recording-enabled: ${EVOLUTION_EXPERIENCE_RECORDING_ENABLED:false}

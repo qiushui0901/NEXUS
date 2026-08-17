@@ -2,12 +2,14 @@
 
 ### Added
 
+- 新增 GitLab 项目自动接入 MVP：SUPER_ADMIN 管理 API、AES-256-GCM 凭据加密、独立 SQLite 元数据与 Webhook 去重、受控 HTTPS clone/fetch/checkout、动态项目注册、项目级无丢失串行队列、首次全量与快进增量索引、失败目标原位重试、`lastIndexedSha/targetSha` 状态、原生 `X-Gitlab-Token` Push Hook；默认由 `GITLAB_INTEGRATION_ENABLED=false` 关闭，并提供简体中文接入指南。
 - 新增真实 RAG 企业评测基线：版本化 JSONL v2 数据契约、24 条拾光冻结用例、稳定 evidence ID、人工审核与 Git commit provenance、nDCG@10/唯一用例降级率指标、版本化质量阈值和可执行发布门禁；提供 `tools/run-real-rag-evaluation.sh` 与简体中文执行指南，默认 CI 仅运行无外部依赖的契约和指标测试。
 - 新增 `docs/gitlab-project-integration-implementation-plan.md`，定义 GitLab 项目发现、受控仓库同步、异步索引、Webhook 幂等、权限与迁移方案。
 - 新增 NEXUS 企业化收口 Trellis 父子任务，拆分发布验证、真实 RAG 评测、GitLab 自动接入和多实例共享状态四条可独立验收的工作流。
 
 ### Changed
 
+- `ProjectRegistry` 支持线程安全动态注册与卸载，静态项目保持优先且继续作为默认项目，现有静态配置和旧 GitLab Webhook 行为不变。
 - 重构 `tools/verify-report.sh`：结构化读取 Maven 版本，使用独立临时文件和 Surefire XML 汇总测试结果，并通过 `clean verify` 避免旧构建产物污染报告。
 - 归档已经随 `0.8.6` 交付的历史 Trellis 任务，使任务状态与发布事实一致。
 - 重新生成 `0.8.6` 机器验证报告：JDK 21、430 个测试、JaCoCo 门禁和可执行 jar 全部通过；`clean` 清除了旧 `target` 中 6 条失效测试报告，修正了历史统计虚高。

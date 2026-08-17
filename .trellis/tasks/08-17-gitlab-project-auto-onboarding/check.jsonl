@@ -1,1 +1,3 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":".trellis/spec/backend/retrieval-and-version-knowledge.md","reason":"检查动态项目是否破坏现有检索、索引锁和 live collection 契约。"}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"检查认证、敏感数据、状态机与跨层错误映射。"}
+{"file":"docs/gitlab-project-integration-implementation-plan.md","reason":"按既定威胁模型检查 token、webhook、目录逃逸、重放与任务并发。"}
