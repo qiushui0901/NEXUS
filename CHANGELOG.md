@@ -2,6 +2,18 @@
 
 ### Added
 
+- 新增 `/settings/gitlab` 可视化管理工作台：提供五步接入向导、连接/项目/collection
+  提交前校验、项目列表与详情、revision drift 和旧索引可用性、持久化同步任务时间线、
+  Webhook 最近状态及 Secret 一次性轮换；支持子路径直达和浏览器前进/后退，PAT 与
+  Webhook Secret 不进入 URL 或浏览器持久化存储。
+- 新增 `/knowledge` 知识管理工作台，提供知识库概览、文档列表、文档处理阶段轨道、
+  分块检查抽屉、失败重试和复用正式链路的检索测试；页面使用内置 Vue WebJar、
+  服务端分页和可见性自适应轮询，不引入外部前端构建链。
+- 新增知识库、导入任务、文档、分块和阶段事件的分页查询 API，并提供项目级重建、
+  文档/分块重试及复用正式混合检索与重排链路的检索测试 API；响应保留降级诊断，
+  同时截断正文并移除向量、异常原文和服务器绝对路径。
+- 知识导入 Bootstrap、逐文档清洗/分块/去重及 Qdrant 嵌入/索引/验证/发布阶段已接入持久化状态目录，可查询真实文件与分块进度；状态写入失败仍不影响原索引主流程。
+- 新增 RAGFlow 风格知识管理状态基础设施及回归测试：SQLite 持久化知识库、导入任务、文档、分块与阶段事件，提供稳定 ID、分页契约、公开错误脱敏和应用重启中断恢复；状态目录作为旁路能力，不改变 Qdrant 正文与向量存储。
 - 新增 GitLab 项目自动接入 MVP：SUPER_ADMIN 管理 API、AES-256-GCM 凭据加密、独立 SQLite 元数据与 Webhook 去重、受控 HTTPS clone/fetch/checkout、动态项目注册、项目级无丢失串行队列、首次全量与快进增量索引、失败目标原位重试、`lastIndexedSha/targetSha` 状态、原生 `X-Gitlab-Token` Push Hook；默认由 `GITLAB_INTEGRATION_ENABLED=false` 关闭，并提供简体中文接入指南。
 - 新增真实 RAG 企业评测基线：版本化 JSONL v2 数据契约、24 条拾光冻结用例、稳定 evidence ID、人工审核与 Git commit provenance、nDCG@10/唯一用例降级率指标、版本化质量阈值和可执行发布门禁；提供 `tools/run-real-rag-evaluation.sh` 与简体中文执行指南，默认 CI 仅运行无外部依赖的契约和指标测试。
 - 新增 `docs/gitlab-project-integration-implementation-plan.md`，定义 GitLab 项目发现、受控仓库同步、异步索引、Webhook 幂等、权限与迁移方案。
@@ -9,10 +21,23 @@
 
 ### Changed
 
+- 知识导入链路新增可观察的 Qdrant 批次阶段回调和运行级分块进度，保持“写入新点、验证成功、再清理旧点”的发布顺序不变。
 - `ProjectRegistry` 支持线程安全动态注册与卸载，静态项目保持优先且继续作为默认项目，现有静态配置和旧 GitLab Webhook 行为不变。
 - 重构 `tools/verify-report.sh`：结构化读取 Maven 版本，使用独立临时文件和 Surefire XML 汇总测试结果，并通过 `clean verify` 避免旧构建产物污染报告。
 - 归档已经随 `0.8.6` 交付的历史 Trellis 任务，使任务状态与发布事实一致。
 - 重新生成 `0.8.6` 机器验证报告：JDK 21、430 个测试、JaCoCo 门禁和可执行 jar 全部通过；`clean` 清除了旧 `target` 中 6 条失效测试报告，修正了历史统计虚高。
+
+### Fixed
+
+- 修复 GitLab 接入向导步骤编号中的比较表达式被浏览器误解析为 HTML 标签，导致步骤条显示 `span="">` 文本的问题。
+- 修复知识全量重建发布后仍保留旧文档/分块状态、GitLab 项目停用后同步任务永久停留在 `QUEUED`，以及 Qdrant 中间批次把未处理分块误计为已排除的问题。
+
+- 修复 GitLab 自动接入安全与恢复边界：PAT 仅可发送到精确 Host 白名单中的 GitLab，默认拒绝
+  IP 与内网解析地址；最新 HEAD 同步会清除旧 `targetSha`，失败重试不再误用旧成功提交；
+  应用重启后自动恢复 `PENDING/CLONING/SYNCING/INDEXING` 中断任务。
+- 修复发布验证报告的可追溯性：脏工作区不再签发归属于 `HEAD` 的报告，Surefire XML
+  缺失或损坏时仍会生成包含 Maven 原始退出码和解析状态的失败报告。
+- 恢复历史 Trellis 任务的真实完成日期，并使用独立 `archivedAt` 字段记录归档日期。
 
 ## 0.8.6 — 2026-08-16
 

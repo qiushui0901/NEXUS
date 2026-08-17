@@ -101,6 +101,9 @@ management:
         rag.stage: 0.5,0.95,0.99
 
 app:
+  knowledge-management:
+    enabled: ${KNOWLEDGE_MANAGEMENT_ENABLED:true}
+    database-path: ${KNOWLEDGE_MANAGEMENT_DATABASE_PATH:data/knowledge-management.db}
   mcp:
     enabled: ${MCP_ENABLED:true}
     max-results: ${MCP_MAX_RESULTS:20}
@@ -112,11 +115,14 @@ app:
     code-graph-root-path: ${CODE_GRAPH_ROOT_PATH:data/code-graph}
     gitlab:
       enabled: ${GITLAB_INTEGRATION_ENABLED:false}
+      ui-enabled: ${GITLAB_UI_ENABLED:true}
       repository-root-path: ${GITLAB_REPOSITORY_ROOT_PATH:data/gitlab-repositories}
       database-path: ${GITLAB_DATABASE_PATH:data/gitlab-integration.db}
       encryption-key: ${GITLAB_ENCRYPTION_KEY:}
       git-timeout-seconds: ${GITLAB_GIT_TIMEOUT_SECONDS:120}
       sync-threads: ${GITLAB_SYNC_THREADS:2}
+      allowed-hosts: ${GITLAB_ALLOWED_HOSTS:gitlab.com}
+      allow-private-hosts: ${GITLAB_ALLOW_PRIVATE_HOSTS:false}
     evolution:
       enabled: ${EVOLUTION_ENABLED:false}
       experience-recording-enabled: ${EVOLUTION_EXPERIENCE_RECORDING_ENABLED:false}

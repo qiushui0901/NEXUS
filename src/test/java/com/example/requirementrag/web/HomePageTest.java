@@ -16,6 +16,7 @@ class HomePageTest {
 
         assertThat(html)
                 .contains("版本化需求、代码和测试知识平台")
+                .contains("href=\"/knowledge\"")
                 .contains("href=\"/wiki\"")
                 .contains("href=\"/versions\"")
                 .contains("href=\"/monitor\"")

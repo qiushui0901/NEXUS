@@ -53,7 +53,13 @@ public class QdrantHybridStore {
      * @param chunks     新版本的全部分块
      */
     public void replaceVersion(String documentId, String version, List<ChunkRecord> chunks) {
-        replaceVersion(collection(), documentId, version, chunks);
+        replaceVersion(collection(), documentId, version, chunks, ProgressListener.noop());
+    }
+
+    /** 使用默认 collection 替换版本，并报告嵌入、写入、校验和发布进度。 */
+    public void replaceVersion(String documentId, String version, List<ChunkRecord> chunks,
+                               ProgressListener progressListener) {
+        replaceVersion(collection(), documentId, version, chunks, progressListener);
     }
 
     /**
@@ -67,24 +73,37 @@ public class QdrantHybridStore {
      * @param chunks     新版本的全部分块
      */
     public void replaceVersion(String collection, String documentId, String version, List<ChunkRecord> chunks) {
+        replaceVersion(collection, documentId, version, chunks, ProgressListener.noop());
+    }
+
+    /**
+     * 替换指定文档版本并报告批次进度。进度监听器属于旁路能力，
+     * 监听器异常不会中断 Qdrant 发布流程。
+     */
+    public void replaceVersion(String collection, String documentId, String version, List<ChunkRecord> chunks,
+                               ProgressListener progressListener) {
         ensureCollection(collection);
+        ProgressListener listener = progressListener == null ? ProgressListener.noop() : progressListener;
         if (chunks == null || chunks.isEmpty()) {
             deleteVersion(collection, documentId, version);
+            notifyProgress(listener, ReplaceStage.PUBLISH, 0, 0);
             return;
         }
-        List<List<Map<String, Object>>> pointBatches = buildPointBatches(chunks, 64);
+        List<List<Map<String, Object>>> pointBatches = buildPointBatches(chunks, 64, listener);
         java.util.Set<String> oldIds = collectPointIds(collection, documentId, version);
-        writePointBatches(collection, pointBatches);
+        writePointBatches(collection, pointBatches, chunks.size(), listener);
         java.util.Set<String> newIds = new java.util.LinkedHashSet<>();
         for (ChunkRecord chunk : chunks) {
             newIds.add(chunk.id());
         }
         verifyVersion(collection, documentId, version, newIds);
+        notifyProgress(listener, ReplaceStage.VERIFY, newIds.size(), newIds.size());
         java.util.Set<String> staleIds = new java.util.HashSet<>(oldIds);
         staleIds.removeAll(newIds);
         if (!staleIds.isEmpty()) {
             deletePoints(collection, staleIds);
         }
+        notifyProgress(listener, ReplaceStage.PUBLISH, newIds.size(), newIds.size());
     }
 
     /** 滚动读取指定文档版本的全部 point ID。 */
@@ -145,21 +164,59 @@ public class QdrantHybridStore {
 
     /** 将分块按指定批量大小分组，供分批次写入。 */
     private List<List<Map<String, Object>>> buildPointBatches(List<ChunkRecord> chunks, int batchSize) {
+        return buildPointBatches(chunks, batchSize, ProgressListener.noop());
+    }
+
+    /** 构建 point 批次，并在每批稠密/稀疏向量完成后报告进度。 */
+    private List<List<Map<String, Object>>> buildPointBatches(List<ChunkRecord> chunks, int batchSize,
+                                                              ProgressListener listener) {
         List<List<Map<String, Object>>> batches = new ArrayList<>();
         for (int start = 0; start < chunks.size(); start += batchSize) {
             int end = Math.min(start + batchSize, chunks.size());
             batches.add(buildPoints(chunks.subList(start, end)));
+            notifyProgress(listener, ReplaceStage.EMBED, end, chunks.size());
         }
         return batches;
     }
 
     /** 逐批 PUT 写入 Qdrant 点，wait=true 等待持久化完成。 */
     private void writePointBatches(String collection, List<List<Map<String, Object>>> batches) {
+        int total = batches.stream().mapToInt(List::size).sum();
+        writePointBatches(collection, batches, total, ProgressListener.noop());
+    }
+
+    /** 逐批写入并在 wait=true 成功返回后报告已持久化点数。 */
+    private void writePointBatches(String collection, List<List<Map<String, Object>>> batches,
+                                   int total, ProgressListener listener) {
+        int completed = 0;
         for (List<Map<String, Object>> points : batches) {
             client.put().uri("/collections/{collection}/points?wait=true", collection)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(Map.of("points", points))
                     .retrieve().toBodilessEntity();
+            completed += points.size();
+            notifyProgress(listener, ReplaceStage.INDEX, completed, total);
+        }
+    }
+
+    private void notifyProgress(ProgressListener listener, ReplaceStage stage, int completed, int total) {
+        try {
+            listener.onProgress(stage, completed, total);
+        } catch (RuntimeException ignored) {
+            // 管理状态是旁路能力，不能覆盖真实的索引发布结果。
+        }
+    }
+
+    /** 安全发布过程的可观察阶段。 */
+    public enum ReplaceStage { EMBED, INDEX, VERIFY, PUBLISH }
+
+    /** Qdrant 版本替换进度监听器。 */
+    @FunctionalInterface
+    public interface ProgressListener {
+        void onProgress(ReplaceStage stage, int completed, int total);
+
+        static ProgressListener noop() {
+            return (stage, completed, total) -> { };
         }
     }
 

@@ -2,6 +2,10 @@ package com.example.requirementrag.knowledge;
 
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.config.RagProperties;
+import com.example.requirementrag.knowledge.management.KnowledgeIngestionTracker;
+import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.EventStatus;
+import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.Stage;
+import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.TriggerType;
 import com.example.requirementrag.model.IngestResponse;
 import com.example.requirementrag.model.KnowledgeEntry;
 import com.example.requirementrag.observability.RagObservability;
@@ -9,6 +13,8 @@ import com.example.requirementrag.service.RequirementIngestionService;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -34,6 +40,7 @@ public class KnowledgeBootstrapService {
     private final BootstrapState bootstrapState;
     private final RagObservability observability;
     private final QdrantHybridStore store;
+    private final KnowledgeIngestionTracker ingestionTracker;
 
     /** 注入配置、项目注册表、ZIP 加载器、导入服务、状态追踪、可观测性与向量存储。 */
     public KnowledgeBootstrapService(RagProperties properties, ProjectRegistry projectRegistry,
@@ -41,6 +48,26 @@ public class KnowledgeBootstrapService {
                                      RequirementIngestionService ingestionService,
                                      BootstrapState bootstrapState, RagObservability observability,
                                      QdrantHybridStore store) {
+        this(properties, projectRegistry, zipLoader, ingestionService, bootstrapState, observability, store,
+                (KnowledgeIngestionTracker) null);
+    }
+
+    @Autowired
+    public KnowledgeBootstrapService(RagProperties properties, ProjectRegistry projectRegistry,
+                                     ZipHtmlKnowledgeLoader zipLoader,
+                                     RequirementIngestionService ingestionService,
+                                     BootstrapState bootstrapState, RagObservability observability,
+                                     QdrantHybridStore store,
+                                     ObjectProvider<KnowledgeIngestionTracker> ingestionTracker) {
+        this(properties, projectRegistry, zipLoader, ingestionService, bootstrapState, observability, store,
+                ingestionTracker.getIfAvailable());
+    }
+
+    private KnowledgeBootstrapService(RagProperties properties, ProjectRegistry projectRegistry,
+                                      ZipHtmlKnowledgeLoader zipLoader,
+                                      RequirementIngestionService ingestionService,
+                                      BootstrapState bootstrapState, RagObservability observability,
+                                      QdrantHybridStore store, KnowledgeIngestionTracker ingestionTracker) {
         this.properties = properties;
         this.projectRegistry = projectRegistry;
         this.zipLoader = zipLoader;
@@ -48,6 +75,7 @@ public class KnowledgeBootstrapService {
         this.bootstrapState = bootstrapState;
         this.observability = observability;
         this.store = store;
+        this.ingestionTracker = ingestionTracker;
     }
 
     /** 在虚拟线程中异步启动所有已启用项目的引导。 */
@@ -103,8 +131,10 @@ public class KnowledgeBootstrapService {
         String documentId = knowledge.documentId();
         String version = knowledge.version();
         String collection = properties.qdrant().collection();
+        String projectId = projectRegistry.find(null).map(RagProperties.ProjectConfig::id).orElse("default");
+        KnowledgeIngestionTracker.Context context = startTracking(projectId, collection, version);
 
-        return doBootstrap(collection, zipPath, documentId, version);
+        return doBootstrap(collection, zipPath, documentId, version, context);
     }
 
     /** 按项目配置执行引导，使用项目级锁。 */
@@ -124,37 +154,48 @@ public class KnowledgeBootstrapService {
         String documentId = knowledge.documentId();
         String version = knowledge.version();
         String collection = project.requirementCollection();
+        KnowledgeIngestionTracker.Context context = startTracking(project.id(), collection, version);
 
         try {
-            return doBootstrap(collection, zipPath, documentId, version);
+            return doBootstrap(collection, zipPath, documentId, version, context);
         } finally {
             bootstrapState.finishProject(project.id());
         }
     }
 
     /** 引导主流程：统计候选数 → 加载 ZIP 条目 → 等待 Qdrant 就绪 → 批量导入，并更新状态、可观测性与日志。 */
-    private IngestResponse doBootstrap(String collection, Path zipPath, String documentId, String version) {
+    private IngestResponse doBootstrap(String collection, Path zipPath, String documentId, String version,
+                                       KnowledgeIngestionTracker.Context context) {
         try {
             bootstrapState.phase("scan");
+            progress(context, Stage.DISCOVER, 0, 0, null);
             int zipTotal = zipLoader.countCandidates(zipPath);
             bootstrapState.filesTotal(zipTotal);
+            progress(context, Stage.DISCOVER, zipTotal, 0, null);
+            event(context, Stage.DISCOVER, EventStatus.SUCCEEDED, zipTotal, zipTotal, 0, null);
 
             bootstrapState.phase("zip");
-            List<KnowledgeEntry> zipEntries = zipLoader.load(zipPath, (processed, fileName) ->
-                    bootstrapState.fileProgress(processed, fileName));
+            List<KnowledgeEntry> zipEntries = zipLoader.load(zipPath, (processed, fileName) -> {
+                bootstrapState.fileProgress(processed, fileName);
+                progress(context, Stage.PARSE, zipTotal, processed, fileName);
+            });
             bootstrapState.zipFiles(zipEntries.size());
             bootstrapState.xlsxRows(0);
+            event(context, Stage.PARSE, EventStatus.SUCCEEDED,
+                    zipTotal, zipEntries.size(), Math.max(0, zipTotal - zipEntries.size()), null);
 
             List<KnowledgeEntry> allEntries = new ArrayList<>(zipEntries);
 
             bootstrapState.phase("wait-qdrant");
+            progress(context, Stage.PARSE, zipTotal, zipEntries.size(), "等待 Qdrant");
             store.waitUntilReady(Duration.ofMinutes(3));
 
             bootstrapState.phase("ingest");
             IngestResponse response = observability.observe("knowledge.bootstrap", documentId, version,
-                    () -> ingestionService.ingestEntries(collection, documentId, version, allEntries));
+                    () -> ingestionService.ingestEntries(collection, documentId, version, allEntries, context));
             bootstrapState.chunks(response.chunks());
             bootstrapState.complete();
+            if (ingestionTracker != null) ingestionTracker.complete(context, response.chunks());
             log.atInfo().addKeyValue("event", "knowledge_bootstrap_completed")
                     .addKeyValue("collection", collection)
                     .addKeyValue("documentId", documentId).addKeyValue("version", version)
@@ -164,6 +205,7 @@ public class KnowledgeBootstrapService {
         }
         catch (IOException exception) {
             bootstrapState.fail(exception.getMessage());
+            if (ingestionTracker != null) ingestionTracker.fail(context, exception);
             log.atError().setCause(exception).addKeyValue("event", "knowledge_bootstrap_failed")
                     .addKeyValue("documentId", documentId).addKeyValue("version", version)
                     .log("Knowledge bootstrap failed");
@@ -171,7 +213,28 @@ public class KnowledgeBootstrapService {
         }
         catch (RuntimeException exception) {
             bootstrapState.fail(exception.getMessage());
+            if (ingestionTracker != null) ingestionTracker.fail(context, exception);
             throw exception;
+        }
+    }
+
+    private KnowledgeIngestionTracker.Context startTracking(String projectId, String collection, String revision) {
+        if (ingestionTracker == null) return KnowledgeIngestionTracker.Context.disabled();
+        return ingestionTracker.start(projectId, projectId, collection, revision, TriggerType.BOOTSTRAP);
+    }
+
+    private void progress(KnowledgeIngestionTracker.Context context, Stage stage,
+                          int total, int processed, String currentFile) {
+        if (ingestionTracker != null) {
+            ingestionTracker.progress(context, stage, total, processed, currentFile);
+        }
+    }
+
+    private void event(KnowledgeIngestionTracker.Context context, Stage stage, EventStatus status,
+                       int input, int output, int excluded, Throwable error) {
+        if (ingestionTracker != null) {
+            ingestionTracker.event(context, "RUN", context.runId(), stage, status,
+                    input, output, excluded, error);
         }
     }
 }

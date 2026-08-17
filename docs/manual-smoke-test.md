@@ -73,6 +73,8 @@ export QUERY="把这里换成你文档里一定存在的一句话或功能名"
 | 入口 | 期望 |
 |------|------|
 | http://127.0.0.1:8080/ | 首页能开，依赖状态可读 |
+| http://127.0.0.1:8080/knowledge | 能看到加载、空状态或真实知识库列表，不应 500 |
+| http://127.0.0.1:8080/settings/gitlab | 功能启用时能看到项目列表或接入向导 |
 | http://127.0.0.1:8080/monitor | 能看到 Collection / RAG 相关状态 |
 | http://127.0.0.1:8080/wiki | 能开（可无业务页，不应 500） |
 | http://127.0.0.1:8080/versions | 能开 |
@@ -192,6 +194,34 @@ curl -s -X POST http://127.0.0.1:8080/api/code/impact \
 
 - [ ] `AVAILABLE` 或明确的 `NOT_AVAILABLE` + 原因（未索引时）
 - [ ] 确定影响与 `UNRESOLVED` 分开，不把推测写成铁板事实
+
+### 3.5 知识库管理页面
+
+打开 `http://127.0.0.1:8080/knowledge`：
+
+- [ ] 列表状态同时有图标和中文文本，不只依赖颜色。
+- [ ] 能进入知识库文档列表，并打开一个文档详情和分块抽屉。
+- [ ] 文档详情能看到阶段轨道、来源、父子块关系、哈希和索引验证状态。
+- [ ] 检索测试能返回正式检索结果或明确的 `NO_RESULTS` / `DEGRADED` 状态。
+- [ ] 失败请求出现就地重试；移动端长路径、commit 和错误摘要不溢出。
+
+重启应用后再次打开页面：
+
+- [ ] 历史任务仍可查询。
+- [ ] 重启前未结束的任务显示 `INTERRUPTED`，不伪装为仍在运行。
+
+### 3.6 GitLab 管理页面
+
+需要提前设置 `GITLAB_INTEGRATION_ENABLED=true`、`GITLAB_UI_ENABLED=true` 和有效加密密钥。
+打开 `http://127.0.0.1:8080/settings/gitlab`：
+
+- [ ] 五步向导的连接失败不会进入下一步。
+- [ ] 项目 ID、分支和 collection 在创建前完成校验。
+- [ ] 创建后可观察同步任务时间线以及 `lastIndexedSha` / `targetSha`。
+- [ ] 失败但存在旧 commit 时明确显示“旧索引仍可用”。
+- [ ] Webhook 状态可见；Secret 轮换后只显示一次。
+- [ ] PAT 和 Secret 不出现在地址栏、页面刷新后的字段或浏览器 `localStorage`。
+- [ ] 直接打开 `/settings/gitlab/{projectId}`，浏览器前进/后退仍能正确切换页面。
 
 ---
 

@@ -12,7 +12,9 @@ import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.Locale;
@@ -100,8 +102,8 @@ public class GitLabSyncService {
         store.save(project);
         try {
             projectRegistry.registerDynamic(project.toProjectConfig());
-            enqueue(project.projectId(), null);
-            return project.toView();
+            enqueue(project.projectId(), null, "INITIAL");
+            return require(project.projectId());
         } catch (RuntimeException exception) {
             projectRegistry.unregisterDynamic(project.projectId());
             store.delete(project.projectId());
@@ -110,17 +112,17 @@ public class GitLabSyncService {
     }
 
     public List<GitLabManagedProject.View> list() {
-        return store.all().stream().map(GitLabManagedProject::toView).toList();
+        return store.all().stream().map(this::view).toList();
     }
 
     public GitLabManagedProject.View require(String projectId) {
-        return requireProject(projectId).toView();
+        return view(requireProject(projectId));
     }
 
     /** 手动同步配置分支的远端 HEAD。 */
     public GitLabManagedProject.View sync(String projectId) {
         GitLabManagedProject project = requireEnabled(projectId);
-        enqueue(project.projectId(), null);
+        enqueue(project.projectId(), null, "MANUAL");
         return require(projectId);
     }
 
@@ -130,23 +132,26 @@ public class GitLabSyncService {
         if (project.status() != GitLabProjectStatus.FAILED) {
             throw new IllegalArgumentException("只有 FAILED 项目可以重试");
         }
-        enqueue(project.projectId(), project.targetSha());
+        enqueue(project.projectId(), project.targetSha(), "RETRY");
         return require(projectId);
     }
 
     /** 禁用动态项目，停止新任务并保留仓库、索引和元数据。 */
     public GitLabManagedProject.View disable(String projectId) {
         requireProject(projectId);
+        store.updateStateKeepingTarget(projectId, GitLabProjectStatus.DISABLED, null, null);
         ProjectQueue queue = queues.remove(projectId);
+        List<SyncRequest> queued = List.of();
         if (queue != null) {
             synchronized (queue) {
+                queued = List.copyOf(queue.requests);
                 queue.requests.clear();
                 if (queue.worker != null) {
                     queue.worker.cancel(true);
                 }
             }
         }
-        store.updateState(projectId, GitLabProjectStatus.DISABLED, null, null, null);
+        queued.forEach(request -> cancelDisabledJob(request.jobId(), request.requestedSha()));
         projectRegistry.unregisterDynamic(projectId);
         return require(projectId);
     }
@@ -175,13 +180,81 @@ public class GitLabSyncService {
         if (!store.recordWebhookEvent(projectId, eventId)) {
             return false;
         }
-        enqueue(projectId, after.toLowerCase(Locale.ROOT));
+        enqueue(projectId, after.toLowerCase(Locale.ROOT), "WEBHOOK");
         return true;
     }
 
-    private void enqueue(String projectId, String requestedSha) {
+    public GitLabGitClient.ValidationResult validateConnection(ValidateConnection request) {
+        if (request == null) {
+            throw new IllegalArgumentException("请求不能为空");
+        }
+        return gitClient.validateRemote(request.cloneUrl(), text(request.branch(), "main"),
+                request.accessToken());
+    }
+
+    public ValidationResponse validateProject(ValidateProject request) {
+        if (request == null) {
+            throw new IllegalArgumentException("请求不能为空");
+        }
+        GitLabGitClient.validateProjectId(request.projectId());
+        if (projectRegistry.isStaticProject(request.projectId())) {
+            throw new IllegalArgumentException("projectId 与静态项目冲突");
+        }
+        if (store.find(request.projectId()).isPresent()) {
+            throw new IllegalArgumentException("GitLab 项目已接入: " + request.projectId());
+        }
+        validateGitPath(request.gitPath());
+        return new ValidationResponse(true, "项目标识可用");
+    }
+
+    public ValidationResponse validateConfig(ValidateConfig request) {
+        if (request == null) {
+            throw new IllegalArgumentException("请求不能为空");
+        }
+        validateCollection(request.requirementCollection());
+        validateCollection(request.codeCollection());
+        if (request.webhookSecret() != null) {
+            validateWebhookSecret(request.webhookSecret());
+        }
+        return new ValidationResponse(true, "配置校验通过");
+    }
+
+    public List<GitLabSyncJob> jobs(String projectId) {
+        requireProject(projectId);
+        return store.jobs(projectId);
+    }
+
+    public GitLabSyncJob job(String projectId, String jobId) {
+        requireProject(projectId);
+        return store.findJob(projectId, jobId)
+                .orElseThrow(() -> new IllegalArgumentException("未知 GitLab 同步任务: " + jobId));
+    }
+
+    public GitLabWebhookStatus webhookStatus(String projectId) {
+        requireProject(projectId);
+        return store.webhookStatus(projectId).orElse(new GitLabWebhookStatus(
+                projectId, "NEVER_RECEIVED", null, null, "尚未收到 Webhook", null));
+    }
+
+    public RotatedSecret rotateWebhookSecret(String projectId) {
+        requireEnabled(projectId);
+        byte[] random = new byte[32];
+        new SecureRandom().nextBytes(random);
+        String secret = Base64.getUrlEncoder().withoutPadding().encodeToString(random);
+        store.updateWebhookSecret(projectId, cipher.encrypt(secret));
+        return new RotatedSecret(secret, Instant.now().toString());
+    }
+
+    public void recordWebhookStatus(String projectId, String status, String eventId,
+                                    String targetSha, String message) {
+        store.recordWebhookStatus(projectId, status, eventId, targetSha, message);
+    }
+
+    private void enqueue(String projectId, String requestedSha, String triggerType) {
         ProjectQueue queue = queues.computeIfAbsent(projectId, ignored -> new ProjectQueue());
-        SyncRequest request = new SyncRequest(requestedSha);
+        GitLabManagedProject project = requireProject(projectId);
+        String jobId = store.createJob(projectId, triggerType, project.lastIndexedSha(), requestedSha);
+        SyncRequest request = new SyncRequest(jobId, requestedSha);
         synchronized (queue) {
             queue.requests.addLast(request);
             if (queue.worker != null && !queue.worker.isDone()) {
@@ -194,6 +267,8 @@ public class GitLabSyncService {
                 if (queue.requests.isEmpty()) {
                     queues.remove(projectId, queue);
                 }
+                store.updateJob(jobId, "FAILED", "QUEUE", requestedSha,
+                        "QUEUE_SUBMISSION_FAILED", "无法提交同步任务", true);
                 throw exception;
             }
         }
@@ -209,28 +284,36 @@ public class GitLabSyncService {
                     return;
                 }
             }
-            synchronize(projectId, request.requestedSha());
+            synchronize(projectId, request);
         }
     }
 
-    private void synchronize(String projectId, String requestedSha) {
+    private void synchronize(String projectId, SyncRequest request) {
+        String jobId = request.jobId();
+        String requestedSha = request.requestedSha();
         try {
             GitLabManagedProject project = requireEnabled(projectId);
             String accessToken = cipher.decrypt(project.encryptedAccessToken());
+            store.updateJob(jobId, "RUNNING", "CLONE", requestedSha, null, null, false);
             if (!store.updateStateIfEnabled(projectId, GitLabProjectStatus.CLONING,
                     null, requestedSha, null)) {
+                cancelDisabledJob(jobId, requestedSha);
                 return;
             }
             gitClient.ensureRepository(project, accessToken);
+            store.updateJob(jobId, "RUNNING", "FETCH", requestedSha, null, null, false);
             if (!store.updateStateIfEnabled(projectId, GitLabProjectStatus.SYNCING,
                     null, requestedSha, null)) {
+                cancelDisabledJob(jobId, requestedSha);
                 return;
             }
             gitClient.fetch(project, accessToken);
             String remoteHead = gitClient.remoteHead(project);
             String target = requestedSha == null ? remoteHead : requestedSha;
+            store.updateJob(jobId, "RUNNING", "RESOLVE_TARGET", target, null, null, false);
             if (!store.updateStateIfEnabled(projectId, GitLabProjectStatus.SYNCING,
                     null, target, null)) {
+                cancelDisabledJob(jobId, target);
                 return;
             }
             if (!target.equals(remoteHead) && !gitClient.isAncestor(projectId, target, remoteHead)) {
@@ -238,16 +321,23 @@ public class GitLabSyncService {
             }
             String previous = project.lastIndexedSha();
             if (previous != null && previous.equals(target)) {
-                store.updateStateIfEnabled(projectId, GitLabProjectStatus.READY,
-                        target, target, null);
+                if (!store.updateStateIfEnabled(projectId, GitLabProjectStatus.READY,
+                        target, target, null)) {
+                    cancelDisabledJob(jobId, target);
+                    return;
+                }
+                store.updateJob(jobId, "SUCCEEDED", "PUBLISH", target, null,
+                        "目标版本已是最新索引", true);
                 return;
             }
             if (previous != null && !gitClient.isAncestor(projectId, previous, target)) {
                 throw new IllegalStateException("检测到非快进推送，已拒绝覆盖现有索引");
             }
             gitClient.checkout(projectId, target);
+            store.updateJob(jobId, "RUNNING", "INDEX", target, null, null, false);
             if (!store.updateStateIfEnabled(projectId, GitLabProjectStatus.INDEXING,
                     null, target, null)) {
+                cancelDisabledJob(jobId, target);
                 return;
             }
             if (previous == null) {
@@ -255,23 +345,48 @@ public class GitLabSyncService {
             } else {
                 incrementalIndexService.indexWithResult(projectId, previous, target);
             }
-            store.updateStateIfEnabled(projectId, GitLabProjectStatus.READY,
-                    target, target, null);
+            if (!store.updateStateIfEnabled(projectId, GitLabProjectStatus.READY,
+                    target, target, null)) {
+                cancelDisabledJob(jobId, target);
+                return;
+            }
+            store.updateJob(jobId, "SUCCEEDED", "PUBLISH", target, null,
+                    "索引发布完成", true);
             log.info("GitLab project sync completed project={} commit={}", projectId, target);
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            fail(projectId, "同步任务被中断");
+            if (isDisabled(projectId)) {
+                cancelDisabledJob(jobId, requestedSha);
+            } else {
+                fail(projectId, jobId, "SYNC_INTERRUPTED", "同步任务被中断");
+            }
         } catch (Exception exception) {
-            fail(projectId, publicError(exception));
-            log.warn("GitLab project sync failed project={} exceptionType={}",
-                    projectId, exception.getClass().getSimpleName());
+            if (isDisabled(projectId)) {
+                cancelDisabledJob(jobId, requestedSha);
+            } else {
+                fail(projectId, jobId, errorCode(exception), publicError(exception));
+                log.warn("GitLab project sync failed project={} exceptionType={}",
+                        projectId, exception.getClass().getSimpleName());
+            }
         }
     }
 
-    private void fail(String projectId, String message) {
+    private void cancelDisabledJob(String jobId, String targetSha) {
+        store.updateJob(jobId, "CANCELLED", "DISABLED", targetSha,
+                "PROJECT_DISABLED", "项目已停用", true);
+    }
+
+    private boolean isDisabled(String projectId) {
+        return store.find(projectId)
+                .map(project -> project.status() == GitLabProjectStatus.DISABLED)
+                .orElse(false);
+    }
+
+    private void fail(String projectId, String jobId, String code, String message) {
         try {
-            store.updateStateIfEnabled(projectId, GitLabProjectStatus.FAILED,
-                    null, null, message);
+            store.updateStateIfEnabledKeepingTarget(projectId, GitLabProjectStatus.FAILED,
+                    null, message);
+            store.updateJob(jobId, "FAILED", "FAILED", null, code, message, true);
         } catch (RuntimeException exception) {
             log.error("Unable to persist GitLab sync failure project={}", projectId);
         }
@@ -289,6 +404,16 @@ public class GitLabSyncService {
         return "项目同步或索引失败，请检查 GitLab 凭据、分支和依赖服务";
     }
 
+    private String errorCode(Exception exception) {
+        if (exception.getMessage() != null && exception.getMessage().contains("非快进")) {
+            return "NON_FAST_FORWARD";
+        }
+        if (exception.getMessage() != null && exception.getMessage().startsWith("Git ")) {
+            return "GIT_OPERATION_FAILED";
+        }
+        return "GITLAB_SYNC_FAILED";
+    }
+
     private void restoreRegistry() {
         for (GitLabManagedProject project : store.all()) {
             if (project.status() == GitLabProjectStatus.DISABLED) {
@@ -297,12 +422,30 @@ public class GitLabSyncService {
             try {
                 projectRegistry.registerDynamic(project.toProjectConfig());
             } catch (IllegalArgumentException exception) {
-                store.updateState(project.projectId(), GitLabProjectStatus.FAILED, null,
+                store.updateStateKeepingTarget(project.projectId(), GitLabProjectStatus.FAILED,
                         null, "动态项目与静态配置冲突");
                 log.warn("Skipped GitLab managed project due to registry conflict project={}",
                         project.projectId());
+                continue;
+            }
+            if (isInterruptedStatus(project.status())) {
+                try {
+                    enqueue(project.projectId(), project.targetSha(), "RECOVERY");
+                } catch (RuntimeException exception) {
+                    store.updateStateKeepingTarget(project.projectId(), GitLabProjectStatus.FAILED,
+                            null, "应用启动时无法恢复中断的同步任务");
+                    log.warn("Unable to restore interrupted GitLab sync project={} exceptionType={}",
+                            project.projectId(), exception.getClass().getSimpleName());
+                }
             }
         }
+    }
+
+    private boolean isInterruptedStatus(GitLabProjectStatus status) {
+        return status == GitLabProjectStatus.PENDING
+                || status == GitLabProjectStatus.CLONING
+                || status == GitLabProjectStatus.SYNCING
+                || status == GitLabProjectStatus.INDEXING;
     }
 
     private void validate(CreateProject request) {
@@ -310,23 +453,33 @@ public class GitLabSyncService {
             throw new IllegalArgumentException("请求不能为空");
         }
         GitLabGitClient.validateProjectId(request.projectId());
-        GitLabGitClient.validateCloneUrl(request.cloneUrl());
+        gitClient.validateCloneUrl(request.cloneUrl());
         GitLabGitClient.validateBranch(text(request.branch(), "main"));
-        if (request.gitPath() == null || request.gitPath().isBlank()
-                || request.gitPath().startsWith("/") || request.gitPath().contains("..")) {
-            throw new IllegalArgumentException("gitPath 必须是 GitLab path_with_namespace");
-        }
+        validateGitPath(request.gitPath());
         validateCollection(text(request.requirementCollection(), request.projectId() + "_requirements"));
         validateCollection(text(request.codeCollection(), request.projectId() + "_code"));
-        if (request.accessToken() == null || request.accessToken().isBlank()
-                || request.webhookSecret() == null || request.webhookSecret().isBlank()) {
-            throw new IllegalArgumentException("accessToken 和 webhookSecret 不能为空");
+        if (request.accessToken() == null || request.accessToken().isBlank()) {
+            throw new IllegalArgumentException("accessToken 不能为空");
         }
+        validateWebhookSecret(request.webhookSecret());
     }
 
     private void validateCollection(String collection) {
         if (!COLLECTION.matcher(collection).matches()) {
             throw new IllegalArgumentException("collection 名仅允许 1-128 位字母、数字、下划线和连字符");
+        }
+    }
+
+    private void validateGitPath(String gitPath) {
+        if (gitPath == null || gitPath.isBlank() || gitPath.startsWith("/")
+                || gitPath.contains("..") || !gitPath.contains("/")) {
+            throw new IllegalArgumentException("gitPath 必须是 GitLab path_with_namespace");
+        }
+    }
+
+    private void validateWebhookSecret(String secret) {
+        if (secret == null || secret.length() < 16 || secret.length() > 256) {
+            throw new IllegalArgumentException("webhookSecret 必须为 16-256 位");
         }
     }
 
@@ -352,6 +505,29 @@ public class GitLabSyncService {
         return value == null || value.isBlank() ? fallback : value.trim();
     }
 
+    private GitLabManagedProject.View view(GitLabManagedProject project) {
+        GitLabSyncJob latest = store.latestJob(project.projectId()).orElse(null);
+        GitLabWebhookStatus webhook = store.webhookStatus(project.projectId()).orElse(null);
+        boolean active = latest != null && ("QUEUED".equals(latest.status())
+                || "RUNNING".equals(latest.status()));
+        return new GitLabManagedProject.View(
+                project.projectId(), project.name(), project.group(), project.side(),
+                project.cloneUrl(), project.branch(), project.gitPath(),
+                project.requirementCollection(), project.codeCollection(), project.status(),
+                project.lastIndexedSha(), project.targetSha(), project.lastError(),
+                project.createdAt(), project.updatedAt(),
+                project.status() != GitLabProjectStatus.DISABLED,
+                project.lastIndexedSha() != null,
+                project.targetSha() != null && !project.targetSha().equals(project.lastIndexedSha()),
+                store.lastSuccessfulSyncAt(project.projectId()),
+                webhook == null ? null : webhook.receivedAt(),
+                active ? latest.id() : null,
+                active ? latest.phase() : null,
+                project.status() == GitLabProjectStatus.FAILED
+                        ? (latest == null ? "GITLAB_SYNC_FAILED" : latest.errorCode()) : null,
+                project.lastError());
+    }
+
     @PreDestroy
     void shutdown() {
         queues.values().forEach(queue -> {
@@ -366,7 +542,7 @@ public class GitLabSyncService {
         executor.shutdownNow();
     }
 
-    private record SyncRequest(String requestedSha) {
+    private record SyncRequest(String jobId, String requestedSha) {
     }
 
     private static final class ProjectQueue {
@@ -388,5 +564,24 @@ public class GitLabSyncService {
             String accessToken,
             String webhookSecret
     ) {
+    }
+
+    public record ValidateConnection(String cloneUrl, String branch, String accessToken) {
+    }
+
+    public record ValidateProject(String projectId, String gitPath) {
+    }
+
+    public record ValidateConfig(
+            String requirementCollection,
+            String codeCollection,
+            String webhookSecret
+    ) {
+    }
+
+    public record ValidationResponse(boolean valid, String message) {
+    }
+
+    public record RotatedSecret(String webhookSecret, String rotatedAt) {
     }
 }

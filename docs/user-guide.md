@@ -88,6 +88,8 @@ Compose 会拉起 NEXUS、Qdrant、Prometheus、Grafana。请将仓库挂载或�
 | 页面 | 地址 |
 |------|------|
 | 首页 / 运行时状态 | http://localhost:8080/ |
+| 知识库管理 | http://localhost:8080/knowledge |
+| GitLab 管理 | http://localhost:8080/settings/gitlab |
 | Wiki | http://localhost:8080/wiki |
 | 版本中心 | http://localhost:8080/versions |
 | 监控 | http://localhost:8080/monitor |
@@ -97,8 +99,37 @@ Compose 会拉起 NEXUS、Qdrant、Prometheus、Grafana。请将仓库挂载或�
 深链接示例：
 
 ```text
+/knowledge/{knowledgeBaseId}/documents/{documentId}
+/settings/gitlab/{projectId}
 /wiki?projectId=...&version=...&featureId=...
 ```
+
+### 知识库管理
+
+`/knowledge` 是运行与排障管理面，`/wiki` 继续用于阅读已发布知识。知识库页面支持：
+
+- 查看知识库、导入任务、文档和分块的持久化状态。
+- 按状态、阶段和关键词筛选文档，使用服务端分页浏览大量分块。
+- 查看 `DISCOVER -> PARSE -> CLEAN -> CHUNK -> DEDUPLICATE -> EMBED -> INDEX
+  -> VERIFY -> PUBLISH` 阶段轨道。
+- 从失败文档或分块触发文档级重建；单块重试不会破坏文档级去重和版本发布语义。
+- 使用正式混合检索与重排链路运行检索测试，并查看来源、父块、分数、最终顺序和降级信息。
+
+运行中页面会自适应轮询；页面不可见或任务稳定后停止刷新。状态数据库默认位于
+`data/knowledge-management.db`，可通过 `KNOWLEDGE_MANAGEMENT_ENABLED` 和
+`KNOWLEDGE_MANAGEMENT_DATABASE_PATH` 配置。它只保存管理元数据，不复制向量正文，也不参与
+检索读路径。
+
+### GitLab 管理
+
+启用 `GITLAB_INTEGRATION_ENABLED=true` 和 `GITLAB_UI_ENABLED=true` 后，超级管理员可在
+`/settings/gitlab` 完成连接测试、项目/分支配置、collection 校验、Webhook 配置和首次同步。
+项目详情展示索引 commit、目标 commit、版本偏离、旧索引可用性、任务时间线和最近 Webhook
+结果，并提供同步、重试、停用和 Secret 轮换。
+
+PAT 和 Webhook Secret 不写入 URL 或浏览器持久化存储。Secret 仅在创建表单当前会话或轮换
+响应中出现一次。完整配置与安全边界见
+[GitLab 项目自动接入使用说明](./gitlab-auto-onboarding-guide.md)。
 
 ---
 

@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>NEXUS · 知识库管理</title>
+  <link rel="stylesheet" href="/assets/knowledge-app.css">
+</head>
+<body>
+<div id="app" v-cloak>
+  <header class="topbar">
+    <a class="brand" href="/"><span class="brand-mark">NX</span><span>NEXUS</span></a>
+    <nav aria-label="主导航">
+      <a class="active" href="/knowledge">知识库</a>
+      <a href="/settings/gitlab">GitLab</a>
+      <a href="/wiki">Wiki</a>
+      <a href="/versions">版本中心</a>
+      <a href="/monitor">代码工作台</a>
+    </nav>
+    <button class="icon-button" type="button" title="刷新" aria-label="刷新" @click="refresh">
+      <span aria-hidden="true">↻</span>
+    </button>
+  </header>
+
+  <main>
+    <div v-if="notice" class="notice" :class="notice.type" role="status">
+      <span>{{ notice.message }}</span>
+      <button type="button" aria-label="关闭提示" @click="notice=null">×</button>
+    </div>
+
+    <section v-if="view==='bases'" class="workspace">
+      <div class="page-heading">
+        <div>
+          <p class="kicker">KNOWLEDGE OPERATIONS</p>
+          <h1>知识库</h1>
+          <p>查看已发布索引、正在处理的文档和需要重试的失败项。</p>
+        </div>
+        <button class="primary" type="button" :disabled="loading" @click="refresh">
+          <span aria-hidden="true">↻</span> 刷新状态
+        </button>
+      </div>
+
+      <div class="summary-strip" aria-label="知识库汇总">
+        <div><span>就绪知识库</span><strong>{{ summary.ready }}</strong></div>
+        <div><span>处理中任务</span><strong>{{ summary.running }}</strong></div>
+        <div><span>失败文档</span><strong>{{ summary.failed }}</strong></div>
+        <div><span>可检索分块</span><strong>{{ formatNumber(summary.chunks) }}</strong></div>
+      </div>
+
+      <div class="toolbar">
+        <label>项目
+          <select v-model="filters.projectId" @change="loadBases(0)">
+            <option value="">全部项目</option>
+            <option v-for="project in projectOptions" :key="project" :value="project">{{ project }}</option>
+          </select>
+        </label>
+        <label>状态
+          <select v-model="filters.status" @change="loadBases(0)">
+            <option value="">全部状态</option>
+            <option v-for="item in statusOptions" :key="item" :value="item">{{ statusLabel(item) }}</option>
+          </select>
+        </label>
+        <label class="search-field"><span>搜索</span>
+          <input v-model.trim="filters.query" type="search" placeholder="名称、项目或 collection" @change="loadBases(0)">
+        </label>
+      </div>
+
+      <div class="table-shell">
+        <table>
+          <thead><tr><th>名称</th><th>类型</th><th>状态</th><th>文档 / 分块</th><th>当前版本</th><th>最近更新</th><th><span class="sr-only">操作</span></th></tr></thead>
+          <tbody>
+          <tr v-for="base in visibleBases" :key="base.id">
+            <td><button class="link-button strong" @click="openBase(base)">{{ base.name }}</button><small>{{ base.projectId }}</small></td>
+            <td>{{ typeLabel(base.type) }}</td>
+            <td><status-badge :status="base.status"></status-badge></td>
+            <td><strong>{{ base.documentCount }}</strong> 文档 <span class="muted">·</span> <strong>{{ formatNumber(base.chunkCount) }}</strong> 分块
+              <small v-if="base.failedDocumentCount">{{ base.failedDocumentCount }} 个失败</small></td>
+            <td><code>{{ base.publishedRevision || base.targetRevision || '未发布' }}</code></td>
+            <td>{{ relativeTime(base.updatedAt) }}</td>
+            <td class="actions"><button class="icon-button" title="查看文档" aria-label="查看文档" @click="openBase(base)">→</button></td>
+          </tr>
+          </tbody>
+        </table>
+        <empty-state v-if="!loading && visibleBases.length===0" title="没有匹配的知识库" message="调整筛选条件，或等待项目完成首次知识导入。"></empty-state>
+        <loading-state v-if="loading"></loading-state>
+      </div>
+      <page-controls :page="basePage.page" :size="basePage.size" :total="basePage.total" @change="loadBases"></page-controls>
+    </section>
+
+    <section v-else-if="view==='documents'" class="workspace">
+      <breadcrumb :items="[{label:'知识库',action:goHome},{label:selectedBase.name}]"></breadcrumb>
+      <div class="page-heading compact">
+        <div><h1>{{ selectedBase.name }}</h1><p>{{ selectedBase.projectId }} · {{ selectedBase.collection }}</p></div>
+        <div class="button-row">
+          <button type="button" @click="openRetrieval"><span aria-hidden="true">⌕</span> 检索测试</button>
+          <button class="primary" type="button" :disabled="actionBusy" @click="rebuildBase"><span aria-hidden="true">↻</span> 重新构建</button>
+        </div>
+      </div>
+      <div class="context-band">
+        <status-badge :status="selectedBase.status"></status-badge>
+        <span>已发布 <code>{{ selectedBase.publishedRevision || '无' }}</code></span>
+        <span>目标 <code>{{ selectedBase.targetRevision || '无' }}</code></span>
+        <span v-if="latestRun">当前阶段 {{ stageLabel(latestRun.phase) }} · {{ progressText(latestRun) }}</span>
+      </div>
+      <div class="tabs" role="tablist">
+        <button class="active" type="button" role="tab">文档</button>
+        <button type="button" role="tab" @click="openRetrieval">检索测试</button>
+      </div>
+      <div class="toolbar">
+        <label>状态<select v-model="filters.documentStatus" @change="loadDocuments(0)"><option value="">全部状态</option><option v-for="item in entityStatusOptions" :value="item">{{ statusLabel(item) }}</option></select></label>
+        <label class="search-field"><span>搜索</span><input v-model.trim="filters.documentQuery" type="search" placeholder="文件名、路径或错误码" @change="loadDocuments(0)"></label>
+      </div>
+      <div class="table-shell">
+        <table>
+          <thead><tr><th>文档</th><th>状态</th><th>处理阶段</th><th>分块</th><th>耗时</th><th>更新时间</th><th><span class="sr-only">操作</span></th></tr></thead>
+          <tbody>
+          <tr v-for="doc in visibleDocuments" :key="doc.id">
+            <td><button class="link-button strong path" @click="openDocument(doc)">{{ doc.sourcePath }}</button><small v-if="doc.error">{{ doc.error.code }}</small></td>
+            <td><status-badge :status="doc.status"></status-badge></td>
+            <td>{{ stageLabel(doc.phase) }}</td><td>{{ doc.chunkCount }}<small v-if="doc.excludedChunkCount">{{ doc.excludedChunkCount }} 排除</small></td>
+            <td>{{ duration(doc.startedAt,doc.finishedAt) }}</td><td>{{ relativeTime(doc.updatedAt) }}</td>
+            <td class="actions"><button v-if="doc.status==='FAILED'" class="icon-button danger" title="重试文档" aria-label="重试文档" @click="retryDocument(doc)">↻</button><button class="icon-button" title="查看详情" aria-label="查看详情" @click="openDocument(doc)">→</button></td>
+          </tr>
+          </tbody>
+        </table>
+        <empty-state v-if="!loading && visibleDocuments.length===0" title="没有匹配的文档" message="运行中的导入会在发现文件后显示在这里。"></empty-state>
+        <loading-state v-if="loading"></loading-state>
+      </div>
+      <page-controls :page="documentPage.page" :size="documentPage.size" :total="documentPage.total" @change="loadDocuments"></page-controls>
+    </section>
+
+    <section v-else-if="view==='document'" class="workspace">
+      <breadcrumb :items="[{label:'知识库',action:goHome},{label:selectedBase.name,action:()=>openBase(selectedBase)},{label:selectedDocument.sourcePath}]"></breadcrumb>
+      <div class="page-heading compact">
+        <div><h1 class="path-title">{{ selectedDocument.sourcePath }}</h1><p>版本 {{ selectedDocument.revision || '未标记' }} · {{ selectedDocument.chunkCount }} 个分块</p></div>
+        <button type="button" :disabled="actionBusy" @click="retryDocument(selectedDocument)"><span aria-hidden="true">↻</span> 重试文档</button>
+      </div>
+      <div class="document-layout">
+        <aside class="stage-panel">
+          <div class="panel-heading"><h2>处理过程</h2><status-badge :status="selectedDocument.status"></status-badge></div>
+          <ol class="stage-rail">
+            <li v-for="stage in stages" :class="stageClass(stage)">
+              <span class="stage-dot" aria-hidden="true">{{ stageGlyph(stage) }}</span>
+              <div><strong>{{ stageLabel(stage) }}</strong><small>{{ stageDescription(stage) }}</small></div>
+            </li>
+          </ol>
+          <dl class="facts">
+            <div><dt>任务</dt><dd><code>{{ selectedDocument.runId || '无' }}</code></dd></div>
+            <div><dt>来源哈希</dt><dd><code>{{ shortHash(selectedDocument.sourceHash) }}</code></dd></div>
+            <div><dt>错误</dt><dd>{{ selectedDocument.error ? selectedDocument.error.code : '无' }}</dd></div>
+          </dl>
+        </aside>
+        <div class="chunk-panel">
+          <div class="panel-heading"><h2>分块</h2><span>{{ chunkPage.total }} 项</span></div>
+          <div class="toolbar inset">
+            <label>状态<select v-model="filters.chunkStatus" @change="loadChunks(0)"><option value="">全部状态</option><option v-for="item in entityStatusOptions" :value="item">{{ statusLabel(item) }}</option></select></label>
+            <label class="search-field"><span>搜索</span><input v-model.trim="filters.chunkQuery" type="search" placeholder="分块 ID、父块或哈希" @change="loadChunks(0)"></label>
+          </div>
+          <div class="chunk-list">
+            <button v-for="chunk in visibleChunks" :key="chunk.chunkId" class="chunk-row" type="button" @click="openChunk(chunk)">
+              <span class="chunk-order">#{{ padChunk(chunk) }}</span>
+              <span class="chunk-main"><status-badge :status="chunk.status"></status-badge><strong>{{ chunk.parentId || '无父块' }}</strong><small>parent {{ chunk.parentOrder }} · child {{ chunk.childOrder }} · {{ shortHash(chunk.contentHash) }}</small></span>
+              <span class="chunk-flags"><span :class="{on:chunk.denseReady}">D</span><span :class="{on:chunk.sparseReady}">S</span><span :class="{on:chunk.qdrantVerified}">Q</span></span>
+              <span aria-hidden="true">→</span>
+            </button>
+            <empty-state v-if="!loading && visibleChunks.length===0" title="没有匹配的分块" message="分块生成后会按父子顺序显示。"></empty-state>
+            <loading-state v-if="loading"></loading-state>
+          </div>
+          <page-controls :page="chunkPage.page" :size="chunkPage.size" :total="chunkPage.total" @change="loadChunks"></page-controls>
+        </div>
+      </div>
+    </section>
+
+    <section v-else-if="view==='retrieval'" class="workspace">
+      <breadcrumb :items="[{label:'知识库',action:goHome},{label:selectedBase.name,action:()=>openBase(selectedBase)},{label:'检索测试'}]"></breadcrumb>
+      <div class="page-heading compact"><div><h1>检索测试</h1><p>复用正式混合检索与重排链路，结果不会写入知识库。</p></div></div>
+      <form class="retrieval-form" @submit.prevent="runRetrieval">
+        <label class="query-input">查询<input v-model.trim="retrieval.query" required placeholder="输入要验证的业务问题"></label>
+        <label>版本<input v-model.trim="retrieval.version" placeholder="默认当前版本"></label>
+        <label>Top K<input v-model.number="retrieval.limit" type="number" min="1" max="50"></label>
+        <button class="primary" type="submit" :disabled="retrieval.loading"><span aria-hidden="true">⌕</span> 运行检索</button>
+      </form>
+      <div v-if="retrieval.response" class="retrieval-status">
+        <status-badge :status="retrieval.response.status"></status-badge>
+        <span>{{ retrieval.response.hits.length }} 个结果</span>
+        <span v-if="retrieval.response.warnings.length">{{ retrieval.response.warnings.length }} 个降级提示</span>
+      </div>
+      <div class="result-list">
+        <article v-for="hit in retrieval.response?.hits || []" :key="hit.chunkId" class="result-row">
+          <span class="rank">{{ hit.rank }}</span>
+          <div><h2>{{ hit.sourcePath || hit.documentId }}</h2><p>{{ hit.childText }}</p><small><code>{{ hit.chunkId }}</code> · parent {{ hit.parentId }} · {{ shortHash(hit.contentHash) }}</small></div>
+        </article>
+        <empty-state v-if="retrieval.response && retrieval.response.hits.length===0" title="没有命中结果" message="尝试更具体的业务名词，或检查目标版本是否已发布。"></empty-state>
+        <loading-state v-if="retrieval.loading"></loading-state>
+      </div>
+    </section>
+  </main>
+
+  <div v-if="selectedChunk" class="drawer-backdrop" @click.self="selectedChunk=null">
+    <aside class="drawer" aria-modal="true" role="dialog" aria-labelledby="chunk-title">
+      <div class="drawer-header"><div><p class="kicker">CHUNK INSPECTOR</p><h2 id="chunk-title">{{ selectedChunk.chunkId }}</h2></div><button class="icon-button" type="button" aria-label="关闭" @click="selectedChunk=null">×</button></div>
+      <status-badge :status="selectedChunk.status"></status-badge>
+      <dl class="facts drawer-facts">
+        <div><dt>父块</dt><dd><code>{{ selectedChunk.parentId }}</code></dd></div>
+        <div><dt>顺序</dt><dd>{{ selectedChunk.parentOrder }} / {{ selectedChunk.childOrder }}</dd></div>
+        <div><dt>内容哈希</dt><dd><code>{{ selectedChunk.contentHash }}</code></dd></div>
+        <div><dt>阶段</dt><dd>{{ stageLabel(selectedChunk.phase) }}</dd></div>
+        <div><dt>稠密向量</dt><dd>{{ selectedChunk.denseReady ? '已生成' : '未完成' }}</dd></div>
+        <div><dt>稀疏向量</dt><dd>{{ selectedChunk.sparseReady ? '已生成' : '未完成' }}</dd></div>
+        <div><dt>Qdrant 验证</dt><dd>{{ selectedChunk.qdrantVerified ? '已验证' : '未验证' }}</dd></div>
+        <div><dt>最近错误</dt><dd>{{ selectedChunk.error ? selectedChunk.error.code : '无' }}</dd></div>
+      </dl>
+      <button v-if="selectedChunk.status==='FAILED'" class="primary full" type="button" @click="retryChunk(selectedChunk)">从此错误重试文档</button>
+    </aside>
+  </div>
+</div>
+<script src="/webjars/vue/3.5.13/dist/vue.global.prod.js"></script>
+<script src="/assets/status-contract.js"></script>
+<script src="/assets/knowledge-api.js"></script>
+<script src="/assets/knowledge-app.js"></script>
+</body>
+</html>

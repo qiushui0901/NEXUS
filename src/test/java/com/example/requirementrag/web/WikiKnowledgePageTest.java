@@ -30,6 +30,7 @@ class WikiKnowledgePageTest {
                 .contains("/api/wiki/projects")
                 .contains("/api/wiki/generate")
                 .contains("/versions")
+                .contains("href=\"/knowledge\"")
                 .contains("new URLSearchParams(location.search).get('projectId')")
                 .contains("new URLSearchParams(location.search).get('version')")
                 .contains("new URLSearchParams(location.search).get('featureId')")

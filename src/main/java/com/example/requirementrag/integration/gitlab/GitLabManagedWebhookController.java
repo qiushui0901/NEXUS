@@ -47,23 +47,38 @@ public class GitLabManagedWebhookController {
         try {
             project = service.authenticateWebhook(projectId, token);
         } catch (SecurityException exception) {
+            record(projectId, "TOKEN_MISMATCH", eventId, null, "Webhook Token 校验失败");
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Webhook token 无效");
         }
         GitLabPushEvent event;
         try {
             event = objectMapper.readValue(body, GitLabPushEvent.class);
         } catch (IOException exception) {
+            record(projectId, "INVALID_JSON", eventId, null, "Webhook JSON 格式无效");
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Webhook JSON 格式无效");
         }
         if (!("refs/heads/" + project.branch()).equals(event.ref())) {
+            record(projectId, "IGNORED_BRANCH", eventId, event.after(), "非目标分支，已忽略");
             return Map.of("status", "ignored", "projectId", projectId);
         }
         if (event.project() == null || !project.gitPath().equals(event.project().pathWithNamespace())) {
+            record(projectId, "PROJECT_MISMATCH", eventId, event.after(), "Webhook 项目不匹配");
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Webhook 项目与接入配置不匹配");
         }
         String id = eventId == null || eventId.isBlank() ? sha256(body) : eventId.trim();
         boolean accepted = service.acceptPush(projectId, id, event.before(), event.after());
+        record(projectId, accepted ? "ACCEPTED" : "DUPLICATE", id, event.after(),
+                accepted ? "Webhook 已接收并进入同步队列" : "重复 Webhook 已忽略");
         return Map.of("status", accepted ? "accepted" : "duplicate", "projectId", projectId);
+    }
+
+    private void record(String projectId, String status, String eventId, String targetSha,
+                        String message) {
+        try {
+            service.recordWebhookStatus(projectId, status, eventId, targetSha, message);
+        } catch (RuntimeException ignored) {
+            // 状态记录是旁路诊断，不改变 Webhook 的原始处理结果。
+        }
     }
 
     private String sha256(byte[] body) {

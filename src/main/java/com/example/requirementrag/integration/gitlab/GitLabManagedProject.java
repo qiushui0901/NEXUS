@@ -40,7 +40,10 @@ public record GitLabManagedProject(
     public View toView() {
         return new View(projectId, name, group, side, cloneUrl, branch, gitPath,
                 requirementCollection, codeCollection, status, lastIndexedSha, targetSha,
-                lastError, createdAt, updatedAt);
+                lastError, createdAt, updatedAt, status != GitLabProjectStatus.DISABLED,
+                lastIndexedSha != null, targetSha != null && !targetSha.equals(lastIndexedSha),
+                null, null, null, null, status == GitLabProjectStatus.FAILED
+                ? "GITLAB_SYNC_FAILED" : null, lastError);
     }
 
     public record View(
@@ -58,7 +61,16 @@ public record GitLabManagedProject(
             String targetSha,
             String lastError,
             String createdAt,
-            String updatedAt
+            String updatedAt,
+            boolean syncAvailable,
+            boolean indexAvailable,
+            boolean revisionDrift,
+            String lastSuccessfulSyncAt,
+            String lastWebhookAt,
+            String activeJobId,
+            String activePhase,
+            String errorCode,
+            String errorMessage
     ) {
     }
 }
