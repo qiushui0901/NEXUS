@@ -46,6 +46,13 @@
             <option v-for="item in statusOptions" :key="item" :value="item">{{ statusLabel(item) }}</option>
           </select>
         </label>
+        <label>类型
+          <select v-model="filters.type" @change="loadBases(0)">
+            <option value="">全部类型</option>
+            <option value="REQUIREMENT">需求</option>
+            <option value="CODE">代码</option>
+          </select>
+        </label>
         <label class="search-field"><span>搜索</span>
           <input v-model.trim="filters.query" type="search" placeholder="名称、项目或 collection" @change="loadBases(0)">
         </label>

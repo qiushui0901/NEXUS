@@ -33,7 +33,7 @@
         bases:[], documents:[], chunks:[], latestRun:null,
         selectedBase:null, selectedDocument:null, selectedChunk:null,
         basePage:{page:0,size:50,total:0}, documentPage:{page:0,size:50,total:0}, chunkPage:{page:0,size:50,total:0},
-        filters:{projectId:"",status:"",query:"",documentStatus:"",documentQuery:"",chunkStatus:"",chunkQuery:""},
+        filters:{projectId:"",status:"",type:"",query:"",documentStatus:"",documentQuery:"",chunkStatus:"",chunkQuery:""},
         stages:["DISCOVER","PARSE","CLEAN","CHUNK","DEDUPLICATE","EMBED","INDEX","VERIFY","PUBLISH"],
         statusOptions:["IDLE","RUNNING","READY","PARTIAL","FAILED","STALE","DISABLED"],
         entityStatusOptions:["PENDING","RUNNING","CHUNKED","EMBEDDING","INDEXING","READY","FAILED","EXCLUDED","INTERRUPTED"],
@@ -46,6 +46,7 @@
       visibleBases(){
         const q=this.filters.query.toLowerCase();
         return this.bases.filter(item=>(!this.filters.status||item.status===this.filters.status)
+          &&(!this.filters.type||item.type===this.filters.type)
           &&(!q||[item.name,item.projectId,item.collection].some(v=>String(v||"").toLowerCase().includes(q))));
       },
       visibleDocuments(){
@@ -70,7 +71,7 @@
       async loadBases(page=0){
         this.loading=true;
         try{
-          const data=await api.bases({projectId:this.filters.projectId,status:this.filters.status,query:this.filters.query,page,size:this.basePage.size});
+          const data=await api.bases({projectId:this.filters.projectId,status:this.filters.status,type:this.filters.type,query:this.filters.query,page,size:this.basePage.size});
           this.bases=data.items;this.basePage=data;this.syncRoute();this.schedulePoll();
         }catch(error){this.showError(error);}finally{this.loading=false;}
       },
