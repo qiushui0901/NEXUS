@@ -6,6 +6,8 @@ public enum RetrievalProfile {
     DEVELOPMENT_PLAN(true, true),
     /** 需求评审：仅需求证据。 */
     REQUIREMENT_REVIEW(true, false),
+    /** 代码检索：仅代码证据（知识库代码类型检索测试等场景）。 */
+    CODE_RETRIEVAL(false, true),
     /** 知识库构建：需求证据 + 代码证据。 */
     WIKI_BUILD(true, true);
 

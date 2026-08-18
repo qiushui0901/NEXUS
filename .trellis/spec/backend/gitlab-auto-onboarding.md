@@ -15,11 +15,18 @@ POST   /api/integrations/gitlab/projects/{projectId}/sync
 POST   /api/integrations/gitlab/projects/{projectId}/retry
 DELETE /api/integrations/gitlab/projects/{projectId}
 POST   /api/webhooks/gitlab/{projectId}
+POST   /api/integrations/gitlab/connections
+GET    /api/integrations/gitlab/connections
+GET    /api/integrations/gitlab/connections/{connectionId}/projects
+POST   /api/integrations/gitlab/connections/{connectionId}/imports
 ```
 
 ```text
 gitlab_managed_project(project_id PK, ..., status, last_indexed_sha, target_sha, last_error, ...)
 gitlab_webhook_event(project_id, event_id, received_at, PK(project_id, event_id))
+gitlab_connection(id PK, base_url, host, username, access_token_ciphertext, status, ...)
+gitlab_managed_project(..., connection_id nullable, remote_project_id nullable,
+                       access_token_ciphertext, ...)
 ```
 
 ## 3. Contracts
@@ -28,6 +35,31 @@ gitlab_webhook_event(project_id, event_id, received_at, PK(project_id, event_id)
 - The feature is absent unless `app.rag.gitlab.enabled=true`.
 - `GITLAB_ENCRYPTION_KEY` is a Base64-encoded 32-byte AES key.
 - PAT and webhook secrets are persisted only as AES-256-GCM ciphertext.
+- New account-imported projects reference `gitlab_connection` and keep an empty legacy project PAT field.
+  Existing projects with no `connection_id` continue to decrypt their project-level ciphertext.
+- One NEXUS instance may keep multiple named GitLab connections. Connection responses never expose PAT
+  plaintext or ciphertext.
+- Account-imported projects use `(connection_id, remote_project_id)` as the stable remote identity.
+  Namespace paths are mutable and may be identical across GitLab instances, so they are display/routing
+  metadata only. The database must enforce uniqueness for the stable identity.
+- Account discovery uses the authenticated membership project list, follows every bounded pagination page,
+  and excludes unrelated public projects. A non-blank search must be sent to GitLab before bounded
+  pagination so accounts above the discovery cap can narrow the result set.
+- Import requests contain remote project IDs and editable NEXUS settings only. The backend re-reads each
+  remote project, verifies authenticated membership from project permissions, and never trusts
+  browser-provided clone URLs or namespace paths.
+- Batch import is item-independent: one rejected project must not roll back accepted projects. Every accepted
+  project immediately enters the existing initial sync queue. Remote detail requests run concurrently with
+  bounded API timeouts; batch acceptance must not run synchronous Git network validation.
+- GitLab REST API and Git Clone/Fetch share one exact-host and private-address policy. A connection PAT may
+  only be resolved for a clone URL with the same normalized host and effective port as that connection.
+- Only deterministic credential errors (`GITLAB_TOKEN_INVALID`) mark a connection `INVALID`. Rate limits,
+  5xx responses, timeouts, and malformed transient responses leave the previous connection status intact.
+- Project creation uses a database atomic insert. A duplicate `projectId` or stable remote identity must
+  never overwrite an existing row, and cleanup may only remove the row/registry entry created by that call.
+- Browser wizard PAT, webhook secret, validation checks, and secret visibility state exist only for the
+  active wizard session. Clear them when leaving the wizard, starting a new wizard, navigating to detail,
+  or unmounting the component.
 - Git credentials are injected only through a temporary `GIT_ASKPASS`; never place them in a URL,
   command argument, response, exception, or log.
 - Clone URLs must use an exact host allowlist match. The default allowlist contains only `gitlab.com`;
@@ -64,6 +96,8 @@ gitlab_webhook_event(project_id, event_id, received_at, PK(project_id, event_id)
 - Duplicate event ID -> accepted request with `status=duplicate`, no second queued task.
 - Non-fast-forward target -> persisted `FAILED`, unchanged `lastIndexedSha`.
 - Invalid encryption key while enabled -> application startup failure.
+- `401/403` during account verification -> connection `INVALID`; `429/5xx/timeout` -> error returned while
+  connection remains in its previous status.
 
 ## 5. Good/Base/Bad Cases
 
@@ -84,6 +118,15 @@ gitlab_webhook_event(project_id, event_id, received_at, PK(project_id, event_id)
 - Startup recovery must cover all four interrupted states and prove stable/terminal states are not scheduled.
 - Native token 401, malformed JSON 400, branch ignore, project mismatch, duplicate event, and ADMIN marker.
 - Spring context with the feature both disabled and enabled.
+- Browser contract tests assert one centralized sensitive-state reset path covers project/account navigation,
+  fresh account linking, route changes, and component unmount.
+- Connection/API tests cover encrypted persistence, membership pagination, 401/403/429/timeouts, invalidation,
+  reauthorization, project defaults, duplicate/archived/no-default-branch states, and partial batch success.
+- Regression tests cover transient verification failures, server-side project search, project rename,
+  same namespace on different instances, concurrent registration, concurrent detail reads, and PAT
+  host/port binding.
+- Browser contract tests assert account PAT, reauthorization PAT, import result secrets, and selection state
+  are cleared on route changes and component unmount.
 
 ## 7. Wrong vs Correct
 

@@ -14,6 +14,7 @@ import java.util.concurrent.AbstractExecutorService;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -47,6 +48,49 @@ class GitLabSyncServiceTest {
                 org.mockito.ArgumentMatchers.any(GitLabManagedProject.class),
                 org.mockito.ArgumentMatchers.eq("glpat-secret"));
         verify(fixture.codeKnowledgeService).index("project-a");
+        fixture.close();
+    }
+
+    @Test
+    void concurrentRegistrationCannotDeleteTheWinningProject() throws Exception {
+        Fixture fixture = fixture();
+        CountDownLatch repositoryChecks = new CountDownLatch(2);
+        CountDownLatch release = new CountDownLatch(1);
+        when(fixture.gitClient.repositoryPath("project-a")).thenAnswer(invocation -> {
+            repositoryChecks.countDown();
+            assertThat(release.await(5, TimeUnit.SECONDS)).isTrue();
+            return java.nio.file.Path.of(fixture.properties.repositoryRootPath(), "project-a");
+        });
+        GitLabSyncService.CreateConnectedProject request =
+                new GitLabSyncService.CreateConnectedProject(
+                        "connection-a", 11, "project-a", "Project A", "group", "server",
+                        "https://gitlab.example.com/group/project-a.git", "main", "group/project-a",
+                        "project_a_requirements", "project_a_code", "webhook-secret-1234");
+
+        try (ExecutorService callers = Executors.newVirtualThreadPerTaskExecutor()) {
+            Future<?> first = callers.submit(() -> fixture.service.registerConnected(request));
+            Future<?> second = callers.submit(() -> fixture.service.registerConnected(request));
+            assertThat(repositoryChecks.await(5, TimeUnit.SECONDS)).isTrue();
+            release.countDown();
+            int succeeded = 0;
+            int rejected = 0;
+            for (Future<?> future : List.of(first, second)) {
+                try {
+                    future.get();
+                    succeeded++;
+                } catch (java.util.concurrent.ExecutionException exception) {
+                    assertThat(exception.getCause()).isInstanceOf(IllegalArgumentException.class);
+                    rejected++;
+                }
+            }
+            assertThat(succeeded).isEqualTo(1);
+            assertThat(rejected).isEqualTo(1);
+        } finally {
+            release.countDown();
+        }
+
+        assertThat(fixture.store.find("project-a")).isPresent();
+        assertThat(fixture.registry.find("project-a")).isPresent();
         fixture.close();
     }
 

@@ -163,7 +163,7 @@
 </div>
 <script src="/assets/error-normalizer.js"></script>
 <script src="/assets/api-client.js"></script>
-<script src="/assets/app-shell.js"></script>
+<script src="/assets/app-shell.js?v=20260818-2"></script>
 <script>
 const requested = {
   projectId: new URLSearchParams(location.search).get('projectId') || '',
@@ -238,6 +238,7 @@ async function loadProjects() {
 }
 async function loadVersions() {
   const projectId = $('projectSelect').value;
+  NexusShell.setContext({projectId, version: ''});
   const versions = await api('/api/wiki/versions?' + params({projectId}));
   $('versionSelect').innerHTML = versions.map(item =>
     `<option value="${esc(item.version)}">版本 ${esc(item.version)}</option>`
@@ -251,6 +252,7 @@ async function loadVersions() {
 async function loadIndex() {
   const projectId = $('projectSelect').value;
   const version = $('versionSelect').value;
+  NexusShell.setContext({projectId, version});
   state.index = await api('/api/wiki/index?' + params({projectId, version}));
   populateFilters();
   renderList();
@@ -299,6 +301,7 @@ async function selectPage(featureId) {
   state.page = normalizePage(await api('/api/wiki/page?' + params({projectId, version, featureId})));
   state.tab = 'overview';
   history.replaceState(null, '', '/wiki?' + params({projectId, version, featureId}));
+  NexusShell.setContext({projectId, version});
   renderList();
   renderPage();
   renderRight();

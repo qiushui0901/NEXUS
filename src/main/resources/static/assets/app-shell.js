@@ -1,5 +1,5 @@
 (function (global) {
-  const VERSION = "0.9.0";
+  const VERSION = "0.9.1";
   const pages = [
     ["home", "总览", "/"],
     ["knowledge", "知识库", "/knowledge"],
@@ -10,12 +10,17 @@
   const pageTitles = Object.fromEntries(pages.map(([id, label]) => [id, label]));
   pageTitles.versions = "版本";
 
-  function context() {
+  function readContext() {
     const params = new URLSearchParams(location.search);
     return {
       projectId: params.get("projectId") || localStorage.getItem("nexus_project_id") || "",
       version: params.get("version") || ""
     };
+  }
+  let liveContext = readContext();
+
+  function context() {
+    return {...liveContext};
   }
 
   function href(path) {
@@ -48,6 +53,50 @@
     if (button) button.setAttribute("aria-expanded", "false");
   }
 
+  function renderContext(inner, title) {
+    inner.replaceChildren();
+    [
+      {value: title, current: true},
+      {value: liveContext.projectId, current: false},
+      {value: liveContext.version, current: false}
+    ].filter(item => item.value).forEach((entry, index) => {
+      if (index) {
+        const separator = document.createElement("span");
+        separator.className = "nexus-context-separator";
+        separator.textContent = "/";
+        inner.append(separator);
+      }
+      const item = document.createElement(entry.current ? "strong" : "span");
+      item.textContent = entry.value;
+      inner.append(item);
+    });
+  }
+
+  function refreshContext(root) {
+    const shell = root._nexusShell;
+    if (!shell) return;
+    shell.brand.href = href("/");
+    shell.nav.replaceChildren(...navLinks(shell.active, false));
+    shell.mobile.replaceChildren(...navLinks(shell.active, true));
+    renderContext(shell.contextInner, shell.title);
+  }
+
+  function applyContext(next) {
+    if (Object.prototype.hasOwnProperty.call(next, "projectId")) {
+      liveContext.projectId = next.projectId || "";
+      if (liveContext.projectId) localStorage.setItem("nexus_project_id", liveContext.projectId);
+      else localStorage.removeItem("nexus_project_id");
+    }
+    if (Object.prototype.hasOwnProperty.call(next, "version")) {
+      liveContext.version = next.version || "";
+    }
+    document.querySelectorAll("[data-nexus-shell]").forEach(refreshContext);
+  }
+
+  function setContext(next) {
+    global.dispatchEvent(new CustomEvent("nexus:context-changed", {detail: next || {}}));
+  }
+
   function render(root) {
     const active = root.dataset.page || "home";
     const title = pageTitles[active] || "工作台";
@@ -66,7 +115,7 @@
     const brand = document.createElement("a");
     brand.className = "nexus-brand";
     brand.href = href("/");
-    brand.innerHTML = '<span class="nexus-brand-mark">NX</span><span>NEXUS</span><small class="nexus-brand-version">0.9.0</small>';
+    brand.innerHTML = '<span class="nexus-brand-mark">NX</span><span>NEXUS</span><small class="nexus-brand-version">0.9.1</small>';
 
     const brandGroup = document.createElement("div");
     brandGroup.style.display = "flex";
@@ -107,18 +156,7 @@
     contextBar.className = "nexus-context-bar";
     const contextInner = document.createElement("div");
     contextInner.className = "nexus-context-inner";
-    const current = context();
-    [current.projectId, title, current.version].filter(Boolean).forEach((value, index) => {
-      if (index) {
-        const separator = document.createElement("span");
-        separator.className = "nexus-context-separator";
-        separator.textContent = "/";
-        contextInner.append(separator);
-      }
-      const item = document.createElement(index === 1 ? "strong" : "span");
-      item.textContent = value;
-      contextInner.append(item);
-    });
+    renderContext(contextInner, title);
     contextBar.append(contextInner);
 
     const dialog = document.createElement("dialog");
@@ -139,6 +177,7 @@
     notices.id = "nexus-notice-region";
     notices.setAttribute("aria-live", "polite");
     root.append(bar, contextBar, mobile, dialog, notices);
+    root._nexusShell = {active, title, brand, nav, mobile, contextInner};
 
     menu.addEventListener("click", () => {
       const open = !mobile.classList.contains("open");
@@ -186,7 +225,8 @@
     setTimeout(() => notice.remove(), 6000);
   }
 
-  global.NexusShell = {version: VERSION, href, context};
+  global.addEventListener("nexus:context-changed", event => applyContext(event.detail || {}));
+  global.NexusShell = {version: VERSION, href, context, setContext};
   global.NexusNotice = {show: showNotice};
   const boot = () => document.querySelectorAll("[data-nexus-shell]").forEach(render);
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);

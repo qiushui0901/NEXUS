@@ -2,10 +2,11 @@
 
 ## 1. 功能说明
 
-NEXUS 可以由超级管理员通过 `/settings/gitlab` 可视化工作台或管理 API 接入 GitLab 项目。
+NEXUS 可以由超级管理员通过 `/settings/gitlab` 关联一个或多个 GitLab 账号，查看账号实际
+加入或拥有的项目，选择一个或多个项目导入。旧的逐仓库管理 API 继续兼容。
 接入后，服务会：
 
-1. 将 PAT 和 Webhook Secret 使用 AES-256-GCM 加密后保存到独立 SQLite。
+1. 将账号 PAT 和项目 Webhook Secret 使用 AES-256-GCM 加密后保存到独立 SQLite。
 2. 在服务端受控目录 clone 指定分支。
 3. 首次执行全量代码索引。
 4. 后续手动同步或 GitLab Push Hook 触发时执行快进增量索引。
@@ -52,8 +53,12 @@ GITLAB_ALLOW_PRIVATE_HOSTS=true
 
 ## 3. 创建 GitLab PAT
 
-在 GitLab 中创建只读 Personal Access Token，至少授予读取目标仓库所需的 `read_repository`
-权限。NEXUS 不使用该 Token 向仓库写入内容。
+在 GitLab 中创建只读 Personal Access Token，授予：
+
+- `read_api`：读取当前账号和该账号实际参与的项目列表。
+- `read_repository`：通过 HTTPS clone/fetch 已选择的代码仓库。
+
+NEXUS 不使用该 Token 向仓库写入内容。
 
 ## 4. 通过管理页面接入
 
@@ -63,26 +68,55 @@ GITLAB_ALLOW_PRIVATE_HOSTS=true
 http://localhost:8080/settings/gitlab
 ```
 
-点击“接入 GitLab 项目”，按五步向导完成：
+1. 点击“关联 GitLab 账号”，填写连接名称、实例地址和 PAT。
+2. 后端验证账号并加密保存 PAT；管理页面不会回显 Token。
+3. 打开账号详情，搜索并勾选该账号实际参与的项目。仅公开可见但账号未加入的项目不会出现。
+4. 系统按 `path_with_namespace` 自动生成 NEXUS `projectId` 和 collection；导入前可逐项目
+   调整端类型、分支和 collection。
+5. 点击“导入并开始同步”。每个项目独立返回成功或失败，成功项目立即进入首次同步队列。
+6. 页面一次性显示各项目的 Webhook URL 和 Secret；离开页面后只能通过项目详情轮换 Secret。
 
-1. 填写 Clone URL、PAT 和目标分支，先执行连接测试。
-2. 设置 NEXUS `projectId`、显示名称、分组、端类型和 GitLab 路径。
-3. 确认需求与代码 collection；页面会在提交前检查冲突。
-4. 生成或填写 Webhook Secret，并在 GitLab 中配置页面给出的 Webhook URL。
-5. 检查脱敏摘要并创建项目，随后在项目详情观察首次同步。
-
-PAT 和 Webhook Secret 使用密码输入框，仅保存在当前页面内存，不进入 URL 或
-`localStorage`。创建完成后，项目详情不会回显两者。Webhook Secret 轮换接口只在当前响应
-中返回一次明文，离开页面前应立即更新 GitLab Webhook 配置。
-
-项目详情页可直接访问 `/settings/gitlab/{projectId}`，展示：
+PAT、重新授权 Token 和一次性 Webhook Secret 仅保存在当前表单/结果页面内存，不进入 URL
+或 `localStorage`。项目详情页可直接访问 `/settings/gitlab/projects/{projectId}`，展示：
 
 - `lastIndexedSha`、`targetSha`、版本偏离和旧索引可用性。
 - 同步任务历史、当前阶段、触发方式和稳定错误码。
 - 最近一次 Webhook 接收结果、目标 commit 和接收时间。
 - 手动同步、失败重试、停用和 Secret 轮换操作。
 
-## 5. 通过 API 接入
+## 5. 通过账号 API 接入
+
+账号连接与项目发现接口：
+
+```text
+POST   /api/integrations/gitlab/connections
+GET    /api/integrations/gitlab/connections
+GET    /api/integrations/gitlab/connections/{connectionId}
+POST   /api/integrations/gitlab/connections/{connectionId}/verify
+POST   /api/integrations/gitlab/connections/{connectionId}/reauthorize
+DELETE /api/integrations/gitlab/connections/{connectionId}
+GET    /api/integrations/gitlab/connections/{connectionId}/projects
+POST   /api/integrations/gitlab/connections/{connectionId}/imports
+```
+
+创建连接：
+
+```bash
+curl -X POST http://localhost:8080/api/integrations/gitlab/connections \
+  -H 'Content-Type: application/json' \
+  -H 'X-Gateway-User: admin' \
+  -H 'X-Gateway-Role: SUPER_ADMIN' \
+  -d '{
+    "name": "公司 GitLab",
+    "baseUrl": "https://gitlab.example.com",
+    "accessToken": "glpat-REPLACE_ME"
+  }'
+```
+
+响应包含连接 ID、账号名和状态，不包含 PAT 或密文。使用连接 ID 获取项目列表后，将选中的
+`remoteProjectId` 和可编辑 NEXUS 配置提交到 `/imports`。
+
+### 旧逐仓库 API
 
 ```bash
 curl -X POST http://localhost:8080/api/integrations/gitlab/projects \
@@ -104,7 +138,7 @@ curl -X POST http://localhost:8080/api/integrations/gitlab/projects \
   }'
 ```
 
-接口立即返回 `202 Accepted`。后台状态依次为：
+旧接口继续可用。账号批量导入和旧接口创建的项目都会立即进入后台队列，状态依次为：
 
 ```text
 PENDING -> CLONING -> SYNCING -> INDEXING -> READY

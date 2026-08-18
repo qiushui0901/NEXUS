@@ -15,7 +15,7 @@ spring:
       server:
         enabled: ${MCP_ENABLED:true}
         name: nexus
-        version: 0.9.0
+        version: 0.9.1
         protocol: STREAMABLE
         instructions: Evidence-bound requirement, code, Wiki, and version knowledge for development agents.
     chat:
@@ -113,6 +113,9 @@ app:
     max-response-characters: ${MCP_MAX_RESPONSE_CHARACTERS:120000}
   rag:
     code-graph-root-path: ${CODE_GRAPH_ROOT_PATH:data/code-graph}
+    runtime:
+      gitlab-base-url: ${GITLAB_HEALTH_URL:https://gitlab.com}
+      gitlab-health-path: ${GITLAB_HEALTH_PATH:/explore}
     gitlab:
       enabled: ${GITLAB_INTEGRATION_ENABLED:false}
       ui-enabled: ${GITLAB_UI_ENABLED:true}

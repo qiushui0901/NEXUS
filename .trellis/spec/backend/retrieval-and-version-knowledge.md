@@ -32,6 +32,7 @@ Supported profiles:
 
 - `DEVELOPMENT_PLAN`: requirement and code evidence
 - `REQUIREMENT_REVIEW`: requirement evidence only
+- `CODE_RETRIEVAL`: code evidence only (knowledge management code retrieval tests)
 - `WIKI_BUILD`: requirement and code evidence for draft enrichment
 
 ### Version knowledge build API
@@ -296,9 +297,10 @@ void RetrievalCircuitBreaker.failure(String stage)
 
 - Requirement recall, version-corpus reads, and code recall start concurrently on the bounded
   `retrievalExecutor`; each active branch has its own `app.rag.retrieval.branch-timeout-ms` deadline.
-- `DEVELOPMENT_PLAN`, `REQUIREMENT_REVIEW`, and `WIKI_BUILD` use the same requirement rerank boundary.
-  The default order is BGE followed by optional LLM reranking; a stage failure preserves the best
-  available prior ordering and adds a stable warning.
+- `DEVELOPMENT_PLAN`, `REQUIREMENT_REVIEW`, and `WIKI_BUILD` use the same requirement rerank boundary;
+  `CODE_RETRIEVAL` is code-only and skips requirement rerank. The default order is BGE followed by
+  optional LLM reranking; a stage failure preserves the best available prior ordering and adds a
+  stable warning.
 - Circuit-breaker state is isolated by retrieval stage. Failures accumulate across allowed calls until
   the configured threshold, success clears the state, and an expired open interval permits a fresh call.
 - Result-cache identity includes request profile, project, document, version, query, limit, corpus flag,

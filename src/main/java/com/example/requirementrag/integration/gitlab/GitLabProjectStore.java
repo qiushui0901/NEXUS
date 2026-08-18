@@ -41,15 +41,18 @@ public class GitLabProjectStore {
         String sql = """
                 INSERT INTO gitlab_managed_project (
                     project_id, name, group_name, side, clone_url, branch_name, git_path,
-                    requirement_collection, code_collection, repository_path, access_token_ciphertext,
+                    requirement_collection, code_collection, repository_path, connection_id, remote_project_id,
+                    access_token_ciphertext,
                     webhook_secret_ciphertext, status, last_indexed_sha, target_sha, last_error,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(project_id) DO UPDATE SET
                     name=excluded.name, group_name=excluded.group_name, side=excluded.side,
                     clone_url=excluded.clone_url, branch_name=excluded.branch_name, git_path=excluded.git_path,
                     requirement_collection=excluded.requirement_collection,
                     code_collection=excluded.code_collection, repository_path=excluded.repository_path,
+                    connection_id=excluded.connection_id,
+                    remote_project_id=excluded.remote_project_id,
                     access_token_ciphertext=excluded.access_token_ciphertext,
                     webhook_secret_ciphertext=excluded.webhook_secret_ciphertext,
                     status=excluded.status, last_indexed_sha=excluded.last_indexed_sha,
@@ -61,6 +64,24 @@ public class GitLabProjectStore {
             statement.executeUpdate();
         } catch (SQLException exception) {
             throw new IllegalStateException("保存 GitLab 项目失败", exception);
+        }
+    }
+
+    /** 原子创建项目；projectId 或远端身份已存在时返回 false，不覆盖现有记录。 */
+    public synchronized boolean insert(GitLabManagedProject project) {
+        String sql = """
+                INSERT OR IGNORE INTO gitlab_managed_project (
+                    project_id, name, group_name, side, clone_url, branch_name, git_path,
+                    requirement_collection, code_collection, repository_path, connection_id, remote_project_id,
+                    access_token_ciphertext, webhook_secret_ciphertext, status, last_indexed_sha,
+                    target_sha, last_error, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """;
+        try (Connection connection = connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            bind(statement, project);
+            return statement.executeUpdate() == 1;
+        } catch (SQLException exception) {
+            throw new IllegalStateException("创建 GitLab 项目失败", exception);
         }
     }
 
@@ -89,6 +110,54 @@ public class GitLabProjectStore {
             return List.copyOf(projects);
         } catch (SQLException exception) {
             throw new IllegalStateException("读取 GitLab 项目列表失败", exception);
+        }
+    }
+
+    public synchronized List<GitLabManagedProject> findByConnectionId(String connectionId) {
+        List<GitLabManagedProject> projects = new ArrayList<>();
+        try (Connection connection = connection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "SELECT * FROM gitlab_managed_project WHERE connection_id=? ORDER BY created_at,project_id")) {
+            statement.setString(1, connectionId);
+            try (ResultSet results = statement.executeQuery()) {
+                while (results.next()) {
+                    projects.add(read(results));
+                }
+            }
+            return List.copyOf(projects);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("读取 GitLab 账号项目失败", exception);
+        }
+    }
+
+    public synchronized Optional<GitLabManagedProject> findByGitPath(String gitPath) {
+        try (Connection connection = connection();
+             PreparedStatement statement = connection.prepareStatement(
+                     "SELECT * FROM gitlab_managed_project WHERE git_path=? LIMIT 1")) {
+            statement.setString(1, gitPath);
+            try (ResultSet results = statement.executeQuery()) {
+                return results.next() ? Optional.of(read(results)) : Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("读取 GitLab 路径项目失败", exception);
+        }
+    }
+
+    public synchronized Optional<GitLabManagedProject> findByRemoteProject(
+            String connectionId, long remoteProjectId) {
+        try (Connection connection = connection();
+             PreparedStatement statement = connection.prepareStatement("""
+                     SELECT * FROM gitlab_managed_project
+                     WHERE connection_id=? AND remote_project_id=?
+                     LIMIT 1
+                     """)) {
+            statement.setString(1, connectionId);
+            statement.setLong(2, remoteProjectId);
+            try (ResultSet results = statement.executeQuery()) {
+                return results.next() ? Optional.of(read(results)) : Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("读取 GitLab 远端项目失败", exception);
         }
     }
 
@@ -380,6 +449,17 @@ public class GitLabProjectStore {
                     )
                     """);
             ensureColumn(connection, "gitlab_managed_project", "target_sha", "TEXT");
+            ensureColumn(connection, "gitlab_managed_project", "connection_id", "TEXT");
+            ensureColumn(connection, "gitlab_managed_project", "remote_project_id", "INTEGER");
+            statement.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_gitlab_managed_project_connection
+                    ON gitlab_managed_project(connection_id)
+                    """);
+            statement.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_gitlab_managed_project_remote
+                    ON gitlab_managed_project(connection_id, remote_project_id)
+                    WHERE connection_id IS NOT NULL AND remote_project_id IS NOT NULL
+                    """);
             statement.execute("""
                     CREATE TABLE IF NOT EXISTS gitlab_webhook_event (
                         project_id TEXT NOT NULL,
@@ -475,14 +555,17 @@ public class GitLabProjectStore {
         statement.setString(8, project.requirementCollection());
         statement.setString(9, project.codeCollection());
         statement.setString(10, project.repositoryPath());
-        statement.setString(11, project.encryptedAccessToken());
-        statement.setString(12, project.encryptedWebhookSecret());
-        statement.setString(13, project.status().name());
-        statement.setString(14, project.lastIndexedSha());
-        statement.setString(15, project.targetSha());
-        statement.setString(16, project.lastError());
-        statement.setString(17, project.createdAt());
-        statement.setString(18, project.updatedAt());
+        statement.setString(11, project.connectionId());
+        if (project.remoteProjectId() == null) statement.setNull(12, java.sql.Types.BIGINT);
+        else statement.setLong(12, project.remoteProjectId());
+        statement.setString(13, project.encryptedAccessToken());
+        statement.setString(14, project.encryptedWebhookSecret());
+        statement.setString(15, project.status().name());
+        statement.setString(16, project.lastIndexedSha());
+        statement.setString(17, project.targetSha());
+        statement.setString(18, project.lastError());
+        statement.setString(19, project.createdAt());
+        statement.setString(20, project.updatedAt());
     }
 
     private GitLabManagedProject read(ResultSet results) throws SQLException {
@@ -492,11 +575,18 @@ public class GitLabProjectStore {
                 results.getString("clone_url"), results.getString("branch_name"),
                 results.getString("git_path"), results.getString("requirement_collection"),
                 results.getString("code_collection"), results.getString("repository_path"),
+                results.getString("connection_id"),
+                nullableLong(results, "remote_project_id"),
                 results.getString("access_token_ciphertext"), results.getString("webhook_secret_ciphertext"),
                 GitLabProjectStatus.valueOf(results.getString("status")),
                 results.getString("last_indexed_sha"), results.getString("target_sha"),
                 results.getString("last_error"),
                 results.getString("created_at"), results.getString("updated_at"));
+    }
+
+    private Long nullableLong(ResultSet results, String column) throws SQLException {
+        long value = results.getLong(column);
+        return results.wasNull() ? null : value;
     }
 
     private void appendJobEvent(Connection connection, String jobId, String phase, String status,

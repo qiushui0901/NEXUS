@@ -115,6 +115,76 @@ class GitLabProjectStoreTest {
     }
 
     @Test
+    void persistsAndQueriesProjectsByConnectionWithoutBreakingLegacyRows() throws Exception {
+        String database = Files.createTempDirectory("nexus-gitlab-project-connection-")
+                .resolve("projects.db").toString();
+        GitLabIntegrationProperties properties = new GitLabIntegrationProperties(
+                true, null, database, "", 10, 1);
+        GitLabProjectStore store = new GitLabProjectStore(properties);
+        GitLabManagedProject legacy = project();
+        GitLabManagedProject connected = new GitLabManagedProject(
+                "project-b", "Project B", "group", "server",
+                "https://gitlab.example.com/group/project-b.git", "main", "group/project-b",
+                "project_b_requirements", "project_b_code", "/tmp/project-b",
+                "connection-a", 22L, "", "encrypted-webhook", GitLabProjectStatus.PENDING,
+                null, null, null, legacy.createdAt(), legacy.updatedAt());
+
+        store.save(legacy);
+        store.save(connected);
+
+        GitLabProjectStore reopened = new GitLabProjectStore(properties);
+        assertThat(reopened.find("project-a")).get()
+                .extracting(GitLabManagedProject::connectionId)
+                .isNull();
+        assertThat(reopened.findByConnectionId("connection-a"))
+                .extracting(GitLabManagedProject::projectId)
+                .containsExactly("project-b");
+        assertThat(reopened.findByRemoteProject("connection-a", 22)).get()
+                .extracting(GitLabManagedProject::gitPath)
+                .isEqualTo("group/project-b");
+        assertThat(reopened.findByRemoteProject("connection-b", 22)).isEmpty();
+    }
+
+    @Test
+    void atomicallyRejectsDuplicateProjectIdAndRemoteIdentityWithoutOverwritingWinner() throws Exception {
+        String database = Files.createTempDirectory("nexus-gitlab-project-insert-")
+                .resolve("projects.db").toString();
+        GitLabIntegrationProperties properties = new GitLabIntegrationProperties(
+                true, null, database, "", 10, 1);
+        GitLabProjectStore store = new GitLabProjectStore(properties);
+        String now = Instant.now().toString();
+        GitLabManagedProject winner = new GitLabManagedProject(
+                "orders", "Orders", "group", "server",
+                "https://gitlab-a.example.com/group/orders.git", "main", "group/orders",
+                "orders_requirements", "orders_code", "/tmp/orders",
+                "connection-a", 11L, "", "winner-secret", GitLabProjectStatus.PENDING,
+                null, null, null, now, now);
+        GitLabManagedProject sameProjectId = new GitLabManagedProject(
+                "orders", "Other", "other", "server",
+                "https://gitlab-b.example.com/other/orders.git", "main", "other/orders",
+                "other_requirements", "other_code", "/tmp/other",
+                "connection-b", 22L, "", "loser-secret", GitLabProjectStatus.PENDING,
+                null, null, null, now, now);
+        GitLabManagedProject sameRemote = new GitLabManagedProject(
+                "orders-copy", "Orders copy", "group", "server",
+                "https://gitlab-a.example.com/group/renamed.git", "main", "group/renamed",
+                "copy_requirements", "copy_code", "/tmp/copy",
+                "connection-a", 11L, "", "loser-secret", GitLabProjectStatus.PENDING,
+                null, null, null, now, now);
+
+        assertThat(store.insert(winner)).isTrue();
+        assertThat(store.insert(sameProjectId)).isFalse();
+        assertThat(store.insert(sameRemote)).isFalse();
+
+        assertThat(store.all()).singleElement().satisfies(saved -> {
+            assertThat(saved.name()).isEqualTo("Orders");
+            assertThat(saved.connectionId()).isEqualTo("connection-a");
+            assertThat(saved.remoteProjectId()).isEqualTo(11L);
+            assertThat(saved.encryptedWebhookSecret()).isEqualTo("winner-secret");
+        });
+    }
+
+    @Test
     void deletingProjectCascadesJobsEventsAndWebhookStatus() throws Exception {
         String database = Files.createTempDirectory("nexus-gitlab-delete-")
                 .resolve("projects.db").toString();

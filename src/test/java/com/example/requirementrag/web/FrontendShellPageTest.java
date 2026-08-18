@@ -46,7 +46,13 @@ class FrontendShellPageTest {
                 .contains("pageTitles.versions = \"版本\"")
                 .contains("projectId")
                 .contains("version")
-                .contains("0.9.0");
+                .contains("nexus:context-changed")
+                .contains("setContext")
+                .contains("refreshContext")
+                .contains("localStorage.setItem(\"nexus_project_id\"")
+                .contains("0.9.1");
+        assertThat(shell.indexOf("{value: title, current: true}"))
+                .isLessThan(shell.indexOf("{value: liveContext.projectId, current: false}"));
     }
 
     @Test

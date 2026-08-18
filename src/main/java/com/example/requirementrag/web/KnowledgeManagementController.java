@@ -1,5 +1,7 @@
 package com.example.requirementrag.web;
 
+import com.example.requirementrag.code.CodeIndexJobService;
+import com.example.requirementrag.code.CodeQdrantStore;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
@@ -7,6 +9,7 @@ import com.example.requirementrag.knowledge.KnowledgeBootstrapService;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.ActionAccepted;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.BaseType;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.ChunkView;
+import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.CodeHit;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.DocumentView;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.EntityStatus;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.KnowledgeBaseView;
@@ -21,6 +24,7 @@ import com.example.requirementrag.knowledge.management.KnowledgeManagementModels
 import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.SummaryStatus;
 import com.example.requirementrag.knowledge.management.SQLiteKnowledgeManagementStore;
 import com.example.requirementrag.model.ChunkRecord;
+import com.example.requirementrag.model.CodeChunk;
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.RagOutcome;
 import com.example.requirementrag.model.UserContext;
@@ -45,6 +49,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -56,6 +61,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class KnowledgeManagementController {
     private static final int CHILD_TEXT_LIMIT = 600;
     private static final int PARENT_TEXT_LIMIT = 1200;
+    private static final int CODE_TEXT_LIMIT = 1200;
 
     private final SQLiteKnowledgeManagementStore store;
     private final ProjectRegistry projectRegistry;
@@ -63,19 +69,25 @@ public class KnowledgeManagementController {
     private final KnowledgeBootstrapService bootstrapService;
     private final RetrievalPipeline retrievalPipeline;
     private final QdrantHybridStore qdrantStore;
+    private final CodeQdrantStore codeStore;
+    private final CodeIndexJobService codeIndexJobService;
 
     public KnowledgeManagementController(SQLiteKnowledgeManagementStore store,
                                          ProjectRegistry projectRegistry,
                                          ProjectAccessGuard accessGuard,
                                          KnowledgeBootstrapService bootstrapService,
                                          RetrievalPipeline retrievalPipeline,
-                                         QdrantHybridStore qdrantStore) {
+                                         QdrantHybridStore qdrantStore,
+                                         CodeQdrantStore codeStore,
+                                         CodeIndexJobService codeIndexJobService) {
         this.store = store;
         this.projectRegistry = projectRegistry;
         this.accessGuard = accessGuard;
         this.bootstrapService = bootstrapService;
         this.retrievalPipeline = retrievalPipeline;
         this.qdrantStore = qdrantStore;
+        this.codeStore = codeStore;
+        this.codeIndexJobService = codeIndexJobService;
     }
 
     @RequiresPermission(Permission.PUBLIC_READ)
@@ -108,52 +120,62 @@ public class KnowledgeManagementController {
     private Page<KnowledgeBaseView> listBasesWithFallback(List<RagProperties.ProjectConfig> projects,
                                                           SummaryStatus status, BaseType type,
                                                           String query, int page, int size) {
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, Math.min(size <= 0 ? 50 : size, 200));
         List<String> projectIds = projects.stream()
                 .map(RagProperties.ProjectConfig::id)
                 .filter(id -> id != null && !id.isBlank())
                 .toList();
-        Page<KnowledgeBaseView> allDb = projectIds.isEmpty()
-                ? new Page<>(List.of(), 0, size, 0)
-                : store.listBasesForProjects(projectIds, status, type, query, 0, 10_000);
+        List<KnowledgeBaseView> allDb = projectIds.isEmpty()
+                ? List.of()
+                : store.allBasesForProjects(projectIds);
         Set<String> dbBaseIds = new HashSet<>();
-        for (KnowledgeBaseView base : allDb.items()) {
+        for (KnowledgeBaseView base : allDb) {
             dbBaseIds.add(base.id());
         }
-        List<KnowledgeBaseView> merged = new ArrayList<>(allDb.items());
+        List<KnowledgeBaseView> merged = new ArrayList<>(allDb);
         for (RagProperties.ProjectConfig project : projects) {
             for (BaseType candidateType : List.of(BaseType.REQUIREMENT, BaseType.CODE)) {
-                if (type != null && type != candidateType) continue;
                 String candidateId = project.id() + ":" + candidateType.name().toLowerCase();
                 if (dbBaseIds.contains(candidateId)) continue;
-                KnowledgeBaseView synthetic = syntheticIfVisible(project, status, candidateType, query);
+                KnowledgeBaseView synthetic = syntheticBase(project, candidateType);
                 if (synthetic != null) {
                     merged.add(synthetic);
                 }
             }
         }
-        int from = Math.min(page * Math.max(1, size), merged.size());
-        int to = Math.min(from + Math.max(1, size), merged.size());
-        return new Page<>(merged.subList(from, to), page, size, merged.size());
-    }
-
-    private KnowledgeBaseView syntheticIfVisible(RagProperties.ProjectConfig project,
-                                                 SummaryStatus status, BaseType type, String query) {
-        if (type != null && type != BaseType.REQUIREMENT && type != BaseType.CODE) return null;
-        if (status != null && status != SummaryStatus.READY) return null;
-        String collection = collectionFor(project, type);
-        if (collection == null || collection.isBlank()) return null;
-        long points = qdrantStore.countPointsIfAvailable(collection);
-        if (points <= 0) return null;
-        KnowledgeBaseView base = syntheticBase(project, collection, type, points);
-        if (!matchesQuery(base, query)) return null;
-        return base;
+        List<KnowledgeBaseView> filtered = merged.stream()
+                .filter(base -> status == null || base.status() == status)
+                .filter(base -> type == null || base.type() == type)
+                .filter(base -> matchesQuery(base, query))
+                .toList();
+        int from = (int) Math.min((long) safePage * safeSize, filtered.size());
+        int to = Math.min(from + safeSize, filtered.size());
+        return new Page<>(filtered.subList(from, to), safePage, safeSize, filtered.size());
     }
 
     private KnowledgeBaseView syntheticBase(RagProperties.ProjectConfig project, BaseType type) {
         String collection = collectionFor(project, type);
         if (collection == null || collection.isBlank()) return null;
-        long points = qdrantStore.countPointsIfAvailable(collection);
+        long points = scopedPointCount(project, collection, type);
         return points > 0 ? syntheticBase(project, collection, type, points) : null;
+    }
+
+    private long scopedPointCount(RagProperties.ProjectConfig project, String collection, BaseType type) {
+        try {
+            if (type == BaseType.CODE) {
+                return codeStore.countProjectIfAvailable(collection, project.id());
+            }
+            RagProperties.ProjectKnowledge knowledge = project.knowledge();
+            if (knowledge == null || knowledge.documentId() == null || knowledge.documentId().isBlank()
+                    || knowledge.version() == null || knowledge.version().isBlank()) {
+                return 0;
+            }
+            return qdrantStore.countVersionIfAvailable(
+                    collection, knowledge.documentId(), knowledge.version());
+        } catch (RuntimeException exception) {
+            return 0;
+        }
     }
 
     private KnowledgeBaseView syntheticBase(RagProperties.ProjectConfig project,
@@ -197,12 +219,12 @@ public class KnowledgeManagementController {
 
     private boolean matchesQuery(KnowledgeBaseView base, String query) {
         if (query == null || query.isBlank()) return true;
-        String q = query.trim().toLowerCase();
+        String q = query.trim().toLowerCase(Locale.ROOT);
         return contains(base.name(), q) || contains(base.projectId(), q) || contains(base.collection(), q);
     }
 
     private boolean contains(String value, String query) {
-        return value != null && value.toLowerCase().contains(query);
+        return value != null && value.toLowerCase(Locale.ROOT).contains(query);
     }
 
     private String projectIdFromBaseId(String id) {
@@ -221,6 +243,10 @@ public class KnowledgeManagementController {
     @ResponseStatus(HttpStatus.ACCEPTED)
     public ActionAccepted rebuild(@PathVariable String id, HttpServletRequest request) {
         KnowledgeBaseView base = requireBase(id, request);
+        if (base.type() == BaseType.CODE) {
+            codeIndexJobService.start(base.projectId());
+            return accepted("CODE_INDEX_REBUILD", base.projectId());
+        }
         bootstrapService.bootstrapAsync(base.projectId());
         return accepted("PROJECT_REBUILD", base.projectId());
     }
@@ -321,21 +347,35 @@ public class KnowledgeManagementController {
                                                @Valid @RequestBody RetrievalTestRequest body,
                                                HttpServletRequest request) {
         KnowledgeBaseView base = requireBase(id, request);
+        boolean codeBase = base.type() == BaseType.CODE;
+        RetrievalProfile profile = codeBase
+                ? RetrievalProfile.CODE_RETRIEVAL
+                : RetrievalProfile.REQUIREMENT_REVIEW;
         RagOutcome<RetrievalBundle> outcome = retrievalPipeline.execute(new RetrievalRequest(
-                body.query(), RetrievalProfile.REQUIREMENT_REVIEW, base.projectId(),
+                body.query(), profile, base.projectId(),
                 body.documentId(), body.version(), body.limit()));
         RetrievalBundle data = outcome.data();
-        List<ChunkRecord> evidence = data == null ? List.of() : data.requirementEvidence();
         AtomicInteger rank = new AtomicInteger(1);
-        List<RetrievalHit> hits = evidence.stream()
-                .map(chunk -> hit(rank.getAndIncrement(), chunk))
-                .toList();
+        List<RetrievalHit> hits = List.of();
+        List<CodeHit> codeHits = List.of();
+        if (codeBase) {
+            List<CodeChunk> evidence = data == null ? List.of() : data.codeEvidence();
+            codeHits = evidence.stream()
+                    .map(chunk -> codeHit(rank.getAndIncrement(), chunk))
+                    .toList();
+        } else {
+            List<ChunkRecord> evidence = data == null ? List.of() : data.requirementEvidence();
+            hits = evidence.stream()
+                    .map(chunk -> hit(rank.getAndIncrement(), chunk))
+                    .toList();
+        }
         return new RetrievalTestResponse(
                 outcome.status(),
                 data == null ? base.projectId() : data.resolvedProjectId(),
                 data == null ? body.documentId() : data.documentId(),
                 data == null ? body.version() : data.version(),
                 hits,
+                codeHits,
                 outcome.warnings(),
                 outcome.stageDiagnostics());
     }
@@ -372,6 +412,22 @@ public class KnowledgeManagementController {
                 chunk.contentHash(),
                 truncate(chunk.childText(), CHILD_TEXT_LIMIT),
                 truncate(chunk.parentText(), PARENT_TEXT_LIMIT));
+    }
+
+    private CodeHit codeHit(int rank, CodeChunk chunk) {
+        return new CodeHit(
+                rank,
+                chunk.id(),
+                chunk.projectId(),
+                chunk.commitSha(),
+                safeSourcePath(chunk.filePath()),
+                chunk.symbolType(),
+                chunk.symbolName(),
+                chunk.startLine(),
+                chunk.endLine(),
+                truncate(chunk.text(), CODE_TEXT_LIMIT),
+                chunk.contentHash(),
+                chunk.language());
     }
 
     private String safeSourcePath(String value) {

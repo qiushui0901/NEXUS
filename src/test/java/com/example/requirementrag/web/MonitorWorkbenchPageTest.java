@@ -71,6 +71,7 @@ class MonitorWorkbenchPageTest {
                 .contains("class=\"mobile-workbench-tabs\"")
                 .contains("sidebarTab === 'evidence'")
                 .contains("mobilePane:'graph'")
+                .contains("NexusShell.setContext")
                 .contains("项目导览")
                 .contains("开始导览")
                 .contains("引用组件")

@@ -8,11 +8,7 @@ import org.springframework.stereotype.Component;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.IDN;
-import java.net.InetAddress;
 import java.net.URI;
-import java.net.URISyntaxException;
-import java.net.UnknownHostException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -38,30 +34,29 @@ public class GitLabGitClient {
 
     private static final Pattern PROJECT_ID = Pattern.compile("[A-Za-z0-9][A-Za-z0-9._-]{0,63}");
     private static final Pattern SHA = Pattern.compile("[0-9a-fA-F]{40}");
-    private static final Pattern IPV4_LITERAL = Pattern.compile("\\d{1,3}(?:\\.\\d{1,3}){3}");
     private final Path repositoryRoot;
     private final Duration timeout;
-    private final Set<String> allowedHosts;
-    private final boolean allowPrivateHosts;
-    private final AddressResolver addressResolver;
+    private final GitLabHostPolicy hostPolicy;
     private final ExecutorService outputExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     @Autowired
-    public GitLabGitClient(GitLabIntegrationProperties properties) {
-        this(properties, InetAddress::getAllByName);
-    }
-
-    GitLabGitClient(GitLabIntegrationProperties properties, AddressResolver addressResolver) {
+    public GitLabGitClient(GitLabIntegrationProperties properties, GitLabHostPolicy hostPolicy) {
         this.repositoryRoot = Path.of(properties.repositoryRootPath()).toAbsolutePath().normalize();
         this.timeout = Duration.ofSeconds(properties.gitTimeoutSeconds());
-        this.allowedHosts = Set.copyOf(properties.allowedHosts());
-        this.allowPrivateHosts = properties.allowPrivateHosts();
-        this.addressResolver = addressResolver;
+        this.hostPolicy = hostPolicy;
         try {
             Files.createDirectories(repositoryRoot);
         } catch (IOException exception) {
             throw new IllegalStateException("无法创建 GitLab 仓库根目录", exception);
         }
+    }
+
+    public GitLabGitClient(GitLabIntegrationProperties properties) {
+        this(properties, new GitLabHostPolicy(properties));
+    }
+
+    GitLabGitClient(GitLabIntegrationProperties properties, GitLabHostPolicy.AddressResolver addressResolver) {
+        this(properties, new GitLabHostPolicy(properties, addressResolver));
     }
 
     /** 计算项目受控仓库路径并阻止路径逃逸。 */
@@ -85,9 +80,9 @@ public class GitLabGitClient {
                 "--", cloneUrl, "refs/heads/" + branch).trim();
         String sha = output.isBlank() ? "" : output.split("\\s+", 2)[0];
         validateSha(sha);
-        URI uri = URI.create(cloneUrl);
+        URI uri = hostPolicy.validateCloneUrl(cloneUrl);
         String path = uri.getPath().replaceFirst("^/", "").replaceFirst("\\.git$", "");
-        return new ValidationResult(normalizeHost(uri.getHost()), path, branch,
+        return new ValidationResult(hostPolicy.normalizeHost(uri.getHost()), path, branch,
                 sha.toLowerCase(Locale.ROOT), true);
     }
 
@@ -177,71 +172,7 @@ public class GitLabGitClient {
     }
 
     void validateCloneUrl(String cloneUrl) {
-        try {
-            URI uri = new URI(cloneUrl);
-            if (!"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null
-                    || uri.getHost().isBlank() || uri.getUserInfo() != null
-                    || uri.getQuery() != null || uri.getFragment() != null
-                    || uri.getPath() == null || uri.getPath().isBlank()) {
-                throw new IllegalArgumentException("GitLab cloneUrl 必须是不含凭据、查询参数和片段的 HTTPS URL");
-            }
-            String host = normalizeHost(uri.getHost());
-            if (!allowedHosts.contains(host)) {
-                throw new IllegalArgumentException("GitLab cloneUrl 主机不在 allowedHosts 白名单中");
-            }
-            InetAddress[] addresses = resolve(host);
-            if (!allowPrivateHosts && (isIpLiteral(host)
-                    || java.util.Arrays.stream(addresses).anyMatch(GitLabGitClient::isUnsafeAddress))) {
-                throw new IllegalArgumentException("GitLab cloneUrl 默认禁止 IP、回环和内网地址");
-            }
-        } catch (URISyntaxException exception) {
-            throw new IllegalArgumentException("GitLab cloneUrl 格式无效");
-        }
-    }
-
-    private String normalizeHost(String host) {
-        String unwrapped = host.startsWith("[") && host.endsWith("]")
-                ? host.substring(1, host.length() - 1) : host;
-        try {
-            return IDN.toASCII(unwrapped).toLowerCase(Locale.ROOT);
-        } catch (IllegalArgumentException exception) {
-            throw new IllegalArgumentException("GitLab cloneUrl 主机名无效");
-        }
-    }
-
-    private InetAddress[] resolve(String host) {
-        try {
-            InetAddress[] addresses = addressResolver.resolve(host);
-            if (addresses == null || addresses.length == 0) {
-                throw new IllegalArgumentException("GitLab cloneUrl 主机无法解析");
-            }
-            return addresses;
-        } catch (UnknownHostException exception) {
-            throw new IllegalArgumentException("GitLab cloneUrl 主机无法解析");
-        }
-    }
-
-    private boolean isIpLiteral(String host) {
-        if (host.contains(":")) {
-            return true;
-        }
-        if (!IPV4_LITERAL.matcher(host).matches()) {
-            return false;
-        }
-        return java.util.Arrays.stream(host.split("\\."))
-                .mapToInt(Integer::parseInt)
-                .allMatch(part -> part >= 0 && part <= 255);
-    }
-
-    private static boolean isUnsafeAddress(InetAddress address) {
-        byte[] bytes = address.getAddress();
-        boolean ipv6UniqueLocal = bytes.length == 16 && (bytes[0] & 0xfe) == 0xfc;
-        return address.isAnyLocalAddress()
-                || address.isLoopbackAddress()
-                || address.isLinkLocalAddress()
-                || address.isSiteLocalAddress()
-                || address.isMulticastAddress()
-                || ipv6UniqueLocal;
+        hostPolicy.validateCloneUrl(cloneUrl);
     }
 
     private String runGit(Path workingDirectory, String accessToken, String... arguments) {
@@ -346,11 +277,6 @@ public class GitLabGitClient {
     }
 
     private record CommandResult(int exitCode, String output) {
-    }
-
-    @FunctionalInterface
-    interface AddressResolver {
-        InetAddress[] resolve(String host) throws UnknownHostException;
     }
 
     public record ValidationResult(

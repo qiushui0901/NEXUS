@@ -296,7 +296,7 @@ GET  /api/versions/manifests/{version}?projectId=...
 GET  /api/versions/compare?projectId=...&fromVersion=...&toVersion=...
 ```
 
-版本比较不再是 0.9.0 的核心产品入口。旧 `/versions` 页面与以下 API 继续保留，供已有集成和历史数据使用；缺失数据仍不得渲染成「无变化」。
+版本比较不再是 0.9.1 的核心产品入口。旧 `/versions` 页面与以下 API 继续保留，供已有集成和历史数据使用；缺失数据仍不得渲染成「无变化」。
 
 ---
 
@@ -371,9 +371,9 @@ Cursor / Codex / stdio 桥接完整说明见 [mcp-quickstart.md](mcp-quickstart.
 超出上下文预算时按模块轮转保留代表块并输出 `CONTEXT_TRUNCATED` 警告（省略块数、
 覆盖模块数），不再静默丢弃后部模块。
 
-## 14. 0.9.0 统一工作台
+## 14. 0.9.1 统一工作台
 
-NEXUS 0.9.0 将 GitLab 自动接入、知识管理和五个核心页面合并为同一个“知识与代码运营工作台”：
+NEXUS 0.9.1 将 GitLab 自动接入、知识管理和五个核心页面合并为同一个“知识与代码运营工作台”：
 
 - `/`：运行总览，优先显示依赖异常、项目问题和快速操作；
 - `/knowledge`：知识库、文档、阶段、分块和检索测试；
@@ -383,7 +383,7 @@ NEXUS 0.9.0 将 GitLab 自动接入、知识管理和五个核心页面合并为
 
 所有核心页面共享同一顶部导航。移动端点击左上角菜单可进入总览、知识库、Wiki、代码和 GitLab。
 
-API Key 不再分别出现在各页面头部。点击右上角“连接”打开连接设置；Key 仍只保存在当前浏览器的 `localStorage.nexusApiKey`，不会进入 URL。GitLab PAT 和 Webhook Secret 不进入该设置，仍只在接入向导当前页面内存中短暂存在。
+API Key 不再分别出现在各页面头部。点击右上角“连接”打开连接设置；Key 仍只保存在当前浏览器的 `localStorage.nexusApiKey`，不会进入 URL。GitLab PAT 只在账号关联或重新授权表单中短暂存在，批量导入生成的 Webhook Secret 只在当前结果页显示一次；二者都不会进入该设置或浏览器持久化存储。
 
 页面间跳转会尽量保留 `projectId` 和 `version`：
 

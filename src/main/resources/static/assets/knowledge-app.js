@@ -37,7 +37,7 @@
         stages:["DISCOVER","PARSE","CLEAN","CHUNK","DEDUPLICATE","EMBED","INDEX","VERIFY","PUBLISH"],
         statusOptions:["IDLE","RUNNING","READY","PARTIAL","FAILED","STALE","DISABLED"],
         entityStatusOptions:["PENDING","RUNNING","CHUNKED","EMBEDDING","INDEXING","READY","FAILED","EXCLUDED","INTERRUPTED"],
-        retrieval:{query:"",version:"",limit:10,loading:false,response:null},
+        retrieval:{query:"",version:"",limit:10,loading:false,response:null,elapsedMs:null},
         pollTimer:null, failedPolls:0
       };
     },
@@ -65,6 +65,31 @@
           if(["RUNNING","QUEUED"].includes(item.status))sum.running++;
           sum.failed+=Number(item.failedDocumentCount||0);sum.chunks+=Number(item.chunkCount||0);return sum;
         },{ready:0,running:0,failed:0,chunks:0});
+      },
+      retrievalHits(){
+        const response=this.retrieval.response;
+        if(!response)return [];
+        if(this.selectedBase && this.selectedBase.type==="CODE"){
+          return response.codeHits||[];
+        }
+        return response.hits||[];
+      },
+      retrievalSourceCount(){
+        return new Set(this.retrievalHits.map(hit=>hit.sourcePath||hit.filePath||hit.documentId).filter(Boolean)).size;
+      },
+      retrievalScope(){
+        const response=this.retrieval.response;
+        if(!response)return"—";
+        if(this.selectedBase && this.selectedBase.type==="CODE"){
+          const commits=[...new Set(this.retrievalHits.map(hit=>hit.commitSha).filter(Boolean))];
+          if(commits.length===1)return this.shortHash(commits[0]);
+          if(commits.length>1)return`${commits.length} 个提交`;
+          return"未返回提交";
+        }
+        return response.version||this.retrieval.version||"当前版本";
+      },
+      retrievalDiagnostics(){
+        return this.retrieval.response&&this.retrieval.response.stageDiagnostics||[];
       }
     },
     methods:{
@@ -72,7 +97,9 @@
         this.loading=true;
         try{
           const data=await api.bases({projectId:this.filters.projectId,status:this.filters.status,type:this.filters.type,query:this.filters.query,page,size:this.basePage.size});
-          this.bases=data.items;this.basePage=data;this.syncRoute();this.schedulePoll();
+          this.bases=data.items;this.basePage=data;
+          NexusShell.setContext({projectId:this.filters.projectId});
+          this.syncRoute();this.schedulePoll();
         }catch(error){this.showError(error);}finally{this.loading=false;}
       },
       async loadDocuments(page=0){
@@ -87,9 +114,10 @@
         try{const data=await api.chunks(this.selectedBase.id,this.selectedDocument.id,{status:this.filters.chunkStatus,query:this.filters.chunkQuery,page,size:this.chunkPage.size});this.chunks=data.items;this.chunkPage=data;this.schedulePoll();}
         catch(error){this.showError(error);}finally{this.loading=false;}
       },
-      async openBase(base){this.selectedBase=base;this.selectedDocument=null;this.view="documents";this.pushPath(`/knowledge/${encodeURIComponent(base.id)}/documents`);await this.loadDocuments(0);},
+      async openBase(base){this.selectedBase=base;this.selectedDocument=null;this.view="documents";NexusShell.setContext({projectId:base.projectId,version:base.publishedRevision||""});this.pushPath(`/knowledge/${encodeURIComponent(base.id)}/documents`);await this.loadDocuments(0);},
       async openDocument(doc){this.selectedDocument=doc;this.view="document";this.pushPath(`/knowledge/${encodeURIComponent(this.selectedBase.id)}/documents/${encodeURIComponent(doc.id)}`);await this.loadChunks(0);},
-      openRetrieval(){this.view="retrieval";this.retrieval.version=this.selectedBase.publishedRevision||"";this.pushPath(`/knowledge/${encodeURIComponent(this.selectedBase.id)}/retrieval`);this.clearPoll();},
+      openRetrieval(){this.view="retrieval";this.retrieval.version=this.selectedBase.publishedRevision||"";NexusShell.setContext({projectId:this.selectedBase.projectId,version:this.retrieval.version});this.pushPath(`/knowledge/${encodeURIComponent(this.selectedBase.id)}/retrieval`);this.clearPoll();},
+      async backToBase(){if(!this.selectedBase)return this.goHome();this.view="documents";this.retrieval.response=null;NexusShell.setContext({projectId:this.selectedBase.projectId,version:this.selectedBase.publishedRevision||""});this.pushPath(`/knowledge/${encodeURIComponent(this.selectedBase.id)}/documents`);await this.loadDocuments(this.documentPage.page);},
       async openChunk(chunk){try{this.selectedChunk=await api.chunk(this.selectedBase.id,chunk.chunkId);}catch(error){this.showError(error);}},
       async copyText(value,message){if(!value)return;await navigator.clipboard.writeText(value);NexusNotice.show(message,"success");},
       goHome(){this.view="bases";this.selectedBase=null;this.selectedDocument=null;this.selectedChunk=null;this.pushPath("/knowledge");this.loadBases(this.basePage.page);},
@@ -98,7 +126,7 @@
       async retryDocument(doc){await this.action(()=>api.retryDocument(this.selectedBase.id,doc.id),"已提交文档重试任务");},
       async retryChunk(chunk){await this.action(()=>api.retryChunk(this.selectedBase.id,chunk.chunkId),"已按文档范围提交重试任务");this.selectedChunk=null;},
       async action(operation,message){this.actionBusy=true;try{await operation();NexusNotice.show(message,"success");await this.refresh();}catch(error){this.showError(error);}finally{this.actionBusy=false;}},
-      async runRetrieval(){if(!this.retrieval.query)return;this.retrieval.loading=true;this.retrieval.response=null;try{this.retrieval.response=await api.retrieval(this.selectedBase.id,{query:this.retrieval.query,version:this.retrieval.version||null,limit:this.retrieval.limit});}catch(error){this.showError(error);}finally{this.retrieval.loading=false;}},
+      async runRetrieval(){if(!this.retrieval.query)return;this.retrieval.loading=true;this.retrieval.response=null;this.retrieval.elapsedMs=null;const started=performance.now();try{this.retrieval.response=await api.retrieval(this.selectedBase.id,{query:this.retrieval.query,version:this.retrieval.version||null,limit:this.retrieval.limit});}catch(error){this.showError(error);}finally{this.retrieval.elapsedMs=Math.max(0,Math.round(performance.now()-started));this.retrieval.loading=false;}},
       statusLabel:status.label,
       typeLabel(value){return {REQUIREMENT:"需求",CODE:"代码",WIKI:"Wiki"}[value]||value;},
       stageLabel(value){return {DISCOVER:"发现文件",PARSE:"读取文件",CLEAN:"文本清洗",CHUNK:"父子分块",DEDUPLICATE:"内容去重",EMBED:"向量化",INDEX:"写入 Qdrant",VERIFY:"验证索引",PUBLISH:"发布版本"}[value]||value||"未开始";},
@@ -109,6 +137,8 @@
       progressText(run){if(!run)return"";if(run.chunksTotal)return`${run.chunksReady}/${run.chunksTotal} 分块`;return`${run.filesProcessed}/${run.filesTotal} 文件`;},
       duration(start,end){if(!start)return"—";const ms=new Date(end||Date.now())-new Date(start);if(ms<1000)return`${ms}ms`;if(ms<60000)return`${(ms/1000).toFixed(1)}s`;return`${Math.floor(ms/60000)}m ${Math.floor(ms%60000/1000)}s`;},
       relativeTime(value){if(!value)return"—";const seconds=Math.max(0,Math.floor((Date.now()-new Date(value))/1000));if(seconds<60)return"刚刚";if(seconds<3600)return`${Math.floor(seconds/60)} 分钟前`;if(seconds<86400)return`${Math.floor(seconds/3600)} 小时前`;return new Date(value).toLocaleDateString("zh-CN");},
+      formatLatency(value){if(value===null||value===undefined)return"—";return value<1000?`${value} ms`:`${(value/1000).toFixed(2)} s`;},
+      retrievalStageLabel(value){const stage=String(value||"");if(stage.includes("route")||stage.includes("routing"))return"项目路由";if(stage.includes("rerank")||stage.includes("bge"))return"候选重排";if(stage.includes("code"))return"代码召回";if(stage.includes("qdrant"))return"Qdrant 混合召回";if(stage.includes("corpus"))return"版本正文";if(stage.includes("requirement")||stage.includes("document"))return"需求召回";return stage||"检索阶段";},
       formatNumber(value){return new Intl.NumberFormat("zh-CN").format(value||0);},
       shortHash(value){return value?value.slice(0,12):"—";},
       padChunk(chunk){return String(chunk.parentOrder*1000+chunk.childOrder+1).padStart(4,"0");},
@@ -130,6 +160,7 @@
         const base=this.bases.find(item=>item.id===parts[1]);
         if(!base)return;
         this.selectedBase=base;
+        NexusShell.setContext({projectId:base.projectId,version:base.publishedRevision||""});
         if(parts[2]==="retrieval"){this.openRetrieval();return;}
         this.view="documents";await this.loadDocuments(0);
         if(parts[2]==="documents"&&parts[3]){

@@ -38,6 +38,7 @@ class WikiKnowledgePageTest {
                 .contains("new URLSearchParams(location.search).get('version')")
                 .contains("new URLSearchParams(location.search).get('featureId')")
                 .contains("pendingFeatureId")
+                .contains("NexusShell.setContext({projectId, version})")
                 .contains("const esc =")
                 .contains("legacyCode.map")
                 .doesNotContain("position:fixed;right:18px;top:18px")

@@ -222,7 +222,7 @@ curl -s -X POST http://127.0.0.1:8080/api/code/impact \
 - [ ] PAT 和 Secret 不出现在地址栏、页面刷新后的字段或浏览器 `localStorage`。
 - [ ] 直接打开 `/settings/gitlab/{projectId}`，浏览器前进/后退仍能正确切换页面。
 
-### 3.7 0.9.0 统一前端
+### 3.7 0.9.1 统一前端
 
 依次打开首页、知识库、GitLab、Wiki 和代码工作台：
 

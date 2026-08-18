@@ -62,7 +62,7 @@
 
 <script src="/assets/error-normalizer.js"></script>
 <script src="/assets/api-client.js"></script>
-<script src="/assets/app-shell.js"></script>
+<script src="/assets/app-shell.js?v=20260818-2"></script>
 <script>
 const escapeText=value=>String(value??"").replace(/[&<>'"]/g,char=>({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[char]));
 
@@ -94,7 +94,7 @@ function render(data){
   document.getElementById("failedCount").textContent=issues.length;
   document.getElementById("attentionCount").textContent=issues.length?issues.length+" 项":"当前无待处理项";
   document.getElementById("attention").innerHTML=issues.length?issues.map(item=>`<div class="attention-item"><span class="attention-mark ${item.tone}">${item.mark}</span><div><strong>${escapeText(item.title)}</strong><small>${escapeText(item.detail)}</small></div><a href="${escapeText(item.href)}">查看</a></div>`).join(""):'<div class="nx-empty"><strong>当前无待处理项</strong><span>知识、代码和依赖状态均未报告异常。</span></div>';
-  document.getElementById("services").innerHTML=services.map(service=>`<div class="service"><span class="service-name"><i class="service-dot ${service.available?"on":""}"></i>${escapeText(service.name)}</span><small>${service.available?"可用":service.required?"不可用":"可降级"}</small></div>`).join("");
+  document.getElementById("services").innerHTML=services.map(service=>`<div class="service"><span class="service-name"><i class="service-dot ${service.available?"on":""}"></i>${escapeText(service.name)}</span><small>${escapeText(service.message||(service.available?"可用":service.required?"不可用":"可降级"))}</small></div>`).join("");
   document.getElementById("projects").innerHTML=projects.length?projects.map(project=>`<article class="project-row"><div><strong>${escapeText(project.projectName||project.projectId)}</strong><small>${escapeText(project.version||"未设置版本")}</small></div><div><small>需求</small><strong>${project.requirementChunks||0}</strong></div><div><small>代码</small><strong>${project.codeChunks||0}</strong></div><div><small>Wiki 版本</small><strong>${project.wikiVersions||0}</strong></div><code title="${escapeText(project.codeCollection||"未配置")}">代码集合：${escapeText(project.codeCollection||"未配置")}</code></article>`).join(""):'<div class="nx-empty"><strong>尚无可访问项目</strong><span>先配置项目或接入 GitLab 仓库。</span></div>';
   document.getElementById("lastRefresh").textContent="最近刷新 "+new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"});
 }

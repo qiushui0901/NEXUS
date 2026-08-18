@@ -150,6 +150,21 @@ class SQLiteKnowledgeManagementStoreTest {
                 "chunk-order", 0, 20).total()).isEqualTo(1);
     }
 
+    @Test
+    void readsAllBasesForProjectsWithoutThePageSizeCap() {
+        SQLiteKnowledgeManagementStore store = store(tempDir.resolve("knowledge.db"));
+        List<String> projects = new java.util.ArrayList<>();
+        for (int index = 0; index < 205; index++) {
+            String projectId = "project-" + index;
+            projects.add(projectId);
+            store.ensureBase(projectId, "Project " + index, BaseType.REQUIREMENT,
+                    "requirements_" + index, SourceType.ZIP, "1.0");
+        }
+
+        assertThat(store.listBasesForProjects(projects, 0, 10_000).items()).hasSize(200);
+        assertThat(store.allBasesForProjects(projects)).hasSize(205);
+    }
+
     private DocumentView document(String id, String baseId, String runId, Instant updatedAt) {
         return new DocumentView(id, baseId, runId, "rules/" + id + ".html", "hash-" + id, "2.0",
                 EntityStatus.READY, Stage.PUBLISH, 3, 0, null,

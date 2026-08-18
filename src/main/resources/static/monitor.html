@@ -1313,7 +1313,7 @@
 
 <script src="/assets/error-normalizer.js"></script>
 <script src="/assets/api-client.js"></script>
-<script src="/assets/app-shell.js"></script>
+<script src="/assets/app-shell.js?v=20260818-2"></script>
 <script>
 const { createApp } = Vue;
 
@@ -1666,6 +1666,10 @@ createApp({
         } else if (this.projects.length > 0) {
           this.currentProjectId = this.projects[0].id;
         }
+        NexusShell.setContext({
+          projectId:this.currentProjectId,
+          version:this.currentProject ? this.currentProject.version || '' : ''
+        });
       } catch(e) {
         this.projects = [];
       }
@@ -1676,6 +1680,7 @@ createApp({
         this.review.documentId = this.currentProject.group || this.currentProject.id;
         this.review.version = this.currentProject.version || '';
       }
+      NexusShell.setContext({projectId:this.currentProjectId,version:this.review.version});
       this.refreshAll();
     },
     setGraphMode(mode) {

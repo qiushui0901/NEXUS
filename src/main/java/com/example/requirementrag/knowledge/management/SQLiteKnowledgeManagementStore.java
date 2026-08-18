@@ -313,6 +313,26 @@ public class SQLiteKnowledgeManagementStore {
         return new Page<>(items, safePage, safeSize, total);
     }
 
+    /** 读取指定项目的全部知识库状态，供真实状态与外部索引兜底合并；不应用分页或筛选。 */
+    public List<KnowledgeBaseView> allBasesForProjects(List<String> projectIds) {
+        List<String> ids = projectIds == null ? List.of() : projectIds.stream()
+                .filter(id -> id != null && !id.isBlank())
+                .distinct()
+                .toList();
+        if (ids.isEmpty()) {
+            return List.of();
+        }
+        StringJoiner placeholders = new StringJoiner(",");
+        ids.forEach(ignored -> placeholders.add("?"));
+        return query(
+                "select * from knowledge_base where project_id in (" + placeholders
+                        + ") order by updated_at desc, id asc",
+                statement -> {
+                    int index = 1;
+                    for (String id : ids) statement.setString(index++, id);
+                }, this::base);
+    }
+
     public KnowledgeBaseView requireBase(String id) {
         return one("select * from knowledge_base where id=?", id, this::base);
     }

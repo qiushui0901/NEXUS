@@ -78,11 +78,13 @@ public final class KnowledgeManagementModels {
             String documentId,
             String version,
             List<RetrievalHit> hits,
+            List<CodeHit> codeHits,
             List<RagWarning> warnings,
             List<RagStageDiagnostic> stageDiagnostics
     ) {
         public RetrievalTestResponse {
             hits = hits == null ? List.of() : List.copyOf(hits);
+            codeHits = codeHits == null ? List.of() : List.copyOf(codeHits);
             warnings = warnings == null ? List.of() : List.copyOf(warnings);
             stageDiagnostics = stageDiagnostics == null ? List.of() : List.copyOf(stageDiagnostics);
         }
@@ -100,6 +102,21 @@ public final class KnowledgeManagementModels {
             String contentHash,
             String childText,
             String parentText
+    ) {}
+
+    public record CodeHit(
+            int rank,
+            String chunkId,
+            String projectId,
+            String commitSha,
+            String filePath,
+            String symbolType,
+            String symbolName,
+            int startLine,
+            int endLine,
+            String text,
+            String contentHash,
+            String language
     ) {}
 
     public record ActionAccepted(String status, String mode, String projectId) {}

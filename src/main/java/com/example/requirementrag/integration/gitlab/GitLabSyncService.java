@@ -33,6 +33,7 @@ public class GitLabSyncService {
     private static final Pattern COLLECTION = Pattern.compile("[A-Za-z0-9][A-Za-z0-9_-]{0,127}");
     private final GitLabProjectStore store;
     private final GitLabCredentialCipher cipher;
+    private final GitLabCredentialResolver credentialResolver;
     private final GitLabGitClient gitClient;
     private final ProjectRegistry projectRegistry;
     private final CodeKnowledgeService codeKnowledgeService;
@@ -43,14 +44,35 @@ public class GitLabSyncService {
     @Autowired
     public GitLabSyncService(GitLabProjectStore store,
                              GitLabCredentialCipher cipher,
+                             GitLabCredentialResolver credentialResolver,
                              GitLabGitClient gitClient,
                              ProjectRegistry projectRegistry,
                              CodeKnowledgeService codeKnowledgeService,
                              IncrementalCodeIndexService incrementalIndexService,
                              GitLabIntegrationProperties properties) {
-        this(store, cipher, gitClient, projectRegistry, codeKnowledgeService, incrementalIndexService,
+        this(store, cipher, credentialResolver, gitClient, projectRegistry,
+                codeKnowledgeService, incrementalIndexService,
                 Executors.newFixedThreadPool(properties.syncThreads(), Thread.ofVirtual()
                         .name("gitlab-sync-", 0).factory()));
+    }
+
+    GitLabSyncService(GitLabProjectStore store,
+                      GitLabCredentialCipher cipher,
+                      GitLabCredentialResolver credentialResolver,
+                      GitLabGitClient gitClient,
+                      ProjectRegistry projectRegistry,
+                      CodeKnowledgeService codeKnowledgeService,
+                      IncrementalCodeIndexService incrementalIndexService,
+                      ExecutorService executor) {
+        this.store = store;
+        this.cipher = cipher;
+        this.credentialResolver = credentialResolver;
+        this.gitClient = gitClient;
+        this.projectRegistry = projectRegistry;
+        this.codeKnowledgeService = codeKnowledgeService;
+        this.incrementalIndexService = incrementalIndexService;
+        this.executor = executor;
+        restoreRegistry();
     }
 
     GitLabSyncService(GitLabProjectStore store,
@@ -60,52 +82,72 @@ public class GitLabSyncService {
                       CodeKnowledgeService codeKnowledgeService,
                       IncrementalCodeIndexService incrementalIndexService,
                       ExecutorService executor) {
-        this.store = store;
-        this.cipher = cipher;
-        this.gitClient = gitClient;
-        this.projectRegistry = projectRegistry;
-        this.codeKnowledgeService = codeKnowledgeService;
-        this.incrementalIndexService = incrementalIndexService;
-        this.executor = executor;
-        restoreRegistry();
+        this(store, cipher, new GitLabCredentialResolver(cipher), gitClient, projectRegistry,
+                codeKnowledgeService, incrementalIndexService, executor);
     }
 
     /** 保存项目、发布到动态注册表并提交首次同步任务。 */
     public GitLabManagedProject.View register(CreateProject request) {
         validate(request);
-        if (projectRegistry.isStaticProject(request.projectId())) {
+        return registerProject(
+                request.projectId(), request.name(), request.group(), request.side(),
+                request.cloneUrl(), request.branch(), request.gitPath(),
+                request.requirementCollection(), request.codeCollection(),
+                null, null, cipher.encrypt(request.accessToken()), request.webhookSecret());
+    }
+
+    /** 保存账号连接下的项目并提交首次同步，项目记录不再复制 PAT 密文。 */
+    public GitLabManagedProject.View registerConnected(CreateConnectedProject request) {
+        validateConnected(request);
+        return registerProject(
+                request.projectId(), request.name(), request.group(), request.side(),
+                request.cloneUrl(), request.branch(), request.gitPath(),
+                request.requirementCollection(), request.codeCollection(),
+                request.connectionId(), request.remoteProjectId(), "", request.webhookSecret());
+    }
+
+    private GitLabManagedProject.View registerProject(
+            String projectId, String name, String group, String side,
+            String cloneUrl, String branch, String gitPath,
+            String requirementCollection, String codeCollection,
+            String connectionId, Long remoteProjectId,
+            String encryptedAccessToken, String webhookSecret) {
+        if (projectRegistry.isStaticProject(projectId)) {
             throw new IllegalArgumentException("projectId 与静态项目冲突");
         }
-        if (store.find(request.projectId()).isPresent()) {
-            throw new IllegalArgumentException("GitLab 项目已接入: " + request.projectId());
+        if (store.find(projectId).isPresent()) {
+            throw new IllegalArgumentException("GitLab 项目已接入: " + projectId);
         }
         String now = Instant.now().toString();
         GitLabManagedProject project = new GitLabManagedProject(
-                request.projectId(),
-                text(request.name(), request.projectId()),
-                text(request.group(), "default"),
-                text(request.side(), "server"),
-                request.cloneUrl(),
-                text(request.branch(), "main"),
-                request.gitPath(),
-                text(request.requirementCollection(), request.projectId() + "_requirements"),
-                text(request.codeCollection(), request.projectId() + "_code"),
-                gitClient.repositoryPath(request.projectId()).toString(),
-                cipher.encrypt(request.accessToken()),
-                cipher.encrypt(request.webhookSecret()),
+                projectId,
+                text(name, projectId),
+                text(group, "default"),
+                text(side, "server"),
+                cloneUrl,
+                text(branch, "main"),
+                gitPath,
+                text(requirementCollection, projectId + "_requirements"),
+                text(codeCollection, projectId + "_code"),
+                gitClient.repositoryPath(projectId).toString(),
+                connectionId,
+                remoteProjectId,
+                encryptedAccessToken,
+                cipher.encrypt(webhookSecret),
                 GitLabProjectStatus.PENDING,
-                null,
-                null,
-                null,
-                now,
-                now);
-        store.save(project);
+                null, null, null, now, now);
+        if (!store.insert(project)) {
+            throw new IllegalArgumentException("GitLab projectId 或远端项目已经接入");
+        }
+        boolean registered = false;
         try {
-            projectRegistry.registerDynamic(project.toProjectConfig());
+            registered = projectRegistry.registerDynamic(project.toProjectConfig());
             enqueue(project.projectId(), null, "INITIAL");
             return require(project.projectId());
         } catch (RuntimeException exception) {
-            projectRegistry.unregisterDynamic(project.projectId());
+            if (registered) {
+                projectRegistry.unregisterDynamic(project.projectId());
+            }
             store.delete(project.projectId());
             throw exception;
         }
@@ -293,7 +335,7 @@ public class GitLabSyncService {
         String requestedSha = request.requestedSha();
         try {
             GitLabManagedProject project = requireEnabled(projectId);
-            String accessToken = cipher.decrypt(project.encryptedAccessToken());
+            String accessToken = credentialResolver.resolve(project).accessToken();
             store.updateJob(jobId, "RUNNING", "CLONE", requestedSha, null, null, false);
             if (!store.updateStateIfEnabled(projectId, GitLabProjectStatus.CLONING,
                     null, requestedSha, null)) {
@@ -393,6 +435,9 @@ public class GitLabSyncService {
     }
 
     private String publicError(Exception exception) {
+        if (exception instanceof GitLabApiException) {
+            return exception.getMessage();
+        }
         if (exception instanceof IllegalArgumentException || exception instanceof IllegalStateException) {
             String message = exception.getMessage();
             if (message != null && (message.startsWith("Git ")
@@ -405,6 +450,9 @@ public class GitLabSyncService {
     }
 
     private String errorCode(Exception exception) {
+        if (exception instanceof GitLabApiException apiException) {
+            return apiException.code();
+        }
         if (exception.getMessage() != null && exception.getMessage().contains("非快进")) {
             return "NON_FAST_FORWARD";
         }
@@ -464,6 +512,23 @@ public class GitLabSyncService {
         validateWebhookSecret(request.webhookSecret());
     }
 
+    private void validateConnected(CreateConnectedProject request) {
+        if (request == null) throw new IllegalArgumentException("请求不能为空");
+        if (request.connectionId() == null || request.connectionId().isBlank()) {
+            throw new IllegalArgumentException("connectionId 不能为空");
+        }
+        if (request.remoteProjectId() <= 0) {
+            throw new IllegalArgumentException("remoteProjectId 必须为正数");
+        }
+        GitLabGitClient.validateProjectId(request.projectId());
+        gitClient.validateCloneUrl(request.cloneUrl());
+        GitLabGitClient.validateBranch(text(request.branch(), "main"));
+        validateGitPath(request.gitPath());
+        validateCollection(text(request.requirementCollection(), request.projectId() + "_requirements"));
+        validateCollection(text(request.codeCollection(), request.projectId() + "_code"));
+        validateWebhookSecret(request.webhookSecret());
+    }
+
     private void validateCollection(String collection) {
         if (!COLLECTION.matcher(collection).matches()) {
             throw new IllegalArgumentException("collection 名仅允许 1-128 位字母、数字、下划线和连字符");
@@ -512,7 +577,7 @@ public class GitLabSyncService {
                 || "RUNNING".equals(latest.status()));
         return new GitLabManagedProject.View(
                 project.projectId(), project.name(), project.group(), project.side(),
-                project.cloneUrl(), project.branch(), project.gitPath(),
+                project.cloneUrl(), project.branch(), project.gitPath(), project.connectionId(),
                 project.requirementCollection(), project.codeCollection(), project.status(),
                 project.lastIndexedSha(), project.targetSha(), project.lastError(),
                 project.createdAt(), project.updatedAt(),
@@ -562,6 +627,22 @@ public class GitLabSyncService {
             String requirementCollection,
             String codeCollection,
             String accessToken,
+            String webhookSecret
+    ) {
+    }
+
+    public record CreateConnectedProject(
+            String connectionId,
+            long remoteProjectId,
+            String projectId,
+            String name,
+            String group,
+            String side,
+            String cloneUrl,
+            String branch,
+            String gitPath,
+            String requirementCollection,
+            String codeCollection,
             String webhookSecret
     ) {
     }

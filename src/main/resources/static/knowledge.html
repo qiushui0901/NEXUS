@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/assets/app-shell.css?v=20260818">
   <link rel="stylesheet" href="/assets/components.css?v=20260818">
   <link rel="stylesheet" href="/assets/responsive.css?v=20260818">
-  <link rel="stylesheet" href="/assets/knowledge-app.css?v=20260818">
+  <link rel="stylesheet" href="/assets/knowledge-app.css?v=20260818-3">
 </head>
 <body>
 <div data-nexus-shell data-page="knowledge"></div>
@@ -184,24 +184,59 @@
 
     <section v-else-if="view==='retrieval'" class="workspace">
       <breadcrumb :items="[{label:'知识库',action:goHome},{label:selectedBase.name,action:()=>openBase(selectedBase)},{label:'检索测试'}]"></breadcrumb>
-      <div class="page-heading compact"><div><h1>检索测试</h1><p>复用正式混合检索与重排链路，结果不会写入知识库。</p></div></div>
-      <form class="retrieval-form" @submit.prevent="runRetrieval">
-        <label class="query-input">查询<input v-model.trim="retrieval.query" required placeholder="输入要验证的业务问题"></label>
-        <label>版本<input v-model.trim="retrieval.version" placeholder="默认当前版本"></label>
-        <label>Top K<input v-model.number="retrieval.limit" type="number" min="1" max="50"></label>
-        <button class="primary" type="submit" :disabled="retrieval.loading"><span aria-hidden="true">⌕</span> 运行检索</button>
+      <div class="page-heading compact retrieval-heading">
+        <div><h1>检索测试</h1><p>复用正式混合检索与重排链路，结果不会写入知识库。</p></div>
+        <button type="button" @click="backToBase"><span aria-hidden="true">←</span> 返回知识库</button>
+      </div>
+      <form class="retrieval-form" :class="{'has-version':selectedBase.type!=='CODE'}" @submit.prevent="runRetrieval">
+        <label class="query-input">查询<input v-model.trim="retrieval.query" required placeholder="输入要验证的业务问题或代码实现描述"></label>
+        <label v-if="selectedBase.type!=='CODE'" class="version-input">版本<input v-model.trim="retrieval.version" placeholder="默认当前版本"></label>
+        <label class="limit-input">Top K<input v-model.number="retrieval.limit" type="number" min="1" max="50"></label>
+        <div class="retrieval-actions">
+          <p v-if="selectedBase.type==='CODE'">范围：当前项目已发布代码索引，结果标注 Git 提交。</p>
+          <p v-else>范围：{{ retrieval.version || selectedBase.publishedRevision || '当前需求版本' }}</p>
+          <button class="primary" type="submit" :disabled="retrieval.loading"><span aria-hidden="true">⌕</span> {{ retrieval.loading ? '检索中' : '运行检索' }}</button>
+        </div>
       </form>
       <div v-if="retrieval.response" class="retrieval-status">
         <status-badge :status="retrieval.response.status"></status-badge>
-        <span>{{ retrieval.response.hits.length }} 个结果</span>
+        <span>{{ retrievalHits.length }} 个结果</span>
         <span v-if="retrieval.response.warnings.length">{{ retrieval.response.warnings.length }} 个降级提示</span>
       </div>
+      <section v-if="retrieval.response" class="retrieval-metrics" aria-label="本次检索指标">
+        <div><span>端到端耗时</span><strong>{{ formatLatency(retrieval.elapsedMs) }}</strong></div>
+        <div><span>返回结果</span><strong>{{ retrievalHits.length }} / {{ retrieval.limit }}</strong></div>
+        <div><span>来源文件</span><strong>{{ retrievalSourceCount }}</strong></div>
+        <div><span>{{ selectedBase.type==='CODE' ? '代码提交' : '需求版本' }}</span><strong><code>{{ retrievalScope }}</code></strong></div>
+      </section>
+      <details v-if="retrievalDiagnostics.length" class="retrieval-diagnostics">
+        <summary>阶段明细 <span>{{ retrievalDiagnostics.length }} 项</span></summary>
+        <div class="diagnostic-list">
+          <div v-for="(item,index) in retrievalDiagnostics" :key="item.stage+'-'+index" class="diagnostic-row">
+            <div><strong>{{ retrievalStageLabel(item.stage) }}</strong><code>{{ item.stage }}</code></div>
+            <status-badge :status="item.status"></status-badge>
+            <span>{{ item.itemCount }} 项</span>
+            <span>{{ formatLatency(item.durationMs) }}</span>
+          </div>
+        </div>
+      </details>
       <div class="result-list">
-        <article v-for="hit in retrieval.response?.hits || []" :key="hit.chunkId" class="result-row">
+        <article v-for="hit in retrievalHits" :key="hit.chunkId" class="result-row">
           <span class="rank">{{ hit.rank }}</span>
-          <div><h2>{{ hit.sourcePath || hit.documentId }}</h2><p>{{ hit.childText }}</p><small><code>{{ hit.chunkId }}</code> · parent {{ hit.parentId }} · {{ shortHash(hit.contentHash) }}</small></div>
+          <div>
+            <h2>{{ hit.sourcePath || hit.filePath || hit.documentId }}</h2>
+            <p>{{ hit.childText || hit.text }}</p>
+            <small><code>{{ hit.chunkId }}</code> ·
+              <template v-if="hit.symbolName">{{ hit.symbolType }} {{ hit.symbolName }} · {{ hit.startLine }}-{{ hit.endLine }}</template>
+              <template v-else>parent {{ hit.parentId }}</template> ·
+              <template v-if="hit.commitSha">提交 {{ shortHash(hit.commitSha) }} · </template>
+              {{ shortHash(hit.contentHash) }}
+            </small>
+          </div>
         </article>
-        <empty-state v-if="retrieval.response && retrieval.response.hits.length===0" title="没有命中结果" message="尝试更具体的业务名词，或检查目标版本是否已发布。"></empty-state>
+        <empty-state v-if="retrieval.response && retrievalHits.length===0"
+          title="没有命中结果"
+          :message="selectedBase.type==='CODE' ? '尝试更具体的类名/方法名/实现名词，或检查代码索引是否已完成。' : '尝试更具体的业务名词，或检查目标版本是否已发布。'"></empty-state>
         <loading-state v-if="retrieval.loading"></loading-state>
       </div>
     </section>
@@ -228,9 +263,9 @@
 <script src="/webjars/vue/3.5.13/dist/vue.global.prod.js"></script>
 <script src="/assets/error-normalizer.js?v=20260818"></script>
 <script src="/assets/api-client.js?v=20260818"></script>
-<script src="/assets/app-shell.js?v=20260818"></script>
-<script src="/assets/status-contract.js?v=20260818"></script>
+<script src="/assets/app-shell.js?v=20260818-2"></script>
+<script src="/assets/status-contract.js?v=20260818-2"></script>
 <script src="/assets/knowledge-api.js?v=20260818"></script>
-<script src="/assets/knowledge-app.js?v=20260818"></script>
+<script src="/assets/knowledge-app.js?v=20260818-3"></script>
 </body>
 </html>

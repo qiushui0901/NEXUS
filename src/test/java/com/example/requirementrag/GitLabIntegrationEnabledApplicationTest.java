@@ -3,6 +3,9 @@ package com.example.requirementrag;
 import com.example.requirementrag.integration.gitlab.GitLabIntegrationController;
 import com.example.requirementrag.integration.gitlab.GitLabManagedWebhookController;
 import com.example.requirementrag.integration.gitlab.GitLabSyncService;
+import com.example.requirementrag.integration.gitlab.GitLabConnectionController;
+import com.example.requirementrag.integration.gitlab.GitLabConnectionStore;
+import com.example.requirementrag.integration.gitlab.GitLabApiClient;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -30,5 +33,8 @@ class GitLabIntegrationEnabledApplicationTest {
         assertThat(context.getBeansOfType(GitLabSyncService.class)).hasSize(1);
         assertThat(context.getBeansOfType(GitLabIntegrationController.class)).hasSize(1);
         assertThat(context.getBeansOfType(GitLabManagedWebhookController.class)).hasSize(1);
+        assertThat(context.getBeansOfType(GitLabConnectionController.class)).hasSize(1);
+        assertThat(context.getBeansOfType(GitLabConnectionStore.class)).hasSize(1);
+        assertThat(context.getBeansOfType(GitLabApiClient.class)).hasSize(1);
     }
 }
