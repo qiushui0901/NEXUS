@@ -962,3 +962,36 @@ Phase 2-6 全部落地：341 测试 verify 全绿；状态契约注册表 + CONT
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: 发布 NEXUS v0.9.1 GitLab 账号导入与统一前端
+
+**Date**: 2026-08-18
+**Task**: 发布 NEXUS v0.9.1 GitLab 账号导入与统一前端
+**Branch**: `main`
+
+### Summary
+
+完成 GitLab 多账号 PAT 连接、成员项目发现与批量导入，修复稳定远端身份、并发注册、凭据 Host 绑定、临时故障状态和服务端搜索问题；合并统一浅色前端、知识检索指标与运行状态监控，JDK 21 全量质量门通过。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a32af87` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

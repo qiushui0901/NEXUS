@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 22
-- **Last Active**: 2026-08-17
+- **Total Sessions**: 23
+- **Last Active**: 2026-08-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~964 | Active |
+| `journal-1.md` | ~997 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 23 | 2026-08-18 | 发布 NEXUS v0.9.1 GitLab 账号导入与统一前端 | `a32af87` | `main` |
 | 22 | 2026-08-17 | RAGFlow 知识库与 GitLab 工作台 Review 收口 | `caae1e3` | `main` |
 | 21 | 2026-08-17 | GitLab 项目自动接入 | `b842338` | `main` |
 | 20 | 2026-08-17 | 建立真实 RAG 企业评测基线 | `521beaf` | `main` |
