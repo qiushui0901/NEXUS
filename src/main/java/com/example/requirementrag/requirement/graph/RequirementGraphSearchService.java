@@ -12,6 +12,7 @@ import com.example.requirementrag.requirement.graph.RequirementGraphModels.Searc
 import com.example.requirementrag.requirement.graph.RequirementGraphModels.SearchResponse;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
@@ -37,6 +38,7 @@ public class RequirementGraphSearchService {
     private final BusinessProjectCatalogService businessProjects;
     private final RequirementGraphProperties properties;
 
+    @Autowired
     public RequirementGraphSearchService(SQLiteRequirementGraphStore store, QdrantHybridStore qdrantStore,
                                          ProjectRegistry projectRegistry,
                                          ObjectProvider<BusinessProjectCatalogService> businessProjects,

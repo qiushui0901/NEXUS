@@ -15,7 +15,7 @@ spring:
       server:
         enabled: ${MCP_ENABLED:true}
         name: nexus
-        version: 0.9.1
+        version: 0.9.2
         protocol: STREAMABLE
         instructions: Evidence-bound requirement, code, Wiki, and version knowledge for development agents.
     chat:

@@ -19,6 +19,7 @@ import com.example.requirementrag.versioning.RequirementSnapshotModels.Entry;
 import com.example.requirementrag.versioning.RequirementSnapshotModels.Snapshot;
 import com.example.requirementrag.versioning.RequirementSnapshotRepository;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
@@ -51,6 +52,7 @@ public class RequirementGraphBuildService {
     private final BusinessProjectCatalogService businessProjects;
     private final RequirementGraphProperties properties;
 
+    @Autowired
     public RequirementGraphBuildService(SQLiteRequirementGraphStore store,
                                         RequirementGraphExtractionService extractionService,
                                         RequirementSnapshotRepository snapshots,

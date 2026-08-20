@@ -50,7 +50,7 @@ class FrontendShellPageTest {
                 .contains("setContext")
                 .contains("refreshContext")
                 .contains("localStorage.setItem(\"nexus_project_id\"")
-                .contains("0.9.1");
+                .contains("0.9.2");
         assertThat(shell.indexOf("{value: title, current: true}"))
                 .isLessThan(shell.indexOf("{value: liveContext.projectId, current: false}"));
     }
