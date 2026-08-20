@@ -60,6 +60,7 @@ public class CodeQdrantStore {
     private final Set<String> initializedCollections = ConcurrentHashMap.newKeySet();
     private final Set<String> descDenseChecked = ConcurrentHashMap.newKeySet();
     private final Set<String> descDenseCollections = ConcurrentHashMap.newKeySet();
+    private final Map<String, String> denseVectorNames = new ConcurrentHashMap<>();
 
     /** 注入 Qdrant 客户端、嵌入模型、稀疏向量化器与配置。 */
     public CodeQdrantStore(RestClient qdrantRestClient, EmbeddingModel embeddingModel,
@@ -479,7 +480,8 @@ public class CodeQdrantStore {
                 : fileScopeFilter(projectId, fileScope);
         Map<String, Object> body = new LinkedHashMap<>();
         List<Map<String, Object>> prefetches = new ArrayList<>();
-        prefetches.add(Map.of("query", dense, "using", "dense", "limit", prefetchLimit, "filter", projectFilter));
+        prefetches.add(Map.of("query", dense, "using", denseVectorName(collection),
+                "limit", prefetchLimit, "filter", projectFilter));
         if (desc != null && supportsDescDense(collection)) {
             prefetches.add(Map.of("query", desc, "using", "desc_dense", "limit", prefetchLimit, "filter", projectFilter));
         }
@@ -512,6 +514,7 @@ public class CodeQdrantStore {
             Map<String, Object> params = map(config.get("params"));
             Map<String, Object> vectors = map(params.get("vectors"));
             supported = vectors.containsKey("desc_dense");
+            denseVectorNames.put(collection, vectors.containsKey("code_dense") ? "code_dense" : "dense");
         } catch (RuntimeException exception) {
             LOGGER.warn("Unable to inspect collection {} for desc_dense: {}", collection, exception.getMessage());
         }
@@ -522,13 +525,18 @@ public class CodeQdrantStore {
         return supported;
     }
 
+    /** 兼容历史 collection 的 code_dense 与当前安全发布 collection 的 dense 命名。 */
+    private String denseVectorName(String collection) {
+        return denseVectorNames.getOrDefault(collection, "dense");
+    }
+
     /** 仅用于离线评测归因：单独查询 dense / sparse 预取结果，不参与生产检索路径。 */
     private List<CodeChunk> prefetchOnly(String collection, float[] dense, String projectId, int prefetchLimit) {
         Map<String, Object> response = executeIdempotentQuery(() -> client.post()
                 .uri("/collections/{collection}/points/query", collection)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(Map.of(
-                        "query", dense, "using", "dense", "limit", prefetchLimit,
+                        "query", dense, "using", denseVectorName(collection), "limit", prefetchLimit,
                         "filter", filter(projectId), "with_payload", true))
                 .retrieve()
                 .body(new ParameterizedTypeReference<>() {}));
@@ -612,6 +620,20 @@ public class CodeQdrantStore {
         return countProjectWithoutInitialization(collection, projectId);
     }
 
+    /** 统计安全发布模式下 live alias 中的项目代码点数。 */
+    public long countLiveProjectIfAvailable(String collection, String projectId) {
+        return countProjectWithoutInitialization(liveCollection(collection), projectId);
+    }
+
+    /** 将配置中的代码 collection 基础名解析为检索与统计统一使用的 live alias。 */
+    public String liveCollection(String collection) {
+        if (collection == null || collection.isBlank()) {
+            throw new IllegalArgumentException("code collection required");
+        }
+        String normalized = collection.trim();
+        return normalized.endsWith("-live") ? normalized : normalized + "-live";
+    }
+
     private long countProjectWithoutInitialization(String collection, String projectId) {
         Map<String, Object> response = client.post().uri("/collections/{collection}/points/count", collection)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -675,6 +697,9 @@ public class CodeQdrantStore {
             payload.put("layer", chunk.layer());
             payload.put("businessDescCn", chunk.businessDescCn());
             payload.put("businessDescEn", chunk.businessDescEn());
+            payload.put("repositoryId", chunk.repositoryId());
+            payload.put("repositoryName", chunk.repositoryName());
+            payload.put("repositoryKind", chunk.repositoryKind());
             payload.put("keywords", chunk.keywords());
             payload.put("userQuestions", chunk.userQuestions());
             payload.put("synonyms", chunk.synonyms());
@@ -1256,7 +1281,8 @@ public class CodeQdrantStore {
                 integer(p, "startLine"), integer(p, "endLine"), string(p, "text"), string(p, "contentHash"),
                 language(p), string(p, "className"), string(p, "module"), string(p, "layer"),
                 string(p, "businessDescCn"), string(p, "businessDescEn"), List.of(), List.of(), List.of(),
-                List.of(), "", List.of(), List.of());
+                List.of(), "", List.of(), List.of(), string(p, "repositoryId"), string(p, "repositoryName"),
+                string(p, "repositoryKind"));
     }
 
     private void sleepMillis(long millis) {

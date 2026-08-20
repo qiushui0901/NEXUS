@@ -31,6 +31,9 @@ import com.example.requirementrag.retrieval.QdrantHybridStore;
 import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
 import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
 import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
+import com.example.requirementrag.project.BusinessProject;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
+import com.example.requirementrag.project.CodeRepository;
 import jakarta.servlet.http.HttpServletRequest;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -387,6 +390,125 @@ class KnowledgeManagementControllerTest {
                 .andExpect(jsonPath("$.page").value(0))
                 .andExpect(jsonPath("$.size").value(200))
                 .andExpect(jsonPath("$.total").value(1));
+    }
+
+    @Test
+    void exposesUnavailableRequirementCountInsteadOfFalseIdle() throws Exception {
+        BusinessProjectCatalogService catalog = mock(BusinessProjectCatalogService.class);
+        BusinessProject project = new BusinessProject(
+                "orders", "Orders", "orders-main", "requirements_orders", "requirements", "orders", "orders",
+                "2.0", BusinessProject.Status.ACTIVE, "2026-08-19T00:00:00Z", "2026-08-19T00:00:00Z");
+        when(catalog.requireProject("orders")).thenReturn(project);
+        when(catalog.accessScopeIds("orders")).thenReturn(List.of("orders"));
+        when(catalog.ownedRepositories("orders")).thenReturn(List.of());
+        when(catalog.sharedRepositories("orders")).thenReturn(List.of());
+        when(accessGuard.currentUser(any())).thenReturn(UserContext.defaultAdmin());
+        when(qdrantStore.countVersionIfAvailable("requirements_orders", "requirements", "2.0"))
+                .thenThrow(new IllegalStateException("qdrant unavailable"));
+        controller = new KnowledgeManagementController(
+                store, projectRegistry, accessGuard, bootstrapService, retrievalPipeline,
+                qdrantStore, codeStore, codeIndexJobService, catalog);
+        mvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new ApiExceptionHandler()).build();
+
+        mvc.perform(get("/api/knowledge-bases").param("projectId", "orders"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].status").value("UNAVAILABLE"))
+                .andExpect(jsonPath("$.items[0].chunkCount").value(0));
+    }
+
+    @Test
+    void exposesUnavailableCodeCountInsteadOfFalseIdle() throws Exception {
+        BusinessProjectCatalogService catalog = mock(BusinessProjectCatalogService.class);
+        String now = "2026-08-19T00:00:00Z";
+        BusinessProject project = new BusinessProject(
+                "orders", "Orders", "orders-main", "requirements_orders", "requirements", "orders", "orders",
+                "2.0", BusinessProject.Status.ACTIVE, now, now);
+        CodeRepository repository = new CodeRepository(
+                "orders-api", "Orders API", CodeRepository.Kind.PROJECT, "orders", "server",
+                "orders_code", "/tmp/orders-api", null, "MAVEN_POM", "pom.xml", true, true, now, now);
+        when(catalog.requireProject("orders")).thenReturn(project);
+        when(catalog.accessScopeIds("orders")).thenReturn(List.of("orders"));
+        when(catalog.ownedRepositories("orders")).thenReturn(List.of(repository));
+        when(catalog.sharedRepositories("orders")).thenReturn(List.of());
+        when(accessGuard.currentUser(any())).thenReturn(UserContext.defaultAdmin());
+        when(qdrantStore.countVersionIfAvailable("requirements_orders", "requirements", "2.0"))
+                .thenReturn(3L);
+        when(codeStore.countLiveProjectIfAvailable("orders_code", "orders-api"))
+                .thenThrow(new IllegalStateException("qdrant unavailable"));
+        controller = new KnowledgeManagementController(
+                store, projectRegistry, accessGuard, bootstrapService, retrievalPipeline,
+                qdrantStore, codeStore, codeIndexJobService, catalog);
+        mvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new ApiExceptionHandler()).build();
+
+        mvc.perform(get("/api/knowledge-bases").param("projectId", "orders"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.items[0].status").value("READY"))
+                .andExpect(jsonPath("$.items[1].status").value("UNAVAILABLE"))
+                .andExpect(jsonPath("$.items[1].chunkCount").value(0));
+    }
+
+    @Test
+    void businessProjectListsSharedRequirementsAndEveryOwnedRepository() throws Exception {
+        BusinessProjectCatalogService catalog = mock(BusinessProjectCatalogService.class);
+        String now = "2026-08-19T00:00:00Z";
+        BusinessProject immortal = new BusinessProject(
+                "immortal", "Immortal", "immortal-game-service", "requirement_chunks",
+                "fengshen", "immortal-game-service", "immortal-game-service", "5.1",
+                BusinessProject.Status.ACTIVE, now, now);
+        CodeRepository main = new CodeRepository(
+                "immortal-game-service", "immortal-game-service", CodeRepository.Kind.PROJECT,
+                "immortal", "server", "code_chunks", "/private/main", null,
+                "MAVEN_POM", "pom.xml", false, true, now, now);
+        CodeRepository api = new CodeRepository(
+                "bizgame-immortal-api", "Immortal Api", CodeRepository.Kind.PROJECT,
+                "immortal", "server", "bizgame_immortal_api_code", "/private/api",
+                "bizgame/immortal-api", "MAVEN_POM", "pom.xml", true, true, now, now);
+        when(catalog.requireProject("immortal")).thenReturn(immortal);
+        when(catalog.accessScopeIds("immortal"))
+                .thenReturn(List.of("immortal", "immortal-game-service"));
+        when(catalog.ownedRepositories("immortal")).thenReturn(List.of(main, api));
+        when(catalog.sharedRepositories("immortal")).thenReturn(List.of());
+        when(catalog.repositoryScope("immortal", List.of("immortal-game-service")))
+                .thenReturn(List.of(main));
+        when(catalog.repositoryScope("immortal", List.of("bizgame-immortal-api")))
+                .thenReturn(List.of(api));
+        when(accessGuard.currentUser(any())).thenReturn(UserContext.defaultAdmin());
+        when(qdrantStore.countVersionIfAvailable("requirement_chunks", "fengshen", "5.1"))
+                .thenReturn(17L);
+        when(codeStore.countProjectIfAvailable("code_chunks", "immortal-game-service"))
+                .thenReturn(12_760L);
+        when(codeStore.countLiveProjectIfAvailable(
+                "bizgame_immortal_api_code", "bizgame-immortal-api")).thenReturn(1_263L);
+        controller = new KnowledgeManagementController(
+                store, projectRegistry, accessGuard, bootstrapService, retrievalPipeline,
+                qdrantStore, codeStore, codeIndexJobService, catalog);
+        mvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new ApiExceptionHandler()).build();
+
+        mvc.perform(get("/api/knowledge-bases").param("projectId", "immortal"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(3))
+                .andExpect(jsonPath("$.items[0].id").value("immortal:requirement"))
+                .andExpect(jsonPath("$.items[0].projectId").value("immortal"))
+                .andExpect(jsonPath("$.items[0].chunkCount").value(17))
+                .andExpect(jsonPath("$.items[1].id")
+                        .value("immortal:code:immortal-game-service"))
+                .andExpect(jsonPath("$.items[1].chunkCount").value(12760))
+                .andExpect(jsonPath("$.items[2].id")
+                        .value("immortal:code:bizgame-immortal-api"))
+                .andExpect(jsonPath("$.items[2].chunkCount").value(1263));
+
+        mvc.perform(post("/api/knowledge-bases/immortal:code:bizgame-immortal-api/rebuild"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.projectId").value("immortal"));
+        verify(codeIndexJobService).start("bizgame-immortal-api");
+
+        mvc.perform(post("/api/knowledge-bases/immortal:requirement/rebuild"))
+                .andExpect(status().isAccepted())
+                .andExpect(jsonPath("$.projectId").value("immortal"));
+        verify(bootstrapService).bootstrapAsync("immortal-game-service", "immortal");
     }
 
     private KnowledgeBaseView base(String id, String projectId) {

@@ -188,6 +188,22 @@ public class GitLabProjectStore {
         return updateState(projectId, status, lastIndexedSha, null, lastError, true, true);
     }
 
+    /** 仅允许 DISABLED 原子恢复为 PENDING，避免并发重复启用。 */
+    public synchronized boolean enableIfDisabled(String projectId) {
+        String sql = """
+                UPDATE gitlab_managed_project
+                SET status='PENDING', target_sha=NULL, last_error=NULL, updated_at=?
+                WHERE project_id=? AND status='DISABLED'
+                """;
+        try (Connection connection = connection(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, Instant.now().toString());
+            statement.setString(2, projectId);
+            return statement.executeUpdate() == 1;
+        } catch (SQLException exception) {
+            throw new IllegalStateException("重新启用 GitLab 项目失败", exception);
+        }
+    }
+
     private boolean updateState(String projectId, GitLabProjectStatus status,
                                 String lastIndexedSha, String targetSha, String lastError,
                                 boolean requireEnabled) {

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.servlet.HandlerMapping;
 
 import java.util.List;
 
@@ -60,6 +61,22 @@ class ProjectIdResolverTest {
         byte[] body = "{\"query\":\"test\"}".getBytes();
         CachedBodyHttpServletRequest request = new CachedBodyHttpServletRequest(wrapWithBody(body));
         assertEquals("fengshen-server", resolver.resolveForAccess(request));
+    }
+
+    @Test
+    void resolvesBusinessProjectIdFromPathVariables() {
+        MockHttpServletRequest request = new MockHttpServletRequest(
+                "GET", "/api/business-projects/immortal");
+        request.setAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE,
+                java.util.Map.of("projectId", "immortal"));
+
+        assertEquals("immortal", resolver.resolveForAccess(request));
+    }
+
+    @Test
+    void projectListDoesNotRequireTheLegacyDefaultProject() {
+        MockHttpServletRequest request = new MockHttpServletRequest("GET", "/api/business-projects");
+        assertNull(resolver.resolveForAccess(request));
     }
 
     private MockHttpServletRequest wrapWithBody(byte[] body) {

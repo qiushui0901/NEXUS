@@ -28,10 +28,15 @@ public class KnowledgeIngestionTracker {
     }
 
     public Context start(String projectId, String name, String collection, String revision, TriggerType trigger) {
+        return start(projectId, name, collection, revision, trigger, SourceType.ZIP);
+    }
+
+    public Context start(String projectId, String name, String collection, String revision,
+                         TriggerType trigger, SourceType sourceType) {
         if (store == null) return Context.disabled();
         return safe(() -> {
             KnowledgeBaseView base = store.ensureBase(projectId, name, BaseType.REQUIREMENT, collection,
-                    SourceType.ZIP, revision);
+                    sourceType == null ? SourceType.ZIP : sourceType, revision);
             RunView run = store.startRun(base.id(), trigger, revision);
             return new Context(base.id(), run.id(), revision, true);
         }, Context.disabled());

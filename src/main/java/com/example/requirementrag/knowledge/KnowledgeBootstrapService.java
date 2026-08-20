@@ -87,13 +87,18 @@ public class KnowledgeBootstrapService {
         thread.setDaemon(true);
         thread.start();
     }
-
-    /** 在后台线程中异步启动指定项目的引导。 */
+    /** 兼容旧调用：仓库配置 ID 与知识状态 ID 相同。 */
     public void bootstrapAsync(String projectId) {
-        if (bootstrapState.running(projectId)) {
+        bootstrapAsync(projectId, projectId);
+    }
+
+    /** 在后台线程中异步启动指定仓库配置，并把知识状态归属到独立的业务项目 ID。 */
+    public void bootstrapAsync(String repositoryProjectId, String knowledgeProjectId) {
+        if (bootstrapState.running(knowledgeProjectId)) {
             return;
         }
-        Thread thread = new Thread(() -> bootstrap(projectId), "nexus-bootstrap-" + projectId);
+        Thread thread = new Thread(() -> bootstrap(repositoryProjectId, knowledgeProjectId),
+                "nexus-bootstrap-" + knowledgeProjectId);
         thread.setDaemon(true);
         thread.start();
     }
@@ -115,8 +120,13 @@ public class KnowledgeBootstrapService {
 
     /** 引导指定 projectId 的项目。 */
     public IngestResponse bootstrap(String projectId) {
-        RagProperties.ProjectConfig project = projectRegistry.require(projectId);
-        return bootstrapProject(project);
+        return bootstrap(projectId, projectId);
+    }
+
+    /** 使用仓库配置读取需求来源，但把状态写入业务项目知识库。 */
+    public IngestResponse bootstrap(String repositoryProjectId, String knowledgeProjectId) {
+        RagProperties.ProjectConfig project = projectRegistry.require(repositoryProjectId);
+        return bootstrapProject(project, knowledgeProjectId);
     }
 
     /** 使用默认配置的引导（向后兼容）。 */
@@ -138,28 +148,32 @@ public class KnowledgeBootstrapService {
     }
 
     /** 按项目配置执行引导，使用项目级锁。 */
+    /** 按仓库配置执行引导，使用业务项目级状态归属和锁。 */
     private IngestResponse bootstrapProject(RagProperties.ProjectConfig project) {
-        if (!bootstrapState.tryStartProject(project.id())) {
-            throw new IllegalStateException("项目 " + project.id() + " 知识库导入正在进行中");
+        return bootstrapProject(project, project.id());
+    }
+
+    private IngestResponse bootstrapProject(RagProperties.ProjectConfig project, String knowledgeProjectId) {
+        if (!bootstrapState.tryStartProject(knowledgeProjectId)) {
+            throw new IllegalStateException("项目 " + knowledgeProjectId + " 知识库导入正在进行中");
         }
-
-        RagProperties.ProjectKnowledge knowledge = project.knowledge();
-        if (knowledge == null) {
-            bootstrapState.finishProject(project.id());
-            throw new IllegalArgumentException("项目 " + project.id() + " 未配置知识库");
-        }
-
-        bootstrapState.start();
-        Path zipPath = Path.of(knowledge.zipPath()).toAbsolutePath().normalize();
-        String documentId = knowledge.documentId();
-        String version = knowledge.version();
-        String collection = project.requirementCollection();
-        KnowledgeIngestionTracker.Context context = startTracking(project.id(), collection, version);
-
         try {
+            RagProperties.ProjectKnowledge knowledge = project.knowledge();
+            if (knowledge == null) {
+                throw new IllegalArgumentException("项目 " + project.id() + " 未配置知识库");
+            }
+            bootstrapState.start();
+            Path zipPath = Path.of(knowledge.zipPath()).toAbsolutePath().normalize();
+            String documentId = knowledge.documentId();
+            String version = knowledge.version();
+            String collection = project.requirementCollection();
+            KnowledgeIngestionTracker.Context context = startTracking(knowledgeProjectId, collection, version);
             return doBootstrap(collection, zipPath, documentId, version, context);
+        } catch (RuntimeException exception) {
+            bootstrapState.fail(exception.getMessage());
+            throw exception;
         } finally {
-            bootstrapState.finishProject(project.id());
+            bootstrapState.finishProject(knowledgeProjectId);
         }
     }
 

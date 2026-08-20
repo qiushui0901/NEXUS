@@ -54,6 +54,13 @@ class GitLabProjectStoreTest {
         assertThat(reopened.find("project-a")).get()
                 .extracting(GitLabManagedProject::status)
                 .isEqualTo(GitLabProjectStatus.DISABLED);
+        assertThat(reopened.enableIfDisabled("project-a")).isTrue();
+        assertThat(reopened.enableIfDisabled("project-a")).isFalse();
+        assertThat(reopened.find("project-a")).get().satisfies(enabled -> {
+            assertThat(enabled.status()).isEqualTo(GitLabProjectStatus.PENDING);
+            assertThat(enabled.targetSha()).isNull();
+            assertThat(enabled.lastError()).isNull();
+        });
         assertThat(reopened.delete("project-a")).isTrue();
         assertThat(reopened.find("project-a")).isEmpty();
     }

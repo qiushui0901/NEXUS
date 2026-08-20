@@ -56,6 +56,12 @@ public class GitLabIntegrationController {
         return service.retry(projectId);
     }
 
+    @PostMapping("/{projectId}/enable")
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public GitLabManagedProject.View enable(@PathVariable String projectId) {
+        return service.enable(projectId);
+    }
+
     @DeleteMapping("/{projectId}")
     public GitLabManagedProject.View disable(@PathVariable String projectId) {
         return service.disable(projectId);

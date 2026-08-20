@@ -5,6 +5,8 @@ import com.example.requirementrag.model.CodeIndexJobState;
 import com.example.requirementrag.model.CodeIndexJobStatus;
 import com.example.requirementrag.model.CodeIndexResponse;
 import com.example.requirementrag.retrieval.EmbeddingUnavailableException;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
+import com.example.requirementrag.project.BusinessProjectSummaryService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,28 +30,57 @@ public class CodeIndexJobService {
     private final CodeKnowledgeService codeKnowledgeService;
     private final ProjectRegistry projectRegistry;
     private final Executor backgroundExecutor;
+    private final BusinessProjectCatalogService businessProjects;
+    private final BusinessProjectSummaryService businessSummaries;
     private final Map<String, CodeIndexJobStatus> statuses = new ConcurrentHashMap<>();
 
     @Autowired
-    public CodeIndexJobService(CodeKnowledgeService codeKnowledgeService, ProjectRegistry projectRegistry) {
+    public CodeIndexJobService(CodeKnowledgeService codeKnowledgeService, ProjectRegistry projectRegistry,
+                               BusinessProjectCatalogService businessProjects,
+                               BusinessProjectSummaryService businessSummaries) {
         this(codeKnowledgeService, projectRegistry,
                 command -> {
                     Thread thread = new Thread(command, "nexus-code-index");
                     thread.setDaemon(true);
                     thread.start();
-                });
+                }, businessProjects, businessSummaries);
     }
 
     CodeIndexJobService(CodeKnowledgeService codeKnowledgeService,
                         ProjectRegistry projectRegistry,
                         Executor backgroundExecutor) {
+        this(codeKnowledgeService, projectRegistry, backgroundExecutor, null);
+    }
+
+    CodeIndexJobService(CodeKnowledgeService codeKnowledgeService,
+                        ProjectRegistry projectRegistry,
+                        Executor backgroundExecutor,
+                        BusinessProjectCatalogService businessProjects) {
+        this(codeKnowledgeService, projectRegistry, backgroundExecutor, businessProjects, null);
+    }
+
+    CodeIndexJobService(CodeKnowledgeService codeKnowledgeService,
+                        ProjectRegistry projectRegistry,
+                        Executor backgroundExecutor,
+                        BusinessProjectCatalogService businessProjects,
+                        BusinessProjectSummaryService businessSummaries) {
         this.codeKnowledgeService = codeKnowledgeService;
         this.projectRegistry = projectRegistry;
         this.backgroundExecutor = backgroundExecutor;
+        this.businessProjects = businessProjects;
+        this.businessSummaries = businessSummaries;
     }
 
     /** 启动后台索引；若该项目已在运行，直接返回当前任务。 */
     public synchronized CodeIndexJobStatus start(String projectId) {
+        if (businessProjects != null && projectRegistry.find(projectId).isEmpty()) {
+            String businessId = businessProjects.resolveProjectId(projectId);
+            for (var repository : businessProjects.ownedRepositories(businessId)) {
+                start(repository.id());
+            }
+            return CodeIndexJobStatus.running(businessId, Instant.now().toString(),
+                    businessChunkCount(businessId));
+        }
         String resolvedProjectId = projectRegistry.require(projectId).id();
         CodeIndexJobStatus current = statuses.get(resolvedProjectId);
         if (current != null && current.state() == CodeIndexJobState.RUNNING) {
@@ -74,11 +105,35 @@ public class CodeIndexJobService {
 
     /** 返回项目最近一次后台索引状态。 */
     public CodeIndexJobStatus status(String projectId) {
+        if (businessProjects != null && projectRegistry.find(projectId).isEmpty()) {
+            String businessId = businessProjects.resolveProjectId(projectId);
+            var repositoryStatuses = businessProjects.ownedRepositories(businessId).stream()
+                    .map(repository -> statuses.get(repository.id()))
+                    .filter(java.util.Objects::nonNull).toList();
+            int chunks = repositoryStatuses.stream().mapToInt(CodeIndexJobStatus::chunks).sum();
+            if (chunks == 0) chunks = businessChunkCount(businessId);
+            if (repositoryStatuses.stream().anyMatch(value -> value.state() == CodeIndexJobState.RUNNING)) {
+                String started = repositoryStatuses.stream().map(CodeIndexJobStatus::startedAt)
+                        .filter(java.util.Objects::nonNull).findFirst().orElse(Instant.now().toString());
+                return CodeIndexJobStatus.running(businessId, started, chunks);
+            }
+            return CodeIndexJobStatus.idle(businessId, chunks);
+        }
         String resolvedProjectId = projectRegistry.require(projectId).id();
         CodeIndexJobStatus current = statuses.get(resolvedProjectId);
         return current != null
                 ? current
                 : CodeIndexJobStatus.idle(resolvedProjectId, existingChunkCount(resolvedProjectId));
+    }
+
+    private int businessChunkCount(String businessProjectId) {
+        if (businessSummaries == null) return 0;
+        try {
+            return Math.toIntExact(businessSummaries.summary(businessProjectId).codeChunks());
+        } catch (RuntimeException exception) {
+            log.debug("Unable to read business project code chunks for {}", businessProjectId, exception);
+            return 0;
+        }
     }
 
     /** 读取项目已有代码 chunk 数用于任务状态展示；读取失败时按 0 处理。 */

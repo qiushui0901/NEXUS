@@ -106,6 +106,67 @@ public class QdrantHybridStore {
         notifyProgress(listener, ReplaceStage.PUBLISH, newIds.size(), newIds.size());
     }
 
+    /**
+     * 局部替换指定文档版本中的来源文件。
+     *
+     * <p>只为 {@code replacedSources} 中的来源写入新向量并删除旧 point，
+     * 其他来源的 point 原样保留。这是 {@code ingestIncremental} 的发布路径，
+     * 避免“只变化一个文件却清空整个版本”的整版替换问题。</p>
+     */
+    public void replaceSources(String collection, String documentId, String version,
+                               List<ChunkRecord> changedChunks, Set<String> replacedSources,
+                               ProgressListener progressListener) {
+        ensureCollection(collection);
+        ProgressListener listener = progressListener == null ? ProgressListener.noop() : progressListener;
+        Set<String> sources = replacedSources == null ? Set.of() : Set.copyOf(replacedSources);
+        if (sources.isEmpty()) {
+            notifyProgress(listener, ReplaceStage.PUBLISH, 0, 0);
+            return;
+        }
+
+        List<ChunkRecord> existing = scrollVersion(collection, documentId, version);
+        Set<String> staleIds = new java.util.LinkedHashSet<>();
+        Set<String> preservedIds = new java.util.LinkedHashSet<>();
+        for (ChunkRecord chunk : existing) {
+            if (sources.contains(chunk.filename())) {
+                staleIds.add(chunk.id());
+            } else {
+                preservedIds.add(chunk.id());
+            }
+        }
+
+        List<ChunkRecord> replacement = changedChunks == null ? List.of() : List.copyOf(changedChunks);
+        Set<String> replacementIds = new java.util.LinkedHashSet<>();
+        if (!replacement.isEmpty()) {
+            List<List<Map<String, Object>>> batches = buildPointBatches(replacement, 64, listener);
+            writePointBatches(collection, batches, replacement.size(), listener);
+            for (ChunkRecord chunk : replacement) {
+                replacementIds.add(chunk.id());
+            }
+            verifyVersion(collection, documentId, version, replacementIds);
+            notifyProgress(listener, ReplaceStage.VERIFY, replacementIds.size(), replacementIds.size());
+        }
+
+        // 同一内容可能在来源变更后复用旧 chunk ID；不能把刚 upsert 的新 point 再删除。
+        staleIds.removeAll(replacementIds);
+        if (!staleIds.isEmpty()) {
+            deletePoints(collection, staleIds);
+        }
+
+        Set<String> expectedIds = new java.util.LinkedHashSet<>(preservedIds);
+        expectedIds.addAll(replacementIds);
+        if (!expectedIds.isEmpty()) {
+            verifyVersion(collection, documentId, version, expectedIds);
+        }
+        notifyProgress(listener, ReplaceStage.PUBLISH, expectedIds.size(), expectedIds.size());
+    }
+
+    /** 使用默认 collection 局部替换指定文档版本中的来源文件。 */
+    public void replaceSources(String documentId, String version, List<ChunkRecord> changedChunks,
+                               Set<String> replacedSources, ProgressListener progressListener) {
+        replaceSources(collection(), documentId, version, changedChunks, replacedSources, progressListener);
+    }
+
     /** 滚动读取指定文档版本的全部 point ID。 */
     private java.util.Set<String> collectPointIds(String collection, String documentId, String version) {
         java.util.Set<String> ids = new java.util.LinkedHashSet<>();
@@ -232,10 +293,21 @@ public class QdrantHybridStore {
                     "id", chunk.id(),
                     "vector", Map.of("dense", denseVectors.get(index),
                             "sparse", Map.of("indices", sparse.indices(), "values", sparse.values())),
-                    "payload", Map.of(
-                            "documentId", chunk.documentId(), "version", chunk.version(), "filename", chunk.filename(),
-                            "parentId", chunk.parentId(), "parentText", chunk.parentText(), "childText", chunk.childText(),
-                            "contentHash", chunk.contentHash(), "parentOrder", chunk.parentOrder(), "childOrder", chunk.childOrder())));
+                    "payload", Map.ofEntries(
+                            Map.entry("documentId", chunk.documentId()),
+                            Map.entry("version", chunk.version()),
+                            Map.entry("filename", chunk.filename()),
+                            Map.entry("parentId", chunk.parentId()),
+                            Map.entry("parentText", chunk.parentText()),
+                            Map.entry("childText", chunk.childText()),
+                            Map.entry("contentHash", chunk.contentHash()),
+                            Map.entry("parentOrder", chunk.parentOrder()),
+                            Map.entry("childOrder", chunk.childOrder()),
+                            Map.entry("sectionPath", chunk.sectionPath()),
+                            Map.entry("heading", chunk.heading()),
+                            Map.entry("requirementId", chunk.requirementId()),
+                            Map.entry("module", chunk.module()),
+                            Map.entry("acceptanceCriteria", chunk.acceptanceCriteria()))));
         }
         return points;
     }
@@ -502,7 +574,10 @@ public class QdrantHybridStore {
         Map<String, Object> p = map(point.get("payload"));
         return new ChunkRecord(String.valueOf(point.get("id")), string(p, "documentId"), string(p, "version"),
                 string(p, "filename"), string(p, "parentId"), string(p, "parentText"), string(p, "childText"),
-                string(p, "contentHash"), integer(p, "parentOrder"), integer(p, "childOrder"));
+                string(p, "contentHash"), integer(p, "parentOrder"), integer(p, "childOrder"),
+                string(p, "sectionPath"), string(p, "heading"),
+                string(p, "requirementId"), string(p, "module"),
+                string(p, "acceptanceCriteria"));
     }
 
     /** 获取配置的 collection 名称。 */

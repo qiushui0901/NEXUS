@@ -118,7 +118,8 @@ public class McpResponsePolicy {
     public CodeHit code(CodeChunk chunk, String evidenceId) {
         return new CodeHit(evidenceId, relativePath(chunk.filePath()), safe(chunk.symbolType()),
                 safe(chunk.symbolName()), chunk.startLine(), chunk.endLine(), bounded(chunk.text()),
-                safe(chunk.commitSha()), safe(chunk.language()));
+                safe(chunk.commitSha()), safe(chunk.language()), safe(chunk.repositoryId()),
+                safe(chunk.repositoryName()), safe(chunk.repositoryKind()));
     }
 
     /**
@@ -359,7 +360,8 @@ public class McpResponsePolicy {
 
     /** 代码检索命中的对外表示。 */
     public record CodeHit(String evidenceId, String filePath, String symbolType, String symbolName,
-                          int startLine, int endLine, String excerpt, String commitSha, String language) {
+                          int startLine, int endLine, String excerpt, String commitSha, String language,
+                          String repositoryId, String repositoryName, String repositoryKind) {
     }
 
     /** Wiki 证据的对外表示。 */

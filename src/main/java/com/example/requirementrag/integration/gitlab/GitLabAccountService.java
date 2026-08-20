@@ -149,6 +149,24 @@ public class GitLabAccountService {
         return new ProjectPage(values.subList(from, to), safePage, safeSize, values.size());
     }
 
+    public List<BranchView> branches(String connectionId, long remoteProjectId) {
+        GitLabConnection connection = activeConnection(connectionId);
+        try {
+            return apiClient.branches(
+                            connection.baseUrl(),
+                            cipher.decrypt(connection.encryptedAccessToken()),
+                            remoteProjectId)
+                    .stream()
+                    .map(branch -> new BranchView(
+                            branch.name(), branch.defaultBranch(),
+                            branch.protectedBranch(), branch.merged()))
+                    .toList();
+        } catch (GitLabApiException exception) {
+            markInvalidIfCredentialError(connectionId, exception);
+            throw exception;
+        }
+    }
+
     GitLabConnection activeConnection(String id) {
         GitLabConnection connection = connection(id);
         requireNotDisabled(connection);
@@ -190,7 +208,7 @@ public class GitLabAccountService {
                 project.id(), project.name(), project.pathWithNamespace(), project.defaultBranch(),
                 project.visibility(), project.archived(), project.lastActivityAt(), state,
                 existing == null ? null : existing.projectId(), generatedProjectId, "server",
-                prefix + "_requirements", prefix + "_code");
+                prefix + "_code");
     }
 
     private String projectId(String path, long remoteId) {
@@ -268,8 +286,15 @@ public class GitLabAccountService {
             String importedProjectId,
             String projectId,
             String side,
-            String requirementCollection,
             String codeCollection
+    ) {
+    }
+
+    public record BranchView(
+            String name,
+            boolean defaultBranch,
+            boolean protectedBranch,
+            boolean merged
     ) {
     }
 }

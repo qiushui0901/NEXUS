@@ -227,8 +227,11 @@
             <h2>{{ hit.sourcePath || hit.filePath || hit.documentId }}</h2>
             <p>{{ hit.childText || hit.text }}</p>
             <small><code>{{ hit.chunkId }}</code> ·
+              <template v-if="hit.requirementId">需求 {{ hit.requirementId }} · </template>
+              <template v-if="hit.sectionPath">{{ hit.sectionPath }} · </template>
+              <template v-if="hit.acceptanceCriteria">验收: {{ hit.acceptanceCriteria }} · </template>
               <template v-if="hit.symbolName">{{ hit.symbolType }} {{ hit.symbolName }} · {{ hit.startLine }}-{{ hit.endLine }}</template>
-              <template v-else>parent {{ hit.parentId }}</template> ·
+              <template v-else-if="hit.parentId">parent {{ hit.parentId }}</template> ·
               <template v-if="hit.commitSha">提交 {{ shortHash(hit.commitSha) }} · </template>
               {{ shortHash(hit.contentHash) }}
             </small>

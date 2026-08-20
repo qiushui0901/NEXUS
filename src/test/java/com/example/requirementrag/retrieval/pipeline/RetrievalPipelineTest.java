@@ -9,6 +9,9 @@ import com.example.requirementrag.model.QueryRouting;
 import com.example.requirementrag.model.RagOutcome;
 import com.example.requirementrag.model.RagOutcomeStatus;
 import com.example.requirementrag.observability.RagObservability;
+import com.example.requirementrag.project.BusinessProject;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
+import com.example.requirementrag.project.CodeRepository;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
 import com.example.requirementrag.service.QueryRouter;
 import com.example.requirementrag.service.RagUnavailableException;
@@ -20,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -75,6 +79,46 @@ class RetrievalPipelineTest {
         assertThat(outcome.data().codeEvidence()).containsExactly(code);
         assertThat(outcome.stageDiagnostics()).extracting("stage")
                 .contains("query.route", "qdrant.hybrid_search", "code.hybrid_search");
+    }
+
+    @Test
+    void searchesAllRepositoriesInABusinessProjectAndKeepsRepositoryIdentity() {
+        BusinessProjectCatalogService catalog = mock(BusinessProjectCatalogService.class);
+        when(queryRouter.routeWithOutcome("query", "immortal")).thenReturn(RagOutcome.of(
+                RagOutcomeStatus.SUCCESS, new QueryRouting("immortal", "both", 1.0, "explicit"),
+                "query.route", 1, 1));
+        when(catalog.resolveProjectId("immortal")).thenReturn("immortal");
+        BusinessProject project = new BusinessProject(
+                "immortal", "Immortal", "immortal-game-service", "requirements",
+                "fengshen", "immortal-game-service", "immortal-game-service", "5.1",
+                BusinessProject.Status.ACTIVE, Instant.EPOCH.toString(), Instant.EPOCH.toString());
+        when(catalog.requireProject("immortal")).thenReturn(project);
+        when(catalog.repositoryScope("immortal", List.of())).thenReturn(List.of(
+                repository("immortal-game-service", "main_code"),
+                repository("bizgame-immortal-api", "api_code")));
+        when(catalog.requirementCoverage("immortal"))
+                .thenReturn(BusinessProjectCatalogService.CoverageStatus.CURRENT);
+        when(documentStore.hybridSearch("requirements", "query", "fengshen", "5.1"))
+                .thenReturn(List.of());
+        CodeChunk main = code("main-hit", "immortal-game-service");
+        CodeChunk api = code("api-hit", "bizgame-immortal-api");
+        when(codeKnowledgeService.searchInCollection(
+                "query", "immortal-game-service", "main_code-live", 8)).thenReturn(List.of(main));
+        when(codeKnowledgeService.searchInCollection(
+                "query", "bizgame-immortal-api", "api_code-live", 8)).thenReturn(List.of(api));
+        RetrievalPipeline multiRepository = new RetrievalPipeline(
+                properties, projectRegistry, queryRouter, documentStore, codeKnowledgeService,
+                mock(RagObservability.class), RequirementReranker.passthrough(),
+                new RetrievalResultCache(Duration.ZERO, 0, "test"), Runnable::run,
+                new RetrievalCircuitBreaker(0, Duration.ZERO),
+                new com.example.requirementrag.retrieval.SparseVectorizer(), catalog);
+
+        RagOutcome<RetrievalBundle> outcome = multiRepository.execute(new RetrievalRequest(
+                "query", RetrievalProfile.DEVELOPMENT_PLAN, "immortal", null, null, 8));
+
+        assertThat(outcome.data().resolvedProjectId()).isEqualTo("immortal");
+        assertThat(outcome.data().codeEvidence()).extracting(CodeChunk::projectId)
+                .containsExactly("immortal-game-service", "bizgame-immortal-api");
     }
 
     @Test
@@ -545,7 +589,18 @@ class RetrievalPipelineTest {
     }
 
     private CodeChunk code(String id) {
-        return new CodeChunk(id, "game", "sha", "src/FeatureService.java", "METHOD", "run",
+        return code(id, "game");
+    }
+
+    private CodeChunk code(String id, String projectId) {
+        return new CodeChunk(id, projectId, "sha", "src/FeatureService.java", "METHOD", "run",
                 10, 20, "void run() {}", "hash");
+    }
+
+    private CodeRepository repository(String id, String collection) {
+        return new CodeRepository(id, id, CodeRepository.Kind.PROJECT, "immortal",
+                "server", collection, "/tmp/" + id, "group/" + id,
+                "MAVEN_POM", "pom.xml", true, true,
+                Instant.EPOCH.toString(), Instant.EPOCH.toString());
     }
 }

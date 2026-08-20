@@ -186,9 +186,11 @@ public class AgenticOrchestrator {
         List<ChunkRecord> corpus = deduplicate(baseBundle.requirementCorpus(),
                 supplementBundle.requirementCorpus());
         List<CodeChunk> code = deduplicate(baseBundle.codeEvidence(), supplementBundle.codeEvidence());
+        List<String> repositories = deduplicate(baseBundle.allowedRepositoryIds(),
+                supplementBundle.allowedRepositoryIds());
         RetrievalBundle mergedBundle = new RetrievalBundle(baseBundle.query(), baseBundle.profile(),
                 baseBundle.resolvedProjectId(), baseBundle.documentId(), baseBundle.version(),
-                requirements, corpus, code);
+                requirements, corpus, code, repositories);
         List<RagWarning> warnings = new ArrayList<>(base.warnings());
         for (RagWarning warning : supplement.warnings()) {
             if (!warnings.contains(warning)) {

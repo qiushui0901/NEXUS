@@ -2,6 +2,7 @@ package com.example.requirementrag.web;
 
 import com.example.requirementrag.model.UserContext;
 import com.example.requirementrag.security.ProjectAuthorizationService;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -166,6 +167,28 @@ class ProjectAuthInterceptorTest {
 
         assertTrue(allowed);
         assertFalse(response.getStatus() == 403);
+    }
+
+    @Test
+    void acceptsBusinessProjectWhenUserOnlyHasTheLegacyAlias() throws Exception {
+        BusinessProjectCatalogService catalog = org.mockito.Mockito.mock(BusinessProjectCatalogService.class);
+        com.example.requirementrag.security.UserContextResolver users =
+                org.mockito.Mockito.mock(com.example.requirementrag.security.UserContextResolver.class);
+        interceptor = new ProjectAuthInterceptor(new ProjectAuthorizationService(projectRegistry),
+                projectIdResolver, users, catalog);
+        MockHttpServletRequest request = new MockHttpServletRequest(
+                "GET", "/api/business-projects/immortal");
+        MockHttpServletResponse response = new MockHttpServletResponse();
+        UserContext user = new UserContext("reader", com.example.requirementrag.model.UserRole.READONLY,
+                java.util.List.of("immortal-game-service"));
+        when(users.resolve(request)).thenReturn(user);
+        when(projectIdResolver.resolveForAccess(request)).thenReturn("immortal");
+        when(catalog.accessScopeIds("immortal"))
+                .thenReturn(java.util.List.of("immortal", "immortal-game-service"));
+
+        boolean allowed = interceptor.preHandle(request, response, new Object());
+
+        assertTrue(allowed);
     }
 
     private MockHttpServletRequest jsonPost(String uri) {

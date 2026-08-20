@@ -11,6 +11,7 @@
     validateConfig(body) { return request(root + "/projects/validate-config", {method:"POST", body:JSON.stringify(body)}); },
     sync(id) { return request(project(id) + "/sync", {method:"POST"}); },
     retry(id) { return request(project(id) + "/retry", {method:"POST"}); },
+    enable(id) { return request(project(id) + "/enable", {method:"POST"}); },
     disable(id) { return request(project(id), {method:"DELETE"}); },
     jobs(id) { return request(project(id) + "/jobs"); },
     job(id, jobId) { return request(project(id) + "/jobs/" + encodeURIComponent(jobId)); },
@@ -39,9 +40,14 @@
       });
       return request(connection(id) + "/projects?" + query.toString());
     },
-    importProjects(id, projects) {
+    remoteBranches(id, remoteProjectId) {
+      return request(connection(id) + "/projects/"
+        + encodeURIComponent(remoteProjectId) + "/branches");
+    },
+    businessProjects() { return request("/api/business-projects"); },
+    importProjects(id, businessProjectId, projects) {
       return request(connection(id) + "/imports", {
-        method:"POST", body:JSON.stringify({projects})
+        method:"POST", body:JSON.stringify({businessProjectId,projects})
       });
     }
   };

@@ -21,7 +21,7 @@ public class RetrievalExecutionConfiguration {
      */
     @Bean(name = "retrievalExecutor", destroyMethod = "shutdown")
     ExecutorService retrievalExecutor(RagProperties properties) {
-        int threads = properties.retrieval().resolvedParallelism();
+        int threads = resolveParallelism(properties);
         AtomicInteger sequence = new AtomicInteger();
         ThreadFactory factory = runnable -> {
             Thread thread = new Thread(runnable, "nexus-retrieval-" + sequence.incrementAndGet());
@@ -32,5 +32,17 @@ public class RetrievalExecutionConfiguration {
                 new ArrayBlockingQueue<>(threads * 16),
                 factory,
                 new ThreadPoolExecutor.CallerRunsPolicy());
+    }
+
+    private int resolveParallelism(RagProperties properties) {
+        RagProperties.Retrieval retrieval = properties.retrieval();
+        if (retrieval == null) return 6;
+        RagProperties.Document document = retrieval.document();
+        RagProperties.CodeRetrieval code = retrieval.code();
+        int docThreads = document != null ? document.resolvedParallelism() : retrieval.resolvedParallelism();
+        int codeThreads = code != null ? code.resolvedParallelism() : retrieval.resolvedParallelism();
+        // P0 单池兼容：取文档/代码各自 parallelism 的最大值，同时兼容旧 flat 配置
+        int legacy = retrieval.resolvedParallelism();
+        return Math.max(legacy, Math.max(docThreads, codeThreads));
     }
 }

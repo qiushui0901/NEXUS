@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/assets/app-shell.css?v=20260818">
   <link rel="stylesheet" href="/assets/components.css?v=20260818">
   <link rel="stylesheet" href="/assets/responsive.css?v=20260818">
-  <link rel="stylesheet" href="/assets/knowledge-app.css?v=20260818-4">
+    <link rel="stylesheet" href="/assets/knowledge-app.css?v=20260818-6">
 </head>
 <body>
 <div data-nexus-shell data-page="gitlab"></div>
@@ -51,7 +51,7 @@
 
     <section v-else-if="view==='accounts'" class="workspace">
       <div class="breadcrumb"><button type="button" @click="goList">GitLab 项目</button><i>/</i><span>账号</span></div>
-      <div class="page-heading compact"><div><h1>GitLab 账号</h1><p>一个连接对应一个 GitLab 实例账号和一份加密 PAT。</p></div><button class="primary" type="button" @click="openConnect">＋ 关联账号</button></div>
+      <div class="page-heading compact"><div><h1>GitLab 账号</h1><p>一个连接对应一个 GitLab 实例账号和一份加密 PAT。</p></div><div class="button-row"><button class="back-command" type="button" @click="goList">← 返回项目列表</button><button class="primary" type="button" @click="openConnect">＋ 关联账号</button></div></div>
       <div class="table-shell">
         <table><thead><tr><th>连接名称</th><th>账号</th><th>实例</th><th>状态</th><th>最近验证</th><th><span class="sr-only">操作</span></th></tr></thead>
           <tbody><tr v-for="account in connections" :key="account.id">
@@ -69,7 +69,7 @@
 
     <section v-else-if="view==='connect'" class="workspace">
       <div class="breadcrumb"><button type="button" @click="goAccounts">GitLab 账号</button><i>/</i><span>关联账号</span></div>
-      <div class="page-heading compact"><div><h1>关联 GitLab 账号</h1><p>PAT 仅提交到后端加密保存，不会进入 URL 或浏览器持久化。</p></div></div>
+      <div class="page-heading compact"><div><h1>关联 GitLab 账号</h1><p>PAT 仅提交到后端加密保存，不会进入 URL 或浏览器持久化。</p></div><button class="back-command" type="button" @click="goAccounts">← 返回 GitLab 账号</button></div>
       <form class="form-panel account-form" @submit.prevent="connectAccount">
         <h2>账号连接</h2>
         <label>连接名称<input v-model.trim="connectionForm.name" required maxlength="100" placeholder="公司 GitLab"></label>
@@ -84,47 +84,71 @@
       <div class="breadcrumb"><button type="button" @click="goAccounts">GitLab 账号</button><i>/</i><span>{{selectedConnection&&selectedConnection.name}}</span></div>
       <div v-if="selectedConnection" class="page-heading compact">
         <div><h1>{{selectedConnection.name}}</h1><p>{{selectedConnection.displayName}} · @{{selectedConnection.username}} · {{selectedConnection.host}}</p></div>
-        <div class="button-row"><button type="button" :disabled="busy" @click="verifyAccount">验证连接</button><button class="danger" type="button" :disabled="busy||selectedConnection.status==='DISABLED'" @click="disableAccount">停用</button></div>
+        <div class="button-row"><button class="back-command" type="button" @click="goAccounts">← 返回 GitLab 账号</button><button type="button" :disabled="busy" @click="verifyAccount">验证连接</button><button class="danger" type="button" :disabled="busy||selectedConnection.status==='DISABLED'" @click="disableAccount">停用</button></div>
       </div>
       <div v-if="selectedConnection" class="context-band"><status-badge :status="selectedConnection.status"></status-badge><span>最近验证 {{relativeTime(selectedConnection.lastVerifiedAt)}}</span><span v-if="selectedConnection.lastError">{{selectedConnection.lastError}}</span></div>
       <form v-if="selectedConnection&&selectedConnection.status!=='ACTIVE'" class="reauthorize-strip" @submit.prevent="reauthorizeAccount">
         <label>新的 Personal Access Token<input v-model="reauthorizeToken" required type="password" autocomplete="new-password"></label>
         <button class="primary" type="submit" :disabled="busy">重新授权</button>
       </form>
-      <form class="toolbar account-project-toolbar" @submit.prevent="loadRemoteProjects(0)">
-        <label class="search-field"><span>搜索账号项目</span><input v-model.trim="remoteQuery" type="search" placeholder="项目名或命名空间"></label>
-        <button type="submit" :disabled="loading">搜索</button>
-      </form>
-      <div class="table-shell">
-        <table><thead><tr><th class="select-cell"><span class="sr-only">选择</span></th><th>GitLab 项目</th><th>默认分支</th><th>可见性</th><th>状态</th><th>最近活动</th></tr></thead>
-          <tbody><tr v-for="remote in remotePage.items" :key="remote.remoteProjectId">
-            <td class="select-cell"><input type="checkbox" :checked="isSelected(remote)" :disabled="!selectable(remote)" :aria-label="'选择 '+remote.pathWithNamespace" @change="toggleRemote(remote)"></td>
-            <td><strong>{{remote.name}}</strong><small>{{remote.pathWithNamespace}}</small></td><td><code>{{remote.defaultBranch||'无'}}</code></td>
-            <td>{{remote.visibility}}</td><td><status-badge :status="importStateStatus(remote.importState)"></status-badge><small>{{importStateLabel(remote.importState)}}<template v-if="remote.importedProjectId"> · {{remote.importedProjectId}}</template></small></td>
-            <td>{{relativeTime(remote.lastActivityAt)}}</td>
-          </tr></tbody>
-        </table>
-        <div v-if="loading" class="loading-state"><span></span>正在读取账号项目</div>
-        <div v-if="!loading&&error" class="empty-state error-state"><strong>GitLab 项目发现失败</strong><p>{{error}}</p><button @click="loadRemoteProjects(remotePage.page)">重试</button></div>
-        <div v-if="!loading&&!error&&!remotePage.items.length" class="empty-state"><strong>没有匹配项目</strong><p>当前账号没有参与的项目，或搜索条件没有命中。</p></div>
-      </div>
-      <div class="pagination" v-if="remotePage.total>remotePage.size"><button type="button" :disabled="remotePage.page<=0" @click="loadRemoteProjects(remotePage.page-1)">← 上一页</button><span>第 {{remotePage.page+1}} / {{remotePages}} 页</span><button type="button" :disabled="remotePage.page+1>=remotePages" @click="loadRemoteProjects(remotePage.page+1)">下一页 →</button></div>
-
-      <section v-if="selectedRemoteItems.length" class="plain-panel import-panel">
-        <div class="panel-heading"><h2>待导入项目</h2><span>{{selectedRemoteItems.length}} 项</span></div>
-        <div class="import-config-list">
-          <details v-for="remote in selectedRemoteItems" :key="remote.remoteProjectId" class="import-config-row">
-            <summary><strong>{{remote.pathWithNamespace}}</strong><span>{{importConfigs[remote.remoteProjectId].projectId}}</span></summary>
-            <div class="import-config-grid">
-              <label>NEXUS 项目 ID<input v-model.trim="importConfigs[remote.remoteProjectId].projectId" required></label>
-              <label>端类型<select v-model="importConfigs[remote.remoteProjectId].side"><option value="server">服务端</option><option value="client">客户端</option></select></label>
-              <label>分支<input v-model.trim="importConfigs[remote.remoteProjectId].branch" required></label>
-              <label>需求 collection<input v-model.trim="importConfigs[remote.remoteProjectId].requirementCollection" required></label>
-              <label>代码 collection<input v-model.trim="importConfigs[remote.remoteProjectId].codeCollection" required></label>
-            </div>
-          </details>
+      <template v-if="importStep==='select'">
+        <div class="plain-panel import-target">
+          <div><strong>导入到业务项目</strong><p>本批仓库统一归属同一个既有业务项目。</p></div>
+          <label>业务项目
+            <select v-model="targetBusinessProjectId" required>
+              <option value="" disabled>请选择业务项目</option>
+              <option v-for="project in businessProjects" :key="project.id" :value="project.id">{{project.name}} · {{project.productVersion||'版本待识别'}}</option>
+            </select>
+          </label>
+          <p v-if="!businessProjects.length" class="form-hint">暂无可用业务项目，请先在项目管理中创建并配置主仓库。</p>
         </div>
-        <div class="form-actions"><button class="primary" type="button" :disabled="busy" @click="importSelected">导入并开始同步</button></div>
+        <form class="toolbar account-project-toolbar" @submit.prevent="loadRemoteProjects(0)">
+          <label class="search-field"><span>搜索账号项目</span><input v-model.trim="remoteQuery" type="search" placeholder="项目名或命名空间"></label>
+          <button type="submit" :disabled="loading">搜索</button>
+        </form>
+        <div class="table-shell">
+          <table><thead><tr><th class="select-cell"><span class="sr-only">选择</span></th><th>GitLab 项目</th><th>默认分支</th><th>可见性</th><th>状态</th><th>最近活动</th></tr></thead>
+            <tbody><tr v-for="remote in remotePage.items" :key="remote.remoteProjectId">
+              <td class="select-cell"><input type="checkbox" :checked="isSelected(remote)" :disabled="!selectable(remote)" :aria-label="'选择 '+remote.pathWithNamespace" @change="toggleRemote(remote)"></td>
+              <td><strong>{{remote.name}}</strong><small>{{remote.pathWithNamespace}}</small></td><td><code>{{remote.defaultBranch||'无'}}</code></td>
+              <td>{{remote.visibility||'未提供'}}</td><td><status-badge :status="importStateStatus(remote.importState)"></status-badge><small>{{importStateLabel(remote.importState)}}<template v-if="remote.importedProjectId"> · {{remote.importedProjectId}}</template></small></td>
+              <td>{{relativeTime(remote.lastActivityAt)}}</td>
+            </tr></tbody>
+          </table>
+          <div v-if="loading" class="loading-state"><span></span>正在读取账号项目</div>
+          <div v-if="!loading&&error" class="empty-state error-state"><strong>GitLab 项目发现失败</strong><p>{{error}}</p><button @click="loadRemoteProjects(remotePage.page)">重试</button></div>
+          <div v-if="!loading&&!error&&!remotePage.items.length" class="empty-state"><strong>没有匹配项目</strong><p>当前账号没有参与的项目，或搜索条件没有命中。</p></div>
+        </div>
+        <div class="pagination" v-if="remotePage.total>remotePage.size"><button type="button" :disabled="remotePage.page<=0" @click="loadRemoteProjects(remotePage.page-1)">← 上一页</button><span>第 {{remotePage.page+1}} / {{remotePages}} 页</span><button type="button" :disabled="remotePage.page+1>=remotePages" @click="loadRemoteProjects(remotePage.page+1)">下一页 →</button></div>
+        <div v-if="selectedRemoteItems.length" class="import-selection-bar">
+          <div><strong>已选择 {{selectedRemoteItems.length}} 个项目</strong><span>下一步可修改项目 ID、端类型、分支和代码 collection。</span></div>
+          <div class="button-row"><button type="button" @click="clearRemoteSelection">清空</button><button class="primary" type="button" :disabled="!targetBusinessProjectId" @click="openImportConfig">下一步：配置导入</button></div>
+        </div>
+      </template>
+
+      <section v-else-if="selectedRemoteItems.length" class="plain-panel import-panel import-review">
+        <div class="import-review-steps"><span class="done">✓ 选择项目</span><strong>2 配置导入</strong></div>
+        <div class="panel-heading"><div><h2>确认项目配置</h2><p>目标业务项目：{{businessProjects.find(project=>project.id===targetBusinessProjectId)?.name||targetBusinessProjectId}}。确认后才会创建仓库并开始首次同步。</p></div><span>{{selectedRemoteItems.length}} 项</span></div>
+        <form @submit.prevent="importSelected">
+          <div class="import-config-list">
+            <article v-for="remote in selectedRemoteItems" :key="remote.remoteProjectId" class="import-config-row">
+              <header><strong>{{remote.name}}</strong><span>{{remote.pathWithNamespace}}</span></header>
+              <div class="import-config-grid">
+                <label>NEXUS 项目 ID<input v-model.trim="importConfigs[remote.remoteProjectId].projectId" required></label>
+                <label>端类型<select v-model="importConfigs[remote.remoteProjectId].side" required><option value="server">服务端</option><option value="client">客户端</option></select></label>
+                <label>分支
+                  <select v-model="importConfigs[remote.remoteProjectId].branch" required :disabled="branchLoading[remote.remoteProjectId]||branchErrors[remote.remoteProjectId]">
+                    <option v-for="branch in (branchOptions[remote.remoteProjectId]||[])" :key="branch.name" :value="branch.name">{{branchLabel(branch)}}</option>
+                  </select>
+                  <small v-if="branchLoading[remote.remoteProjectId]" class="branch-state">正在读取远端分支</small>
+                  <small v-else-if="branchErrors[remote.remoteProjectId]" class="branch-state error">{{branchErrors[remote.remoteProjectId]}} <button type="button" @click.prevent="loadRemoteBranches(remote)">重试</button></small>
+                </label>
+                <label>代码 collection<input v-model.trim="importConfigs[remote.remoteProjectId].codeCollection" required></label>
+              </div>
+            </article>
+          </div>
+          <div class="form-actions"><button type="button" :disabled="busy" @click="backToProjectSelection">← 返回选择项目</button><button class="primary" type="submit" :disabled="busy||!importConfigsValid">确认导入并开始同步</button></div>
+        </form>
       </section>
 
       <section v-if="importResults" class="plain-panel import-results">
@@ -143,7 +167,7 @@
       <div v-else-if="error" class="empty-state error-state"><strong>GitLab 项目详情加载失败</strong><p>{{error}}</p><button @click="openProject(selected,false)">重试</button></div>
       <template v-else>
         <div class="breadcrumb"><button type="button" @click="goList">GitLab 项目</button><i>/</i><span>{{selected.name}}</span></div>
-        <div class="page-heading compact"><div><h1>{{selected.name}}</h1><p>{{selected.gitPath}} · {{selected.branch}}</p></div><div class="button-row"><button class="primary" @click="sync" :disabled="busy||!selected.syncAvailable">↻ 同步</button><details class="action-menu"><summary>操作</summary><div><button v-if="selected.status==='FAILED'" @click="retry" :disabled="busy">重试失败任务</button><button class="danger" @click="disable" :disabled="busy||selected.status==='DISABLED'">停用项目</button></div></details></div></div>
+        <div class="page-heading compact"><div><h1>{{selected.name}}</h1><p>{{selected.gitPath}} · {{selected.branch}}</p></div><div class="button-row"><button class="back-command" type="button" @click="goList">← 返回项目列表</button><button v-if="selected.status==='DISABLED'" class="primary" @click="enable" :disabled="busy">重新启用</button><button v-else class="primary" @click="sync" :disabled="busy||!selected.syncAvailable">↻ 同步</button><details class="action-menu"><summary>操作</summary><div><button v-if="selected.status==='FAILED'" @click="retry" :disabled="busy">重试失败任务</button><button v-if="selected.status!=='DISABLED'" class="danger" @click="disable" :disabled="busy">停用项目</button></div></details></div></div>
         <div class="context-band"><status-badge :status="selected.status"></status-badge><span>索引 <code>{{shortSha(selected.lastIndexedSha)}}</code></span><span>目标 <code>{{shortSha(selected.targetSha)}}</code></span><span>{{selected.indexAvailable?'索引可用':'尚无可用索引'}}</span><span v-if="selected.revisionDrift">版本偏离</span></div>
         <div class="detail-grid">
           <section class="plain-panel"><div class="panel-heading"><h2>同步任务时间线</h2><span>{{jobs.length}} 项</span></div><ol class="timeline"><li v-for="job in jobs" :key="job.id" @click="loadJob(job)"><span class="timeline-dot" :class="'tone-'+tone(job.status)">{{glyph(job.status)}}</span><div><strong>{{phaseLabel(job.phase)}}</strong><small>{{job.triggerType}} · {{relativeTime(job.startedAt)}} · {{shortSha(job.targetSha)}} · {{job.errorCode||job.status}}</small></div></li></ol><div v-if="!jobs.length" class="empty-state"><strong>暂无同步任务</strong></div></section>
@@ -158,7 +182,7 @@
 <script src="/assets/api-client.js?v=20260818"></script>
 <script src="/assets/app-shell.js?v=20260818-2"></script>
 <script src="/assets/status-contract.js?v=20260818-3"></script>
-<script src="/assets/gitlab-api.js?v=20260818-2"></script>
-<script src="/assets/gitlab-app.js?v=20260818-2"></script>
+<script src="/assets/gitlab-api.js?v=20260818-4"></script>
+<script src="/assets/gitlab-app.js?v=20260818-7"></script>
 </body>
 </html>

@@ -70,10 +70,7 @@ function attentionItems(data){
   const items=[];
   for(const project of data.projects||[]){
     for(const warning of project.warnings||[]){
-      items.push({tone:"bad",mark:"!",title:project.projectName||project.projectId,detail:warning,href:"/monitor?projectId="+encodeURIComponent(project.projectId)});
-    }
-    if(!project.repositoryAvailable){
-      items.push({tone:"warn",mark:"!",title:project.projectName||project.projectId,detail:"代码仓库当前不可读取",href:"/settings/gitlab"});
+      items.push({tone:"bad",mark:"!",title:project.name||project.id,detail:warning,href:"/monitor?projectId="+encodeURIComponent(project.id)});
     }
   }
   for(const service of data.services||[]){
@@ -89,20 +86,24 @@ function render(data){
   const services=data.services||[];
   const issues=attentionItems(data);
   document.getElementById("projectCount").textContent=projects.length;
-  document.getElementById("readyCount").textContent=projects.filter(project=>project.repositoryAvailable&&!project.warnings?.length).length;
+  document.getElementById("readyCount").textContent=projects.filter(project=>project.status==="READY").length;
   document.getElementById("runningCount").textContent=data.state==="DEGRADED"?1:0;
   document.getElementById("failedCount").textContent=issues.length;
   document.getElementById("attentionCount").textContent=issues.length?issues.length+" 项":"当前无待处理项";
   document.getElementById("attention").innerHTML=issues.length?issues.map(item=>`<div class="attention-item"><span class="attention-mark ${item.tone}">${item.mark}</span><div><strong>${escapeText(item.title)}</strong><small>${escapeText(item.detail)}</small></div><a href="${escapeText(item.href)}">查看</a></div>`).join(""):'<div class="nx-empty"><strong>当前无待处理项</strong><span>知识、代码和依赖状态均未报告异常。</span></div>';
   document.getElementById("services").innerHTML=services.map(service=>`<div class="service"><span class="service-name"><i class="service-dot ${service.available?"on":""}"></i>${escapeText(service.name)}</span><small>${escapeText(service.message||(service.available?"可用":service.required?"不可用":"可降级"))}</small></div>`).join("");
-  document.getElementById("projects").innerHTML=projects.length?projects.map(project=>`<article class="project-row"><div><strong>${escapeText(project.projectName||project.projectId)}</strong><small>${escapeText(project.version||"未设置版本")}</small></div><div><small>需求</small><strong>${project.requirementChunks||0}</strong></div><div><small>代码</small><strong>${project.codeChunks||0}</strong></div><div><small>Wiki 版本</small><strong>${project.wikiVersions||0}</strong></div><code title="${escapeText(project.codeCollection||"未配置")}">代码集合：${escapeText(project.codeCollection||"未配置")}</code></article>`).join(""):'<div class="nx-empty"><strong>尚无可访问项目</strong><span>先配置项目或接入 GitLab 仓库。</span></div>';
+  document.getElementById("projects").innerHTML=projects.length?projects.map(project=>`<article class="project-row"><div><strong>${escapeText(project.name||project.id)}</strong><small>${escapeText(project.productVersion||"版本待识别")} · 需求 ${escapeText(project.latestRequirementVersion||"未导入")}</small></div><div><small>需求</small><strong>${project.requirementChunks||0}</strong></div><div><small>代码</small><strong>${project.codeChunks||0}</strong></div><div><small>Wiki 版本</small><strong>${project.wikiVersions||0}</strong></div><code>${project.repositoryCount||0} 个项目仓库 · ${project.sharedRepositoryCount||0} 个公共库</code></article>`).join(""):'<div class="nx-empty"><strong>尚无可访问项目</strong><span>先配置项目或接入 GitLab 仓库。</span></div>';
   document.getElementById("lastRefresh").textContent="最近刷新 "+new Date().toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"});
 }
 
 async function loadStatus(){
   document.getElementById("error").innerHTML="";
   try{
-    render(await NexusApi.request("/api/runtime/status"));
+    const [runtime,projects]=await Promise.all([
+      NexusApi.request("/api/runtime/status"),
+      NexusApi.request("/api/business-projects")
+    ]);
+    render({...runtime,projects});
   }catch(error){
     const safe=NexusErrors.normalize(error,"运行状态服务暂时不可用");
     document.getElementById("error").innerHTML=`<div class="nx-error"><strong>${escapeText(safe.message)}</strong><span>${escapeText(safe.action)}</span><button type="button" onclick="loadStatus()">重试</button></div>`;

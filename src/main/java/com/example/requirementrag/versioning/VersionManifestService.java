@@ -52,7 +52,7 @@ public class VersionManifestService {
         Path file = manifestPath(projectId, version);
         String createdAt = Files.isRegularFile(file) ? read(file).createdAt() : now;
         VersionManifest manifest = new VersionManifest(
-                1,
+                3,
                 projectId,
                 version,
                 optionalIdentifier(input.baseVersion(), "baseVersion"),
@@ -60,6 +60,8 @@ public class VersionManifestService {
                 optionalIdentifier(input.requirementVersion(), "requirementVersion"),
                 commit(input.baseCodeCommit(), "baseCodeCommit"),
                 commit(input.codeCommit(), "codeCommit"),
+                optionalIdentifier(input.productVersion() == null ? version : input.productVersion(), "productVersion"),
+                cleanRepositoryBaselines(input.repositoryBaselines()),
                 validateSnapshot(input.testSnapshot()),
                 optionalIdentifier(input.wikiVersion(), "wikiVersion"),
                 optionalText(input.wikiBuildId(), 200, "wikiBuildId"),
@@ -200,6 +202,24 @@ public class VersionManifestService {
         return notes.stream().filter(VersionManifestService::hasText)
                 .map(value -> optionalText(value, 500, "notes"))
                 .toList();
+    }
+
+    private List<VersionModels.RepositoryBaseline> cleanRepositoryBaselines(
+            List<VersionModels.RepositoryBaseline> baselines) {
+        if (baselines == null) return List.of();
+        return baselines.stream().map(value -> {
+            if (value == null) throw new IllegalArgumentException("repositoryBaseline 不能为空");
+            String kind = optionalIdentifier(value.kind(), "repositoryKind");
+            if (!"PROJECT".equals(kind) && !"SHARED".equals(kind)) {
+                throw new IllegalArgumentException("repositoryKind 只能是 PROJECT 或 SHARED");
+            }
+            return new VersionModels.RepositoryBaseline(
+                    VersionPathPolicy.identifier(value.repositoryId(), "repositoryId"),
+                    kind,
+                    optionalIdentifier(value.version(), "repositoryVersion"),
+                    commit(value.commitSha(), "repositoryCommitSha"),
+                    optionalIdentifier(value.codeCollection(), "repositoryCodeCollection"));
+        }).toList();
     }
 
     private static String optionalText(String value, int maxLength, String field) {

@@ -102,7 +102,8 @@ public class VersionManifestResolver {
         return new VersionManifest(manifest.schemaVersion(), manifest.projectId(), manifest.version(), manifest.baseVersion(),
                 hasText(manifest.requirementDocumentId()) ? manifest.requirementDocumentId() : snapshot.documentId(),
                 hasText(manifest.requirementVersion()) ? manifest.requirementVersion() : snapshot.requirementVersion(),
-                manifest.baseCodeCommit(), manifest.codeCommit(), manifest.testSnapshot(), manifest.wikiVersion(),
+                manifest.baseCodeCommit(), manifest.codeCommit(), manifest.productVersion(),
+                manifest.repositoryBaselines(), manifest.testSnapshot(), manifest.wikiVersion(),
                 manifest.wikiBuildId(), manifest.status(), manifest.createdAt(), manifest.updatedAt(), notes);
     }
 

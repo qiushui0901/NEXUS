@@ -46,6 +46,15 @@ public final class VersionModels {
         }
     }
 
+    /** 业务项目版本中单个自有仓库或公共库的版本基线。 */
+    public record RepositoryBaseline(
+            @NotBlank @Size(max = 100) String repositoryId,
+            @NotBlank @Size(max = 20) String kind,
+            @Size(max = 100) String version,
+            @Size(max = 64) String commitSha,
+            @Size(max = 160) String codeCollection
+    ) {}
+
     /** 一个版本的全部事实引用（需求、代码、测试、Wiki），持久化为 JSON 清单。 */
     public record VersionManifest(
             Integer schemaVersion,
@@ -56,6 +65,8 @@ public final class VersionModels {
             @Size(max = 100) String requirementVersion,
             @Size(max = 64) String baseCodeCommit,
             @Size(max = 64) String codeCommit,
+            @Size(max = 100) String productVersion,
+            List<@Valid RepositoryBaseline> repositoryBaselines,
             @Valid TestSnapshot testSnapshot,
             @Size(max = 100) String wikiVersion,
             @Size(max = 200) String wikiBuildId,
@@ -65,7 +76,19 @@ public final class VersionModels {
             List<@Size(max = 500) String> notes
     ) {
         public VersionManifest {
+            repositoryBaselines = repositoryBaselines == null ? List.of() : List.copyOf(repositoryBaselines);
             notes = notes == null ? List.of() : List.copyOf(notes);
+        }
+
+        /** schema v1/v2 单仓库清单兼容构造器。 */
+        public VersionManifest(Integer schemaVersion, String projectId, String version, String baseVersion,
+                               String requirementDocumentId, String requirementVersion,
+                               String baseCodeCommit, String codeCommit, TestSnapshot testSnapshot,
+                               String wikiVersion, String wikiBuildId, ManifestStatus status,
+                               String createdAt, String updatedAt, List<String> notes) {
+            this(schemaVersion, projectId, version, baseVersion, requirementDocumentId, requirementVersion,
+                    baseCodeCommit, codeCommit, version, List.of(), testSnapshot, wikiVersion, wikiBuildId,
+                    status, createdAt, updatedAt, notes);
         }
     }
 

@@ -13,6 +13,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -43,11 +44,12 @@ class RequirementIngestionServiceTest {
 
     @Test
     void defaultCollectionIngestionInvalidatesRetrievalCache() {
-        when(preprocessor.clean(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(preprocessor.cleanWithDiagnostics(any())).thenAnswer(invocation ->
+                new TextPreprocessor.CleanResult(invocation.getArgument(0), false, 0, 0));
         when(observability.observe(any(), any(), any(),
                 org.mockito.ArgumentMatchers.<java.util.function.Supplier<?>>any()))
                 .thenAnswer(invocation -> invocation.getArgument(3, java.util.function.Supplier.class).get());
-        when(chunker.split(any())).thenReturn(java.util.List.of(
+        when(chunker.splitStructured(any())).thenReturn(java.util.List.of(
                 new ParentChildChunker.ParentChunk(1, "规则文本", java.util.List.of("规则文本"))));
         org.mockito.Mockito.doAnswer(invocation -> {
             invocation.getArgument(3, Runnable.class).run();
@@ -67,11 +69,12 @@ class RequirementIngestionServiceTest {
 
     @Test
     void ingestsPdfViaTikaTextExtraction() throws Exception {
-        when(preprocessor.clean(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(preprocessor.cleanWithDiagnostics(any())).thenAnswer(invocation ->
+                new TextPreprocessor.CleanResult(invocation.getArgument(0), false, 0, 0));
         when(observability.observe(any(), any(), any(),
                 org.mockito.ArgumentMatchers.<java.util.function.Supplier<?>>any()))
                 .thenAnswer(invocation -> invocation.getArgument(3, java.util.function.Supplier.class).get());
-        when(chunker.split(any())).thenAnswer(invocation -> {
+        when(chunker.splitStructured(any())).thenAnswer(invocation -> {
             String text = invocation.getArgument(0);
             return java.util.List.of(new ParentChildChunker.ParentChunk(1, text, java.util.List.of(text)));
         });
@@ -119,11 +122,12 @@ class RequirementIngestionServiceTest {
 
     @Test
     void sharedFallbackCollectionInvalidatesAllProjects() {
-        when(preprocessor.clean(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(preprocessor.cleanWithDiagnostics(any())).thenAnswer(invocation ->
+                new TextPreprocessor.CleanResult(invocation.getArgument(0), false, 0, 0));
         when(observability.observe(any(), any(), any(),
                 org.mockito.ArgumentMatchers.<java.util.function.Supplier<?>>any()))
                 .thenAnswer(invocation -> invocation.getArgument(3, java.util.function.Supplier.class).get());
-        when(chunker.split(any())).thenReturn(java.util.List.of(
+        when(chunker.splitStructured(any())).thenReturn(java.util.List.of(
                 new ParentChildChunker.ParentChunk(1, "规则文本", java.util.List.of("规则文本"))));
         org.mockito.Mockito.doAnswer(invocation -> {
             invocation.getArgument(3, Runnable.class).run();
@@ -145,11 +149,12 @@ class RequirementIngestionServiceTest {
 
     @Test
     void explicitCollectionIngestionAlsoInvalidatesRetrievalCache() {
-        when(preprocessor.clean(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(preprocessor.cleanWithDiagnostics(any())).thenAnswer(invocation ->
+                new TextPreprocessor.CleanResult(invocation.getArgument(0), false, 0, 0));
         when(observability.observe(any(), any(), any(),
                 org.mockito.ArgumentMatchers.<java.util.function.Supplier<?>>any()))
                 .thenAnswer(invocation -> invocation.getArgument(3, java.util.function.Supplier.class).get());
-        when(chunker.split(any())).thenReturn(java.util.List.of(
+        when(chunker.splitStructured(any())).thenReturn(java.util.List.of(
                 new ParentChildChunker.ParentChunk(1, "规则文本", java.util.List.of("规则文本"))));
         org.mockito.Mockito.doAnswer(invocation -> {
             invocation.getArgument(3, Runnable.class).run();
@@ -170,11 +175,12 @@ class RequirementIngestionServiceTest {
 
     @Test
     void recordsIntermediateQdrantBatchesAsRunningWithoutExcludedChunks() {
-        when(preprocessor.clean(any())).thenAnswer(invocation -> invocation.getArgument(0));
+        when(preprocessor.cleanWithDiagnostics(any())).thenAnswer(invocation ->
+                new TextPreprocessor.CleanResult(invocation.getArgument(0), false, 0, 0));
         when(observability.observe(any(), any(), any(),
                 org.mockito.ArgumentMatchers.<java.util.function.Supplier<?>>any()))
                 .thenAnswer(invocation -> invocation.getArgument(3, java.util.function.Supplier.class).get());
-        when(chunker.split(any())).thenReturn(List.of(
+        when(chunker.splitStructured(any())).thenReturn(List.of(
                 new ParentChildChunker.ParentChunk(1, "规则一", List.of("规则一")),
                 new ParentChildChunker.ParentChunk(2, "规则二", List.of("规则二"))));
         org.mockito.Mockito.doAnswer(invocation -> {
@@ -205,5 +211,53 @@ class RequirementIngestionServiceTest {
                 eq(EventStatus.SUCCEEDED), eq(2), eq(2), eq(0), isNull());
         verify(tracker, times(2)).event(eq(context), eq("RUN"), eq("run-a"), eq(Stage.EMBED),
                 any(), any(Integer.class), any(Integer.class), eq(0), isNull());
+    }
+
+    @Test
+    void incrementalIngestReplacesChangedSourcesWithoutReplacingTheWholeVersion() {
+        when(preprocessor.cleanWithDiagnostics(any())).thenAnswer(invocation ->
+                new TextPreprocessor.CleanResult(invocation.getArgument(0), false, 0, 0));
+        when(observability.observe(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<java.util.function.Supplier<?>>any()))
+                .thenAnswer(invocation -> invocation.getArgument(3, java.util.function.Supplier.class).get());
+        when(chunker.splitStructured(any())).thenReturn(List.of(
+                new ParentChildChunker.ParentChunk(1, "变更后的 A", List.of("变更后的 A"))));
+        org.mockito.Mockito.doAnswer(invocation -> {
+            invocation.getArgument(3, Runnable.class).run();
+            return null;
+        }).when(observability).observe(anyString(), anyString(), anyString(), any(Runnable.class));
+        RequirementIngestionService service = new RequirementIngestionService(
+                store, preprocessor, resultCache, projectRegistry, chunker, observability);
+
+        service.ingestIncremental("requirements", "doc-a", "5.1",
+                List.of(new KnowledgeEntry("a.html", "A changed"),
+                        new KnowledgeEntry("b.html", "B unchanged")),
+                Map.of("a.html", Hashing.sha256("A original"),
+                        "b.html", Hashing.sha256("B unchanged")));
+
+        verify(store).replaceSources(eq("requirements"), eq("doc-a"), eq("5.1"), anyList(),
+                org.mockito.ArgumentMatchers.argThat(sources -> sources.equals(java.util.Set.of("a.html"))), any());
+        verify(store, never()).replaceVersion(anyString(), anyString(), anyList());
+        verify(store, never()).replaceVersion(anyString(), anyString(), anyString(), anyList());
+    }
+
+    @Test
+    void incrementalIngestSkipsUnchangedSources() {
+        when(preprocessor.cleanWithDiagnostics(any())).thenAnswer(invocation ->
+                new TextPreprocessor.CleanResult(invocation.getArgument(0), false, 0, 0));
+        when(observability.observe(any(), any(), any(),
+                org.mockito.ArgumentMatchers.<java.util.function.Supplier<?>>any()))
+                .thenAnswer(invocation -> invocation.getArgument(3, java.util.function.Supplier.class).get());
+        RequirementIngestionService service = new RequirementIngestionService(
+                store, preprocessor, resultCache, projectRegistry, chunker, observability);
+
+        IngestResponse response = service.ingestIncremental(
+                null, "doc-a", "5.1",
+                List.of(new KnowledgeEntry("spec.html", "规则文本")),
+                Map.of("spec.html", Hashing.sha256("规则文本")));
+
+        assertThat(response.chunks()).isZero();
+        verify(store, never()).replaceVersion(anyString(), anyString(), anyList());
+        verify(store, never()).replaceVersion(anyString(), anyString(), anyString(), anyList());
     }
 }

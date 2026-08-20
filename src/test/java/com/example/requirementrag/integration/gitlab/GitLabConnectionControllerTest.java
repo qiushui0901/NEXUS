@@ -42,6 +42,9 @@ class GitLabConnectionControllerTest {
         when(service.reauthorize("connection-a", reauthorize)).thenReturn(view);
         when(service.disable("connection-a")).thenReturn(view);
         when(service.projects("connection-a", 0, 50, "order")).thenReturn(page);
+        List<GitLabAccountService.BranchView> branches =
+                List.of(new GitLabAccountService.BranchView("main", true, true, false));
+        when(service.branches("connection-a", 11)).thenReturn(branches);
         GitLabProjectImportService.BatchImportRequest importRequest =
                 new GitLabProjectImportService.BatchImportRequest(List.of());
         GitLabProjectImportService.BatchImportResponse importResponse =
@@ -56,6 +59,7 @@ class GitLabConnectionControllerTest {
         assertThat(controller.reauthorize("connection-a", reauthorize)).isSameAs(view);
         assertThat(controller.disable("connection-a")).isSameAs(view);
         assertThat(controller.projects("connection-a", 0, 50, "order")).isSameAs(page);
+        assertThat(controller.branches("connection-a", 11)).isSameAs(branches);
         assertThat(controller.imports("connection-a", importRequest)).isSameAs(importResponse);
 
         verify(service).create(create);
@@ -65,6 +69,7 @@ class GitLabConnectionControllerTest {
         verify(service).reauthorize("connection-a", reauthorize);
         verify(service).disable("connection-a");
         verify(service).projects("connection-a", 0, 50, "order");
+        verify(service).branches("connection-a", 11);
         verify(importService).importProjects("connection-a", importRequest);
     }
 }

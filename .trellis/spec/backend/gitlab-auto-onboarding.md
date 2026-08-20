@@ -13,11 +13,13 @@ GET    /api/integrations/gitlab/projects
 GET    /api/integrations/gitlab/projects/{projectId}
 POST   /api/integrations/gitlab/projects/{projectId}/sync
 POST   /api/integrations/gitlab/projects/{projectId}/retry
+POST   /api/integrations/gitlab/projects/{projectId}/enable
 DELETE /api/integrations/gitlab/projects/{projectId}
 POST   /api/webhooks/gitlab/{projectId}
 POST   /api/integrations/gitlab/connections
 GET    /api/integrations/gitlab/connections
 GET    /api/integrations/gitlab/connections/{connectionId}/projects
+GET    /api/integrations/gitlab/connections/{connectionId}/projects/{remoteProjectId}/branches
 POST   /api/integrations/gitlab/connections/{connectionId}/imports
 ```
 
@@ -45,9 +47,29 @@ gitlab_managed_project(..., connection_id nullable, remote_project_id nullable,
 - Account discovery uses the authenticated membership project list, follows every bounded pagination page,
   and excludes unrelated public projects. A non-blank search must be sent to GitLab before bounded
   pagination so accounts above the discovery cap can narrow the result set.
-- Import requests contain remote project IDs and editable NEXUS settings only. The backend re-reads each
-  remote project, verifies authenticated membership from project permissions, and never trusts
-  browser-provided clone URLs or namespace paths.
+- Self-hosted GitLab responses are an external schema boundary. Project list/detail responses must be read
+  as text, parsed into a JSON tree, and projected field-by-field. Accept the standard list array plus
+  `data`, `items`, or `projects` array envelopes; do not bind the entire response directly to
+  `RemoteProject[]`, because vendor/proxy wrappers and non-standard optional field types otherwise turn a
+  valid account into an HTTP 500.
+- Account import is code-repository onboarding only. Import requests contain remote project ID, `projectId`,
+  side, selected branch, and code collection; they do not contain or establish a requirement collection
+  relationship. Connected projects use `knowledge=null` to express that requirement knowledge is absent;
+  an isolated internal unlinked-requirement collection exists only for legacy non-null storage compatibility
+  and must never be treated as configured knowledge.
+- A GitLab repository is not a business project. Batch import requires one existing, complete
+  `businessProjectId`; every accepted repository in that batch is cataloged under that business project.
+  The wizard must not create a business project or let individual rows choose different owners.
+- Repository IDs remain the identity for clone, queue, webhook, sync job, code collection, and source access.
+  Business project IDs own requirements, product version, Wiki, permissions, and aggregate retrieval.
+- Ordinary repositories have exactly one business project owner. Cross-project code is modeled as a
+  separately indexed shared repository and referenced explicitly by each business project.
+- The backend re-reads each remote project, verifies authenticated membership from project permissions,
+  and never trusts browser-provided clone URLs or namespace paths.
+- Branch choices come from the authenticated GitLab repository branches API. The UI uses a select control
+  that exposes default/protected/merged state; free-text branch entry is forbidden for account imports.
+  Before registration, the backend re-reads the remote branch list and rejects a branch that is missing or
+  was deleted after the UI review.
 - Batch import is item-independent: one rejected project must not roll back accepted projects. Every accepted
   project immediately enters the existing initial sync queue. Remote detail requests run concurrently with
   bounded API timeouts; batch acceptance must not run synchronous Git network validation.
@@ -55,11 +77,19 @@ gitlab_managed_project(..., connection_id nullable, remote_project_id nullable,
   only be resolved for a clone URL with the same normalized host and effective port as that connection.
 - Only deterministic credential errors (`GITLAB_TOKEN_INVALID`) mark a connection `INVALID`. Rate limits,
   5xx responses, timeouts, and malformed transient responses leave the previous connection status intact.
+- `401` is a credential failure. `403` maps to `GITLAB_TOKEN_INVALID` only for the account `/user`
+  verification call; project discovery/detail/branch `403` maps to `GITLAB_PERMISSION_DENIED` and must not
+  invalidate the whole connection.
 - Project creation uses a database atomic insert. A duplicate `projectId` or stable remote identity must
   never overwrite an existing row, and cleanup may only remove the row/registry entry created by that call.
 - Browser wizard PAT, webhook secret, validation checks, and secret visibility state exist only for the
   active wizard session. Clear them when leaving the wizard, starting a new wizard, navigating to detail,
   or unmounting the component.
+- Account project import is a gated two-step UI: selection only records remote IDs; a separate configuration
+  review expands every selected project and allows editing `projectId`, side, branch, and code collection.
+  The frontend must not call `/imports` unless the review step is active, branch discovery has succeeded,
+  and every
+  required field is non-blank; the final command explicitly confirms that initial sync starts immediately.
 - Git credentials are injected only through a temporary `GIT_ASKPASS`; never place them in a URL,
   command argument, response, exception, or log.
 - Clone URLs must use an exact host allowlist match. The default allowlist contains only `gitlab.com`;
@@ -85,6 +115,14 @@ gitlab_managed_project(..., connection_id nullable, remote_project_id nullable,
   task cannot restore `CLONING`, `INDEXING`, `READY`, or `FAILED`.
 - Disabling a project persists `DISABLED` before cancelling its worker and terminalizes every queued or
   running persisted sync job as `CANCELLED` / `PROJECT_DISABLED`; no job may remain active after disable.
+- Re-enabling is an in-place transition, not a second import. Only `DISABLED` may atomically transition to
+  `PENDING`; restore the same dynamic project config, preserve repository/index/history, and enqueue one
+  `REENABLE` latest-HEAD sync. Concurrent re-enable requests must not create duplicate jobs or records.
+- Every GitLab secondary view exposes a visible return command in the page heading. Breadcrumbs may remain
+  for context but are not the only way back to project/account lists.
+- GitLab status polling is silent and non-reentrant. It updates existing project, account, and detail data
+  without toggling first-load placeholders, changing page height, clearing one-time secrets, or surfacing
+  transient poll failures as blocking page errors.
 
 ## 4. Validation & Error Matrix
 
@@ -98,6 +136,13 @@ gitlab_managed_project(..., connection_id nullable, remote_project_id nullable,
 - Invalid encryption key while enabled -> application startup failure.
 - `401/403` during account verification -> connection `INVALID`; `429/5xx/timeout` -> error returned while
   connection remains in its previous status.
+- Project/detail/branch `403` -> `GITLAB_PERMISSION_DENIED`, item operation fails, connection remains active.
+- Import branch missing from the freshly read remote branch list -> `GITLAB_BRANCH_NOT_FOUND`, no project row
+  or initial sync job is created.
+- Re-enable a non-`DISABLED` project -> validation error; credential, registry, or queue failure rolls the
+  project back to `DISABLED`.
+- Missing/blank/non-JSON project response, or an object without a supported project array envelope ->
+  `GITLAB_INVALID_RESPONSE`; never return a generic servlet 500 caused by DTO deserialization.
 
 ## 5. Good/Base/Bad Cases
 
@@ -113,8 +158,8 @@ gitlab_managed_project(..., connection_id nullable, remote_project_id nullable,
   branch, SHA, repository-root containment, bounded Git output, and clean origin URL.
 - SQLite restart persistence, migration-compatible `target_sha`, webhook deduplication, and disabled guard.
 - Initial full index, fast-forward incremental index, non-fast-forward rejection, queued Push, retry, and
-  disable race. Retry must cover both a recorded failed target and an early latest-HEAD failure after an
-  older READY target.
+  disable/re-enable race. Retry must cover both a recorded failed target and an early latest-HEAD failure
+  after an older READY target. Re-enable must preserve one project row and use trigger `REENABLE`.
 - Startup recovery must cover all four interrupted states and prove stable/terminal states are not scheduled.
 - Native token 401, malformed JSON 400, branch ignore, project mismatch, duplicate event, and ADMIN marker.
 - Spring context with the feature both disabled and enabled.
@@ -125,8 +170,28 @@ gitlab_managed_project(..., connection_id nullable, remote_project_id nullable,
 - Regression tests cover transient verification failures, server-side project search, project rename,
   same namespace on different instances, concurrent registration, concurrent detail reads, and PAT
   host/port binding.
+- API client tests cover standard project arrays, self-hosted `data/items/projects` envelopes, optional
+  fields with non-standard types, project detail wrappers, and paginated branch state projection.
+- Regression tests prove connected project configs have `knowledge=null`, early Bootstrap configuration
+  failures release the project lock, project-level `403` does not invalidate the account, and stale/tampered
+  branch submissions are rejected before registration.
 - Browser contract tests assert account PAT, reauthorization PAT, import result secrets, and selection state
   are cleared on route changes and component unmount.
+- Browser contract tests assert the selection action enters configuration review before
+  `GitLabApi.importProjects`, all four code-onboarding fields are visible without collapsed disclosure
+  widgets, requirement collection is absent, branch is a remote-backed stateful select, and back/clear
+  paths do not submit an import.
+- Browser contract tests assert explicit return commands exist on account list, account connect, account
+  detail, and project detail views, and disabled project detail exposes `GitLabApi.enable`.
+- Browser contract tests assert polling uses silent loaders, rejects overlapping refreshes, and does not
+  route detail polling through the first-load state-reset path.
+- Browser and service tests assert import requires one existing business project, sends it once at batch
+  level, and creates repository catalog ownership without creating an isolated business project.
+- Explicit catalog migrations use insert-or-verify semantics. Existing IDs, collections, or aliases must
+  match the expected semantic record; otherwise the transaction rolls back and must not mark the migration
+  completed.
+- Public business-project repository DTOs never expose local `repositoryPath` or other server filesystem
+  paths.
 
 ## 7. Wrong vs Correct
 
@@ -157,4 +222,17 @@ enqueue(projectId, null);        // retry moves to the latest remote HEAD
 ```java
 queue.worker = null;             // retain the stable project queue until disable/shutdown
 enqueue(projectId, project.targetSha());
+```
+
+### Wrong
+
+```java
+client.get().retrieve().body(RemoteProject[].class);
+```
+
+### Correct
+
+```java
+String body = client.get().retrieve().body(String.class);
+JsonNode projects = supportedProjectArray(objectMapper.readTree(body));
 ```

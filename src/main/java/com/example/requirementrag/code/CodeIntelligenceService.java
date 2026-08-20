@@ -72,15 +72,28 @@ public class CodeIntelligenceService {
      * @param limit      符号/关系数量上限，钳制在 1-200
      * @return 影响分析响应；commit 差异计算失败时抛出 IllegalStateException
      */
+    public CodeIntelligenceResponse impactCommitsInRepository(String repositoryId, String repositoryPath,
+                                                               String fromCommit, String toCommit,
+                                                               Integer depth, Integer limit) {
+        return impactCommitsResolved(repositoryId, repositoryPath, fromCommit, toCommit, depth, limit);
+    }
+
     public CodeIntelligenceResponse impactCommits(String projectId, String fromCommit, String toCommit,
                                                   Integer depth, Integer limit) {
-        String project = resolveProject(projectId);
+        return impactCommitsResolved(resolveProject(projectId), null, fromCommit, toCommit, depth, limit);
+    }
+
+    private CodeIntelligenceResponse impactCommitsResolved(String project, String repositoryPath,
+                                                           String fromCommit, String toCommit,
+                                                           Integer depth, Integer limit) {
         if (fromCommit == null || fromCommit.isBlank() || toCommit == null || toCommit.isBlank()) {
             throw new IllegalArgumentException("fromCommit and toCommit are required");
         }
         GitDiffService.GitDiffResult diff;
         try {
-            diff = gitDiffService.diff(project, fromCommit, toCommit);
+            diff = repositoryPath == null || repositoryPath.isBlank()
+                    ? gitDiffService.diff(project, fromCommit, toCommit)
+                    : gitDiffService.diffInRepository(project, repositoryPath, fromCommit, toCommit);
         }
         catch (java.io.IOException | InterruptedException exception) {
             if (exception instanceof InterruptedException) Thread.currentThread().interrupt();

@@ -11,6 +11,9 @@ import com.example.requirementrag.model.RagOutcomeStatus;
 import com.example.requirementrag.model.RagStageDiagnostic;
 import com.example.requirementrag.model.RagWarning;
 import com.example.requirementrag.observability.RagObservability;
+import com.example.requirementrag.project.BusinessProject;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
+import com.example.requirementrag.project.BusinessProjectCodeSearchService;
 import com.example.requirementrag.retrieval.SparseVectorizer;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
 import com.example.requirementrag.service.QueryRouter;
@@ -51,6 +54,10 @@ public class RetrievalPipeline {
     private final Executor retrievalExecutor;
     private final RetrievalCircuitBreaker circuitBreaker;
     private final SparseVectorizer sparseVectorizer;
+    private final BusinessProjectCatalogService businessProjects;
+    private final BusinessProjectCodeSearchService businessCodeSearch;
+    private final DocumentRetrievalService documentRetrievalService;
+    private final CodeRetrievalService codeRetrievalService;
 
     @Autowired
     public RetrievalPipeline(RagProperties properties, ProjectRegistry projectRegistry, QueryRouter queryRouter,
@@ -59,7 +66,11 @@ public class RetrievalPipeline {
                              RetrievalResultCache resultCache,
                              @Qualifier("retrievalExecutor") Executor retrievalExecutor,
                              RetrievalCircuitBreaker circuitBreaker,
-                             SparseVectorizer sparseVectorizer) {
+                             SparseVectorizer sparseVectorizer,
+                             BusinessProjectCatalogService businessProjects,
+                             BusinessProjectCodeSearchService businessCodeSearch,
+                             DocumentRetrievalService documentRetrievalService,
+                             CodeRetrievalService codeRetrievalService) {
         this.properties = properties;
         this.projectRegistry = projectRegistry;
         this.queryRouter = queryRouter;
@@ -71,6 +82,68 @@ public class RetrievalPipeline {
         this.retrievalExecutor = retrievalExecutor;
         this.circuitBreaker = circuitBreaker;
         this.sparseVectorizer = sparseVectorizer;
+        this.businessProjects = businessProjects;
+        this.businessCodeSearch = businessCodeSearch;
+        this.documentRetrievalService = documentRetrievalService;
+        this.codeRetrievalService = codeRetrievalService;
+    }
+
+    /** 兼容构造器（测试不依赖 PageIndex 时使用）。 */
+    public RetrievalPipeline(RagProperties properties, ProjectRegistry projectRegistry, QueryRouter queryRouter,
+                             QdrantHybridStore documentStore, CodeKnowledgeService codeKnowledgeService,
+                             RagObservability observability, RequirementReranker requirementReranker,
+                             RetrievalResultCache resultCache,
+                             @Qualifier("retrievalExecutor") Executor retrievalExecutor,
+                             RetrievalCircuitBreaker circuitBreaker,
+                             SparseVectorizer sparseVectorizer,
+                             BusinessProjectCatalogService businessProjects,
+                             BusinessProjectCodeSearchService businessCodeSearch) {
+        this(properties, projectRegistry, queryRouter, documentStore, codeKnowledgeService, observability,
+                requirementReranker, resultCache, retrievalExecutor, circuitBreaker, sparseVectorizer,
+                businessProjects, businessCodeSearch,
+                new DocumentRetrievalServiceImpl(documentStore, requirementReranker),
+                new CodeRetrievalServiceImpl(codeKnowledgeService, businessCodeSearch));
+    }
+
+    /** 兼容构造器（Spring 未注入 PageIndex 时回退）。 */
+    public RetrievalPipeline(RagProperties properties, ProjectRegistry projectRegistry, QueryRouter queryRouter,
+                             QdrantHybridStore documentStore, CodeKnowledgeService codeKnowledgeService,
+                             RagObservability observability, RequirementReranker requirementReranker,
+                             RetrievalResultCache resultCache,
+                             @Qualifier("retrievalExecutor") Executor retrievalExecutor,
+                             RetrievalCircuitBreaker circuitBreaker,
+                             SparseVectorizer sparseVectorizer,
+                             BusinessProjectCatalogService businessProjects,
+                             BusinessProjectCodeSearchService businessCodeSearch,
+                             boolean fallback) {
+        this(properties, projectRegistry, queryRouter, documentStore, codeKnowledgeService, observability,
+                requirementReranker, resultCache, retrievalExecutor, circuitBreaker, sparseVectorizer,
+                businessProjects, businessCodeSearch,
+                new DocumentRetrievalServiceImpl(documentStore, requirementReranker),
+                new CodeRetrievalServiceImpl(codeKnowledgeService, businessCodeSearch));
+    }
+
+    public RetrievalPipeline(RagProperties properties, ProjectRegistry projectRegistry, QueryRouter queryRouter,
+                             QdrantHybridStore documentStore, CodeKnowledgeService codeKnowledgeService,
+                             RagObservability observability, RequirementReranker requirementReranker,
+                             RetrievalResultCache resultCache,
+                             Executor retrievalExecutor,
+                             RetrievalCircuitBreaker circuitBreaker,
+                             SparseVectorizer sparseVectorizer) {
+        this(properties, projectRegistry, queryRouter, documentStore, codeKnowledgeService, observability,
+                requirementReranker, resultCache, retrievalExecutor, circuitBreaker, sparseVectorizer, null);
+    }
+
+    public RetrievalPipeline(RagProperties properties, ProjectRegistry projectRegistry, QueryRouter queryRouter,
+                             QdrantHybridStore documentStore, CodeKnowledgeService codeKnowledgeService,
+                             RagObservability observability, RequirementReranker requirementReranker,
+                             RetrievalResultCache resultCache, Executor retrievalExecutor,
+                             RetrievalCircuitBreaker circuitBreaker, SparseVectorizer sparseVectorizer,
+                             BusinessProjectCatalogService businessProjects) {
+        this(properties, projectRegistry, queryRouter, documentStore, codeKnowledgeService, observability,
+                requirementReranker, resultCache, retrievalExecutor, circuitBreaker, sparseVectorizer,
+                businessProjects, businessProjects == null ? null
+                        : new BusinessProjectCodeSearchService(businessProjects, codeKnowledgeService));
     }
 
     /** 供聚焦测试使用的兼容构造器，不依赖 Spring 注入（无稀疏向量化器）。 */
@@ -102,13 +175,19 @@ public class RetrievalPipeline {
      * @return 检索结果：证据、解析后的项目 ID 及状态/警告/诊断
      */
     public RagOutcome<RetrievalBundle> execute(RetrievalRequest request) {
-        String documentId = hasText(request.documentId()) ? request.documentId() : properties.knowledge().documentId();
-        String version = hasText(request.version()) ? request.version() : properties.knowledge().version();
         int limit = Math.min(Math.max(request.limit() == null ? 8 : request.limit(), 1), 50);
 
         RagOutcome<QueryRouting> routing = queryRouter.routeWithOutcome(request.query(), request.projectId());
+        String projectId = businessProjects == null ? routing.data().projectId()
+                : businessProjects.resolveProjectId(routing.data().projectId());
+        BusinessProject businessProject = resolveBusinessProject(projectId);
+        String documentId = hasText(request.documentId()) ? request.documentId()
+                : businessProject == null ? properties.knowledge().documentId()
+                : businessProject.requirementDocumentId();
+        String version = hasText(request.version()) ? request.version()
+                : businessProject == null ? properties.knowledge().version()
+                : businessProject.latestRequirementVersion();
         recordOutcome(routing, documentId, version);
-        String projectId = routing.data().projectId();
         var cached = resultCache.get(request, projectId, documentId, version, limit);
         if (cached.isPresent()) {
             observability.event("retrieval_cache_hit");
@@ -117,27 +196,31 @@ public class RetrievalPipeline {
         observability.event("retrieval_cache_miss");
 
         String requirementCollection = request.profile().usesRequirementEvidence()
-                ? projectRegistry.resolveRequirementCollection(projectId) : null;
+                ? businessProject == null ? projectRegistry.resolveRequirementCollection(projectId)
+                : businessProject.requirementCollection()
+                : null;
+        List<String> allowedRepositoryIds = businessProjects == null
+                ? List.of(projectId)
+                : businessProjects.repositoryScope(projectId, request.repositoryIds()).stream()
+                .map(com.example.requirementrag.project.CodeRepository::id).toList();
         long timeoutMs = properties.retrieval() == null
                 ? 5_000 : properties.retrieval().resolvedBranchTimeoutMs();
         CompletableFuture<RagOutcome<List<ChunkRecord>>> requirementFuture =
                 request.profile().usesRequirementEvidence()
                 ? submit(DOCUMENT_STAGE, () -> retrieve(DOCUMENT_STAGE, documentId, version,
                         "DOCUMENT_RETRIEVAL_UNAVAILABLE", "需求文档检索暂时不可用",
-                        () -> documentStore.hybridSearch(requirementCollection, request.query(), documentId, version)),
+                        () -> documentRetrievalService.search(requirementCollection, request.query(), documentId, version)),
                         timeoutMs)
                 : completed(DOCUMENT_STAGE);
         CompletableFuture<RagOutcome<List<ChunkRecord>>> corpusFuture = request.includeVersionCorpus()
                 ? submit(DOCUMENT_CORPUS_STAGE, () -> retrieve(DOCUMENT_CORPUS_STAGE, documentId, version,
                         "DOCUMENT_CORPUS_UNAVAILABLE", "需求文档正文暂时不可用",
-                        () -> documentStore.scrollVersion(requirementCollection, documentId, version)),
+                        () -> documentRetrievalService.scrollCorpus(requirementCollection, documentId, version)),
                         timeoutMs)
                 : completed(DOCUMENT_CORPUS_STAGE);
         CompletableFuture<RagOutcome<List<CodeChunk>>> codeFuture = request.profile().usesCodeEvidence()
-                ? submit(CODE_STAGE, () -> retrieve(CODE_STAGE, documentId, version,
-                        "CODE_RETRIEVAL_UNAVAILABLE", "代码检索暂时不可用",
-                        () -> codeKnowledgeService.search(request.query(), projectId, limit)),
-                        timeoutMs)
+                ? submit(CODE_STAGE, () -> codeRetrievalService.searchOutcome(request.query(), projectId,
+                        request.repositoryIds(), limit), timeoutMs)
                 : completed(CODE_STAGE);
 
         RagOutcome<List<ChunkRecord>> requirementOutcome = await(requirementFuture, DOCUMENT_STAGE,
@@ -157,7 +240,7 @@ public class RetrievalPipeline {
                 ? Math.max(limit, retrieval.resolvedBgeTopK())
                 : limit;
         RagOutcome<List<ChunkRecord>> rerankOutcome = request.profile().usesRequirementEvidence()
-                ? requirementReranker.rerank(request.query(), documentId, version, rerankCandidates, rerankLimit)
+                ? documentRetrievalService.rerank(request.query(), documentId, version, rerankCandidates, rerankLimit)
                 : RagOutcome.of(RagOutcomeStatus.NO_RESULTS, List.of(), "retrieval.rerank", 0, 0);
         List<ChunkRecord> requirements = selectParentRepresentatives(
                 request.query(), rerankOutcome.data(), childFirstRerank)
@@ -184,6 +267,13 @@ public class RetrievalPipeline {
             collect(corpusOutcome, warnings, diagnostics);
         }
         collect(codeOutcome, warnings, diagnostics);
+        if (businessProjects != null && businessProject != null
+                && businessProjects.requirementCoverage(projectId)
+                == BusinessProjectCatalogService.CoverageStatus.BEHIND) {
+            warnings.add(new RagWarning("retrieval.requirement.coverage", "REQUIREMENT_VERSION_BEHIND",
+                    "需求版本 " + version + " 落后于产品版本 "
+                            + businessProjects.productVersion(projectId).displayVersion(), 0));
+        }
 
         boolean failedCoreStage = requirementOutcome.status() == RagOutcomeStatus.FAILED
                 || request.includeVersionCorpus() && corpusOutcome.status() == RagOutcomeStatus.FAILED
@@ -197,7 +287,7 @@ public class RetrievalPipeline {
                 : requirements.isEmpty() && corpus.isEmpty() && code.isEmpty()
                         ? RagOutcomeStatus.NO_RESULTS : RagOutcomeStatus.SUCCESS;
         RetrievalBundle bundle = new RetrievalBundle(request.query(), request.profile(), projectId, documentId,
-                version, requirements, corpus, code);
+                version, requirements, corpus, code, allowedRepositoryIds);
         RagOutcome<RetrievalBundle> outcome = new RagOutcome<>(status, bundle, warnings, diagnostics);
         if (status == RagOutcomeStatus.SUCCESS || status == RagOutcomeStatus.NO_RESULTS) {
             resultCache.put(request, projectId, documentId, version, limit, outcome);
@@ -344,8 +434,18 @@ public class RetrievalPipeline {
     /** 代码块去重键：优先 chunk id，缺失时用 filePath + symbolName + startLine。 */
     private String codeKey(CodeChunk chunk) {
         return hasText(chunk.id()) ? chunk.id()
-                : chunk.filePath() + ':' + chunk.symbolName() + ':' + chunk.startLine();
+                : chunk.projectId() + ':' + chunk.filePath() + ':' + chunk.symbolName() + ':' + chunk.startLine();
     }
+
+    private BusinessProject resolveBusinessProject(String projectId) {
+        if (businessProjects == null) return null;
+        try {
+            return businessProjects.requireProject(projectId);
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
+    }
+
 
     /** 汇总子结果中的警告与阶段诊断到外层集合。 */
     private void collect(RagOutcome<?> outcome, List<RagWarning> warnings,

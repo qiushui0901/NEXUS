@@ -1,5 +1,7 @@
 package com.example.requirementrag.integration.gitlab;
 
+import com.example.requirementrag.project.BusinessProjectCatalogService;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
@@ -23,17 +25,29 @@ public class GitLabProjectImportService {
     private final GitLabGitClient gitClient;
     private final GitLabProjectStore projectStore;
     private final GitLabSyncService syncService;
+    private final BusinessProjectCatalogService catalogService;
 
+    @Autowired
     public GitLabProjectImportService(GitLabAccountService accountService,
                                       GitLabApiClient apiClient,
                                       GitLabGitClient gitClient,
                                       GitLabProjectStore projectStore,
-                                      GitLabSyncService syncService) {
+                                      GitLabSyncService syncService,
+                                      BusinessProjectCatalogService catalogService) {
         this.accountService = accountService;
         this.apiClient = apiClient;
         this.gitClient = gitClient;
         this.projectStore = projectStore;
         this.syncService = syncService;
+        this.catalogService = catalogService;
+    }
+
+    GitLabProjectImportService(GitLabAccountService accountService,
+                               GitLabApiClient apiClient,
+                               GitLabGitClient gitClient,
+                               GitLabProjectStore projectStore,
+                               GitLabSyncService syncService) {
+        this(accountService, apiClient, gitClient, projectStore, syncService, null);
     }
 
     public BatchImportResponse importProjects(String connectionId, BatchImportRequest request) {
@@ -42,6 +56,10 @@ public class GitLabProjectImportService {
         }
         if (request.projects().size() > MAX_BATCH) {
             throw new IllegalArgumentException("单次最多导入 " + MAX_BATCH + " 个项目");
+        }
+        String businessProjectId = request.businessProjectId();
+        if (catalogService != null) {
+            businessProjectId = catalogService.requireImportTarget(businessProjectId).id();
         }
         Set<Long> requestedIds = new HashSet<>();
         for (ImportProject item : request.projects()) {
@@ -87,25 +105,39 @@ public class GitLabProjectImportService {
                 if (branch == null || branch.isBlank()) {
                     throw new ImportFailure("GITLAB_DEFAULT_BRANCH_MISSING", "项目没有默认分支");
                 }
+                if (resolved.branches().stream().noneMatch(value -> branch.equals(value.name()))) {
+                    throw new ImportFailure("GITLAB_BRANCH_NOT_FOUND", "所选分支不存在或已被删除");
+                }
                 String webhookSecret = secret();
-                GitLabManagedProject.View project = syncService.registerConnected(
-                        new GitLabSyncService.CreateConnectedProject(
-                                connection.id(),
-                                remote.id(),
-                                item.projectId(),
-                                remote.name(),
-                                group(remote.pathWithNamespace()),
-                                text(item.side(), "server"),
-                                remote.httpUrlToRepo(),
-                                branch,
-                                remote.pathWithNamespace(),
-                                item.requirementCollection(),
-                                item.codeCollection(),
-                                webhookSecret));
-                results.add(new ImportResult(
-                        remote.id(), remote.pathWithNamespace(), item.projectId(),
-                        "ACCEPTED", null, null, project,
-                        webhookSecret, "/api/webhooks/gitlab/" + project.projectId()));
+                boolean catalogRegistered = false;
+                try {
+                    if (catalogService != null) {
+                        catalogService.registerOwnedRepository(businessProjectId, item.projectId(), remote.name(),
+                                text(item.side(), "server"), item.codeCollection(),
+                                gitClient.repositoryPath(item.projectId()).toString(), remote.pathWithNamespace());
+                        catalogRegistered = true;
+                    }
+                    GitLabManagedProject.View project = syncService.registerConnected(
+                            new GitLabSyncService.CreateConnectedProject(
+                                    connection.id(),
+                                    remote.id(),
+                                    item.projectId(),
+                                    remote.name(),
+                                    group(remote.pathWithNamespace()),
+                                    text(item.side(), "server"),
+                                    remote.httpUrlToRepo(),
+                                    branch,
+                                    remote.pathWithNamespace(),
+                                    item.codeCollection(),
+                                    webhookSecret));
+                    results.add(new ImportResult(
+                            remote.id(), remote.pathWithNamespace(), item.projectId(),
+                            "ACCEPTED", null, null, project,
+                            webhookSecret, "/api/webhooks/gitlab/" + project.projectId()));
+                } catch (RuntimeException exception) {
+                    if (catalogRegistered) catalogService.unregisterRepository(item.projectId());
+                    throw exception;
+                }
             } catch (ImportFailure exception) {
                 results.add(failed(item, exception.code, exception.getMessage()));
             } catch (GitLabApiException exception) {
@@ -123,14 +155,18 @@ public class GitLabProjectImportService {
 
     private ResolvedProject resolve(GitLabConnection connection, String token, ImportProject item) {
         try {
-            return new ResolvedProject(
-                    apiClient.project(connection.baseUrl(), token, item.remoteProjectId()),
-                    null, null, null);
+            GitLabApiClient.RemoteProject remote =
+                    apiClient.project(connection.baseUrl(), token, item.remoteProjectId());
+            List<GitLabApiClient.RemoteBranch> branches =
+                    !remote.member() || remote.archived() ? List.of()
+                            : apiClient.branches(connection.baseUrl(), token, item.remoteProjectId());
+            return new ResolvedProject(remote, branches, null, null, null);
         } catch (GitLabApiException exception) {
-            return new ResolvedProject(null, exception, exception.code(), exception.getMessage());
+            return new ResolvedProject(null, List.of(),
+                    exception, exception.code(), exception.getMessage());
         } catch (RuntimeException exception) {
-            return new ResolvedProject(null, exception,
-                    "GITLAB_IMPORT_FAILED", "项目详情读取失败，请稍后重试");
+            return new ResolvedProject(null, List.of(), exception,
+                    "GITLAB_IMPORT_FAILED", "项目详情或分支读取失败，请稍后重试");
         }
     }
 
@@ -139,11 +175,11 @@ public class GitLabProjectImportService {
             return pending.get();
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            return new ResolvedProject(null, exception,
+            return new ResolvedProject(null, List.of(), exception,
                     "GITLAB_IMPORT_INTERRUPTED", "项目导入被中断");
         } catch (ExecutionException exception) {
-            return new ResolvedProject(null, exception,
-                    "GITLAB_IMPORT_FAILED", "项目详情读取失败，请稍后重试");
+            return new ResolvedProject(null, List.of(), exception,
+                    "GITLAB_IMPORT_FAILED", "项目详情或分支读取失败，请稍后重试");
         }
     }
 
@@ -172,9 +208,13 @@ public class GitLabProjectImportService {
         return value == null || value.isBlank() ? fallback : value.trim();
     }
 
-    public record BatchImportRequest(List<ImportProject> projects) {
+    public record BatchImportRequest(String businessProjectId, List<ImportProject> projects) {
         public BatchImportRequest {
             projects = projects == null ? List.of() : List.copyOf(projects);
+        }
+
+        public BatchImportRequest(List<ImportProject> projects) {
+            this(null, projects);
         }
     }
 
@@ -183,7 +223,6 @@ public class GitLabProjectImportService {
             String projectId,
             String side,
             String branch,
-            String requirementCollection,
             String codeCollection
     ) {
     }
@@ -215,6 +254,7 @@ public class GitLabProjectImportService {
 
     private record ResolvedProject(
             GitLabApiClient.RemoteProject remote,
+            List<GitLabApiClient.RemoteBranch> branches,
             Exception failure,
             String code,
             String message

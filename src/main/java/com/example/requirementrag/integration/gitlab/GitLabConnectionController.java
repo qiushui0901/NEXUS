@@ -69,6 +69,13 @@ public class GitLabConnectionController {
         return service.projects(connectionId, page, size, query);
     }
 
+    @GetMapping("/{connectionId}/projects/{remoteProjectId}/branches")
+    public List<GitLabAccountService.BranchView> branches(
+            @PathVariable String connectionId,
+            @PathVariable long remoteProjectId) {
+        return service.branches(connectionId, remoteProjectId);
+    }
+
     @PostMapping("/{connectionId}/imports")
     public GitLabProjectImportService.BatchImportResponse imports(
             @PathVariable String connectionId,

@@ -82,7 +82,7 @@ public final class EvidenceRegistry {
         }
 
         for (CodeChunk chunk : bundle.codeEvidence()) {
-            if (!sameScope(bundle.resolvedProjectId(), chunk.projectId())) {
+            if (chunk.projectId() == null || !bundle.allowedRepositoryIds().contains(chunk.projectId())) {
                 continue;
             }
             String fingerprint = String.join("|", safe(chunk.projectId()), safe(chunk.commitSha()),

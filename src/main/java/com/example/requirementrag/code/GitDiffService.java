@@ -76,13 +76,22 @@ public class GitDiffService {
      */
     public GitDiffResult diff(String projectId, String fromCommit, String toCommit)
             throws IOException, InterruptedException {
-        String from = commit(fromCommit, "fromCommit");
-        String to = commit(toCommit, "toCommit");
+        commit(fromCommit, "fromCommit");
+        commit(toCommit, "toCommit");
         RagProperties.ProjectConfig project = projectRegistry.require(projectId);
         String configuredPath = hasText(project.repositoryPath())
                 ? project.repositoryPath() : properties.code().repositoryPath();
-        if (!hasText(configuredPath)) throw new IllegalStateException("项目代码仓库未配置");
-        Path repository = Path.of(configuredPath).toAbsolutePath().normalize();
+        return diffInRepository(projectId, configuredPath, fromCommit, toCommit);
+    }
+
+    /** 在业务项目目录解析出的仓库路径执行 commit diff，避免旧 ProjectRegistry 回退。 */
+    public GitDiffResult diffInRepository(String repositoryId, String repositoryPath,
+                                           String fromCommit, String toCommit)
+            throws IOException, InterruptedException {
+        String from = commit(fromCommit, "fromCommit");
+        String to = commit(toCommit, "toCommit");
+        if (!hasText(repositoryPath)) throw new IllegalStateException("项目代码仓库未配置");
+        Path repository = Path.of(repositoryPath).toAbsolutePath().normalize();
         if (!Files.isDirectory(repository.resolve(".git"))) throw new IllegalStateException("项目代码仓库不可用");
 
         Process process = new ProcessBuilder("git", "diff", "--name-status", "-M", from, to)
@@ -90,7 +99,7 @@ public class GitDiffService {
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         int exitCode = process.waitFor();
         if (exitCode != 0) {
-            log.warn("Git diff failed for project {} with exit code {}", projectId, exitCode);
+            log.warn("Git diff failed for repository {} with exit code {}", repositoryId, exitCode);
             throw new IllegalStateException("Git 版本差异分析失败");
         }
         List<GitFileChange> changes = output.lines().map(this::parse).filter(java.util.Objects::nonNull).toList();

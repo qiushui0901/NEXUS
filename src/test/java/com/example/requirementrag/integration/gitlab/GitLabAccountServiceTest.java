@@ -160,6 +160,53 @@ class GitLabAccountServiceTest {
         });
     }
 
+    @Test
+    void exposesRemoteBranchStatesForImportSelection() throws Exception {
+        Fixture fixture = fixture();
+        when(fixture.apiClient.account("https://gitlab.example.com", "glpat-secret"))
+                .thenReturn(new GitLabApiClient.Account(7, "qiushui", "秋水"));
+        GitLabConnection.View created = fixture.service.create(
+                new GitLabAccountService.CreateConnection(
+                        "公司 GitLab", "https://gitlab.example.com", "glpat-secret"));
+        when(fixture.apiClient.branches(
+                "https://gitlab.example.com", "glpat-secret", 11))
+                .thenReturn(List.of(
+                        new GitLabApiClient.RemoteBranch("main", true, true, false, "a".repeat(40)),
+                        new GitLabApiClient.RemoteBranch("develop", false, false, false, "b".repeat(40))));
+
+        assertThat(fixture.service.branches(created.id(), 11))
+                .extracting(
+                        GitLabAccountService.BranchView::name,
+                        GitLabAccountService.BranchView::defaultBranch,
+                        GitLabAccountService.BranchView::protectedBranch)
+                .containsExactly(
+                        org.assertj.core.groups.Tuple.tuple("main", true, true),
+                        org.assertj.core.groups.Tuple.tuple("develop", false, false));
+    }
+
+    @Test
+    void keepsConnectionActiveWhenOneProjectsBranchesAreForbidden() throws Exception {
+        Fixture fixture = fixture();
+        when(fixture.apiClient.account("https://gitlab.example.com", "glpat-secret"))
+                .thenReturn(new GitLabApiClient.Account(7, "qiushui", "秋水"));
+        GitLabConnection.View created = fixture.service.create(
+                new GitLabAccountService.CreateConnection(
+                        "公司 GitLab", "https://gitlab.example.com", "glpat-secret"));
+        when(fixture.apiClient.branches(
+                "https://gitlab.example.com", "glpat-secret", 11))
+                .thenThrow(new GitLabApiException(
+                        "GITLAB_PERMISSION_DENIED", "当前 GitLab 项目或仓库权限不足"));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(
+                        () -> fixture.service.branches(created.id(), 11))
+                .isInstanceOf(GitLabApiException.class)
+                .extracting(error -> ((GitLabApiException) error).code())
+                .isEqualTo("GITLAB_PERMISSION_DENIED");
+        assertThat(fixture.connectionStore.find(created.id())).get()
+                .extracting(GitLabConnection::status)
+                .isEqualTo(GitLabConnectionStatus.ACTIVE);
+    }
+
     private GitLabApiClient.RemoteProject remote(long id, String name, String path,
                                                   String branch, boolean archived) {
         return new GitLabApiClient.RemoteProject(

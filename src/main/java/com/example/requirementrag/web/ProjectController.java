@@ -5,6 +5,8 @@ import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.UserContext;
+import com.example.requirementrag.project.BusinessProjectSummaryService;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -27,15 +29,21 @@ public class ProjectController {
     private final QdrantHybridStore documentStore;
     private final CodeQdrantStore codeStore;
     private final ProjectAccessGuard accessGuard;
+    private final BusinessProjectSummaryService businessSummaryService;
+    private final BusinessProjectCatalogService businessCatalog;
 
     public ProjectController(ProjectRegistry projectRegistry,
                              QdrantHybridStore documentStore,
                              CodeQdrantStore codeStore,
-                             ProjectAccessGuard accessGuard) {
+                             ProjectAccessGuard accessGuard,
+                             BusinessProjectSummaryService businessSummaryService,
+                             BusinessProjectCatalogService businessCatalog) {
         this.projectRegistry = projectRegistry;
         this.documentStore = documentStore;
         this.codeStore = codeStore;
         this.accessGuard = accessGuard;
+        this.businessSummaryService = businessSummaryService;
+        this.businessCatalog = businessCatalog;
     }
 
     /** 列出当前用户有权访问的项目及其统计摘要。对应 GET /api/projects。 */
@@ -43,10 +51,14 @@ public class ProjectController {
     @GetMapping
     public List<ProjectSummary> list(HttpServletRequest request) {
         UserContext user = accessGuard.currentUser(request);
-        return projectRegistry.all().stream()
-                .filter(project -> hasText(project.id()))
-                .filter(project -> user.hasAccessTo(project.id()))
-                .map(this::toSummary)
+        return businessSummaryService.summaries().stream()
+                .filter(project -> {
+                    var business = businessCatalog.requireProject(project.id());
+                    return user.hasAccessTo(project.id())
+                            || user.hasAccessTo(business.requirementSnapshotNamespace());
+                })
+                .map(project -> new ProjectSummary(project.id(), project.name(), "business", "all",
+                        project.productVersion(), project.requirementChunks(), project.codeChunks()))
                 .toList();
     }
 

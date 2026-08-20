@@ -2,6 +2,8 @@ package com.example.requirementrag.config;
 
 import com.example.requirementrag.integration.gitlab.GitLabIntegrationProperties;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementProperties;
+import com.example.requirementrag.project.BusinessProjectCatalogProperties;
+import com.example.requirementrag.requirement.graph.RequirementGraphProperties;
 import com.example.requirementrag.web.ProjectAuthInterceptor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
@@ -18,7 +20,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
         VersioningProperties.class,
         AuthProperties.class,
         GitLabIntegrationProperties.class,
-        KnowledgeManagementProperties.class
+        KnowledgeManagementProperties.class,
+        BusinessProjectCatalogProperties.class,
+        RequirementGraphProperties.class
 })
 public class WebMvcConfig implements WebMvcConfigurer {
 

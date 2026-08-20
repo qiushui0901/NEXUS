@@ -14,6 +14,18 @@ public record ChunkRecord(
         String childText,
         String contentHash,
         int parentOrder,
-        int childOrder
+        int childOrder,
+        String sectionPath,
+        String heading,
+        String requirementId,
+        String module,
+        String acceptanceCriteria
 ) {
+    /** 兼容旧构造器：未提供结构化元数据时填充空值。 */
+    public ChunkRecord(String id, String documentId, String version, String filename,
+                       String parentId, String parentText, String childText,
+                       String contentHash, int parentOrder, int childOrder) {
+        this(id, documentId, version, filename, parentId, parentText, childText,
+                contentHash, parentOrder, childOrder, "", "", "", "", "");
+    }
 }

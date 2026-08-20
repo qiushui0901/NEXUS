@@ -65,7 +65,7 @@ class GitLabSyncServiceTest {
                 new GitLabSyncService.CreateConnectedProject(
                         "connection-a", 11, "project-a", "Project A", "group", "server",
                         "https://gitlab.example.com/group/project-a.git", "main", "group/project-a",
-                        "project_a_requirements", "project_a_code", "webhook-secret-1234");
+                        "project_a_code", "webhook-secret-1234");
 
         try (ExecutorService callers = Executors.newVirtualThreadPerTaskExecutor()) {
             Future<?> first = callers.submit(() -> fixture.service.registerConnected(request));
@@ -89,8 +89,12 @@ class GitLabSyncServiceTest {
             release.countDown();
         }
 
-        assertThat(fixture.store.find("project-a")).isPresent();
+        assertThat(fixture.store.find("project-a")).get().satisfies(project ->
+                assertThat(project.requirementCollection())
+                        .isEqualTo("nexus_unlinked_project_a_requirements"));
         assertThat(fixture.registry.find("project-a")).isPresent();
+        assertThat(fixture.registry.require("project-a").knowledge()).isNull();
+        assertThat(fixture.service.require("project-a").requirementCollection()).isNull();
         fixture.close();
     }
 
@@ -316,6 +320,34 @@ class GitLabSyncServiceTest {
             releaseClone.countDown();
             fixture.close();
         }
+    }
+
+    @Test
+    void reEnablesDisabledProjectWithoutCreatingADuplicateRecord() throws Exception {
+        Fixture fixture = fixture();
+        String oldSha = "a".repeat(40);
+        String newSha = "b".repeat(40);
+        GitLabManagedProject existing = project(fixture, oldSha);
+        fixture.store.save(new GitLabManagedProject(
+                existing.projectId(), existing.name(), existing.group(), existing.side(),
+                existing.cloneUrl(), existing.branch(), existing.gitPath(),
+                existing.requirementCollection(), existing.codeCollection(), existing.repositoryPath(),
+                existing.encryptedAccessToken(), existing.encryptedWebhookSecret(),
+                GitLabProjectStatus.DISABLED, oldSha, oldSha, null,
+                existing.createdAt(), existing.updatedAt()));
+        when(fixture.gitClient.remoteHead(any())).thenReturn(newSha);
+        when(fixture.gitClient.isAncestor("project-a", oldSha, newSha)).thenReturn(true);
+
+        GitLabManagedProject.View enabled = fixture.service.enable("project-a");
+
+        assertThat(enabled.status()).isEqualTo(GitLabProjectStatus.READY);
+        assertThat(fixture.store.all()).hasSize(1);
+        assertThat(fixture.registry.find("project-a")).isPresent();
+        assertThat(fixture.store.jobs("project-a")).singleElement()
+                .extracting(GitLabSyncJob::triggerType)
+                .isEqualTo("REENABLE");
+        verify(fixture.incrementalIndexService).indexWithResult("project-a", oldSha, newSha);
+        fixture.close();
     }
 
     @Test

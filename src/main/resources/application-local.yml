@@ -10,3 +10,7 @@ app:
       base-url: ${QDRANT_URL:http://localhost:6333}
     retrieval:
       llm-rerank-enabled: ${LLM_RERANK_ENABLED:true}
+      document:
+        llm-rerank-enabled: ${RETRIEVAL_DOCUMENT_LLM_RERANK_ENABLED:true}
+      code:
+        bge-rerank-enabled: ${RETRIEVAL_CODE_BGE_RERANK_ENABLED:false}

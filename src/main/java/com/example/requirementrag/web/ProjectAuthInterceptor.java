@@ -5,6 +5,8 @@ import com.example.requirementrag.model.UserContext;
 import com.example.requirementrag.security.ProjectAuthorizationService;
 import com.example.requirementrag.security.UnauthenticatedException;
 import com.example.requirementrag.security.UserContextResolver;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
+import org.springframework.beans.factory.annotation.Autowired;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.http.HttpMethod;
@@ -19,13 +21,23 @@ public class ProjectAuthInterceptor implements HandlerInterceptor {
     private final ProjectAuthorizationService authorizationService;
     private final ProjectIdResolver projectIdResolver;
     private final UserContextResolver userContextResolver;
+    private final BusinessProjectCatalogService businessProjects;
+
+    @Autowired
+    public ProjectAuthInterceptor(ProjectAuthorizationService authorizationService,
+                                  ProjectIdResolver projectIdResolver,
+                                  UserContextResolver userContextResolver,
+                                  BusinessProjectCatalogService businessProjects) {
+        this.authorizationService = authorizationService;
+        this.projectIdResolver = projectIdResolver;
+        this.userContextResolver = userContextResolver;
+        this.businessProjects = businessProjects;
+    }
 
     public ProjectAuthInterceptor(ProjectAuthorizationService authorizationService,
                                   ProjectIdResolver projectIdResolver,
                                   UserContextResolver userContextResolver) {
-        this.authorizationService = authorizationService;
-        this.projectIdResolver = projectIdResolver;
-        this.userContextResolver = userContextResolver;
+        this(authorizationService, projectIdResolver, userContextResolver, null);
     }
 
     /** 解析可信身份后执行权限与项目访问校验；无法建立身份时返回 401，通过后将 UserContext 写入请求属性。 */
@@ -43,7 +55,10 @@ public class ProjectAuthInterceptor implements HandlerInterceptor {
         Permission required = resolveRequiredPermission(request, handler);
         try {
             authorizationService.requirePermission(user, required);
-            authorizationService.requireProjectAccess(user, projectIdResolver.resolveForAccess(request));
+            String requestedProjectId = projectIdResolver.resolveForAccess(request);
+            if (requestedProjectId != null && !hasAccess(user, requestedProjectId)) {
+                throw new AccessDeniedException("Insufficient permissions");
+            }
         }
         catch (AccessDeniedException exception) {
             response.sendError(HttpServletResponse.SC_FORBIDDEN, "Insufficient permissions");
@@ -52,6 +67,14 @@ public class ProjectAuthInterceptor implements HandlerInterceptor {
 
         request.setAttribute(UserContext.REQUEST_ATTRIBUTE, user);
         return true;
+    }
+
+    private boolean hasAccess(UserContext user, String requestedProjectId) {
+        if (businessProjects == null) {
+            authorizationService.requireProjectAccess(user, requestedProjectId);
+            return true;
+        }
+        return businessProjects.accessScopeIds(requestedProjectId).stream().anyMatch(user::hasAccessTo);
     }
 
     /** 解析方法或类上的 @RequiresPermission，均未标注时按 HTTP 方法取默认权限。 */

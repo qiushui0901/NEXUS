@@ -1,10 +1,15 @@
 package com.example.requirementrag.web;
 
+import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.config.ProjectRegistry;
+import com.example.requirementrag.knowledge.management.KnowledgeIngestionTracker;
+import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.SourceType;
+import com.example.requirementrag.knowledge.management.KnowledgeManagementModels.TriggerType;
 import com.example.requirementrag.model.DoubtBatch;
 import com.example.requirementrag.model.IngestResponse;
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.ReviewRequest;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
 import com.example.requirementrag.service.DoubtExportService;
 import com.example.requirementrag.service.ReviewFacadeService;
 import com.example.requirementrag.service.RequirementIngestionService;
@@ -36,18 +41,40 @@ public class RequirementController {
     private final DoubtExportService exportService;
     private final ProjectRegistry projectRegistry;
     private final ProjectAccessGuard accessGuard;
+    private final KnowledgeIngestionTracker ingestionTracker;
+    private final BusinessProjectCatalogService businessProjects;
 
     public RequirementController(RequirementIngestionService ingestionService, ReviewFacadeService reviewFacade,
                                  DoubtExportService exportService, ProjectRegistry projectRegistry,
                                  ProjectAccessGuard accessGuard) {
+        this(ingestionService, reviewFacade, exportService, projectRegistry, accessGuard,
+                (KnowledgeIngestionTracker) null, (BusinessProjectCatalogService) null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public RequirementController(RequirementIngestionService ingestionService, ReviewFacadeService reviewFacade,
+                                 DoubtExportService exportService, ProjectRegistry projectRegistry,
+                                 ProjectAccessGuard accessGuard,
+                                 org.springframework.beans.factory.ObjectProvider<KnowledgeIngestionTracker> tracker,
+                                 org.springframework.beans.factory.ObjectProvider<BusinessProjectCatalogService> businessProjects) {
+        this(ingestionService, reviewFacade, exportService, projectRegistry, accessGuard,
+                tracker.getIfAvailable(), businessProjects.getIfAvailable());
+    }
+
+    private RequirementController(RequirementIngestionService ingestionService, ReviewFacadeService reviewFacade,
+                                  DoubtExportService exportService, ProjectRegistry projectRegistry,
+                                  ProjectAccessGuard accessGuard, KnowledgeIngestionTracker ingestionTracker,
+                                  BusinessProjectCatalogService businessProjects) {
         this.ingestionService = ingestionService;
         this.reviewFacade = reviewFacade;
         this.exportService = exportService;
         this.projectRegistry = projectRegistry;
         this.accessGuard = accessGuard;
+        this.ingestionTracker = ingestionTracker;
+        this.businessProjects = businessProjects;
     }
 
-    /** 上传文档并导入向量库。projectId 可选，指定后写入该项目的需求 collection。 */
+    /** 上传文档并导入向量库，同时记录知识管理运行状态。projectId 可选。 */
     @RequiresPermission(Permission.WRITE)
     @PostMapping(value = "/documents", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public IngestResponse ingest(
@@ -58,7 +85,30 @@ public class RequirementController {
             HttpServletRequest httpRequest) throws IOException {
         accessGuard.requireProjectAccess(httpRequest, projectId);
         String collection = resolveRequirementCollection(projectId);
-        return ingestionService.ingest(collection, file, version, documentId);
+        String knowledgeProjectId = resolveKnowledgeProjectId(projectId);
+        KnowledgeIngestionTracker.Context context = startUploadTracking(knowledgeProjectId, collection, version);
+        try {
+            IngestResponse response = ingestionService.ingest(collection, file, version, documentId, context);
+            if (ingestionTracker != null) ingestionTracker.complete(context, response.chunks());
+            return response;
+        } catch (IOException | RuntimeException exception) {
+            if (ingestionTracker != null) ingestionTracker.fail(context, exception);
+            throw exception;
+        }
+    }
+
+    private KnowledgeIngestionTracker.Context startUploadTracking(String projectId, String collection,
+                                                                    String version) {
+        if (ingestionTracker == null) return KnowledgeIngestionTracker.Context.disabled();
+        return ingestionTracker.start(projectId, projectId, collection, version,
+                TriggerType.MANUAL, SourceType.UPLOAD);
+    }
+
+    private String resolveKnowledgeProjectId(String projectId) {
+        if (projectId == null || projectId.isBlank()) {
+            return projectRegistry.find(null).map(RagProperties.ProjectConfig::id).orElse("default");
+        }
+        return businessProjects == null ? projectId : businessProjects.resolveProjectId(projectId);
     }
 
     /** 执行需求存疑评审并返回 JSON 结果。 */
@@ -85,10 +135,11 @@ public class RequirementController {
                 .body(xlsx);
     }
 
-    /** 按项目解析需求 collection；未指定项目时返回 null 走全局默认。 */
+    /** 按业务项目解析共享需求 collection；未指定项目时返回 null 走全局默认。 */
     private String resolveRequirementCollection(String projectId) {
-        if (projectId == null || projectId.isBlank()) {
-            return null;
+        if (projectId == null || projectId.isBlank()) return null;
+        if (businessProjects != null) {
+            return businessProjects.requireProject(projectId).requirementCollection();
         }
         return projectRegistry.resolveRequirementCollection(projectId);
     }

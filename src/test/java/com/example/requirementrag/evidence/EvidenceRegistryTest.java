@@ -137,6 +137,25 @@ class EvidenceRegistryTest {
         assertThat(registry.evidenceId(foreignCode)).isEmpty();
     }
 
+    @Test
+    void acceptsCodeEvidenceFromAllowedRepositoriesInABusinessProject() {
+        CodeChunk main = new CodeChunk("main", "immortal-game-service", "commit-a",
+                "src/Main.java", "class", "Main", 1, 10, "main", "hash-main");
+        CodeChunk api = new CodeChunk("api", "bizgame-immortal-api", "commit-b",
+                "src/Api.java", "class", "Api", 1, 10, "api", "hash-api");
+        CodeChunk foreign = new CodeChunk("foreign", "other-project", "commit-c",
+                "src/Other.java", "class", "Other", 1, 10, "other", "hash-other");
+        RetrievalBundle bundle = new RetrievalBundle("query", RetrievalProfile.DEVELOPMENT_PLAN,
+                "immortal", "doc-a", "5.1", List.of(), List.of(), List.of(main, api, foreign),
+                List.of("immortal-game-service", "bizgame-immortal-api"));
+
+        EvidenceRegistry registry = EvidenceRegistry.from(bundle);
+
+        assertThat(registry.references()).extracting(EvidenceRef::evidenceId)
+                .containsExactly("code:main", "code:api");
+        assertThat(registry.evidenceId(foreign)).isEmpty();
+    }
+
     private RetrievalBundle bundle(List<ChunkRecord> requirements, List<CodeChunk> code) {
         return new RetrievalBundle("query", RetrievalProfile.DEVELOPMENT_PLAN, "project-a", "doc-a", "1.0",
                 requirements, code);

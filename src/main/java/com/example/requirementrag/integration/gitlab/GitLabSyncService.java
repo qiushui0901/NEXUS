@@ -92,7 +92,8 @@ public class GitLabSyncService {
         return registerProject(
                 request.projectId(), request.name(), request.group(), request.side(),
                 request.cloneUrl(), request.branch(), request.gitPath(),
-                request.requirementCollection(), request.codeCollection(),
+                text(request.requirementCollection(), request.projectId() + "_requirements"),
+                request.codeCollection(),
                 null, null, cipher.encrypt(request.accessToken()), request.webhookSecret());
     }
 
@@ -102,7 +103,8 @@ public class GitLabSyncService {
         return registerProject(
                 request.projectId(), request.name(), request.group(), request.side(),
                 request.cloneUrl(), request.branch(), request.gitPath(),
-                request.requirementCollection(), request.codeCollection(),
+                GitLabManagedProject.unlinkedRequirementCollection(request.projectId()),
+                request.codeCollection(),
                 request.connectionId(), request.remoteProjectId(), "", request.webhookSecret());
     }
 
@@ -127,7 +129,7 @@ public class GitLabSyncService {
                 cloneUrl,
                 text(branch, "main"),
                 gitPath,
-                text(requirementCollection, projectId + "_requirements"),
+                requirementCollection,
                 text(codeCollection, projectId + "_code"),
                 gitClient.repositoryPath(projectId).toString(),
                 connectionId,
@@ -196,6 +198,31 @@ public class GitLabSyncService {
         queued.forEach(request -> cancelDisabledJob(request.jobId(), request.requestedSha()));
         projectRegistry.unregisterDynamic(projectId);
         return require(projectId);
+    }
+
+    /** 原地恢复已停用项目，保留历史与索引并提交最新 HEAD 同步。 */
+    public GitLabManagedProject.View enable(String projectId) {
+        GitLabManagedProject project = requireProject(projectId);
+        if (project.status() != GitLabProjectStatus.DISABLED) {
+            throw new IllegalArgumentException("只有已停用项目可以重新启用");
+        }
+        credentialResolver.resolve(project);
+        if (!store.enableIfDisabled(projectId)) {
+            throw new IllegalArgumentException("GitLab 项目状态已变化，请刷新后重试");
+        }
+        boolean registered = false;
+        try {
+            registered = projectRegistry.registerDynamic(project.toProjectConfig());
+            enqueue(projectId, null, "REENABLE");
+            return require(projectId);
+        } catch (RuntimeException exception) {
+            if (registered) {
+                projectRegistry.unregisterDynamic(projectId);
+            }
+            store.updateState(projectId, GitLabProjectStatus.DISABLED,
+                    null, project.targetSha(), "重新启用失败");
+            throw exception;
+        }
     }
 
     /** 校验项目级 GitLab 原生 Secret Token。 */
@@ -524,7 +551,6 @@ public class GitLabSyncService {
         gitClient.validateCloneUrl(request.cloneUrl());
         GitLabGitClient.validateBranch(text(request.branch(), "main"));
         validateGitPath(request.gitPath());
-        validateCollection(text(request.requirementCollection(), request.projectId() + "_requirements"));
         validateCollection(text(request.codeCollection(), request.projectId() + "_code"));
         validateWebhookSecret(request.webhookSecret());
     }
@@ -578,7 +604,9 @@ public class GitLabSyncService {
         return new GitLabManagedProject.View(
                 project.projectId(), project.name(), project.group(), project.side(),
                 project.cloneUrl(), project.branch(), project.gitPath(), project.connectionId(),
-                project.requirementCollection(), project.codeCollection(), project.status(),
+                project.connectionId() == null || project.connectionId().isBlank()
+                        ? project.requirementCollection() : null,
+                project.codeCollection(), project.status(),
                 project.lastIndexedSha(), project.targetSha(), project.lastError(),
                 project.createdAt(), project.updatedAt(),
                 project.status() != GitLabProjectStatus.DISABLED,
@@ -641,7 +669,6 @@ public class GitLabSyncService {
             String cloneUrl,
             String branch,
             String gitPath,
-            String requirementCollection,
             String codeCollection,
             String webhookSecret
     ) {

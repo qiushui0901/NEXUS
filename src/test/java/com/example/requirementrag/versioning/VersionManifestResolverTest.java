@@ -54,6 +54,29 @@ class VersionManifestResolverTest {
         assertThat(resolved.notes()).contains("formal", "已从需求快照补齐需求版本引用 5.1");
     }
 
+    @Test
+    void enrichmentPreservesSchemaV3ProductAndRepositoryBaselines() {
+        VersionManifestService manifests = mock(VersionManifestService.class);
+        WikiRepository wiki = mock(WikiRepository.class);
+        RequirementSnapshotRepository snapshots = mock(RequirementSnapshotRepository.class);
+        var baseline = new VersionModels.RepositoryBaseline(
+                "immortal-game-service", "PROJECT", "5.2.0", "c".repeat(40), "code_chunks");
+        VersionManifest formal = new VersionManifest(3, "immortal", "v5.2.0", null,
+                null, null, null, null, "v5.2.0", List.of(baseline),
+                null, "v5.2.0", "build", ManifestStatus.RELEASED,
+                "created", "updated", List.of("formal"));
+        when(wiki.listVersions("immortal")).thenReturn(List.of());
+        when(manifests.list("immortal")).thenReturn(List.of(formal));
+        when(snapshots.list("immortal")).thenReturn(List.of(snapshot("5.1", "v5.2.0")));
+
+        VersionManifest resolved =
+                new VersionManifestResolver(manifests, wiki, snapshots).get("immortal", "v5.2.0");
+
+        assertThat(resolved.productVersion()).isEqualTo("v5.2.0");
+        assertThat(resolved.repositoryBaselines()).containsExactly(baseline);
+        assertThat(resolved.requirementVersion()).isEqualTo("5.1");
+    }
+
     private VersionIndex index(String version, String baseCommit, String codeCommit) {
         return new VersionIndex(1, "game", "Game", version, version, baseCommit, codeCommit, "now", List.of());
     }

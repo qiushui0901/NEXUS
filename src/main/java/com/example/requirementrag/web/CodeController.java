@@ -16,6 +16,10 @@ import com.example.requirementrag.model.ImpactAnalysisRequest;
 import com.example.requirementrag.model.CodeSearchRequest;
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.model.SourceSnippet;
+import com.example.requirementrag.project.BusinessProjectCodeSearchService;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
+import com.example.requirementrag.project.CodeRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -42,18 +46,34 @@ public class CodeController {
     private final CodeIndexJobService codeIndexJobService;
     private final ProjectAccessGuard accessGuard;
     private final CodeIntelligenceService codeIntelligenceService;
+    private final BusinessProjectCodeSearchService businessCodeSearch;
+    private final BusinessProjectCatalogService businessCatalog;
 
     /** 注入代码知识服务。 */
+    @Autowired
     public CodeController(CodeKnowledgeService codeKnowledgeService,
                           IncrementalCodeIndexService incrementalCodeIndexService,
                           CodeIndexJobService codeIndexJobService,
                           ProjectAccessGuard accessGuard,
-                          CodeIntelligenceService codeIntelligenceService) {
+                          CodeIntelligenceService codeIntelligenceService,
+                          BusinessProjectCodeSearchService businessCodeSearch,
+                          BusinessProjectCatalogService businessCatalog) {
         this.codeKnowledgeService = codeKnowledgeService;
         this.incrementalCodeIndexService = incrementalCodeIndexService;
         this.codeIndexJobService = codeIndexJobService;
         this.accessGuard = accessGuard;
         this.codeIntelligenceService = codeIntelligenceService;
+        this.businessCodeSearch = businessCodeSearch;
+        this.businessCatalog = businessCatalog;
+    }
+
+    public CodeController(CodeKnowledgeService codeKnowledgeService,
+                          IncrementalCodeIndexService incrementalCodeIndexService,
+                          CodeIndexJobService codeIndexJobService,
+                          ProjectAccessGuard accessGuard,
+                          CodeIntelligenceService codeIntelligenceService) {
+        this(codeKnowledgeService, incrementalCodeIndexService, codeIndexJobService, accessGuard,
+                codeIntelligenceService, null, null);
     }
 
     /** 扫描配置仓库中的受支持语言，并写入代码向量和静态符号图。 */
@@ -103,7 +123,10 @@ public class CodeController {
     @PostMapping("/search")
     public List<CodeChunk> search(@Valid @RequestBody CodeSearchRequest request, HttpServletRequest httpRequest) {
         accessGuard.requireProjectAccess(httpRequest, request.projectId());
-        return codeKnowledgeService.search(request.query(), request.projectId(), request.limit());
+        return businessCodeSearch == null
+                ? codeKnowledgeService.search(request.query(), request.projectId(), request.limit())
+                : businessCodeSearch.search(request.query(), request.projectId(),
+                request.repositoryIds(), request.limit());
     }
 
     /** 根据查询和视图返回代码图谱。 */
@@ -111,6 +134,12 @@ public class CodeController {
     @PostMapping("/graph")
     public CodeGraphResponse graph(@Valid @RequestBody CodeGraphRequest request, HttpServletRequest httpRequest) {
         accessGuard.requireProjectAccess(httpRequest, request.projectId());
+        CodeRepository repository = repositoryForUnambiguousRequest(request.projectId(), request.repositoryId());
+        if (repository != null) {
+            return codeKnowledgeService.graphInCollection(request.query(), repository.id(),
+                    repository.liveAlias() ? repository.codeCollection() + "-live" : repository.codeCollection(),
+                    request.view(), request.limit(), request.crossSide());
+        }
         return codeKnowledgeService.graph(request.query(), request.projectId(), request.view(), request.limit(),
                 request.crossSide());
     }
@@ -121,7 +150,9 @@ public class CodeController {
     public CodeIntelligenceResponse symbolGraph(@Valid @RequestBody SymbolGraphRequest request,
                                                 HttpServletRequest httpRequest) {
         accessGuard.requireProjectAccess(httpRequest, request.projectId());
-        return codeIntelligenceService.graph(request.projectId(), request.symbol(), request.direction(),
+        CodeRepository repository = repositoryForUnambiguousRequest(request.projectId(), request.repositoryId());
+        String scope = repository == null ? request.projectId() : repository.id();
+        return codeIntelligenceService.graph(scope, request.symbol(), request.direction(),
                 request.depth(), request.limit());
     }
 
@@ -137,11 +168,17 @@ public class CodeController {
         if (symbol == commits) {
             throw new IllegalArgumentException("Select exactly one impact mode: symbol or fromCommit+toCommit");
         }
-        return symbol
-                ? codeIntelligenceService.impactSymbol(request.projectId(), request.symbol(),
-                request.depth(), request.limit())
-                : codeIntelligenceService.impactCommits(request.projectId(), request.fromCommit(),
-                request.toCommit(), request.depth(), request.limit());
+        CodeRepository repository = repositoryForUnambiguousRequest(request.projectId(), request.repositoryId());
+        String scope = repository == null ? request.projectId() : repository.id();
+        if (symbol) {
+            return codeIntelligenceService.impactSymbol(scope, request.symbol(), request.depth(), request.limit());
+        }
+        if (repository != null) {
+            return codeIntelligenceService.impactCommitsInRepository(repository.id(), repository.repositoryPath(),
+                    request.fromCommit(), request.toCommit(), request.depth(), request.limit());
+        }
+        return codeIntelligenceService.impactCommits(scope, request.fromCommit(), request.toCommit(),
+                request.depth(), request.limit());
     }
 
     /** 返回代码索引统计。 */
@@ -150,18 +187,46 @@ public class CodeController {
     public Map<String, Object> status(@RequestParam(required = false) String projectId,
                                       HttpServletRequest httpRequest) {
         accessGuard.requireProjectAccess(httpRequest, projectId);
-        return Map.of("chunks", codeKnowledgeService.count(projectId));
+        return Map.of("chunks", businessCodeSearch == null
+                ? codeKnowledgeService.count(projectId) : businessCodeSearch.count(projectId));
     }
 
     /** 读取源码片段。 */
     @RequiresPermission(Permission.PUBLIC_READ)
     @GetMapping("/source")
     public SourceSnippet source(@RequestParam(required = false) String projectId,
+                                @RequestParam(required = false) String repositoryId,
                                 @RequestParam String filePath,
                                 @RequestParam(required = false) Integer startLine,
                                 @RequestParam(required = false) Integer endLine,
                                 HttpServletRequest httpRequest) throws IOException {
         accessGuard.requireProjectAccess(httpRequest, projectId);
+        CodeRepository repository = repositoryForUnambiguousRequest(projectId, repositoryId);
+        if (repository != null) {
+            return codeKnowledgeService.sourceInRepository(repository.repositoryPath(), filePath, startLine, endLine);
+        }
         return codeKnowledgeService.source(projectId, filePath, startLine, endLine);
+    }
+
+    private CodeRepository repositoryForUnambiguousRequest(String projectId, String repositoryId) {
+        if (repositoryId != null && !repositoryId.isBlank()) {
+            return repositoryFor(projectId, repositoryId);
+        }
+        if (businessCatalog == null) {
+            return null;
+        }
+        List<CodeRepository> repositories = businessCatalog.repositoryScope(projectId, List.of());
+        if (repositories.size() != 1) {
+            throw new IllegalArgumentException("多仓库业务项目必须指定 repositoryId");
+        }
+        return repositories.getFirst();
+    }
+
+    private CodeRepository repositoryFor(String projectId, String repositoryId) {
+        if (businessCatalog == null) {
+            throw new IllegalArgumentException("repositoryId requires business project catalog");
+        }
+        return businessCatalog.repositoryScope(projectId, List.of(repositoryId)).stream().findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("仓库不属于当前业务项目"));
     }
 }

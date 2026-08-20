@@ -2,6 +2,7 @@
 
 ### Added
 
+- 新增 `docs/code-knowledge-base-value-and-validation-plan.md`，汇总代码与研发知识库可沉淀内容、证据链方向、RAG/结构化存储分工、MVP 方案、对照实验和提效验收指标。
 - 新增 `/settings/gitlab` 可视化管理工作台：支持关联多个 GitLab PAT 账号、分页发现账号
   实际参与的项目、搜索多选、逐项目调整 `projectId`/分支/collection 并批量导入；同时保留
   已导入项目详情、revision drift、旧索引可用性、任务时间线、Webhook 状态及 Secret
@@ -24,21 +25,36 @@
 
 ### Changed
 
-- 知识库检索测试新增单次运行指标：端到端耗时、返回结果、来源文件、实际需求版本/代码提交，以及可展开的后端阶段耗时、候选数量与阶段状态；不将单次查询错误包装为 Recall 或准确率。
+- 需求 Multipart 上传现在复用知识管理运行追踪，记录 `UPLOAD` 来源、文件/分块阶段和成功/失败结果；业务项目需求重建与重试分离仓库配置 ID 和业务项目状态 ID，避免把主仓库身份当作需求归属。
+- 知识管理页新增 `UNAVAILABLE` 需求状态，Qdrant 不可用不再伪装成真实零分块；前端筛选和状态契约同步支持该状态。
+- LightRAG 暂不替换现有需求检索链路。现有 dense+sparse、版本过滤、证据白名单和 Qdrant 原子发布继续作为生产主链路；LightRAG 仅保留为后续跨文档实体/关系图谱的离线对照或旁路增强候选。
+- 新增默认关闭的需求语义图 MVP：按业务项目/文档/需求版本保存 LLM 实体关系草稿，强制绑定原文 evidence ID，支持 SQLite 原子快照、Local/Global 查询、Qdrant 证据回查和审核后发布；不改变现有需求检索主链路。
 - 首页运行状态监视从已停用的 Ollama/BGE 本地依赖更新为 Qdrant、当前 OpenAI 兼容 API 配置模型和 GitLab 连通性；模型探针会核对所有已配置模型，外部探针并行且保持短超时。
 - 代码语义标注模型的默认配置由残留的 `claude-opus-5` 对齐为已验证的
   `gpt-5.6-sol`；仍可通过 `ANNOTATION_MODEL` 环境变量覆盖。
 - 五个核心页面统一为 NEXUS 知识与代码运营工作台外壳，新增共享设计 Token、完整桌面/移动导航、项目上下文、连接设置、通知和错误规范化基础设施；代码工作台改为统一浅色图谱工作区，版本比较从核心入口移除并兼容保留旧路由/API。
 - 知识管理页新增“类型”筛选（全部/需求/代码），并在列表中同时展示需求文档索引与代码索引状态。
+- 需求文档导入改为结构感知分块：检测 Markdown 标题后按章节切分父块，并在父块/子块中保留“章节路径”前缀（如 `【章节: 访问控制 / 项目授权撤销】`），无标题文本自动回退原固定窗口逻辑；`ParentChildChunker.split` 保持历史行为，既有评测语料契约不受影响。
+- 需求分块新增结构化元数据并持久化到 Qdrant payload 与检索测试响应：`sectionPath`（章节路径）、`heading`（当前标题）、`requirementId`（需求编号，保守正则抽取）、`module`（模块=章节首段）、`acceptanceCriteria`（验收标准，紧随“验收标准/验收条件”后最多 5 行保守抽取）；前端检索测试结果可直接看到“需求编号 / 章节路径 / 验收标准”。旧 `ChunkRecord` 构造器保持兼容，历史存储无字段时回退为空。
+- 需求文档清洗不再静默丢尾：`TextPreprocessor` 新增 `cleanWithDiagnostics` 返回 `truncated/keptLines/consideredLines`，导入触发 `120_000` 字截断时记录 WARN 日志、发出 `text.clean.truncated` 事件，并把被截断来源写入 `IngestResponse.truncatedSources`（导入 API 返回解析质量诊断）。
+- 需求解析健壮性：HTML 加载按 BOM/meta charset 自动识别编码（兜底 UTF-8）；分页噪声过滤收紧为“第 N 页 / 第 N 页 共 M 页”，避免误删正文；XLSX 加载支持表头映射“模块/问题/解答/答案”列，不再写死前三列。
+- 新增 `RequirementImageCaptioner` 图片内容理解扩展点：Spring 中可注入 OCR/Vision 实现，解析时把图片字节和 alt/图注传给实现，返回的中文描述追加到图片占位符中；未配置实现时保持原占位符行为。
+- 新增版本级差量导入入口 `RequirementIngestionService.ingestIncremental`：按 source sha256 过滤出新增/变更条目，只重新解析并向量化变化部分，未变化条目跳过；无变化时不触发向量库写入。
 - 知识导入链路新增可观察的 Qdrant 批次阶段回调和运行级分块进度，保持“写入新点、验证成功、再清理旧点”的发布顺序不变。
 - `ProjectRegistry` 支持线程安全动态注册与卸载，静态项目保持优先且继续作为默认项目，现有静态配置和旧 GitLab Webhook 行为不变。
 - 重构 `tools/verify-report.sh`：结构化读取 Maven 版本，使用独立临时文件和 Surefire XML 汇总测试结果，并通过 `clean verify` 避免旧构建产物污染报告。
+- 封神代码召回对比升级为四向文档 `docs/fengshen-code-retrieval-four-way-comparison.md`：NEXUS 指标更新为 E10 最新（Recall@1 93.6% / Recall@10 99.6% / MRR 0.9596），并纳入 `codebase-memory MCP（BM25）` 结果（Recall@10 92.0% / MRR 0.8348 / P50 24ms）；旧三方文档保留并标记为历史版本。
 - 归档已经随 `0.8.6` 交付的历史 Trellis 任务，使任务状态与发布事实一致。
 - 重新生成 `0.8.6` 机器验证报告：JDK 21、430 个测试、JaCoCo 门禁和可执行 jar 全部通过；`clean` 清除了旧 `target` 中 6 条失效测试报告，修正了历史统计虚高。
 - 本地运行时 SQLite 数据库（`data/*.db`）纳入 `.gitignore`，避免本地状态库进入发布提交。
 
 ### Fixed
 
+- 修复业务项目多仓库代码状态统计回退默认 collection、图谱/源码/影响分析回退默认仓库、代码命中缺少仓库来源，以及 `ImageUnderstandingService` 未实现 `RequirementImageCaptioner` 的问题；ZIP HTML、图片索引和解压读取增加单条目、总量与数量上限。
+- 修复需求差量导入只提交变化来源导致未变化来源向量被删除的问题：新增来源级 Qdrant 局部替换并处理来源删除。
+- 修复多仓库业务项目在图谱、符号图、影响分析和源码读取未传 `repositoryId` 时静默回退默认仓库的问题；多仓库歧义请求现在明确拒绝，单仓库范围可安全解析。
+- 修复多仓库代码检索部分失败被标记为成功的问题，返回 `DEGRADED`、`CODE_REPOSITORY_PARTIAL_FAILURE` 和失败仓库 ID；代码统计不可用时显示 `UNAVAILABLE` 而非真实零值。
+- 修复 ZIP Vision 导入绕过数量、并发和超时配置的问题，文档级图片 caption 现在受 `max-images-per-doc`、`concurrency` 和 `timeout-ms` 约束。
 - 修复 GitLab 账号导入的稳定性与安全边界：临时 429/5xx/超时不再把连接永久标记为
   `INVALID`；远端项目按“连接 + GitLab 数字 ID”判重并支持项目改名和多实例同路径；
   批量导入并发读取项目详情且不再同步执行最长 120 秒的 Git 预检；并发注册使用原子插入，

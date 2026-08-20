@@ -6,10 +6,15 @@ import com.example.requirementrag.model.CodeIndexJobState;
 import com.example.requirementrag.model.CodeIndexJobStatus;
 import com.example.requirementrag.model.CodeIndexResponse;
 import com.example.requirementrag.retrieval.EmbeddingUnavailableException;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
+import com.example.requirementrag.project.CodeRepository;
 import org.junit.jupiter.api.Test;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -72,6 +77,28 @@ class CodeIndexJobServiceTest {
         assertThat(status.state()).isEqualTo(CodeIndexJobState.FAILED);
         assertThat(status.message()).contains("Ollama").doesNotContain("provider internals");
         assertThat(status.completedAt()).isNotBlank();
+    }
+
+    @Test
+    void businessProjectStatusDoesNotRequireALegacyProjectRegistryEntry() {
+        CodeKnowledgeService knowledgeService = mock(CodeKnowledgeService.class);
+        ProjectRegistry registry = mock(ProjectRegistry.class);
+        BusinessProjectCatalogService catalog = mock(BusinessProjectCatalogService.class);
+        String now = Instant.EPOCH.toString();
+        CodeRepository main = new CodeRepository(
+                "main-repo", "Main", CodeRepository.Kind.PROJECT, "immortal",
+                "server", "main_code", "/repo/main", "group/main",
+                "MAVEN_POM", "pom.xml", true, true, now, now);
+        when(registry.find("immortal")).thenReturn(Optional.empty());
+        when(catalog.resolveProjectId("immortal")).thenReturn("immortal");
+        when(catalog.ownedRepositories("immortal")).thenReturn(List.of(main));
+        CodeIndexJobService service =
+                new CodeIndexJobService(knowledgeService, registry, Runnable::run, catalog);
+
+        CodeIndexJobStatus status = service.status("immortal");
+
+        assertThat(status.projectId()).isEqualTo("immortal");
+        assertThat(status.state()).isEqualTo(CodeIndexJobState.IDLE);
     }
 
     private ProjectRegistry registryFor(String projectId) {

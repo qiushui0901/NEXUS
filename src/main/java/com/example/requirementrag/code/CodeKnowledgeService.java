@@ -123,7 +123,15 @@ public class CodeKnowledgeService {
 
     /** 语义搜索代码 chunk。 */
     public List<CodeChunk> search(String query, String projectId, Integer limit) {
-        return searchInternal(query, projectId, limit, false).ranked();
+        return searchInternal(query, projectId, limit, false, null).ranked();
+    }
+
+    /** 按仓库目录声明的物理 collection 或 live alias 检索，兼容历史直写索引。 */
+    public List<CodeChunk> searchInCollection(String query, String projectId, String collection, Integer limit) {
+        if (collection == null || collection.isBlank()) {
+            throw new IllegalArgumentException("code collection required");
+        }
+        return searchInternal(query, projectId, limit, false, collection.trim()).ranked();
     }
 
     /**
@@ -132,7 +140,7 @@ public class CodeKnowledgeService {
      * dense/sparse 归因仅在纯混合检索路径上有值。
      */
     public CodeQdrantStore.CodeSearchTrace searchTrace(String query, String projectId, Integer limit) {
-        return searchInternal(query, projectId, limit, true).trace();
+        return searchInternal(query, projectId, limit, true, null).trace();
     }
 
     /** 检索结果 + 可选诊断 trace（同一次检索执行，保证归因一致）。 */
@@ -140,10 +148,11 @@ public class CodeKnowledgeService {
     }
 
     /** 生产检索编排：精确符号通道 → 类名限定召回 → 混合检索；collectTrace 时附带同次检索的候选归因。 */
-    private SearchOutcome searchInternal(String query, String projectId, Integer limit, boolean collectTrace) {
+    private SearchOutcome searchInternal(String query, String projectId, Integer limit, boolean collectTrace,
+                                         String collectionOverride) {
         String resolvedProject = projectId == null || projectId.isBlank() ? properties.code().projectId() : projectId;
         int resolvedLimit = Math.min(Math.max(limit == null ? 10 : limit, 1), 50);
-        String collection = liveCollection(resolvedProject);
+        String collection = collectionOverride == null ? liveCollection(resolvedProject) : collectionOverride;
 
         if (graphStore == null) {
             return hybridOnly(collection, query, resolvedProject, resolvedLimit, collectTrace);
@@ -474,6 +483,15 @@ public class CodeKnowledgeService {
         return graph(query, projectId, view, limit, false);
     }
 
+    /** 按显式 collection 构建代码图谱，供业务项目多仓库路由使用。 */
+    public CodeGraphResponse graphInCollection(String query, String repositoryId, String collection,
+                                                String view, Integer limit, boolean crossSide) {
+        int resolvedLimit = limit == null ? 16 : limit;
+        List<CodeChunk> hits = searchInCollection(query, repositoryId, collection, resolvedLimit);
+        Map<String, String> projectSides = projectSides(hits);
+        return new GraphBuilder(query, resolveView(query, view), hits, crossSide, projectSides).build();
+    }
+
     /** 按视图构建前端代码图谱，可选同时检索同组对端项目代码。 */
     public CodeGraphResponse graph(String query, String projectId, String view, Integer limit, boolean crossSide) {
         String resolvedView = resolveView(query, view);
@@ -484,6 +502,14 @@ public class CodeKnowledgeService {
         Map<String, String> projectSides = projectSides(hits);
         GraphBuilder builder = new GraphBuilder(query, resolvedView, hits, crossSide, projectSides);
         return builder.build();
+    }
+
+    /** 按显式仓库 collection 返回代码 chunk 数，避免业务项目目录回退到旧 ProjectRegistry。 */
+    public long countInCollection(String collection, String repositoryId) {
+        if (collection == null || collection.isBlank() || repositoryId == null || repositoryId.isBlank()) {
+            return 0L;
+        }
+        return store.countProject(collection.trim(), repositoryId.trim());
     }
 
     /** 返回指定项目已写入的代码 chunk 数。 */
@@ -498,12 +524,22 @@ public class CodeKnowledgeService {
         return count(null);
     }
 
+    /** 按目录解析出的仓库路径读取源码，避免多仓库项目回退到默认仓库。 */
+    public SourceSnippet sourceInRepository(String repositoryPath, String filePath,
+                                             Integer startLine, Integer endLine) throws IOException {
+        return sourceFromRoot(repositoryPath, filePath, startLine, endLine);
+    }
+
     /** 读取源码片段，用于前端点击检索结果后展示。 */
     public SourceSnippet source(String projectId, String filePath, Integer startLine, Integer endLine) throws IOException {
         if (filePath == null || filePath.isBlank()) {
             throw new IllegalArgumentException("filePath required");
         }
-        String repoPath = resolveRepositoryPath(projectId);
+        return sourceFromRoot(resolveRepositoryPath(projectId), filePath, startLine, endLine);
+    }
+
+    private SourceSnippet sourceFromRoot(String repoPath, String filePath, Integer startLine,
+                                         Integer endLine) throws IOException {
         Path root = Path.of(repoPath).toRealPath();
         Path file = root.resolve(filePath).normalize().toRealPath();
         if (!file.startsWith(root)) {

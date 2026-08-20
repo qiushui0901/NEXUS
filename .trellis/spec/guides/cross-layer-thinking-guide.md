@@ -40,6 +40,7 @@ For each arrow, ask:
 | Service ↔ Database    | Format conversions, null handling |
 | Backend ↔ Frontend    | Serialization, date formats       |
 | Component ↔ Component | Props shape changes               |
+| External API ↔ Backend | Vendor versions, wrappers, optional field types |
 
 ### Step 3: Define Contracts
 
@@ -48,6 +49,12 @@ For each boundary:
 - What is the exact input format?
 - What is the exact output format?
 - What errors can occur?
+
+For external APIs, also ask:
+
+- Is the top-level JSON shape guaranteed across self-hosted/vendor versions?
+- Can optional fields change type without invalidating the fields we actually need?
+- Should the boundary decode into a tolerant tree/projection instead of a strict whole-response DTO?
 
 ---
 
@@ -120,6 +127,21 @@ After implementation:
       casting payload fields locally
 - [ ] Checked that derived state points back to the source event identifier
       (`seq`, `id`, `version`) instead of inventing a second cursor
+
+### Business Project / Repository Model Changes
+
+When introducing a parent business-project identity above repository IDs, audit every consumer of
+`projectId`, not only retrieval:
+
+- [ ] list/detail projections and filters
+- [ ] status polling and background job status
+- [ ] knowledge/Wiki/version namespaces
+- [ ] rebuild/retry action routing
+- [ ] authorization and legacy aliases
+- [ ] cache keys and invalidation
+
+Product-facing responses use the business project ID; repository-scoped operations explicitly carry the
+repository ID. Never pass a business project ID into a legacy repository registry by accident.
 
 ---
 

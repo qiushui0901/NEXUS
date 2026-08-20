@@ -13,6 +13,8 @@ import com.example.requirementrag.wiki.WikiStalenessService;
 import com.example.requirementrag.wiki.module.ModuleFactModels.ModuleBuildRequest;
 import com.example.requirementrag.wiki.module.ModuleKnowledgeBuildService;
 import com.example.requirementrag.wiki.module.ModuleStaleRebuildService;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
+import org.springframework.beans.factory.annotation.Autowired;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -33,11 +35,14 @@ public class WikiController {
     private final ModuleStaleRebuildService moduleRebuildService;
     private final ProjectRegistry projectRegistry;
     private final ProjectAccessGuard accessGuard;
+    private final BusinessProjectCatalogService businessProjects;
 
+    @Autowired
     public WikiController(WikiRepository repository, WikiGenerationService generationService,
                           WikiStalenessService stalenessService, ModuleKnowledgeBuildService moduleBuildService,
                           ModuleStaleRebuildService moduleRebuildService, ProjectRegistry projectRegistry,
-                          ProjectAccessGuard accessGuard) {
+                          ProjectAccessGuard accessGuard,
+                          BusinessProjectCatalogService businessProjects) {
         this.repository = repository;
         this.generationService = generationService;
         this.stalenessService = stalenessService;
@@ -45,6 +50,15 @@ public class WikiController {
         this.moduleRebuildService = moduleRebuildService;
         this.projectRegistry = projectRegistry;
         this.accessGuard = accessGuard;
+        this.businessProjects = businessProjects;
+    }
+
+    public WikiController(WikiRepository repository, WikiGenerationService generationService,
+                          WikiStalenessService stalenessService, ModuleKnowledgeBuildService moduleBuildService,
+                          ModuleStaleRebuildService moduleRebuildService, ProjectRegistry projectRegistry,
+                          ProjectAccessGuard accessGuard) {
+        this(repository, generationService, stalenessService, moduleBuildService, moduleRebuildService,
+                projectRegistry, accessGuard, null);
     }
 
     /** 列出当前用户有权访问的 Wiki 项目。对应 GET /api/wiki/projects。 */
@@ -62,7 +76,7 @@ public class WikiController {
     @GetMapping("/versions")
     public List<VersionIndex> versions(@RequestParam String projectId, HttpServletRequest request) {
         requireAccess(projectId, request);
-        return repository.listVersions(projectId);
+        return repository.listVersions(wikiNamespace(projectId));
     }
 
     /** 获取指定项目版本的知识索引。对应 GET /api/wiki/index。 */
@@ -71,7 +85,7 @@ public class WikiController {
     public VersionIndex index(@RequestParam String projectId, @RequestParam String version,
                               HttpServletRequest request) {
         requireAccess(projectId, request);
-        return repository.getIndex(projectId, version);
+        return repository.getIndex(wikiNamespace(projectId), version);
     }
 
     /** 获取指定版本下功能特性的页面内容。对应 GET /api/wiki/page。 */
@@ -80,7 +94,7 @@ public class WikiController {
     public Page page(@RequestParam String projectId, @RequestParam String version,
                      @RequestParam String featureId, HttpServletRequest request) {
         requireAccess(projectId, request);
-        return repository.getPage(projectId, version, featureId);
+        return repository.getPage(wikiNamespace(projectId), version, featureId);
     }
 
     /** 检测指定版本 Wiki 的过期页面（代码 commit / 需求哈希）。对应 GET /api/wiki/staleness。 */
@@ -89,7 +103,7 @@ public class WikiController {
     public WikiStalenessService.StaleReport staleness(@RequestParam String projectId, @RequestParam String version,
                                                       HttpServletRequest request) {
         requireAccess(projectId, request);
-        return stalenessService.staleness(projectId, version);
+        return stalenessService.staleness(wikiNamespace(projectId), version);
     }
 
     /** 构建单个模块的知识草稿（抽取事实 → 规划页面 → 质量门 → 保存草稿）。对应 POST /api/wiki/modules/build。 */
@@ -102,7 +116,7 @@ public class WikiController {
                               @RequestParam(required = false) String requirementVersion,
                               HttpServletRequest request) {
         requireAccess(projectId, request);
-        return moduleBuildService.build(new ModuleBuildRequest(projectId, version, modulePath, codeCommit,
+        return moduleBuildService.build(new ModuleBuildRequest(wikiNamespace(projectId), version, modulePath, codeCommit,
                 accessGuard.currentUser(request).username(), documentId, requirementVersion));
     }
 
@@ -116,7 +130,7 @@ public class WikiController {
                                                                  @RequestParam(required = false) String codeCommit,
                                                                  HttpServletRequest request) {
         requireAccess(projectId, request);
-        return moduleRebuildService.rebuild(projectId, version, modulePath, featureId, codeCommit,
+        return moduleRebuildService.rebuild(wikiNamespace(projectId), version, modulePath, featureId, codeCommit,
                 accessGuard.currentUser(request).username());
     }
 
@@ -126,12 +140,24 @@ public class WikiController {
     public GenerationResult generate(@RequestParam String projectId, @RequestParam String version,
                                      HttpServletRequest request) {
         requireAccess(projectId, request);
-        return generationService.generate(projectId, version);
+        return generationService.generate(wikiNamespace(projectId), version);
     }
 
     /** 校验项目存在且当前用户有访问权。 */
     private void requireAccess(String projectId, HttpServletRequest request) {
-        projectRegistry.require(projectId);
-        accessGuard.requireProjectAccess(request, projectId);
+        if (businessProjects == null) {
+            projectRegistry.require(projectId);
+            accessGuard.requireProjectAccess(request, projectId);
+            return;
+        }
+        var project = businessProjects.requireProject(projectId);
+        var user = accessGuard.currentUser(request);
+        if (!user.hasAccessTo(project.id()) && !user.hasAccessTo(project.requirementSnapshotNamespace())) {
+            throw new AccessDeniedException("Insufficient permissions");
+        }
+    }
+
+    private String wikiNamespace(String projectId) {
+        return businessProjects == null ? projectId : businessProjects.requireProject(projectId).wikiNamespace();
     }
 }

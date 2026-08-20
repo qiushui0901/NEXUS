@@ -118,22 +118,31 @@ public class ExcelKnowledgeLoader {
         return values;
     }
 
-    /** 将工作表行解析为 KnowledgeEntry 列表。 */
+    /** 将工作表行解析为 KnowledgeEntry 列表，支持按表头映射“模块/问题/解答”列。 */
     private List<KnowledgeEntry> readRows(Document sheet, List<String> sharedStrings, String sheetName) {
         List<KnowledgeEntry> entries = new ArrayList<>();
         NodeList rows = sheet.getElementsByTagNameNS(MAIN_NS, "row");
+        int moduleColumn = 0;
+        int questionColumn = 1;
+        int answerColumn = 2;
         for (int rowIndex = 0; rowIndex < rows.getLength(); rowIndex++) {
             Element row = (Element) rows.item(rowIndex);
             List<String> cells = rowCells(row, sharedStrings);
             if (cells.isEmpty()) {
                 continue;
             }
-            String module = valueAt(cells, 0);
-            String question = valueAt(cells, 1);
-            String answer = valueAt(cells, 2);
-            if (rowIndex == 0 && module.contains("模块")) {
+            if (rowIndex == 0 && isHeaderRow(cells)) {
+                moduleColumn = headerColumn(cells, "模块", 0);
+                questionColumn = headerColumn(cells, "问题", 1);
+                answerColumn = headerColumn(cells, "解答", 2);
+                if (answerColumn == 2) {
+                    answerColumn = headerColumn(cells, "答案", 2);
+                }
                 continue;
             }
+            String module = valueAt(cells, moduleColumn);
+            String question = valueAt(cells, questionColumn);
+            String answer = valueAt(cells, answerColumn);
             if (question.isBlank() && answer.isBlank()) {
                 continue;
             }
@@ -146,6 +155,21 @@ public class ExcelKnowledgeLoader {
             entries.add(new KnowledgeEntry("xlsx/" + sheetName + "#" + (rowIndex + 1), text));
         }
         return entries;
+    }
+
+    private boolean isHeaderRow(List<String> cells) {
+        return cells.stream().anyMatch(cell -> cell != null
+                && (cell.contains("模块") || cell.contains("问题") || cell.contains("解答") || cell.contains("答案")));
+    }
+
+    private int headerColumn(List<String> cells, String keyword, int fallback) {
+        for (int index = 0; index < cells.size(); index++) {
+            String cell = cells.get(index);
+            if (cell != null && cell.contains(keyword)) {
+                return index;
+            }
+        }
+        return fallback;
     }
 
     /** 提取一行中各列单元格值并按列序排列。 */

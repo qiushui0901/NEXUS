@@ -71,9 +71,10 @@ http://localhost:8080/settings/gitlab
 1. 点击“关联 GitLab 账号”，填写连接名称、实例地址和 PAT。
 2. 后端验证账号并加密保存 PAT；管理页面不会回显 Token。
 3. 打开账号详情，搜索并勾选该账号实际参与的项目。仅公开可见但账号未加入的项目不会出现。
-4. 系统按 `path_with_namespace` 自动生成 NEXUS `projectId` 和 collection；导入前可逐项目
-   调整端类型、分支和 collection。
-5. 点击“导入并开始同步”。每个项目独立返回成功或失败，成功项目立即进入首次同步队列。
+4. 系统按 `path_with_namespace` 自动生成 NEXUS `projectId` 和代码 collection；导入前可逐项目
+   调整端类型，并从远端分支下拉列表中选择分支。GitLab 仓库导入只接入代码，不在这里绑定需求知识。
+5. 进入“配置导入”确认页后点击“确认导入并开始同步”。每个项目独立返回成功或失败，
+   成功项目立即进入首次同步队列。
 6. 页面一次性显示各项目的 Webhook URL 和 Secret；离开页面后只能通过项目详情轮换 Secret。
 
 PAT、重新授权 Token 和一次性 Webhook Secret 仅保存在当前表单/结果页面内存，不进入 URL
@@ -96,6 +97,7 @@ POST   /api/integrations/gitlab/connections/{connectionId}/verify
 POST   /api/integrations/gitlab/connections/{connectionId}/reauthorize
 DELETE /api/integrations/gitlab/connections/{connectionId}
 GET    /api/integrations/gitlab/connections/{connectionId}/projects
+GET    /api/integrations/gitlab/connections/{connectionId}/projects/{remoteProjectId}/branches
 POST   /api/integrations/gitlab/connections/{connectionId}/imports
 ```
 
@@ -113,8 +115,9 @@ curl -X POST http://localhost:8080/api/integrations/gitlab/connections \
   }'
 ```
 
-响应包含连接 ID、账号名和状态，不包含 PAT 或密文。使用连接 ID 获取项目列表后，将选中的
-`remoteProjectId` 和可编辑 NEXUS 配置提交到 `/imports`。
+响应包含连接 ID、账号名和状态，不包含 PAT 或密文。使用连接 ID 获取项目列表与远端分支后，
+将选中的 `remoteProjectId`、`projectId`、端类型、分支和代码 collection 提交到 `/imports`。
+需求知识在知识管理流程中独立导入和关联，不属于 GitLab 仓库导入请求。
 
 ### 旧逐仓库 API
 
@@ -183,6 +186,7 @@ GET    /api/integrations/gitlab/projects
 GET    /api/integrations/gitlab/projects/{projectId}
 POST   /api/integrations/gitlab/projects/{projectId}/sync
 POST   /api/integrations/gitlab/projects/{projectId}/retry
+POST   /api/integrations/gitlab/projects/{projectId}/enable
 DELETE /api/integrations/gitlab/projects/{projectId}
 GET    /api/integrations/gitlab/projects/{projectId}/jobs
 GET    /api/integrations/gitlab/projects/{projectId}/jobs/{jobId}
@@ -193,6 +197,8 @@ POST   /api/integrations/gitlab/projects/{projectId}/webhook-secret/rotate
 - `sync`：拉取配置分支当前 HEAD。
 - `retry`：仅允许重试 `FAILED` 项目。已记录目标 commit 时固定重试该目标；如果任务在解析
   远端 HEAD 前失败，则重新获取当前远端 HEAD，不会误用上一次成功的旧目标。
+- `enable`：将 `DISABLED` 项目原地恢复并提交一次最新 HEAD 同步；项目 ID、仓库、历史索引
+  和任务记录保持不变。
 - `DELETE`：将项目置为 `DISABLED` 并从动态注册表移除；仓库、索引和元数据会保留。
 - `jobs`：查询持久化任务和阶段事件。应用重启时，尚未结束的 job 会标记为
   `INTERRUPTED`，不会继续显示为运行中。
@@ -215,10 +221,19 @@ POST   /api/integrations/gitlab/projects/{projectId}/webhook-secret/rotate
 
 ## 9. 当前边界
 
-当前版本由管理员直接提交 PAT 和项目信息，尚未实现：
+GitLab 仓库接入遵循“业务项目 → 多仓库”模型：
+
+- 业务项目拥有共享需求、产品版本、Wiki 和权限边界。
+- GitLab 仓库只负责自身分支、commit、Webhook、同步任务和代码索引。
+- 批量导入前必须统一选择一个已经配置完成的业务项目；单个仓库不能在导入行内改归属。
+- 产品版本由业务项目的主仓库构建元数据决定。Immortal 当前主仓库
+  `immortal-game-service` 的 Maven 版本为 `v5.2.0`，需求最高版本 `5.1` 会显示为落后，
+  但最后可用需求仍可用于带警告的检索。
+- 普通仓库只能属于一个业务项目。跨项目公共库独立索引，由业务项目显式引用。
+
+尚未实现：
 
 - GitLab OAuth 登录和 Token 刷新。
-- 自动枚举当前用户可访问的项目和分支。
 - 多实例共享任务队列。
 
 这些能力不影响当前在单实例 NEXUS 中完成团队级项目自动接入和持续索引。

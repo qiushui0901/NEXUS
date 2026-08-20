@@ -35,7 +35,7 @@
         basePage:{page:0,size:50,total:0}, documentPage:{page:0,size:50,total:0}, chunkPage:{page:0,size:50,total:0},
         filters:{projectId:"",status:"",type:"",query:"",documentStatus:"",documentQuery:"",chunkStatus:"",chunkQuery:""},
         stages:["DISCOVER","PARSE","CLEAN","CHUNK","DEDUPLICATE","EMBED","INDEX","VERIFY","PUBLISH"],
-        statusOptions:["IDLE","RUNNING","READY","PARTIAL","FAILED","STALE","DISABLED"],
+        statusOptions:["IDLE","RUNNING","READY","PARTIAL","FAILED","STALE","DISABLED","UNAVAILABLE"],
         entityStatusOptions:["PENDING","RUNNING","CHUNKED","EMBEDDING","INDEXING","READY","FAILED","EXCLUDED","INTERRUPTED"],
         retrieval:{query:"",version:"",limit:10,loading:false,response:null,elapsedMs:null},
         pollTimer:null, failedPolls:0

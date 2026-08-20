@@ -20,6 +20,34 @@ Apply this specification when changing any of the following:
 
 The NEXUS platform version (for example `0.3.0-SNAPSHOT`) and a product requirement version (for example `2026.07`) are separate identifiers and must never be inferred from one another.
 
+## Business Project and Repository Scope
+
+- Product-facing `projectId` identifies a business project. Repository IDs identify independently indexed
+  code repositories and remain the scope for Git, Webhook, source, graph, and sync operations.
+- Every product-facing projection must resolve through the business-project catalog, including knowledge
+  management, monitor status, code-index status, Wiki, retrieval, and authorization. A controller must not
+  fall back to `ProjectRegistry.require(businessProjectId)`.
+- Knowledge management projects one shared requirement base plus one code base per enabled owned/referenced
+  repository. Code-base IDs include both business project and repository identity; rebuild and retrieval
+  actions route to the repository ID while responses keep the business project ID.
+- One business project owns one shared requirement scope and one version-anchor repository. Product version
+  comes from the anchor repository build metadata; requirement version may lag and must emit
+  `REQUIREMENT_VERSION_BEHIND` without being relabeled as the product version.
+- Default code retrieval expands a business project to all enabled owned repositories plus explicitly
+  referenced shared repositories. Optional repository filters may only narrow this resolved scope.
+- Code evidence and deduplication keys retain repository ID so identical paths and symbols in different
+  repositories never collide.
+- `RetrievalBundle.allowedRepositoryIds` is the code-evidence whitelist. `EvidenceRegistry` validates
+  `CodeChunk.projectId` against this repository set, never against the business project ID.
+- Repository scope changes are cache-invalidating events. Adding/removing a shared repository or
+  registering/unregistering an owned repository must invalidate every retrieval cache entry for that
+  business project; request `repositoryIds` alone is not a catalog revision.
+- Code counts use each repository's publication mode: legacy direct collections remain readable, while
+  safe-published repositories use `<base>-live`. Missing/unavailable and true zero are distinct states.
+- Version manifest schema v3 stores `productVersion` and `repositoryBaselines`; schema v1/v2 single-commit
+  manifests remain readable.
+- Any manifest copy/enrichment path must preserve schema-v3 `productVersion` and `repositoryBaselines`.
+
 ## 2. Signatures and APIs
 
 ### Unified retrieval
@@ -34,6 +62,13 @@ Supported profiles:
 - `REQUIREMENT_REVIEW`: requirement evidence only
 - `CODE_RETRIEVAL`: code evidence only (knowledge management code retrieval tests)
 - `WIKI_BUILD`: requirement and code evidence for draft enrichment
+
+Requirement ingestion uses structure-aware chunking: Markdown headings become parent boundaries and
+`sectionPath/heading/requirementId/module/acceptanceCriteria` metadata is stored in the Qdrant payload
+and surfaced in knowledge-management retrieval hits. Long-document truncation is explicit via
+`TextPreprocessor.cleanWithDiagnostics` and returned through `IngestResponse.truncatedSources`.
+`RequirementIngestionService.ingestIncremental` provides a source-hash diff entry point for
+version-level imports; unchanged sources are skipped.
 
 ### Version knowledge build API
 

@@ -17,6 +17,8 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.tika.TikaDocumentReader;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.util.StringUtils;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -25,16 +27,24 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 需求文档导入服务：解析、分块、去重并写入向量库。
  */
 @Service
 public class RequirementIngestionService {
+
+    private static final Logger log = LoggerFactory.getLogger(RequirementIngestionService.class);
+    private static final Pattern REQUIREMENT_ID = Pattern.compile(
+            "(?:需求编号|需求ID|需求编号|REQ\\s*[:：]?)\\s*([A-Za-z0-9._-]{2,64})",
+            Pattern.CASE_INSENSITIVE);
 
     private final QdrantHybridStore store;
     private final TextPreprocessor preprocessor;
@@ -77,10 +87,20 @@ public class RequirementIngestionService {
     }
 
     /**
-     * 上传 multipart 文件并导入为指定版本的向量分块。使用默认 collection。
+     * 上传文档并导入为指定版本的向量分块。使用默认 collection。
      */
     public IngestResponse ingest(MultipartFile file, String version, String documentId) throws IOException {
-        return ingest(null, file, version, documentId);
+        return ingest(null, file, version, documentId, KnowledgeIngestionTracker.Context.disabled());
+    }
+
+    /** 上传文档并使用已有知识管理运行上下文记录阶段状态。 */
+    public IngestResponse ingest(String collection, MultipartFile file, String version, String documentId,
+                                 KnowledgeIngestionTracker.Context trackingContext) throws IOException {
+        String id = StringUtils.hasText(documentId) ? documentId : UUID.randomUUID().toString();
+        String filename = StringUtils.hasText(file.getOriginalFilename()) ? file.getOriginalFilename() : "document";
+        return ingestEntries(collection, id, version,
+                List.of(new KnowledgeEntry(filename, readMultipart(file, id, version, filename))),
+                trackingContext == null ? KnowledgeIngestionTracker.Context.disabled() : trackingContext);
     }
 
     /**
@@ -94,9 +114,7 @@ public class RequirementIngestionService {
      * @throws IOException 文件读取或解析失败时抛出
      */
     public IngestResponse ingest(String collection, MultipartFile file, String version, String documentId) throws IOException {
-        String id = StringUtils.hasText(documentId) ? documentId : UUID.randomUUID().toString();
-        String filename = StringUtils.hasText(file.getOriginalFilename()) ? file.getOriginalFilename() : "document";
-        return ingestEntries(collection, id, version, List.of(new KnowledgeEntry(filename, readMultipart(file, id, version, filename))));
+        return ingest(collection, file, version, documentId, KnowledgeIngestionTracker.Context.disabled());
     }
 
     /**
@@ -120,33 +138,85 @@ public class RequirementIngestionService {
         return ingestEntries(collection, documentId, version, entries, KnowledgeIngestionTracker.Context.disabled());
     }
 
+    /**
+     * 版本级差量导入入口：按 source sha256 过滤出新增/变更条目，只重新解析并向量化这些条目；
+     * 未变化条目直接跳过，并通过 Qdrant 来源级局部替换保留未变化来源。
+     *
+     * @param collection          目标 collection，可空
+     * @param documentId          文档 ID
+     * @param version             需求版本
+     * @param entries             当前版本全部知识条目
+     * @param previousSourceHashes 上一版本 source → sha256 映射；为空表示全部视为新增
+     * @return 导入结果；无变化时 chunks=0 且不调用向量库
+     */
+    public IngestResponse ingestIncremental(String collection, String documentId, String version,
+                                            List<KnowledgeEntry> entries,
+                                            Map<String, String> previousSourceHashes) {
+        List<KnowledgeEntry> current = entries == null ? List.of() : List.copyOf(entries);
+        if (previousSourceHashes == null || previousSourceHashes.isEmpty()) {
+            // 没有可比对的来源清单时只能执行一次完整发布，不能把未知旧来源误当作已删除。
+            return ingestEntries(collection, documentId, version, current);
+        }
+
+        Map<String, String> previous = Map.copyOf(previousSourceHashes);
+        Set<String> currentSources = current.stream().map(KnowledgeEntry::source).collect(java.util.stream.Collectors.toSet());
+        List<KnowledgeEntry> changed = current.stream()
+                .filter(entry -> !java.util.Objects.equals(previous.get(entry.source()), Hashing.sha256(entry.text())))
+                .toList();
+        Set<String> replacedSources = new java.util.LinkedHashSet<>(changed.stream()
+                .map(KnowledgeEntry::source).toList());
+        previous.keySet().stream().filter(source -> !currentSources.contains(source)).forEach(replacedSources::add);
+
+        if (replacedSources.isEmpty()) {
+            return new IngestResponse(documentId, version, 0, List.of());
+        }
+        return ingestEntries(collection, documentId, version, changed,
+                KnowledgeIngestionTracker.Context.disabled(), replacedSources);
+    }
+
     /** 批量导入并把逐文档、逐分块阶段写入知识管理状态目录。 */
     public IngestResponse ingestEntries(String collection, String documentId, String version,
                                         List<KnowledgeEntry> entries,
                                         KnowledgeIngestionTracker.Context trackingContext) {
-        if (entries.isEmpty()) {
+        return ingestEntries(collection, documentId, version, entries, trackingContext, null);
+    }
+
+    private IngestResponse ingestEntries(String collection, String documentId, String version,
+                                         List<KnowledgeEntry> entries,
+                                         KnowledgeIngestionTracker.Context trackingContext,
+                                         Set<String> replacedSources) {
+        if ((entries == null || entries.isEmpty())
+                && (replacedSources == null || replacedSources.isEmpty())) {
             throw new IllegalArgumentException("没有可导入的知识条目");
         }
 
         boolean tracking = ingestionTracker != null && trackingContext != null && trackingContext.enabled();
         List<ChunkRecord> chunks = new ArrayList<>();
+        List<String> truncatedSources = new ArrayList<>();
         Map<String, List<ChunkRecord>> chunksBySource = new LinkedHashMap<>();
         Map<String, String> sourceHashes = new LinkedHashMap<>();
         Set<String> seenParents = new HashSet<>();
         Set<String> seenChildren = new HashSet<>();
-        for (KnowledgeEntry entry : entries) {
+        for (KnowledgeEntry entry : entries == null ? List.<KnowledgeEntry>of() : entries) {
             String source = entry.source();
             String sourceHash = Hashing.sha256(entry.text());
             sourceHashes.put(source, sourceHash);
             trackDocument(trackingContext, source, sourceHash, EntityStatus.RUNNING, Stage.CLEAN, 0, 0, null);
             trackEvent(trackingContext, source, Stage.CLEAN, EventStatus.RUNNING, 1, 0, 0, null);
-            String cleaned;
+            TextPreprocessor.CleanResult cleanResult;
             try {
-                cleaned = observability.observe("text.clean", documentId, version,
-                        () -> preprocessor.clean(entry.text()));
+                cleanResult = observability.observe("text.clean", documentId, version,
+                        () -> preprocessor.cleanWithDiagnostics(entry.text()));
             } catch (RuntimeException exception) {
                 trackFailure(trackingContext, source, sourceHash, Stage.CLEAN, List.of(), exception);
                 throw exception;
+            }
+            String cleaned = cleanResult.text();
+            if (cleanResult.truncated()) {
+                log.warn("需求文档清洗被截断: documentId={} version={} source={} keptLines={} consideredLines={}",
+                        documentId, version, source, cleanResult.keptLines(), cleanResult.consideredLines());
+                observability.event("text.clean.truncated");
+                truncatedSources.add(source);
             }
             if (cleaned.isBlank()) {
                 trackEvent(trackingContext, source, Stage.CLEAN, EventStatus.SKIPPED, 1, 0, 1, null);
@@ -159,7 +229,7 @@ public class RequirementIngestionService {
             List<ParentChildChunker.ParentChunk> parents;
             try {
                 parents = observability.observe("parent_child.chunk", documentId, version,
-                        () -> chunker.split(cleaned));
+                        () -> chunker.splitStructured(cleaned));
             } catch (RuntimeException exception) {
                 trackFailure(trackingContext, source, sourceHash, Stage.CHUNK, List.of(), exception);
                 throw exception;
@@ -185,7 +255,7 @@ public class RequirementIngestionService {
             chunks.addAll(entryChunks);
         }
 
-        if (chunks.isEmpty()) {
+        if (chunks.isEmpty() && (replacedSources == null || replacedSources.isEmpty())) {
             throw new IllegalArgumentException("文档解析后没有有效文本");
         }
 
@@ -203,13 +273,23 @@ public class RequirementIngestionService {
         try {
             if (collection != null && !collection.isBlank()) {
                 observability.observe("qdrant.upsert", documentId, version, () -> {
-                    if (tracking) store.replaceVersion(collection, documentId, version, chunks, listener);
-                    else store.replaceVersion(collection, documentId, version, chunks);
+                    if (replacedSources != null) {
+                        store.replaceSources(collection, documentId, version, chunks, replacedSources, listener);
+                    } else if (tracking) {
+                        store.replaceVersion(collection, documentId, version, chunks, listener);
+                    } else {
+                        store.replaceVersion(collection, documentId, version, chunks);
+                    }
                 });
             } else {
                 observability.observe("qdrant.upsert", documentId, version, () -> {
-                    if (tracking) store.replaceVersion(documentId, version, chunks, listener);
-                    else store.replaceVersion(documentId, version, chunks);
+                    if (replacedSources != null) {
+                        store.replaceSources(documentId, version, chunks, replacedSources, listener);
+                    } else if (tracking) {
+                        store.replaceVersion(documentId, version, chunks, listener);
+                    } else {
+                        store.replaceVersion(documentId, version, chunks);
+                    }
                 });
             }
         } catch (RuntimeException exception) {
@@ -232,7 +312,7 @@ public class RequirementIngestionService {
             }
         }
         observability.event("document_ingested");
-        return new IngestResponse(documentId, version, chunks.size());
+        return new IngestResponse(documentId, version, chunks.size(), truncatedSources);
     }
 
     private void reportQdrantProgress(KnowledgeIngestionTracker.Context context, List<ChunkRecord> chunks,
@@ -321,15 +401,81 @@ public class RequirementIngestionService {
             String parentHash = Hashing.sha256(parent.text());
             if (!seenParents.add(parentHash)) continue;
             String parentId = Hashing.uuid(id + ":" + version + ":parent:" + parentHash);
+            String sectionPath = parent.sectionPath() == null ? "" : parent.sectionPath();
+            String heading = parent.heading() == null ? "" : parent.heading();
+            String requirementId = extractRequirementId(parent.text());
+            String module = moduleFrom(sectionPath, heading);
+            String acceptanceCriteria = extractAcceptanceCriteria(parent.text());
             for (int childIndex = 0; childIndex < parent.children().size(); childIndex++) {
                 String child = parent.children().get(childIndex);
                 String childHash = Hashing.sha256(child);
                 if (!seenChildren.add(childHash)) continue;
                 chunks.add(new ChunkRecord(Hashing.uuid(id + ":" + version + ":child:" + childHash), id, version,
-                        filename, parentId, parent.text(), child, childHash, parent.order(), childIndex));
+                        filename, parentId, parent.text(), child, childHash, parent.order(), childIndex,
+                        sectionPath, heading, requirementId, module, acceptanceCriteria));
             }
         }
         return chunks;
+    }
+
+    /** 从父块文本中保守提取需求编号；未命中返回空串。 */
+    private static String extractRequirementId(String text) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+        Matcher matcher = REQUIREMENT_ID.matcher(text);
+        return matcher.find() ? matcher.group(1).trim() : "";
+    }
+
+    /**
+     * 从父块文本中保守提取“验收标准/验收条件”后的内容。
+     * 只取紧随其后的非空、非标题、非其他属性行，最多 5 行、500 字，避免污染。
+     */
+    private static String extractAcceptanceCriteria(String text) {
+        if (text == null || text.isBlank()) {
+            return "";
+        }
+        String[] lines = text.split("\\R");
+        StringBuilder collected = new StringBuilder();
+        boolean collecting = false;
+        int collectedLines = 0;
+        for (String rawLine : lines) {
+            String line = rawLine.strip();
+            if (line.isBlank()) {
+                continue;
+            }
+            if (!collecting) {
+                if (line.contains("验收标准") || line.contains("验收条件")
+                        || line.toLowerCase(Locale.ROOT).contains("acceptance criteria")) {
+                    collecting = true;
+                    continue;
+                }
+                continue;
+            }
+            if (line.startsWith("#") || line.contains("需求编号") || line.contains("产品解答")
+                    || line.contains("问题") || line.contains("前置条件") || line.contains("后置条件")
+                    || line.contains("异常") || line.contains("约束")) {
+                break;
+            }
+            if (collected.length() + line.length() > 500 || collectedLines >= 5) {
+                break;
+            }
+            if (collected.length() > 0) {
+                collected.append('\n');
+            }
+            collected.append(line);
+            collectedLines++;
+        }
+        return collected.toString();
+    }
+
+    /** 模块取章节路径首段；无章节时回退到标题。 */
+    private static String moduleFrom(String sectionPath, String heading) {
+        if (sectionPath != null && !sectionPath.isBlank()) {
+            int separator = sectionPath.indexOf(" / ");
+            return (separator > 0 ? sectionPath.substring(0, separator) : sectionPath).trim();
+        }
+        return heading == null ? "" : heading.trim();
     }
 
     /** 带文件名的 ByteArrayResource，供 Tika 识别文件类型。 */

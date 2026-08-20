@@ -55,10 +55,15 @@ public record GitLabManagedProject(
 
     /** 转换为现有索引和检索链路使用的项目配置。 */
     public RagProperties.ProjectConfig toProjectConfig() {
+        boolean connected = connectionId != null && !connectionId.isBlank();
+        String effectiveRequirementCollection = connected
+                ? unlinkedRequirementCollection(projectId) : requirementCollection;
+        RagProperties.ProjectKnowledge knowledge = connected ? null
+                : new RagProperties.ProjectKnowledge(false, null, null, null, null, null, null, 800);
         return new RagProperties.ProjectConfig(
-                projectId, name, group, side, requirementCollection, codeCollection,
+                projectId, name, group, side, effectiveRequirementCollection, codeCollection,
                 repositoryPath, gitPath,
-                new RagProperties.ProjectKnowledge(false, null, null, null, null, null, null, 800),
+                knowledge,
                 List.of(),
                 List.of("/target/", "/.git/", "/node_modules/"),
                 1_000_000);
@@ -67,11 +72,16 @@ public record GitLabManagedProject(
     /** API 响应中使用的无敏感信息视图。 */
     public View toView() {
         return new View(projectId, name, group, side, cloneUrl, branch, gitPath, connectionId,
-                requirementCollection, codeCollection, status, lastIndexedSha, targetSha,
+                connectionId == null || connectionId.isBlank() ? requirementCollection : null,
+                codeCollection, status, lastIndexedSha, targetSha,
                 lastError, createdAt, updatedAt, status != GitLabProjectStatus.DISABLED,
                 lastIndexedSha != null, targetSha != null && !targetSha.equals(lastIndexedSha),
                 null, null, null, null, status == GitLabProjectStatus.FAILED
                 ? "GITLAB_SYNC_FAILED" : null, lastError);
+    }
+
+    static String unlinkedRequirementCollection(String projectId) {
+        return "nexus_unlinked_" + projectId.replace('.', '_').replace('-', '_') + "_requirements";
     }
 
     public record View(

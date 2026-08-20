@@ -30,8 +30,24 @@ public record CodeChunk(
         List<String> synonyms,
         String extendsClass,
         List<String> implementsInterfaces,
-        List<String> annotations
+        List<String> annotations,
+        String repositoryId,
+        String repositoryName,
+        String repositoryKind
 ) {
+    /** 兼容已有完整构造器：仓库元数据尚未提供时留空。 */
+    public CodeChunk(String id, String projectId, String commitSha, String filePath,
+                     String symbolType, String symbolName, int startLine, int endLine,
+                     String text, String contentHash, String language, String className,
+                     String module, String layer, String businessDescCn, String businessDescEn,
+                     List<String> callRelation, List<String> keywords, List<String> userQuestions,
+                     List<String> synonyms, String extendsClass, List<String> implementsInterfaces,
+                     List<String> annotations) {
+        this(id, projectId, commitSha, filePath, symbolType, symbolName, startLine, endLine,
+                text, contentHash, language, className, module, layer, businessDescCn, businessDescEn,
+                callRelation, keywords, userQuestions, synonyms, extendsClass, implementsInterfaces,
+                annotations, "", "", "");
+    }
     /**
      * 兼容旧构造器：供 0.7 版本之前的调用方及已存储载荷使用，
      * 未指定语言时按文件路径推断 {@link com.example.requirementrag.code.CodeLanguage}。
@@ -61,6 +77,18 @@ public record CodeChunk(
         synonyms = synonyms == null ? List.of() : List.copyOf(synonyms);
         implementsInterfaces = implementsInterfaces == null ? List.of() : List.copyOf(implementsInterfaces);
         annotations = annotations == null ? List.of() : List.copyOf(annotations);
+        repositoryId = repositoryId == null ? "" : repositoryId;
+        repositoryName = repositoryName == null ? "" : repositoryName;
+        repositoryKind = repositoryKind == null ? "" : repositoryKind;
+    }
+
+    /** 将目录中的仓库身份附加到检索结果，不改变底层代码内容。 */
+    public CodeChunk withRepositoryMetadata(String id, String name, String kind) {
+        return new CodeChunk(this.id, this.projectId, this.commitSha, this.filePath, this.symbolType,
+                this.symbolName, this.startLine, this.endLine, this.text, this.contentHash, this.language,
+                this.className, this.module, this.layer, this.businessDescCn, this.businessDescEn,
+                this.callRelation, this.keywords, this.userQuestions, this.synonyms, this.extendsClass,
+                this.implementsInterfaces, this.annotations, id, name, kind);
     }
 
     /** 附加语义元数据（annotator 阶段，向后兼容）。 */
@@ -70,7 +98,7 @@ public record CodeChunk(
                 startLine, endLine, text, contentHash, language,
                 className, module, layer, businessDescCn, businessDescEn,
                 callRelation, keywords, userQuestions, synonyms,
-                extendsClass, implementsInterfaces, annotations);
+                extendsClass, implementsInterfaces, annotations, repositoryId, repositoryName, repositoryKind);
     }
 
     /** 附加完整语义元数据（含 user_questions 和 synonyms）。 */
@@ -81,7 +109,7 @@ public record CodeChunk(
                 startLine, endLine, text, contentHash, language,
                 className, module, layer, businessDescCn, businessDescEn,
                 callRelation, keywords, userQuestions, synonyms,
-                extendsClass, implementsInterfaces, annotations);
+                extendsClass, implementsInterfaces, annotations, repositoryId, repositoryName, repositoryKind);
     }
 
     /** 设置静态分析结果（extends/implements/annotations）与类级信息。 */
@@ -93,7 +121,7 @@ public record CodeChunk(
                 startLine, endLine, text, contentHash, language,
                 className, inferredModule, inferredLayer, businessDescCn, businessDescEn,
                 callRelation, keywords, userQuestions, synonyms,
-                extendsClass, implementsInterfaces, annotations);
+                extendsClass, implementsInterfaces, annotations, repositoryId, repositoryName, repositoryKind);
     }
 
     /** 从文件路径推断所属模块（包路径中第一个有意义的段）。 */

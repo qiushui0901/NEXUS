@@ -7,8 +7,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.web.servlet.HandlerMapping;
 
 import java.io.IOException;
+import java.util.Map;
 
 /** 从 query 参数或 JSON body 解析 projectId。 */
 @Component
@@ -29,6 +31,13 @@ public class ProjectIdResolver {
         if (hasText(fromQuery)) {
             return fromQuery.trim();
         }
+        Object variables = request.getAttribute(HandlerMapping.URI_TEMPLATE_VARIABLES_ATTRIBUTE);
+        if (variables instanceof Map<?, ?> values) {
+            Object pathProject = values.get("projectId");
+            if (pathProject != null && hasText(pathProject.toString())) {
+                return pathProject.toString().trim();
+            }
+        }
         if (request instanceof CachedBodyHttpServletRequest cached) {
             return extractFromJson(cached.getCachedBody());
         }
@@ -40,6 +49,10 @@ public class ProjectIdResolver {
         String explicit = resolve(request);
         if (hasText(explicit)) {
             return explicit;
+        }
+        String path = request.getRequestURI();
+        if ("/api/projects".equals(path) || "/api/business-projects".equals(path)) {
+            return null;
         }
         String defaultId = projectRegistry.defaultProject().id();
         return hasText(defaultId) ? defaultId : null;

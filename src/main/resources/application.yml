@@ -138,6 +138,12 @@ app:
       candidate-root-path: ${EVOLUTION_CANDIDATE_ROOT_PATH:data/evolution/candidates}
       dataset-root-path: ${EVOLUTION_DATASET_ROOT_PATH:data/evolution/datasets}
       policy-root-path: ${EVOLUTION_POLICY_ROOT_PATH:data/evolution/policies}
+    vision:
+      enabled: ${VISION_ENABLED:false}
+      model: ${VISION_MODEL:glm-5.2}
+      max-images-per-doc: ${VISION_MAX_IMAGES_PER_DOC:20}
+      timeout-ms: ${VISION_TIMEOUT_MS:8000}
+      concurrency: ${VISION_CONCURRENCY:3}
     qdrant:
       base-url: ${QDRANT_URL:http://localhost:6333}
       collection: ${QDRANT_COLLECTION:requirement_chunks}
@@ -166,6 +172,7 @@ app:
       routing-model: ${LLM_ROUTING_MODEL:}
       annotation-model: ${ANNOTATION_MODEL:gpt-5.6-sol}
     retrieval:
+      # legacy flat keys (deprecated, kept for backward compat) — new code should use document/code sub-keys
       dense-top-k: 50
       sparse-top-k: 50
       hybrid-top-k: 40
@@ -186,6 +193,36 @@ app:
       code-exact-symbol-enabled: ${CODE_EXACT_SYMBOL_ENABLED:true}
       code-class-scoped-enabled: ${CODE_CLASS_SCOPED_ENABLED:true}
       code-structural-rerank-enabled: ${CODE_STRUCTURAL_RERANK_ENABLED:true}
+      document:
+        dense-top-k: ${RETRIEVAL_DOCUMENT_DENSE_TOP_K:50}
+        sparse-top-k: ${RETRIEVAL_DOCUMENT_SPARSE_TOP_K:50}
+        hybrid-top-k: ${RETRIEVAL_DOCUMENT_HYBRID_TOP_K:40}
+        bge-top-k: ${RETRIEVAL_DOCUMENT_BGE_TOP_K:20}
+        llm-top-k: ${RETRIEVAL_DOCUMENT_LLM_TOP_K:10}
+        llm-rerank-enabled: ${RETRIEVAL_DOCUMENT_LLM_RERANK_ENABLED:true}
+        llm-rerank-skip-gap: ${RETRIEVAL_DOCUMENT_LLM_RERANK_SKIP_GAP:0}
+        branch-timeout-ms: ${RETRIEVAL_DOCUMENT_BRANCH_TIMEOUT_MS:5000}
+        parallelism: ${RETRIEVAL_DOCUMENT_PARALLELISM:6}
+        circuit-breaker-failure-threshold: ${RETRIEVAL_DOCUMENT_CIRCUIT_FAILURE_THRESHOLD:3}
+        circuit-breaker-open-ms: ${RETRIEVAL_DOCUMENT_CIRCUIT_OPEN_MS:30000}
+        result-cache-ttl-seconds: ${RETRIEVAL_DOCUMENT_CACHE_TTL_SECONDS:120}
+        result-cache-max-entries: ${RETRIEVAL_DOCUMENT_CACHE_MAX_ENTRIES:1000}
+        embedding-cache-ttl-seconds: ${RETRIEVAL_DOCUMENT_EMBEDDING_CACHE_TTL_SECONDS:900}
+        embedding-cache-max-entries: ${RETRIEVAL_DOCUMENT_EMBEDDING_CACHE_MAX_ENTRIES:10000}
+        child-first-rerank-enabled: ${RETRIEVAL_DOCUMENT_CHILD_FIRST_RERANK_ENABLED:true}
+        enriched-bge-passage-enabled: ${RETRIEVAL_DOCUMENT_ENRICHED_BGE_PASSAGE_ENABLED:true}
+        page-index-enabled: ${RETRIEVAL_DOCUMENT_PAGE_INDEX_ENABLED:false}
+      code:
+        branch-timeout-ms: ${RETRIEVAL_CODE_BRANCH_TIMEOUT_MS:5000}
+        parallelism: ${RETRIEVAL_CODE_PARALLELISM:6}
+        circuit-breaker-failure-threshold: ${RETRIEVAL_CODE_CIRCUIT_FAILURE_THRESHOLD:3}
+        circuit-breaker-open-ms: ${RETRIEVAL_CODE_CIRCUIT_OPEN_MS:30000}
+        query-expansion-enabled: ${RETRIEVAL_CODE_QUERY_EXPANSION_ENABLED:true}
+        bge-rerank-enabled: ${RETRIEVAL_CODE_BGE_RERANK_ENABLED:false}
+        candidate-multiplier: ${RETRIEVAL_CODE_CANDIDATE_MULTIPLIER:3}
+        exact-symbol-enabled: ${RETRIEVAL_CODE_EXACT_SYMBOL_ENABLED:true}
+        class-scoped-enabled: ${RETRIEVAL_CODE_CLASS_SCOPED_ENABLED:true}
+        structural-rerank-enabled: ${RETRIEVAL_CODE_STRUCTURAL_RERANK_ENABLED:true}
     knowledge:
       bootstrap-enabled: ${KNOWLEDGE_BOOTSTRAP_ENABLED:false}
       zip-path: ${KNOWLEDGE_ZIP_PATH:}
@@ -195,6 +232,18 @@ app:
       zip-folder-prefix: ${KNOWLEDGE_ZIP_FOLDER_PREFIX:}
       xlsx-sheet-prefix: ${KNOWLEDGE_XLSX_SHEET_PREFIX:}
       min-html-bytes: ${KNOWLEDGE_MIN_HTML_BYTES:800}
+    requirement-graph:
+      enabled: ${REQUIREMENT_GRAPH_ENABLED:false}
+      extraction-enabled: ${REQUIREMENT_GRAPH_EXTRACTION_ENABLED:true}
+      retrieval-enabled: ${REQUIREMENT_GRAPH_RETRIEVAL_ENABLED:false}
+      database-path: ${REQUIREMENT_GRAPH_DATABASE_PATH:data/requirement-graph.db}
+      max-entities-per-chunk: ${REQUIREMENT_GRAPH_MAX_ENTITIES_PER_CHUNK:20}
+      max-relations-per-chunk: ${REQUIREMENT_GRAPH_MAX_RELATIONS_PER_CHUNK:30}
+      max-input-chars: ${REQUIREMENT_GRAPH_MAX_INPUT_CHARS:20000}
+      max-hops: ${REQUIREMENT_GRAPH_MAX_HOPS:2}
+      candidate-limit: ${REQUIREMENT_GRAPH_CANDIDATE_LIMIT:40}
+      extraction-model: ${REQUIREMENT_GRAPH_EXTRACTION_MODEL:}
+      extraction-prompt-version: ${REQUIREMENT_GRAPH_EXTRACTION_PROMPT_VERSION:v1}
     wiki:
       root-path: ${WIKI_ROOT_PATH:data/wiki}
       source-path: ${WIKI_SOURCE_PATH:data/wiki-sources}
@@ -214,6 +263,9 @@ app:
       # 生产环境（application-production.yml）禁止默认管理员并应配置该头。
       identity-header: ${AUTH_IDENTITY_HEADER:}
       default-admin-allowed: ${AUTH_DEFAULT_ADMIN_ALLOWED:false}
+
+    project-catalog:
+      database-path: ${BUSINESS_PROJECT_CATALOG_DB_PATH:data/business-project-catalog.db}
 
     # 多项目注册表。为空时自动基于上方 knowledge/code 构造默认项目。
     # 每个项目独立 collection，互不干扰。

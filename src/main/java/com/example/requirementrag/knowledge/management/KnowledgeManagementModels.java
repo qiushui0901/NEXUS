@@ -16,7 +16,7 @@ public final class KnowledgeManagementModels {
 
     public enum BaseType { REQUIREMENT, CODE, WIKI }
     public enum SourceType { ZIP, GITLAB, GENERATED, UPLOAD }
-    public enum SummaryStatus { IDLE, QUEUED, RUNNING, READY, PARTIAL, FAILED, STALE, DISABLED }
+    public enum SummaryStatus { IDLE, QUEUED, RUNNING, READY, PARTIAL, FAILED, STALE, DISABLED, UNAVAILABLE }
     public enum EntityStatus { PENDING, RUNNING, CHUNKED, EMBEDDING, INDEXING, READY, FAILED, EXCLUDED, STALE, INTERRUPTED }
     public enum Stage { DISCOVER, PARSE, CLEAN, CHUNK, DEDUPLICATE, EMBED, INDEX, VERIFY, PUBLISH }
     public enum TriggerType { BOOTSTRAP, MANUAL, GITLAB, RETRY }
@@ -96,6 +96,11 @@ public final class KnowledgeManagementModels {
             String documentId,
             String version,
             String sourcePath,
+            String sectionPath,
+            String heading,
+            String requirementId,
+            String module,
+            String acceptanceCriteria,
             String parentId,
             int parentOrder,
             int childOrder,
@@ -116,7 +121,10 @@ public final class KnowledgeManagementModels {
             int endLine,
             String text,
             String contentHash,
-            String language
+            String language,
+            String repositoryId,
+            String repositoryName,
+            String repositoryKind
     ) {}
 
     public record ActionAccepted(String status, String mode, String projectId) {}

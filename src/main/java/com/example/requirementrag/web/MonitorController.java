@@ -1,6 +1,7 @@
 package com.example.requirementrag.web;
 
 import com.example.requirementrag.config.ProjectRegistry;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.knowledge.BootstrapState;
 import com.example.requirementrag.knowledge.KnowledgeBootstrapService;
@@ -49,12 +50,14 @@ public class MonitorController {
     private final RestClient ollamaClient;
     private final ProjectAccessGuard accessGuard;
     private final ProjectRegistry projectRegistry;
+    private final BusinessProjectCatalogService businessProjects;
 
     /** 注入配置、引导状态、向量库与指标注册表，并初始化健康检查客户端。 */
     public MonitorController(RagProperties properties, BootstrapState bootstrapState,
                                KnowledgeBootstrapService bootstrapService, QdrantHybridStore store,
                                MeterRegistry meterRegistry, RagObservability observability,
                                ProjectAccessGuard accessGuard, ProjectRegistry projectRegistry,
+                               BusinessProjectCatalogService businessProjects,
                                @Value("${server.port:8080}") int serverPort,
                                @Value("${spring.ai.ollama.base-url:http://localhost:11434}") String ollamaBaseUrl) {
         this.properties = properties;
@@ -65,6 +68,7 @@ public class MonitorController {
         this.observability = observability;
         this.accessGuard = accessGuard;
         this.projectRegistry = projectRegistry;
+        this.businessProjects = businessProjects;
         this.appClient = RestClient.builder().baseUrl("http://localhost:" + serverPort).build();
         this.ollamaClient = RestClient.builder().baseUrl(ollamaBaseUrl).build();
     }
@@ -95,6 +99,14 @@ public class MonitorController {
             return properties.knowledge();
         }
         try {
+            var project = businessProjects.requireProject(projectId);
+            return new RagProperties.Knowledge(false, null, null,
+                    project.requirementDocumentId(), project.latestRequirementVersion(),
+                    null, null, 0);
+        } catch (IllegalArgumentException ignored) {
+            // 兼容旧单仓库项目。
+        }
+        try {
             RagProperties.ProjectConfig project = projectRegistry.require(projectId);
             if (project.knowledge() != null) {
                 return project.knowledge().toKnowledge();
@@ -113,6 +125,11 @@ public class MonitorController {
             return properties.qdrant().collection();
         }
         try {
+            return businessProjects.requireProject(projectId).requirementCollection();
+        } catch (IllegalArgumentException ignored) {
+            // 兼容旧单仓库项目。
+        }
+        try {
             return projectRegistry.resolveRequirementCollection(projectId);
         } catch (IllegalArgumentException exception) {
             log.warn("Monitor status cannot resolve the requirement collection for project {}; using the default",
@@ -129,7 +146,16 @@ public class MonitorController {
                                          HttpServletRequest httpRequest) {
         accessGuard.requireProjectAccess(httpRequest, projectId);
         if (projectId != null && !projectId.isBlank()) {
-            bootstrapService.bootstrapAsync(projectId);
+            String repositoryProjectId = projectId;
+            String knowledgeProjectId = projectId;
+            try {
+                if (businessProjects != null) {
+                    repositoryProjectId = businessProjects.requireProject(projectId).versionAnchorRepositoryId();
+                }
+            } catch (IllegalArgumentException exception) {
+                log.warn("Monitor bootstrap cannot resolve business project {}; using repository ID", projectId);
+            }
+            bootstrapService.bootstrapAsync(repositoryProjectId, knowledgeProjectId);
         } else {
             bootstrapService.bootstrapAsync();
         }

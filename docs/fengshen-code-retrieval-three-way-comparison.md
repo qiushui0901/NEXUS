@@ -1,5 +1,7 @@
 # 封神代码召回三方对比分析
 
+> ⚠️ 本文件为历史版本（NEXUS 数据为旧基线）。最新版已升级为四向对比并更新 NEXUS E10 指标，见 **[封神代码召回四向对比分析](./fengshen-code-retrieval-four-way-comparison.md)**。
+
 > 对比对象：LightRAG、NEXUS、RAGFlow  
 > 测试集：`evaluation/fengshen-code-retrieval-eval-500.jsonl`，500 道代码检索题  
 > 评测日期：2026-08-12  

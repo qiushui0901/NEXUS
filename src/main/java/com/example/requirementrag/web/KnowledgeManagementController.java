@@ -31,6 +31,10 @@ import com.example.requirementrag.model.UserContext;
 import com.example.requirementrag.retrieval.pipeline.RetrievalBundle;
 import com.example.requirementrag.retrieval.pipeline.RetrievalPipeline;
 import com.example.requirementrag.retrieval.pipeline.RetrievalProfile;
+import com.example.requirementrag.project.BusinessProject;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
+import com.example.requirementrag.project.CodeRepository;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.example.requirementrag.retrieval.pipeline.RetrievalRequest;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -71,6 +75,28 @@ public class KnowledgeManagementController {
     private final QdrantHybridStore qdrantStore;
     private final CodeQdrantStore codeStore;
     private final CodeIndexJobService codeIndexJobService;
+    private final BusinessProjectCatalogService businessProjects;
+
+    @Autowired
+    public KnowledgeManagementController(SQLiteKnowledgeManagementStore store,
+                                         ProjectRegistry projectRegistry,
+                                         ProjectAccessGuard accessGuard,
+                                         KnowledgeBootstrapService bootstrapService,
+                                         RetrievalPipeline retrievalPipeline,
+                                         QdrantHybridStore qdrantStore,
+                                         CodeQdrantStore codeStore,
+                                         CodeIndexJobService codeIndexJobService,
+                                         BusinessProjectCatalogService businessProjects) {
+        this.store = store;
+        this.projectRegistry = projectRegistry;
+        this.accessGuard = accessGuard;
+        this.bootstrapService = bootstrapService;
+        this.retrievalPipeline = retrievalPipeline;
+        this.qdrantStore = qdrantStore;
+        this.codeStore = codeStore;
+        this.codeIndexJobService = codeIndexJobService;
+        this.businessProjects = businessProjects;
+    }
 
     public KnowledgeManagementController(SQLiteKnowledgeManagementStore store,
                                          ProjectRegistry projectRegistry,
@@ -80,14 +106,8 @@ public class KnowledgeManagementController {
                                          QdrantHybridStore qdrantStore,
                                          CodeQdrantStore codeStore,
                                          CodeIndexJobService codeIndexJobService) {
-        this.store = store;
-        this.projectRegistry = projectRegistry;
-        this.accessGuard = accessGuard;
-        this.bootstrapService = bootstrapService;
-        this.retrievalPipeline = retrievalPipeline;
-        this.qdrantStore = qdrantStore;
-        this.codeStore = codeStore;
-        this.codeIndexJobService = codeIndexJobService;
+        this(store, projectRegistry, accessGuard, bootstrapService, retrievalPipeline,
+                qdrantStore, codeStore, codeIndexJobService, null);
     }
 
     @RequiresPermission(Permission.PUBLIC_READ)
@@ -99,9 +119,101 @@ public class KnowledgeManagementController {
                                         @RequestParam(defaultValue = "0") int page,
                                         @RequestParam(defaultValue = "50") int size,
                                         HttpServletRequest request) {
+        if (businessProjects != null) {
+            return listBusinessBases(accessibleBusinessProjects(projectId, request),
+                    status, type, query, page, size);
+        }
         List<RagProperties.ProjectConfig> projects = accessibleProjects(projectId, request);
         return listBasesWithFallback(projects, status, type, query, page, size);
     }
+
+    private List<BusinessProject> accessibleBusinessProjects(String projectId, HttpServletRequest request) {
+        UserContext user = accessGuard.currentUser(request);
+        if (projectId != null && !projectId.isBlank()) {
+            BusinessProject project = businessProjects.requireProject(projectId);
+            if (!businessProjects.accessScopeIds(project.id()).stream().anyMatch(user::hasAccessTo)) {
+                throw new AccessDeniedException("Insufficient permissions");
+            }
+            return List.of(project);
+        }
+        return businessProjects.projects().stream()
+                .filter(project -> businessProjects.accessScopeIds(project.id()).stream().anyMatch(user::hasAccessTo))
+                .toList();
+    }
+
+    private Page<KnowledgeBaseView> listBusinessBases(List<BusinessProject> projects,
+                                                      SummaryStatus status, BaseType type,
+                                                      String query, int page, int size) {
+        int safePage = Math.max(0, page);
+        int safeSize = Math.max(1, Math.min(size <= 0 ? 50 : size, 200));
+        List<KnowledgeBaseView> values = new ArrayList<>();
+        for (BusinessProject project : projects) {
+            values.add(businessRequirementBase(project));
+            for (CodeRepository repository : businessProjects.ownedRepositories(project.id())) {
+                values.add(businessCodeBase(project, repository));
+            }
+            for (CodeRepository repository : businessProjects.sharedRepositories(project.id())) {
+                values.add(businessCodeBase(project, repository));
+            }
+        }
+        List<KnowledgeBaseView> filtered = values.stream()
+                .filter(base -> status == null || base.status() == status)
+                .filter(base -> type == null || base.type() == type)
+                .filter(base -> matchesQuery(base, query))
+                .toList();
+        int from = (int) Math.min((long) safePage * safeSize, filtered.size());
+        int to = Math.min(from + safeSize, filtered.size());
+        return new Page<>(filtered.subList(from, to), safePage, safeSize, filtered.size());
+    }
+
+    private KnowledgeBaseView businessRequirementBase(BusinessProject project) {
+        RequirementCount count = requirementCount(project);
+        SummaryStatus status = count.available()
+                ? count.points() > 0 ? SummaryStatus.READY : SummaryStatus.IDLE
+                : SummaryStatus.UNAVAILABLE;
+        return new KnowledgeBaseView(project.id() + ":requirement", project.id(),
+                project.name() + " 需求", BaseType.REQUIREMENT, project.requirementCollection(),
+                SourceType.ZIP, status, null, project.latestRequirementVersion(), 0, 0, 0,
+                count.points(), null, null, null);
+    }
+
+    private KnowledgeBaseView businessCodeBase(BusinessProject project, CodeRepository repository) {
+        CodeCount count = codeCount(repository);
+        SummaryStatus status = !repository.enabled() ? SummaryStatus.DISABLED
+                : !count.available() ? SummaryStatus.UNAVAILABLE
+                : count.points() > 0 ? SummaryStatus.READY : SummaryStatus.IDLE;
+        return new KnowledgeBaseView(project.id() + ":code:" + repository.id(), project.id(),
+                repository.name(), BaseType.CODE, repository.codeCollection(), SourceType.GITLAB,
+                status, null, null, 0, 0, 0, count.points(), null, null, null);
+    }
+
+    private RequirementCount requirementCount(BusinessProject project) {
+        if (project.latestRequirementVersion() == null || project.latestRequirementVersion().isBlank()) {
+            return new RequirementCount(true, 0);
+        }
+        try {
+            return new RequirementCount(true, qdrantStore.countVersionIfAvailable(
+                    project.requirementCollection(), project.requirementDocumentId(),
+                    project.latestRequirementVersion()));
+        } catch (RuntimeException exception) {
+            return new RequirementCount(false, 0);
+        }
+    }
+
+    private record RequirementCount(boolean available, long points) {}
+
+    private CodeCount codeCount(CodeRepository repository) {
+        try {
+            long points = repository.liveAlias()
+                    ? codeStore.countLiveProjectIfAvailable(repository.codeCollection(), repository.id())
+                    : codeStore.countProjectIfAvailable(repository.codeCollection(), repository.id());
+            return new CodeCount(true, points);
+        } catch (RuntimeException exception) {
+            return new CodeCount(false, 0);
+        }
+    }
+
+    private record CodeCount(boolean available, long points) {}
 
     private List<RagProperties.ProjectConfig> accessibleProjects(String projectId,
                                                                  HttpServletRequest request) {
@@ -244,10 +356,16 @@ public class KnowledgeManagementController {
     public ActionAccepted rebuild(@PathVariable String id, HttpServletRequest request) {
         KnowledgeBaseView base = requireBase(id, request);
         if (base.type() == BaseType.CODE) {
-            codeIndexJobService.start(base.projectId());
+            codeIndexJobService.start(repositoryIdFromBase(base));
             return accepted("CODE_INDEX_REBUILD", base.projectId());
         }
-        bootstrapService.bootstrapAsync(base.projectId());
+        if (businessProjects == null) {
+            bootstrapService.bootstrapAsync(base.projectId());
+        } else {
+            bootstrapService.bootstrapAsync(
+                    businessProjects.requireProject(base.projectId()).versionAnchorRepositoryId(),
+                    base.projectId());
+        }
         return accepted("PROJECT_REBUILD", base.projectId());
     }
 
@@ -305,7 +423,7 @@ public class KnowledgeManagementController {
                                         HttpServletRequest request) {
         KnowledgeBaseView base = requireBase(id, request);
         notFound(() -> store.requireDocument(id, documentId));
-        bootstrapService.bootstrapAsync(base.projectId());
+        bootstrapRequirement(base);
         return accepted("DOCUMENT_REBUILD", base.projectId());
     }
 
@@ -337,7 +455,7 @@ public class KnowledgeManagementController {
                                      HttpServletRequest request) {
         KnowledgeBaseView base = requireBase(id, request);
         notFound(() -> store.requireChunkInBase(id, chunkId));
-        bootstrapService.bootstrapAsync(base.projectId());
+        bootstrapRequirement(base);
         return accepted("DOCUMENT_REBUILD", base.projectId());
     }
 
@@ -353,7 +471,8 @@ public class KnowledgeManagementController {
                 : RetrievalProfile.REQUIREMENT_REVIEW;
         RagOutcome<RetrievalBundle> outcome = retrievalPipeline.execute(new RetrievalRequest(
                 body.query(), profile, base.projectId(),
-                body.documentId(), body.version(), body.limit()));
+                body.documentId(), body.version(), body.limit(), false, null,
+                codeBase ? List.of(repositoryIdFromBase(base)) : List.of()));
         RetrievalBundle data = outcome.data();
         AtomicInteger rank = new AtomicInteger(1);
         List<RetrievalHit> hits = List.of();
@@ -381,8 +500,13 @@ public class KnowledgeManagementController {
     }
 
     private KnowledgeBaseView requireBase(String id, HttpServletRequest request) {
+        if (businessProjects != null) {
+            KnowledgeBaseView businessBase = businessBase(id, request);
+            if (businessBase != null) return businessBase;
+        }
         try {
             KnowledgeBaseView base = store.requireBase(id);
+            if (base == null) throw new IllegalArgumentException("knowledge base not found");
             projectRegistry.require(base.projectId());
             accessGuard.requireProjectAccess(request, base.projectId());
             return base;
@@ -399,6 +523,49 @@ public class KnowledgeManagementController {
         }
     }
 
+    private KnowledgeBaseView businessBase(String id, HttpServletRequest request) {
+        String[] parts = id == null ? new String[0] : id.split(":", 3);
+        if (parts.length < 2) return null;
+        BusinessProject project;
+        try {
+            project = businessProjects.requireProject(parts[0]);
+        } catch (IllegalArgumentException exception) {
+            return null;
+        }
+        UserContext user = accessGuard.currentUser(request);
+        if (!businessProjects.accessScopeIds(project.id()).stream().anyMatch(user::hasAccessTo)) {
+            throw new AccessDeniedException("Insufficient permissions");
+        }
+        if ("requirement".equals(parts[1]) && parts.length == 2) {
+            return businessRequirementBase(project);
+        }
+        if ("code".equals(parts[1]) && parts.length == 3) {
+            return businessProjects.repositoryScope(project.id(), List.of(parts[2])).stream()
+                    .findFirst().map(repository -> businessCodeBase(project, repository)).orElse(null);
+        }
+        return null;
+    }
+
+    private void bootstrapRequirement(KnowledgeBaseView base) {
+        if (businessProjects == null) {
+            bootstrapService.bootstrapAsync(base.projectId());
+            return;
+        }
+        bootstrapService.bootstrapAsync(
+                businessProjects.requireProject(base.projectId()).versionAnchorRepositoryId(),
+                base.projectId());
+    }
+
+    private String repositoryIdFromBase(KnowledgeBaseView base) {
+        String[] parts = base.id().split(":", 3);
+        return parts.length == 3 && "code".equals(parts[1]) ? parts[2] : base.projectId();
+    }
+
+    private String bootstrapProjectId(String businessProjectId) {
+        return businessProjects == null ? businessProjectId
+                : businessProjects.requireProject(businessProjectId).versionAnchorRepositoryId();
+    }
+
     private RetrievalHit hit(int rank, ChunkRecord chunk) {
         return new RetrievalHit(
                 rank,
@@ -406,6 +573,11 @@ public class KnowledgeManagementController {
                 chunk.documentId(),
                 chunk.version(),
                 safeSourcePath(chunk.filename()),
+                chunk.sectionPath(),
+                chunk.heading(),
+                chunk.requirementId(),
+                chunk.module(),
+                chunk.acceptanceCriteria(),
                 chunk.parentId(),
                 chunk.parentOrder(),
                 chunk.childOrder(),
@@ -427,7 +599,10 @@ public class KnowledgeManagementController {
                 chunk.endLine(),
                 truncate(chunk.text(), CODE_TEXT_LIMIT),
                 chunk.contentHash(),
-                chunk.language());
+                chunk.language(),
+                chunk.repositoryId(),
+                chunk.repositoryName(),
+                chunk.repositoryKind());
     }
 
     private String safeSourcePath(String value) {
