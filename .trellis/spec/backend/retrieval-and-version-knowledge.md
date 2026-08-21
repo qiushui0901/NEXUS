@@ -1213,3 +1213,83 @@ The representative selector is internal to `RetrievalPipeline`. Spring injects t
 
 **Correct:** preserve BGE's parent order, keep its first sibling by default, and replace only when the
 candidate's own child text clears both conservative gain thresholds.
+
+
+## Scenario: Versioned requirement semantic graph hardening
+
+### 1. Scope / Trigger
+- Trigger: changing `com.example.requirementrag.requirement.graph.*`, requirement graph persistence, review APIs, or graph retrieval flags.
+- The graph is an auxiliary projection. Dense+sparse Qdrant requirement retrieval remains the source of truth.
+
+### 2. Signatures
+```java
+GraphSnapshot RequirementGraphBuildService.build(BuildRequest request)
+SearchResponse RequirementGraphSearchService.search(SearchRequest request)
+SearchResponse RequirementGraphHybridSearchService.search(SearchRequest request)
+SearchResponse RequirementGraphHybridSearchService.search(SearchRequest request, QueryPlan plan)
+QueryPlan RequirementGraphQueryPlanner.plan(SearchRequest request)
+```
+
+### 3. Contracts
+- A graph snapshot is isolated by business project, document ID, requirement version, source revision, ontology version, and prompt version.
+- Parent text is planned into bounded overlapping windows; every window stores exact start/end offsets, content hash, status, attempt count, and stable ID.
+- Window output is persisted before the next model call. Retryable provider failures may retry within configured budgets; schema/evidence failures do not retry indefinitely.
+- Claims use `ClaimStatus`; new production search defaults to `VERIFIED` claims and published/verified snapshots. Legacy schema-v1 snapshots remain readable through compatibility constructors.
+- Evidence is first-class and includes quote, section path, absolute offsets, content hash, and `EvidenceResolutionStatus`. Unresolved evidence is visible through `GRAPH_EVIDENCE_UNAVAILABLE`.
+- Claim→Evidence is normalized in `requirement_graph_claim_evidence` (snapshot_id, claim_id, evidence_id, support_type, confidence, created_at). Draft replacement rebuilds the association; evidence deletion cascades; publication gate reads the normalized table (falling back to legacy JSON `source_evidence_ids` for old snapshots) so dangling evidence cannot be published.
+- Publication requires all entity/relation claims to be `VERIFIED` and every stored evidence span to be `RESOLVED`; publication records actor, reason, and audit entry.
+- Build failure produces stable codes such as `GRAPH_WINDOW_FAILED`, `GRAPH_PARTIAL_FAILURE`, `GRAPH_MODEL_TIMEOUT`, `GRAPH_SCHEMA_INVALID`, and `GRAPH_PUBLICATION_BLOCKED`.
+- `RequirementGraphController.search` is the unified entry: `NAIVE` returns raw Qdrant text blocks only; `LOCAL/GLOBAL` dispatch to graph neighborhood/global relation search; `HYBRID` and `MIX` dispatch to `RequirementGraphHybridSearchService`; `MIX` is never inferred by the planner.
+- `MIX` fuses text blocks (Qdrant dense+sparse RRF), entities, relations, one/multi-hop paths, and evidence through configurable weights (`app.rag.requirement-graph.fusion.*`, default 0.30/0.20/0.15/0.15/0.15/0.05). The returned `SearchResponse` carries real `sourceChunks`, `paths`, `entities`, `relations`, `evidence`, and `channelScores`.
+- Multi-snapshot isolation: `requirement_graph_window` uses `(snapshot_id, id)` and `requirement_graph_window_result` uses `(snapshot_id, window_id)` composite primary keys; `requirement_graph_evidence` uses `(snapshot_id, evidence_id)`, and `requirement_graph_claim_evidence` references it with a composite foreign key. Existing single-key databases are rebuilt by automatic migration on startup.
+- Every SQLite business connection enables `PRAGMA foreign_keys=ON`, so cascades and referential integrity actually execute. Draft graph data is saved atomically via `saveDraftSnapshot` (snapshot → evidence → entity/relation → claim_evidence → uncertainty/conflict in one transaction, evidence before claim_evidence); deleting a snapshot cascades to windows, evidence, and claim_evidence.
+- MIX text scores are linked to graph claims by parent block key (`filename|parentId|parentOrder|contentHash`) rather than comparing chunk IDs with span evidence IDs, so a high-scoring text block raises the fused score of entities/relations whose evidence comes from the same parent.
+- Text retrieval failures are explicit: `GRAPH_TEXT_NO_HITS` (normal empty), `GRAPH_TEXT_RETRIEVAL_UNAVAILABLE`, and `GRAPH_TEXT_RETRIEVAL_TIMEOUT` warnings instead of silent empty success. MIX degrades to graph results with a warning; NAIVE reports degraded status.
+- `QueryPlan` drives `MIX` execution (allowed statuses, hops, per-channel caps, entity/relation keywords, section keywords). MIX paginates each channel independently (text, paths, evidence) so pages do not repeat page-0 content.
+- `maxEstimatedTokens` is enforced during window extraction: reaching the budget stops further model calls (`GRAPH_BUDGET_EXCEEDED`).
+- Asynchronous jobs: a restarted QUEUED job without a snapshot may be re-queued from its persisted request; cancelling during a plain runtime exception keeps the persisted `CANCELLED` state.
+- Logs and persisted audit data contain IDs, status, actor, duration, and safe error codes only; never raw model responses, credentials, or unbounded requirement text.
+
+### 4. Validation & Error Matrix
+| Condition | Required result |
+| --- | --- |
+| Quote is not resolvable in a window | Store `UNAVAILABLE`; block publication |
+| Source revision or ontology/prompt version changes | Build a new snapshot; old published snapshot remains readable |
+| Retryable model timeout/rate limit/transient 5xx | Retry within `maxRetries`, `maxModelCalls`, and wall-clock budget |
+| Non-retryable schema/evidence error | Mark window failed with a stable code |
+| Any incomplete window with partial disabled | `GRAPH_PARTIAL_FAILURE`; no publication |
+| Entity/relation is edited | Claim returns to `EXTRACTED`; actor/reason are audited |
+| Published claim is edited | Reject; create a new draft/rebuild |
+| Search sees unresolved claims without `includeUnresolved=true` | Exclude them |
+| Graph rows exceed `maxGraphRows` | Return bounded results with `GRAPH_RESULT_TRUNCATED` |
+| MIX has no text/graph hits | Return empty channels with explicit warnings, never invent claims |
+| Text retrieval service timeout/unavailable | Return `GRAPH_TEXT_RETRIEVAL_TIMEOUT`/`GRAPH_TEXT_RETRIEVAL_UNAVAILABLE` warning; MIX still returns graph results, NAIVE degrades |
+| Estimated tokens exceed `maxEstimatedTokens` | Stop further model calls and mark remaining windows `GRAPH_BUDGET_EXCEEDED` |
+| Verified claim references absent evidence | `GRAPH_EVIDENCE_MISSING` publication blocker from normalized table |
+
+### 5. Good / Base / Bad Cases
+- Good: repeated names in different sections keep separate context keys unless deterministic evidence supports a merge; all published claims have resolved spans; MIX response re-ranks entities/relations whose evidence appears in top text chunks.
+- Base: legacy parent-only evidence remains readable as `LEGACY_PARENT_ONLY` and is not treated as verified new evidence; NAIVE serves raw text blocks without graph claims.
+- Bad: silently truncating the tail, merging same-name entities solely by spelling, publishing extracted claims, converting evidence lookup failures to empty successful text, or fabricating `sourceChunks`/`paths` that were never retrieved.
+
+### 6. Tests Required
+- Window tests assert boundary selection, overlap, tail coverage, Unicode text, and stable resume IDs.
+- Extraction tests assert enum/schema/endpoint/confidence validation and exact quote rejection.
+- Store tests assert schema migration, atomic replacement, window result resume, evidence persistence, normalized claim_evidence association, claim review, audit, publication blocking, two identical-chunk snapshots keeping independent windows/evidence, snapshot delete cascades, and FK rejection of dangling claim_evidence.
+- Controller tests assert business-project authorization for build, claims, review, search, audit, publish, and that `MIX` routes through the hybrid service with `plan` attached.
+- Retrieval tests assert verified-status filtering, hybrid pagination, truncation warnings, evidence degradation, NAIVE text-only behavior, MIX fused channels/paths/channelScores, text-evidence parent reordering, text-channel failure warnings, per-channel page isolation, and token-budget stop.
+- Job tests assert QUEUED-without-snapshot requeue on resume and that a plain runtime exception during cancel keeps `CANCELLED`.
+
+### 7. Wrong vs Correct
+**Wrong:** truncate a parent with `substring(0, maxInputChars)` and publish the highest-confidence relation.
+
+**Correct:** create overlapping offset-addressable windows, persist each result, retain uncertainty/conflict claims, require verified claims and resolved evidence at publication, and keep the previous published snapshot immutable.
+
+
+### Requirement graph operational additions
+
+- Asynchronous graph jobs use `POST /api/requirement-graphs/builds`, `GET /builds/{buildId}`, `POST /builds/{buildId}/resume`, and `POST /builds/{buildId}/cancel`; the original synchronous `/build` remains compatible.
+- Review callers may use explicit `/claims/{claimId}/verify`, `/reject`, `/merge`, and `/split` aliases. Every mutation must resolve the claim's snapshot before authorization and append an audit record.
+- `/snapshots/{snapshotId}/neighborhood/{entityId}` and `/snapshots/{snapshotId}/paths` return bounded graph data and explicit truncation/evidence warnings.
+- `REQUIREMENT_GRAPH_PRIVACY_POLICY_REQUIRED=true` requires a matching `project-policies.<businessProjectId>` entry before model calls. Project policy cannot widen the global external-transmission ban.
+- Metrics are tagged only with project and safe status values; requirement text, quotes, prompts, and model responses are never metric labels or log fields.

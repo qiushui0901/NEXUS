@@ -78,28 +78,30 @@ public class RequirementGraphExtractionService {
                     .call()
                     .entity(ExtractionResult.class);
             return validate(input, result);
+        } catch (RequirementGraphException exception) {
+            throw exception;
         } catch (RuntimeException exception) {
             log.warn("Requirement graph extraction failed source={} parent={}: {}",
                     input.filename(), input.parentId(), exception.getClass().getSimpleName());
-            throw new IllegalStateException("需求语义图抽取失败", exception);
+            throw new RequirementGraphException("GRAPH_MODEL_UNAVAILABLE", "需求语义图模型暂时不可用", exception);
         }
     }
 
     /** 可被离线测试复用的确定性输出校验。 */
     public ExtractionResult validate(ExtractionInput input, ExtractionResult result) {
-        if (result == null) throw new IllegalArgumentException("需求语义图抽取结果为空");
+        if (result == null) throw new RequirementGraphException("GRAPH_SCHEMA_INVALID", "需求语义图抽取结果为空");
         if (result.entities().size() > properties.maxEntitiesPerChunk()) {
-            throw new IllegalArgumentException("需求语义图实体数量超过上限");
+            throw new RequirementGraphException("GRAPH_SCHEMA_INVALID", "需求语义图实体数量超过上限");
         }
         if (result.relations().size() > properties.maxRelationsPerChunk()) {
-            throw new IllegalArgumentException("需求语义图关系数量超过上限");
+            throw new RequirementGraphException("GRAPH_SCHEMA_INVALID", "需求语义图关系数量超过上限");
         }
         Map<String, ExtractedEntity> entities = new LinkedHashMap<>();
         List<ExtractedEntity> normalizedEntities = new ArrayList<>();
         for (ExtractedEntity raw : result.entities()) {
             if (raw == null || raw.localId() == null || raw.localId().isBlank()
                     || raw.name() == null || raw.name().isBlank()) {
-                throw new IllegalArgumentException("需求语义图实体缺少 localId 或 name");
+                throw new RequirementGraphException("GRAPH_SCHEMA_INVALID", "需求语义图实体缺少 localId 或 name");
             }
             EntityType type = parseEntityType(raw.type());
             double confidence = confidence(raw.confidence());
@@ -108,7 +110,7 @@ public class RequirementGraphExtractionService {
                     raw.name().trim(), cleanStrings(raw.aliases()),
                     bounded(raw.description(), 1_000), quotes, confidence);
             if (entities.putIfAbsent(normalized.localId(), normalized) != null) {
-                throw new IllegalArgumentException("需求语义图实体 localId 重复: " + normalized.localId());
+                throw new RequirementGraphException("GRAPH_SCHEMA_INVALID", "需求语义图实体 localId 重复: " + normalized.localId());
             }
             normalizedEntities.add(normalized);
         }
@@ -117,15 +119,16 @@ public class RequirementGraphExtractionService {
             if (raw == null || raw.sourceLocalId() == null || raw.targetLocalId() == null
                     || raw.sourceLocalId().isBlank() || raw.targetLocalId().isBlank()
                     || raw.statement() == null || raw.statement().isBlank()) {
-                throw new IllegalArgumentException("需求语义图关系字段不完整");
+                throw new RequirementGraphException("GRAPH_SCHEMA_INVALID", "需求语义图关系字段不完整");
             }
             if (!entities.containsKey(raw.sourceLocalId()) || !entities.containsKey(raw.targetLocalId())) {
-                throw new IllegalArgumentException("需求语义图关系引用不存在的实体");
+                throw new RequirementGraphException("GRAPH_SCHEMA_INVALID", "需求语义图关系引用不存在的实体");
             }
             RelationType type = parseRelationType(raw.type());
             normalizedRelations.add(new ExtractedRelation(raw.sourceLocalId().trim(), type.name(),
                     raw.targetLocalId().trim(), bounded(raw.statement(), 1_000),
-                    evidenceQuotes(input.text(), raw.evidenceQuotes()), confidence(raw.confidence())));
+                    evidenceQuotes(input.text(), raw.evidenceQuotes()), confidence(raw.confidence()),
+                    bounded(raw.condition(), 500), bounded(raw.scenario(), 500)));
         }
         return new ExtractionResult(normalizedEntities, normalizedRelations,
                 cleanStrings(result.uncertainties()));
@@ -154,7 +157,7 @@ public class RequirementGraphExtractionService {
                 .distinct()
                 .limit(3)
                 .toList();
-        if (valid.isEmpty()) throw new IllegalArgumentException("需求语义图结果缺少可回查原文证据");
+        if (valid.isEmpty()) throw new RequirementGraphException("GRAPH_EVIDENCE_INVALID", "需求语义图结果缺少可回查原文证据");
         return valid;
     }
 
@@ -162,7 +165,7 @@ public class RequirementGraphExtractionService {
         try {
             return EntityType.valueOf(normalizeEnum(value));
         } catch (RuntimeException exception) {
-            throw new IllegalArgumentException("未知需求实体类型: " + value, exception);
+            throw new RequirementGraphException("GRAPH_SCHEMA_INVALID", "未知需求实体类型: " + value, exception);
         }
     }
 
@@ -170,7 +173,7 @@ public class RequirementGraphExtractionService {
         try {
             return RelationType.valueOf(normalizeEnum(value));
         } catch (RuntimeException exception) {
-            throw new IllegalArgumentException("未知需求关系类型: " + value, exception);
+            throw new RequirementGraphException("GRAPH_SCHEMA_INVALID", "未知需求关系类型: " + value, exception);
         }
     }
 
@@ -180,7 +183,7 @@ public class RequirementGraphExtractionService {
 
     private double confidence(double value) {
         if (Double.isNaN(value) || value < 0 || value > 1) {
-            throw new IllegalArgumentException("需求语义图 confidence 必须在 0 到 1 之间");
+            throw new RequirementGraphException("GRAPH_SCHEMA_INVALID", "需求语义图 confidence 必须在 0 到 1 之间");
         }
         return value;
     }

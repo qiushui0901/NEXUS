@@ -244,6 +244,32 @@ app:
       candidate-limit: ${REQUIREMENT_GRAPH_CANDIDATE_LIMIT:40}
       extraction-model: ${REQUIREMENT_GRAPH_EXTRACTION_MODEL:}
       extraction-prompt-version: ${REQUIREMENT_GRAPH_EXTRACTION_PROMPT_VERSION:v1}
+      ontology-version: ${REQUIREMENT_GRAPH_ONTOLOGY_VERSION:v1}
+      schema-version: ${REQUIREMENT_GRAPH_SCHEMA_VERSION:2}
+      window-overlap-chars: ${REQUIREMENT_GRAPH_WINDOW_OVERLAP_CHARS:400}
+      max-windows: ${REQUIREMENT_GRAPH_MAX_WINDOWS:500}
+      max-model-calls: ${REQUIREMENT_GRAPH_MAX_MODEL_CALLS:500}
+      max-retries: ${REQUIREMENT_GRAPH_MAX_RETRIES:2}
+      max-wall-clock-seconds: ${REQUIREMENT_GRAPH_MAX_WALL_CLOCK_SECONDS:900}
+      max-estimated-tokens: ${REQUIREMENT_GRAPH_MAX_ESTIMATED_TOKENS:0}
+      max-concurrent-workers: ${REQUIREMENT_GRAPH_MAX_CONCURRENT_WORKERS:2}
+      max-graph-rows: ${REQUIREMENT_GRAPH_MAX_GRAPH_ROWS:10000}
+      allow-partial-build: ${REQUIREMENT_GRAPH_ALLOW_PARTIAL_BUILD:false}
+      shadow-build: ${REQUIREMENT_GRAPH_SHADOW_BUILD:false}
+      shadow-query: ${REQUIREMENT_GRAPH_SHADOW_QUERY:false}
+      hybrid-retrieval-enabled: ${REQUIREMENT_GRAPH_HYBRID_RETRIEVAL_ENABLED:false}
+      require-published-for-search: ${REQUIREMENT_GRAPH_REQUIRE_PUBLISHED_FOR_SEARCH:true}
+      external-transmission-allowed: ${REQUIREMENT_GRAPH_EXTERNAL_TRANSMISSION_ALLOWED:false}
+      data-classification: ${REQUIREMENT_GRAPH_DATA_CLASSIFICATION:INTERNAL}
+      allowed-provider: ${REQUIREMENT_GRAPH_ALLOWED_PROVIDER:configured}
+      privacy-policy-required: ${REQUIREMENT_GRAPH_PRIVACY_POLICY_REQUIRED:false}
+      fusion:
+        text-weight: ${REQUIREMENT_GRAPH_FUSION_TEXT_WEIGHT:0.30}
+        entity-weight: ${REQUIREMENT_GRAPH_FUSION_ENTITY_WEIGHT:0.20}
+        relation-weight: ${REQUIREMENT_GRAPH_FUSION_RELATION_WEIGHT:0.15}
+        path-weight: ${REQUIREMENT_GRAPH_FUSION_PATH_WEIGHT:0.15}
+        evidence-weight: ${REQUIREMENT_GRAPH_FUSION_EVIDENCE_WEIGHT:0.15}
+        freshness-weight: ${REQUIREMENT_GRAPH_FUSION_FRESHNESS_WEIGHT:0.05}
     wiki:
       root-path: ${WIKI_ROOT_PATH:data/wiki}
       source-path: ${WIKI_SOURCE_PATH:data/wiki-sources}

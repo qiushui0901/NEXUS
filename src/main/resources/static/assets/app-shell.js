@@ -3,6 +3,7 @@
   const pages = [
     ["home", "总览", "/"],
     ["knowledge", "知识库", "/knowledge"],
+    ["requirement-graph", "需求图", "/requirement-graph.html"],
     ["wiki", "Wiki", "/wiki"],
     ["monitor", "代码", "/monitor"],
     ["gitlab", "GitLab", "/settings/gitlab"]

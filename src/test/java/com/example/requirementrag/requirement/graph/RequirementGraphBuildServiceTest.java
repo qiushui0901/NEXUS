@@ -19,8 +19,11 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class RequirementGraphBuildServiceTest {
@@ -66,5 +69,37 @@ class RequirementGraphBuildServiceTest {
         assertThat(first.entityCount()).isEqualTo(2);
         assertThat(first.relationCount()).isEqualTo(1);
         assertThat(store.findLatest("orders", "requirements", "2.0")).contains(second);
+    }
+
+    @Test
+    void tokenBudgetStopsFurtherModelCalls() {
+        RequirementGraphProperties tokenProperties = tokenProperties();
+        SQLiteRequirementGraphStore store = new SQLiteRequirementGraphStore(new ObjectMapper(), tokenProperties);
+        RequirementGraphExtractionService extractor = mock(RequirementGraphExtractionService.class);
+        RequirementSnapshotRepository snapshots = mock(RequirementSnapshotRepository.class);
+        com.example.requirementrag.retrieval.QdrantHybridStore qdrant =
+                mock(com.example.requirementrag.retrieval.QdrantHybridStore.class);
+        ProjectRegistry registry = mock(ProjectRegistry.class);
+        when(registry.resolveRequirementCollection("orders")).thenReturn("requirements_orders");
+        Snapshot source = new Snapshot(1, "orders", "requirements", "2.0", null, List.of(),
+                "2026-08-20T00:00:00Z", List.of(), List.of(
+                        new Entry("entry-1", "orders.md", 0,
+                                "玩家购买成长基金并影响库存。", "hash-1")));
+        when(snapshots.materialize("orders", "requirements", "2.0")).thenReturn(Optional.of(source));
+
+        RequirementGraphBuildService service = new RequirementGraphBuildService(
+                store, extractor, snapshots, qdrant, registry, tokenProperties);
+        assertThatThrownBy(() -> service.build(new BuildRequest("orders", "requirements", "2.0",
+                "requirements_orders")))
+                .isInstanceOf(RequirementGraphBuildFailureException.class);
+        verify(extractor, never()).extract(any());
+    }
+
+    private RequirementGraphProperties tokenProperties() {
+        return new RequirementGraphProperties(
+                true, true, true, tempDir.resolve("graph-token.db").toString(),
+                20, 30, 20_000, 2, 40, "model", "v1", "v1", 2, 400, 500, 500, 2, 900,
+                100, 2, 10_000, false, false, false, false, false, false,
+                "INTERNAL", "configured", false, java.util.Map.of());
     }
 }

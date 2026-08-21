@@ -17,6 +17,22 @@
 
 - 修复需求语义图启用模式下多个构造器未明确 Spring 注入入口的问题；构建和查询开关同时开启时 Spring 上下文可正常加载。
 - 修复多仓库代码统计读取基础 collection 而非实际 live alias、导致已发布代码点显示为 0 的问题，并区分不可用与真实零值。
+- 将需求语义图从单父块实验升级为受预算约束的结构化窗口构建：记录覆盖率、窗口状态、重试与可恢复结果，支持跨窗口不确定性/关系冲突、证据跨度、声明审核、审计发布、分页和可选混合检索；默认仍不影响 Qdrant 需求主检索。
+- 新增 `/requirement-graph.html` 证据优先审阅工作台、异步构建任务状态、声明审核/邻域/路径 API、项目级隐私策略开关、合成评测质量门和构建/检索指标；旧同步构建接口保持兼容。
+- 声明审阅新增显式通过/驳回/合并/拆分操作及不可变发布门禁；构建任务支持取消、恢复和窗口级结果复用。
+- Code Review 整改：异步任务改为 SQLite 持久化（重启后仍可查询/恢复/取消，启动时标记中断任务）；取消/失败时保留快照 ID 并支持按 buildId 找回已创建快照；发布门禁校验 VERIFIED 声明引用的 `source_evidence_ids` 必须真实存在（新增 `GRAPH_EVIDENCE_MISSING` 阻塞码）；Embedding 失败后回写快照 warning 数；本体校验由“默认放行”改为显式 source/target 矩阵并对未知关系报 `GRAPH_SCHEMA_INVALID`；终态任务按 7 天保留并自动清理。
+- 第二轮 Code Review 整改：删除 `SearchRequest`/`SearchResponse` 中与 record canonical constructor 重复/递归的显式构造器（解除 P0 编译阻断）；`MIX` 模式现在与 `HYBRID` 一起路由到 `RequirementGraphHybridSearchService`；`RequirementGraphQueryPlanner` 注册为 Spring Bean 并在 Controller 中生成 `QueryPlan`、回填到响应、缺失 mode 时自动推断；重启恢复会按 `build_id` 回填已创建快照 ID；异步构建按窗口实时回写 `completedWindows/totalWindows` 进度。
+- 第三轮 Code Review 整改：`MIX` 升级为真正的多通道混合检索（Qdrant 文本块 + 实体 + 关系 + 一跳/多跳路径 + 证据），按可配置权重 `app.rag.requirement-graph.fusion.*` 加权融合并在响应中保留各通道得分（`channelScores`）；`SearchResponse` 新增 `sourceChunks`/`paths` 由真实检索结果填充；新增 `NAIVE` 纯文本块检索模式并把五种模式统一到 `Controller → QueryPlanner → HybridSearchService` 入口；新增规范化 `requirement_graph_claim_evidence` 关联表，草稿重建时同步重建、删除证据级联清理、发布门禁优先基于该表校验证据完整性（旧快照回退读取 JSON `source_evidence_ids`）。
+- 第四轮 Code Review 整改（多版本数据隔离与检索语义）：
+  - Window/WindowResult 改为 `(snapshot_id, id)/(snapshot_id, window_id)` 复合主键并补充旧库自动迁移，同一需求多次构建不再因全局窗口 ID 冲突失败。
+  - Evidence 改为 `(snapshot_id, evidence_id)` 复合主键，Claim→Evidence 外键同步改为复合外键；旧发布快照与新草稿可独立保存相同证据。
+  - 每个 SQLite 业务连接显式开启 `PRAGMA foreign_keys=ON`，级联删除与引用完整性真正生效；新增原子 `saveDraftSnapshot`（快照→证据→实体/关系→Claim→Evidence→不确定性/冲突单事务写入，证据先行满足外键顺序），并新增快照级联删除。
+  - 修复 MIX 文本与图通道 ID 空间不一致：通过父块 `filename|parentId|parentOrder|contentHash` 把 Qdrant 命中文本块关联到同父块的 span Evidence，文本命中真正参与实体/关系融合排序，并补排序回归测试。
+  - 文本检索通道不再把故障伪装成空结果：区分 `GRAPH_TEXT_NO_HITS`/`GRAPH_TEXT_RETRIEVAL_UNAVAILABLE`/`GRAPH_TEXT_RETRIEVAL_TIMEOUT` 并显式返回 warning。
+  - `QueryPlan` 真正驱动 MIX 检索（状态集合、hops、各通道上限、实体/关系关键词、章节关键词），并移除无调用方的 `planMIX()`。
+  - MIX 改为各通道独立分页：文本块、路径、证据不再每页重复返回第一页内容。
+  - `maxEstimatedTokens` 生效：达到 Token 预算后停止后续模型调用。
+  - 无快照的 QUEUED 任务重启后可按原请求重新排队恢复；取消期间模型调用抛普通异常时不再把已持久化的 CANCELLED 覆盖为 FAILED。
 
 ## 0.9.1 — 2026-08-18
 

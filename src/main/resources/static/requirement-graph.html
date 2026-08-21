@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>NEXUS · 需求语义图</title>
+  <link rel="stylesheet" href="/assets/design-tokens.css?v=20260820">
+  <link rel="stylesheet" href="/assets/app-shell.css?v=20260820">
+  <link rel="stylesheet" href="/assets/components.css?v=20260820">
+  <link rel="stylesheet" href="/assets/responsive.css?v=20260820">
+  <link rel="stylesheet" href="/assets/requirement-graph.css?v=20260820">
+</head>
+<body>
+<div data-nexus-shell data-page="requirement-graph"></div>
+<main class="graph-page" id="graph-app">
+  <section class="graph-hero">
+    <div>
+      <p class="eyebrow">REQUIREMENT GRAPH · REVIEW WORKBENCH</p>
+      <h1>把需求关系变成可核验的路径</h1>
+      <p class="hero-copy">每个实体、关系和结论都回到具体版本的原文证据。构建、审核和检索在同一个可追溯工作区完成。</p>
+    </div>
+    <div class="graph-hero-mark" aria-hidden="true"><span></span><i></i><b></b><em></em></div>
+  </section>
+
+  <section class="graph-control-grid" aria-label="需求图控制台">
+    <form class="graph-panel graph-build-panel" id="build-form">
+      <div class="panel-heading"><div><span class="panel-kicker">01 / BUILD</span><h2>构建版本快照</h2></div><span class="status-pill" id="build-state">未启动</span></div>
+      <div class="field-grid">
+        <label>业务项目 ID<input id="project-id" name="projectId" required placeholder="immortal"></label>
+        <label>需求文档 ID<input id="document-id" name="documentId" required placeholder="requirements"></label>
+        <label>需求版本<input id="requirement-version" name="requirementVersion" required placeholder="5.1"></label>
+        <label>Collection（可选）<input id="collection" name="collection" placeholder="沿用业务项目配置"></label>
+      </div>
+      <div class="action-row"><button class="primary-button" type="submit" id="build-button">开始异步构建</button><button class="quiet-button" type="button" id="resume-button" disabled>恢复失败任务</button><button class="quiet-button danger-button" type="button" id="cancel-button" disabled>取消</button></div>
+      <p class="helper-text">构建按结构化窗口执行，失败窗口和成功结果会持久化；默认不会改变主需求检索。</p>
+      <div class="job-console" id="job-console" aria-live="polite">等待构建任务。</div>
+    </form>
+
+    <section class="graph-panel graph-search-panel">
+      <div class="panel-heading"><div><span class="panel-kicker">02 / QUERY</span><h2>检索关系与邻域</h2></div><span class="status-pill neutral" id="query-state">证据优先</span></div>
+      <form id="search-form">
+        <label>自然语言问题<input id="query" required placeholder="订单取消会影响哪些模块？"></label>
+        <div class="field-grid compact-grid">
+          <label>快照<select id="snapshot-id"><option value="">先加载快照</option></select></label>
+          <label>模式<select id="search-mode"><option value="LOCAL">Local 邻域</option><option value="GLOBAL">Global 关系</option><option value="HYBRID">Hybrid 图检索</option></select></label>
+          <label>最大跳数<input id="max-hops" type="number" min="0" max="4" value="2"></label>
+          <label>每页数量<input id="result-limit" type="number" min="1" max="50" value="20"></label>
+        </div>
+        <label class="check-line"><input id="include-unresolved" type="checkbox"> 包含未审核/不确定声明（仅审阅预览）</label>
+        <div class="action-row"><button class="primary-button" type="submit">运行图检索</button><button class="quiet-button" type="button" id="load-snapshots">刷新快照</button></div>
+      </form>
+    </section>
+  </section>
+
+  <section class="graph-workspace">
+    <div class="graph-panel graph-result-panel">
+      <div class="panel-heading"><div><span class="panel-kicker">03 / EVIDENCE MAP</span><h2>实体、关系与证据</h2></div><span id="result-summary" class="muted-label">暂无结果</span></div>
+      <div id="result-warning" class="warning-banner hidden"></div>
+      <div id="graph-result" class="graph-result empty-result"><strong>还没有图检索结果</strong><span>构建并发布一个快照后，从自然语言问题开始。</span></div>
+    </div>
+    <aside class="graph-panel graph-review-panel">
+      <div class="panel-heading"><div><span class="panel-kicker">04 / REVIEW</span><h2>声明审核</h2></div><button class="icon-button" type="button" id="refresh-claims" aria-label="刷新声明">↻</button></div>
+      <p class="helper-text">只有 VERIFIED 声明和 RESOLVED 证据允许发布。编辑会创建待审核状态。</p>
+      <div id="claims-result" class="claims-result"><div class="empty-result"><strong>选择快照</strong><span>载入实体和关系审核列表。</span></div></div>
+    </aside>
+  </section>
+</main>
+<script src="/assets/error-normalizer.js?v=20260820"></script>
+<script src="/assets/api-client.js?v=20260820"></script>
+<script src="/assets/app-shell.js?v=20260820"></script>
+<script src="/assets/requirement-graph.js?v=20260820"></script>
+</body>
+</html>
