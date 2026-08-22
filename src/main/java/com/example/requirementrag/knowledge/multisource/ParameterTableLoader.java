@@ -1,5 +1,6 @@
 package com.example.requirementrag.knowledge.multisource;
 
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeStatus;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.ParameterClaim;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.ParameterValueType;
 import org.springframework.stereotype.Component;
@@ -14,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -78,13 +80,13 @@ public class ParameterTableLoader {
         boolean inclusive = inclusive(layout, row);
         String normalized = normalizeValue(rawValue, valueType);
         int precision = precisionOf(rawValue, valueType);
-        String columnRange = columnRange(layout);
+        String columnRange = dataColumnRange(layout, rowNumber + 1);
         String evidenceLocation = sheetName + "!" + (rowNumber + 1);
         String claimId = "param:" + sha256(projectId + "|" + effectiveVersion + "|" + workbook + "|" + sheetName + "|" + (rowNumber + 1)).substring(0, 32);
         return new ParameterClaim(claimId, projectId, effectiveVersion, workbook, sheetName,
                 rowNumber + 1, columnRange, module, parameter, rawValue == null ? "" : rawValue.trim(),
                 normalized, unit == null ? "" : unit.trim(), minValue, maxValue, precision,
-                inclusive, valueType, factKey, evidenceLocation);
+                inclusive, valueType, factKey, evidenceLocation, KnowledgeStatus.SUPPORTED);
     }
 
     /** 解析整个参数表：返回每行参数 Claim。 */
@@ -107,9 +109,17 @@ public class ParameterTableLoader {
         return value == null ? null : value.trim();
     }
 
-    private String columnRange(TableLayout layout) {
-        if (layout.headers().isEmpty()) return "";
-        return "A" + 1 + ":" + columnLetter(layout.headers().size() - 1) + 1;
+    /** 数据行范围的列区间：value/min/max/unit 所在列的最小-最大范围，指向真实数据行。 */
+    private String dataColumnRange(TableLayout layout, int dataRow) {
+        List<Integer> columns = new ArrayList<>();
+        for (String role : List.of("value", "min", "max", "unit")) {
+            Integer column = layout.columnByRole().get(role);
+            if (column != null) columns.add(column);
+        }
+        if (columns.isEmpty()) return "";
+        int start = columns.stream().mapToInt(Integer::intValue).min().getAsInt();
+        int end = columns.stream().mapToInt(Integer::intValue).max().getAsInt();
+        return columnLetter(start) + dataRow + ":" + columnLetter(end) + dataRow;
     }
 
     private String columnLetter(int column) {

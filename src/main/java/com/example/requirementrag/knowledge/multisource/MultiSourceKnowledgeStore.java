@@ -181,7 +181,7 @@ public class MultiSourceKnowledgeStore {
                 statement.setString(17, claim.valueType().name());
                 statement.setString(18, claim.factKey());
                 statement.setString(19, claim.evidenceLocation());
-                statement.setString(20, KnowledgeStatus.SUPPORTED.name());
+                statement.setString(20, claim.status() == null ? KnowledgeStatus.SUPPORTED.name() : claim.status().name());
                 statement.setString(21, createdAt);
                 statement.addBatch();
             }
@@ -207,7 +207,8 @@ public class MultiSourceKnowledgeStore {
                             decimal(rows.getString("min_value")), decimal(rows.getString("max_value")),
                             rows.getInt("precision"), rows.getInt("inclusive_boundary") == 1,
                             ParameterValueType.valueOf(rows.getString("value_type")),
-                            rows.getString("fact_key"), rows.getString("evidence_location")));
+                            rows.getString("fact_key"), rows.getString("evidence_location"),
+                            KnowledgeStatus.valueOf(rows.getString("status"))));
                 }
             }
             return List.copyOf(result);
@@ -327,7 +328,8 @@ public class MultiSourceKnowledgeStore {
                             rows.getString("test_case_id"), rows.getString("title"), rows.getString("module"),
                             rows.getString("preconditions"), rows.getString("steps"), rows.getString("expected_result"),
                             rows.getString("covered_requirement_id"), rows.getString("framework"),
-                            rows.getString("file_path"), rows.getString("test_method"), rows.getString("evidence_location")));
+                            rows.getString("file_path"), rows.getString("test_method"), rows.getString("evidence_location"),
+                            KnowledgeStatus.SUPPORTED));
                 }
             }
             return List.copyOf(result);
@@ -383,7 +385,8 @@ public class MultiSourceKnowledgeStore {
                             rows.getString("test_run_id"), rows.getString("test_case_id"),
                             rows.getString("execution_status"), rows.getString("executed_at"),
                             rows.getString("environment"), rows.getString("actual_result"),
-                            rows.getString("failure_message"), rows.getString("evidence_location")));
+                            rows.getString("failure_message"), rows.getString("evidence_location"),
+                            KnowledgeStatus.SUPPORTED));
                 }
             }
             return List.copyOf(result);
@@ -394,18 +397,193 @@ public class MultiSourceKnowledgeStore {
 
     /** 幂等重导：删除指定项目/版本的旧数据再写入。 */
     public synchronized void replaceProjectVersion(String projectId, String version) {
+        replaceSnapshot(projectId, version, List.of(), List.of(), List.of(), List.of());
+    }
+
+    /** 事务性重导：一次调用完成清理 + 参数/存疑/测试用例/测试结果写入，任一步失败整体回滚。 */
+    public synchronized void replaceSnapshot(String projectId, String version, List<ParameterClaim> parameters,
+                                             List<DoubtClaim> doubts, List<TestCaseClaim> testCases,
+                                             List<TestResultClaim> testResults) {
         try (Connection connection = open()) {
-            for (String table : List.of("multi_source_parameter", "multi_source_doubt",
-                    "multi_source_test_case", "multi_source_test_result")) {
-                try (PreparedStatement statement = connection.prepareStatement(
-                        "delete from " + table + " where project_id=? and version=?")) {
-                    statement.setString(1, projectId);
-                    statement.setString(2, version);
-                    statement.executeUpdate();
-                }
+            connection.setAutoCommit(false);
+            try {
+                deleteProjectVersion(connection, projectId, version);
+                insertParameters(connection, projectId, version, parameters);
+                insertDoubts(connection, projectId, version, doubts);
+                insertTestCases(connection, projectId, version, testCases);
+                insertTestResults(connection, projectId, version, testResults);
+                connection.commit();
+            } catch (SQLException | RuntimeException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(true);
             }
         } catch (SQLException exception) {
-            throw new IllegalStateException("无法清理多源知识", exception);
+            throw new IllegalStateException("事务性重导多源知识失败", exception);
+        }
+    }
+
+    private void deleteProjectVersion(Connection connection, String projectId, String version) throws SQLException {
+        for (String table : List.of("multi_source_parameter", "multi_source_doubt",
+                "multi_source_test_case", "multi_source_test_result")) {
+            try (PreparedStatement statement = connection.prepareStatement(
+                    "delete from " + table + " where project_id=? and version=?")) {
+                statement.setString(1, projectId);
+                statement.setString(2, version);
+                statement.executeUpdate();
+            }
+        }
+    }
+
+    private void insertParameters(Connection connection, String projectId, String version,
+                                  List<ParameterClaim> claims) throws SQLException {
+        if (claims == null || claims.isEmpty()) return;
+        try (PreparedStatement statement = connection.prepareStatement("""
+                insert into multi_source_parameter(
+                  claim_id,project_id,version,workbook,sheet_name,row_number,column_range,module,parameter,
+                  raw_value,normalized_value,unit,min_value,max_value,precision,inclusive_boundary,value_type,
+                  fact_key,evidence_location,status,created_at)
+                values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                on conflict(claim_id) do update set
+                  module=excluded.module,parameter=excluded.parameter,raw_value=excluded.raw_value,
+                  normalized_value=excluded.normalized_value,unit=excluded.unit,min_value=excluded.min_value,
+                  max_value=excluded.max_value,precision=excluded.precision,inclusive_boundary=excluded.inclusive_boundary,
+                  value_type=excluded.value_type,fact_key=excluded.fact_key,evidence_location=excluded.evidence_location,
+                  status=excluded.status
+                """)) {
+            String createdAt = Instant.now().toString();
+            for (ParameterClaim claim : claims) {
+                statement.setString(1, claim.claimId());
+                statement.setString(2, projectId);
+                statement.setString(3, version);
+                statement.setString(4, claim.workbook());
+                statement.setString(5, claim.sheetName());
+                statement.setInt(6, claim.rowNumber());
+                statement.setString(7, claim.columnRange());
+                statement.setString(8, claim.module());
+                statement.setString(9, claim.parameter());
+                statement.setString(10, claim.rawValue());
+                statement.setString(11, claim.normalizedValue());
+                statement.setString(12, claim.unit());
+                statement.setString(13, decimal(claim.minValue()));
+                statement.setString(14, decimal(claim.maxValue()));
+                statement.setInt(15, claim.precision());
+                statement.setInt(16, claim.inclusiveBoundary() ? 1 : 0);
+                statement.setString(17, claim.valueType().name());
+                statement.setString(18, claim.factKey());
+                statement.setString(19, claim.evidenceLocation());
+                statement.setString(20, claim.status() == null ? KnowledgeStatus.SUPPORTED.name() : claim.status().name());
+                statement.setString(21, createdAt);
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
+    private void insertDoubts(Connection connection, String projectId, String version,
+                              List<DoubtClaim> claims) throws SQLException {
+        if (claims == null || claims.isEmpty()) return;
+        try (PreparedStatement statement = connection.prepareStatement("""
+                insert into multi_source_doubt(
+                  doubt_id,project_id,version,module,question,answer,source_sheet,row_number,status,
+                  owner,severity,due_date,proposed_options,evidence_location,created_at)
+                values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                on conflict(doubt_id) do update set
+                  module=excluded.module,question=excluded.question,answer=excluded.answer,
+                  source_sheet=excluded.source_sheet,row_number=excluded.row_number,status=excluded.status,
+                  owner=excluded.owner,severity=excluded.severity,due_date=excluded.due_date,
+                  proposed_options=excluded.proposed_options,evidence_location=excluded.evidence_location
+                """)) {
+            String createdAt = Instant.now().toString();
+            for (DoubtClaim claim : claims) {
+                statement.setString(1, claim.doubtId());
+                statement.setString(2, projectId);
+                statement.setString(3, version);
+                statement.setString(4, claim.module());
+                statement.setString(5, claim.question());
+                statement.setString(6, claim.answer());
+                statement.setString(7, claim.sourceSheet());
+                statement.setInt(8, claim.rowNumber());
+                statement.setString(9, claim.status().name());
+                statement.setString(10, claim.owner());
+                statement.setString(11, claim.severity());
+                statement.setString(12, claim.dueDate());
+                statement.setString(13, json(claim.proposedOptions()));
+                statement.setString(14, claim.evidenceLocation());
+                statement.setString(15, createdAt);
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
+    private void insertTestCases(Connection connection, String projectId, String version,
+                                 List<TestCaseClaim> claims) throws SQLException {
+        if (claims == null || claims.isEmpty()) return;
+        try (PreparedStatement statement = connection.prepareStatement("""
+                insert into multi_source_test_case(
+                  claim_id,project_id,version,test_case_id,title,module,preconditions,steps,expected_result,
+                  covered_requirement_id,framework,file_path,test_method,evidence_location,created_at)
+                values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                on conflict(claim_id) do update set
+                  title=excluded.title,module=excluded.module,steps=excluded.steps,
+                  expected_result=excluded.expected_result,covered_requirement_id=excluded.covered_requirement_id,
+                  framework=excluded.framework,test_method=excluded.test_method,evidence_location=excluded.evidence_location
+                """)) {
+            String createdAt = Instant.now().toString();
+            for (TestCaseClaim claim : claims) {
+                statement.setString(1, claim.claimId());
+                statement.setString(2, projectId);
+                statement.setString(3, version);
+                statement.setString(4, claim.testCaseId());
+                statement.setString(5, claim.title());
+                statement.setString(6, claim.module());
+                statement.setString(7, claim.preconditions());
+                statement.setString(8, claim.steps());
+                statement.setString(9, claim.expectedResult());
+                statement.setString(10, claim.coveredRequirementId());
+                statement.setString(11, claim.framework());
+                statement.setString(12, claim.filePath());
+                statement.setString(13, claim.testMethod());
+                statement.setString(14, claim.evidenceLocation());
+                statement.setString(15, createdAt);
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
+    private void insertTestResults(Connection connection, String projectId, String version,
+                                   List<TestResultClaim> claims) throws SQLException {
+        if (claims == null || claims.isEmpty()) return;
+        try (PreparedStatement statement = connection.prepareStatement("""
+                insert into multi_source_test_result(
+                  claim_id,project_id,version,test_run_id,test_case_id,execution_status,executed_at,
+                  environment,actual_result,failure_message,evidence_location,created_at)
+                values(?,?,?,?,?,?,?,?,?,?,?,?)
+                on conflict(claim_id) do update set
+                  execution_status=excluded.execution_status,executed_at=excluded.executed_at,
+                  environment=excluded.environment,actual_result=excluded.actual_result,
+                  failure_message=excluded.failure_message,evidence_location=excluded.evidence_location
+                """)) {
+            String createdAt = Instant.now().toString();
+            for (TestResultClaim claim : claims) {
+                statement.setString(1, claim.claimId());
+                statement.setString(2, projectId);
+                statement.setString(3, version);
+                statement.setString(4, claim.testRunId());
+                statement.setString(5, claim.testCaseId());
+                statement.setString(6, claim.executionStatus());
+                statement.setString(7, claim.executedAt());
+                statement.setString(8, claim.environment());
+                statement.setString(9, claim.actualResult());
+                statement.setString(10, claim.failureMessage());
+                statement.setString(11, claim.evidenceLocation());
+                statement.setString(12, createdAt);
+                statement.addBatch();
+            }
+            statement.executeBatch();
         }
     }
 

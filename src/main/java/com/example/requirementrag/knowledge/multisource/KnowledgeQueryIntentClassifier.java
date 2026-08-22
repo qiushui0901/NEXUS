@@ -19,7 +19,8 @@ public class KnowledgeQueryIntentClassifier {
         if (containsAny(text, "存疑", "未确认", "待确认", "风险", "待讨论", "疑问", "doubt", "risk", "open question")) {
             return KnowledgeQueryIntent.DOUBT;
         }
-        if (containsAny(text, "是否一致", "实现是否", "需求.*测试", "测试.*需求", "对比", "差异", "一致", "consisten", "match")) {
+        if (containsAny(text, "是否一致", "需求和测试", "测试和需求", "需求与测试", "测试与需求",
+                "需求测试是否", "测试需求是否", "保持一致", "对比", "差异", "consisten", "match")) {
             return KnowledgeQueryIntent.CONSISTENCY;
         }
         if (containsAny(text, "测试", "覆盖", "验证", "是否通过", "通过率", "test", "coverage", "validation")) {

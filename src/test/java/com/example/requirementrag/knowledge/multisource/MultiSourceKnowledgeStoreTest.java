@@ -58,6 +58,24 @@ class MultiSourceKnowledgeStoreTest {
     }
 
     @Test
+    void replaceSnapshotIsTransactionalAcrossAllSources() {
+        MultiSourceKnowledgeStore store = new MultiSourceKnowledgeStore(
+                tempDir.resolve("multi-source-snapshot.db").toString(), new ObjectMapper());
+        var layout = loader.parseHeaders(List.of("参数", "值"));
+        List<ParameterClaim> parameters = loader.parse(layout,
+                List.of(Map.of("0", "a", "1", "1")), "fengshen", "5.1", "t.xlsx", "表");
+        store.replaceSnapshot("fengshen", "5.1", parameters, List.of(), List.of(), List.of());
+
+        assertThat(store.findParameters("fengshen", "5.1")).hasSize(1);
+        assertThat(store.findDoubts("fengshen", "5.1")).isEmpty();
+
+        store.replaceSnapshot("fengshen", "5.1", List.of(), List.of(doubtParser.parse(
+                Map.of("问题", "新存疑", "状态", "OPEN"), "fengshen", "5.1", "存疑", 1)), List.of(), List.of());
+        assertThat(store.findParameters("fengshen", "5.1")).isEmpty();
+        assertThat(store.findDoubts("fengshen", "5.1")).hasSize(1);
+    }
+
+    @Test
     void replaceProjectVersionClearsOldClaims() {
         MultiSourceKnowledgeStore store = new MultiSourceKnowledgeStore(
                 tempDir.resolve("multi-source-replace.db").toString(), new ObjectMapper());

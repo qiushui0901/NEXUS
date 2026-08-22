@@ -1,19 +1,24 @@
 package com.example.requirementrag.knowledge.multisource;
 
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeStatus;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.TestCaseClaim;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.TestResultClaim;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
+import javax.xml.parsers.DocumentBuilderFactory;
+import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 测试用例与测试结果加载器：首期支持 JSON/JSONL 与 JUnit XML 结果。
@@ -21,10 +26,6 @@ import java.util.regex.Pattern;
  */
 @Component
 public class TestKnowledgeLoaders {
-    private static final Pattern JUNIT_TESTCASE = Pattern.compile(
-            "<testcase\\s+name=\"([^\"]*)\"\\s+classname=\"([^\"]*)\"[^>]*>(.*?)</testcase>", Pattern.DOTALL);
-    private static final Pattern JUNIT_FAILURE = Pattern.compile("<failure[^>]*message=\"([^\"]*)\"");
-
     private final ObjectMapper objectMapper;
 
     public TestKnowledgeLoaders(ObjectMapper objectMapper) {
@@ -49,7 +50,7 @@ public class TestKnowledgeLoaders {
             String claimId = "tc:" + sha256(projectId + "|" + version + "|" + testCaseId).substring(0, 32);
             return new TestCaseClaim(claimId, projectId, version, testCaseId, title, module,
                     preconditions, steps, expectedResult, coveredRequirementId, framework,
-                    filePath, testMethod, evidenceLocation);
+                    filePath, testMethod, evidenceLocation, KnowledgeStatus.SUPPORTED);
         } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
             throw new IllegalArgumentException("测试用例 JSON 解析失败", exception);
         }
@@ -71,32 +72,58 @@ public class TestKnowledgeLoaders {
             String claimId = "tr:" + sha256(projectId + "|" + version + "|" + testCaseId + "|"
                     + (testRunId == null ? "" : testRunId)).substring(0, 32);
             return new TestResultClaim(claimId, projectId, version, testRunId, testCaseId,
-                    executionStatus, executedAt, environment, actualResult, failureMessage, evidenceLocation);
+                    executionStatus, executedAt, environment, actualResult, failureMessage,
+                    evidenceLocation, KnowledgeStatus.SUPPORTED);
         } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
             throw new IllegalArgumentException("测试结果 JSON 解析失败", exception);
         }
     }
 
-    /** 解析 JUnit XML 为测试结果 Claim。 */
+    /** 解析 JUnit XML 为测试结果 Claim，区分 PASSED/FAILED/SKIPPED/ERROR。 */
     public List<TestResultClaim> parseJunitXml(String xml, String projectId, String version, String testRunId,
                                                String environment, String executedAt) {
         List<TestResultClaim> result = new ArrayList<>();
-        Matcher matcher = JUNIT_TESTCASE.matcher(xml == null ? "" : xml);
-        while (matcher.find()) {
-            String name = matcher.group(1);
-            String className = matcher.group(2);
-            String body = matcher.group(3);
-            String testCaseId = className + "." + name;
-            String failure = null;
-            Matcher failureMatcher = JUNIT_FAILURE.matcher(body);
-            if (failureMatcher.find()) failure = failureMatcher.group(1);
-            String status = failure == null ? "PASSED" : "FAILED";
-            String claimId = "tr:" + sha256(projectId + "|" + version + "|" + testCaseId + "|" + testRunId).substring(0, 32);
-            result.add(new TestResultClaim(claimId, projectId, version, testRunId, testCaseId,
-                    status, executedAt, environment, failure == null ? "PASSED" : failure,
-                    failure, testRunId + "#" + testCaseId));
+        if (xml == null || xml.isBlank()) return result;
+        try {
+            Document document = DocumentBuilderFactory.newInstance().newDocumentBuilder()
+                    .parse(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)));
+            NodeList testcases = document.getElementsByTagName("testcase");
+            for (int index = 0; index < testcases.getLength(); index++) {
+                Element testcase = (Element) testcases.item(index);
+                String name = testcase.getAttribute("name");
+                String className = testcase.getAttribute("classname");
+                String testCaseId = (className == null || className.isBlank() ? "" : className + ".") + safe(name);
+                String status = "PASSED";
+                String failure = null;
+                NodeList children = testcase.getChildNodes();
+                for (int childIndex = 0; childIndex < children.getLength(); childIndex++) {
+                    Node child = children.item(childIndex);
+                    if (!(child instanceof Element element)) continue;
+                    String tag = element.getTagName();
+                    if ("failure".equalsIgnoreCase(tag)) {
+                        status = "FAILED";
+                        failure = element.getAttribute("message");
+                    } else if ("error".equalsIgnoreCase(tag)) {
+                        status = "ERROR";
+                        failure = element.getAttribute("message");
+                    } else if ("skipped".equalsIgnoreCase(tag)) {
+                        status = "SKIPPED";
+                    }
+                }
+                String claimId = "tr:" + sha256(projectId + "|" + version + "|" + testCaseId + "|"
+                        + (testRunId == null ? "" : testRunId)).substring(0, 32);
+                result.add(new TestResultClaim(claimId, projectId, version, testRunId, testCaseId,
+                        status, executedAt, environment, status.equals("PASSED") ? "PASSED" : safe(failure),
+                        failure, testRunId + "#" + testCaseId, KnowledgeStatus.SUPPORTED));
+            }
+        } catch (Exception exception) {
+            throw new IllegalArgumentException("JUnit XML 解析失败: " + exception.getMessage(), exception);
         }
         return result;
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private String text(JsonNode node, String... keys) {

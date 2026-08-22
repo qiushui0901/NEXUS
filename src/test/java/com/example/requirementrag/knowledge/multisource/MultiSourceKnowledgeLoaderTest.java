@@ -4,6 +4,8 @@ import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeMode
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.DoubtStatus;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.ParameterClaim;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.ParameterValueType;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.TestResultClaim;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -62,6 +64,24 @@ class MultiSourceKnowledgeLoaderTest {
         assertThat(doubt.status()).isEqualTo(DoubtStatus.OPEN);
         assertThat(doubt.owner()).isEqualTo("张三");
         assertThat(doubt.evidenceLocation()).isEqualTo("5.1存疑!2");
+    }
+
+    @Test
+    void parsesJunitSkippedAndErrorDistinctly() {
+        TestKnowledgeLoaders loaders = new TestKnowledgeLoaders(new ObjectMapper());
+        String xml = """
+                <testsuite>
+                  <testcase name="ok" classname="A"/>
+                  <testcase name="skip" classname="B"><skipped/></testcase>
+                  <testcase name="err" classname="C"><error message="boom"/></testcase>
+                </testsuite>
+                """;
+        List<TestResultClaim> results = loaders.parseJunitXml(xml, "p", "1.0", "run-1", "ci", "2026-08-22");
+
+        assertThat(results).extracting(TestResultClaim::executionStatus)
+                .containsExactly("PASSED", "SKIPPED", "ERROR");
+        assertThat(results).extracting(TestResultClaim::testCaseId)
+                .containsExactly("A.ok", "B.skip", "C.err");
     }
 
     @Test

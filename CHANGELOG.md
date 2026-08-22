@@ -64,6 +64,13 @@
   - Phase 4：新增 `SourceFilterStrategy`（按意图过滤来源）与 `MultiSourceSearchService`（意图分类 → 读取结构化知识 → 来源过滤 + 存疑门禁 → 关键词召回 → 冲突分析 → 结论状态与解释）。
   - Phase 5：新增 `src/test/resources/evaluation/multi-source-golden.jsonl` Golden Dataset 与 `MultiSourceGoldenEvalTest` 离线评估（参数/验证/存疑/无结果四类断言）。
   - `MultiSourceKnowledgeStore` 注册为 Spring Bean；全量多源链路（解析→存储→检索→评估）可离线运行。
+- 第十二轮开发（多源知识 Code Review 整改）：
+  - P1：REQUIREMENT 来源经 `RequirementGraphCandidateAdapter` 接入（已发布/已审核语义图实体/关系投影为统一 Claim）。
+  - P1：新增 `CrossSourceRelationExtractor` 与跨源关系模型（TEST_CASE->VERIFIES、PARAMETER_TABLE->SUPPORTS、DOUBT->RAISES_DOUBT）。
+  - P1：冲突分析按 `subject|predicate` 兜底分组对齐 factKey；旧 `KnowledgeConflictService` 识别 `TEST_CASE/TEST_RESULT`。
+  - P1：多源检索改为字段加权评分 + 冲突惩罚 + 稳定排序 + Top-K 分页；中文无空格查询按 2-gram 分词。
+  - P1：JUnit XML 改为 DOM 解析，区分 `PASSED/FAILED/SKIPPED/ERROR`。
+  - P2：Claim 状态纳入领域模型并应用到 `MultiSourceKnowledgeGate`；`CONSISTENCY` 意图返回 OPEN 存疑；意图分类器修复中文一致性短语；多源重导改为事务性 `replaceSnapshot`；参数 Evidence 列范围指向真实数据行。
 
 ## 0.9.1 — 2026-08-18
 

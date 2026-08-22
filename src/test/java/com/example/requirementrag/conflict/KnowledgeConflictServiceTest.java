@@ -131,6 +131,15 @@ class KnowledgeConflictServiceTest {
         assertThat(Authority.SECONDARY).isEqualTo(Authority.SECONDARY);
     }
 
+    @Test
+    void classifiesNewTestCaseAndTestResultAsTestConflicts() {
+        var report = service.analyze("sample", "2.1", List.of(
+                claim("req-1", SourceType.REQUIREMENT, "enabled", "yes", List.of()),
+                claim("tc-1", SourceType.TEST_CASE, "enabled", "no", List.of())));
+        assertThat(report.conflicts()).anyMatch(conflict ->
+                conflict.type() == ConflictType.REQUIREMENT_TEST);
+    }
+
     private KnowledgeClaim claim(String evidenceId, SourceType sourceType, String factKey,
                                  String value, List<String> supportingEvidenceIds) {
         Authority authority = sourceType == SourceType.WIKI ? Authority.DERIVED : Authority.PRIMARY;

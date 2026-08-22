@@ -84,11 +84,13 @@ public final class MultiSourceKnowledgeModels {
             boolean inclusiveBoundary,
             ParameterValueType valueType,
             String factKey,
-            String evidenceLocation
+            String evidenceLocation,
+            KnowledgeStatus status
     ) {
         public ParameterClaim {
             if (claimId == null || claimId.isBlank()) throw new IllegalArgumentException("claimId 不能为空");
             if (parameter == null || parameter.isBlank()) throw new IllegalArgumentException("parameter 不能为空");
+            status = status == null ? KnowledgeStatus.SUPPORTED : status;
         }
     }
 
@@ -132,11 +134,13 @@ public final class MultiSourceKnowledgeModels {
             String framework,
             String filePath,
             String testMethod,
-            String evidenceLocation
+            String evidenceLocation,
+            KnowledgeStatus status
     ) {
         public TestCaseClaim {
             if (claimId == null || claimId.isBlank()) throw new IllegalArgumentException("claimId 不能为空");
             if (testCaseId == null || testCaseId.isBlank()) throw new IllegalArgumentException("testCaseId 不能为空");
+            status = status == null ? KnowledgeStatus.SUPPORTED : status;
         }
     }
 
@@ -152,11 +156,13 @@ public final class MultiSourceKnowledgeModels {
             String environment,
             String actualResult,
             String failureMessage,
-            String evidenceLocation
+            String evidenceLocation,
+            KnowledgeStatus status
     ) {
         public TestResultClaim {
             if (claimId == null || claimId.isBlank()) throw new IllegalArgumentException("claimId 不能为空");
             if (testCaseId == null || testCaseId.isBlank()) throw new IllegalArgumentException("testCaseId 不能为空");
+            status = status == null ? KnowledgeStatus.SUPPORTED : status;
         }
     }
 
@@ -201,6 +207,31 @@ public final class MultiSourceKnowledgeModels {
         VERSION_INTERNAL,
         SOURCE_STALE,
         MISSING_VALIDATION
+    }
+
+    /** 跨来源关系类型：测试验证需求、参数支撑需求、存疑指向需求、需求由代码实现等。 */
+    public enum CrossSourceRelationType {
+        VERIFIES,
+        SUPPORTS,
+        RAISES_DOUBT,
+        IMPLEMENTED_BY,
+        COVERS
+    }
+
+    /** 跨来源关系：绑定 source/target Claim、来源类型、Evidence 与版本。 */
+    public record CrossSourceRelation(
+            String relationId,
+            String projectId,
+            String version,
+            String sourceClaimId,
+            String targetClaimId,
+            CrossSourceRelationType type,
+            String evidenceLocation,
+            String metadata
+    ) {
+        public CrossSourceRelation {
+            if (relationId == null || relationId.isBlank()) throw new IllegalArgumentException("relationId 不能为空");
+        }
     }
 
     /** 多源检索响应：统一 Claim、Evidence、冲突、存疑与解释。 */

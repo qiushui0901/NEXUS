@@ -24,8 +24,10 @@ public class MultiSourceConflictAnalyzer {
     public List<String> analyze(List<UnifiedKnowledgeClaim> claims) {
         Map<String, List<UnifiedKnowledgeClaim>> byFactKey = new LinkedHashMap<>();
         for (UnifiedKnowledgeClaim claim : claims) {
-            if (claim.factKey() == null || claim.factKey().isBlank()) continue;
-            byFactKey.computeIfAbsent(claim.factKey(), ignored -> new ArrayList<>()).add(claim);
+            if (claim == null) continue;
+            String group = groupKey(claim);
+            if (group.isBlank()) continue;
+            byFactKey.computeIfAbsent(group, ignored -> new ArrayList<>()).add(claim);
         }
         List<String> conflicts = new ArrayList<>();
         for (Map.Entry<String, List<UnifiedKnowledgeClaim>> entry : byFactKey.entrySet()) {
@@ -48,6 +50,17 @@ public class MultiSourceConflictAnalyzer {
             }
         }
         return List.copyOf(conflicts);
+    }
+
+    /** 分组键：优先 subject|predicate（跨来源事实对齐），缺失时回退 factKey。 */
+    private String groupKey(UnifiedKnowledgeClaim claim) {
+        String subjectPredicate = (safe(claim.subject()) + "|" + safe(claim.predicate())).toLowerCase(Locale.ROOT);
+        if (!subjectPredicate.isBlank() && !"|".equals(subjectPredicate)) return subjectPredicate;
+        return safe(claim.factKey()).toLowerCase(Locale.ROOT);
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value.trim();
     }
 
     /** 根据冲突与可用证据计算结论状态。 */

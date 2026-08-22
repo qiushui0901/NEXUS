@@ -18,4 +18,5 @@
 - [x] Phase 3 统一 Claim（UnifiedKnowledgeClaim）+ factKey + 多源冲突分析器
 - [x] Phase 4 意图分类 + 来源过滤 + 多源检索服务 + 解释
 - [x] Phase 5 Golden Dataset 离线评估（`multi-source-golden.jsonl` + `MultiSourceGoldenEvalTest`）
-- [ ] 生产加固（留待后续）：Qdrant payload 多源过滤、旧 `TEST` 数据回填清洗、按项目灰度开关、LLM 意图回退、真实 Token usage
+- [x] Code Review 整改：REQUIREMENT 适配器、跨源关系抽取、factKey 兜底对齐、旧冲突服务 TEST_CASE 兼容、评分/Top-K/CJK 分词、JUnit skipped/error、Claim 状态门禁、事务性 replaceSnapshot、参数 Evidence 行范围、一致性存疑、意图分类修复
+- [ ] 生产加固（留待后续）：Qdrant payload 多源过滤、旧 `TEST` 数据回填清洗、按项目灰度开关、LLM 意图回退、真实 Token usage、CODE 适配器

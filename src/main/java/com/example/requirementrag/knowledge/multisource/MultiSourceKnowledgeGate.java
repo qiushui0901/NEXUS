@@ -33,8 +33,8 @@ public class MultiSourceKnowledgeGate {
     public boolean includeDoubt(DoubtStatus doubtStatus, KnowledgeQueryIntent intent) {
         if (doubtStatus == DoubtStatus.RESOLVED) return true;
         if (doubtStatus == DoubtStatus.REJECTED || doubtStatus == DoubtStatus.OBSOLETE) return false;
-        // OPEN / UNDER_DISCUSSION 只在明确查询风险/存疑时返回。
-        return intent == KnowledgeQueryIntent.DOUBT;
+        // OPEN / UNDER_DISCUSSION 只在明确查询风险/存疑或一致性分析时返回。
+        return intent == KnowledgeQueryIntent.DOUBT || intent == KnowledgeQueryIntent.CONSISTENCY;
     }
 
     /** 过滤存疑列表。 */

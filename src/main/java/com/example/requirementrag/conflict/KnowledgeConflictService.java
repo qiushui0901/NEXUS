@@ -223,14 +223,21 @@ public class KnowledgeConflictService {
         if (left == right) return ConflictType.SOURCE_INTERNAL;
         Set<SourceType> types = Set.of(left, right);
         if (types.contains(SourceType.WIKI)) return ConflictType.WIKI_PRIMARY;
-        if (types.contains(SourceType.REQUIREMENT) && types.contains(SourceType.TEST)) {
+        if (types.contains(SourceType.REQUIREMENT) && hasTestSource(types)) {
             return ConflictType.REQUIREMENT_TEST;
         }
         if (types.contains(SourceType.REQUIREMENT) && types.contains(SourceType.CODE)) {
             return ConflictType.REQUIREMENT_CODE;
         }
-        if (types.contains(SourceType.CODE) && types.contains(SourceType.TEST)) return ConflictType.CODE_TEST;
+        if (types.contains(SourceType.CODE) && hasTestSource(types)) return ConflictType.CODE_TEST;
         return ConflictType.SOURCE_INTERNAL;
+    }
+
+    /** 是否属于测试类来源：兼容旧 TEST，并识别新 TEST_CASE / TEST_RESULT。 */
+    private boolean hasTestSource(Set<SourceType> types) {
+        return types.contains(SourceType.TEST)
+                || types.contains(SourceType.TEST_CASE)
+                || types.contains(SourceType.TEST_RESULT);
     }
 
     private Severity severity(ConflictType type) {
