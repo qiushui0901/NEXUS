@@ -491,8 +491,19 @@ public class SQLiteRequirementGraphStore {
         }
     }
 
+    /** 已发布快照不可变：所有图数据写入口必须在写入前校验，防止构建/恢复覆盖发布结果。 */
+    private void assertMutable(String snapshotId) {
+        if (snapshotId == null || snapshotId.isBlank()) return;
+        findSnapshotById(snapshotId).ifPresent(snapshot -> {
+            if (snapshot.status() == SnapshotStatus.PUBLISHED) {
+                throw new RequirementGraphException("GRAPH_SNAPSHOT_IMMUTABLE", "已发布需求语义图快照不可修改");
+            }
+        });
+    }
+
     public synchronized void replaceDraft(GraphSnapshot snapshot, List<Entity> entities, List<Relation> relations) {
         requireText(snapshot == null ? null : snapshot.id(), "snapshot id");
+        assertMutable(snapshot.id());
         try (Connection connection = open()) {
             connection.setAutoCommit(false);
             try {
@@ -520,6 +531,7 @@ public class SQLiteRequirementGraphStore {
                                                List<RequirementGraphModels.Evidence> evidence,
                                                List<Uncertainty> uncertainties, List<Conflict> conflicts) {
         requireText(snapshot == null ? null : snapshot.id(), "snapshot id");
+        assertMutable(snapshot.id());
         try (Connection connection = open()) {
             connection.setAutoCommit(false);
             try {
@@ -549,6 +561,7 @@ public class SQLiteRequirementGraphStore {
     }
 
     public synchronized void saveWindows(String snapshotId, List<RequirementGraphWindowView> windows) {
+        assertMutable(snapshotId);
         try (Connection connection = open()) {
             connection.setAutoCommit(false);
             try (PreparedStatement statement = connection.prepareStatement("""
@@ -601,6 +614,7 @@ public class SQLiteRequirementGraphStore {
 
     public synchronized void saveWindowResult(String snapshotId, String windowId,
                                               RequirementGraphModels.ExtractionResult result) {
+        assertMutable(snapshotId);
         try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement("""
                 insert into requirement_graph_window_result(window_id,snapshot_id,result_json,updated_at)
                 values(?,?,?,?) on conflict(snapshot_id,window_id) do update set result_json=excluded.result_json,updated_at=excluded.updated_at
@@ -616,10 +630,12 @@ public class SQLiteRequirementGraphStore {
     }
 
     public synchronized void saveEntityEmbeddings(String snapshotId, Map<String, float[]> vectors) {
+        assertMutable(snapshotId);
         saveEmbeddings("requirement_graph_entity_embedding", "entity_id", snapshotId, vectors);
     }
 
     public synchronized void saveRelationEmbeddings(String snapshotId, Map<String, float[]> vectors) {
+        assertMutable(snapshotId);
         saveEmbeddings("requirement_graph_relation_embedding", "relation_id", snapshotId, vectors);
     }
 
@@ -658,6 +674,7 @@ public class SQLiteRequirementGraphStore {
     }
 
     public synchronized void saveEvidence(String snapshotId, List<RequirementGraphModels.Evidence> evidence) {
+        assertMutable(snapshotId);
         try (Connection connection = open()) {
             connection.setAutoCommit(false);
             try {
@@ -734,6 +751,7 @@ public class SQLiteRequirementGraphStore {
     }
 
     public synchronized void saveUncertainties(String snapshotId, List<Uncertainty> uncertainties) {
+        assertMutable(snapshotId);
         try (Connection connection = open()) {
             connection.setAutoCommit(false);
             try {
@@ -763,6 +781,7 @@ public class SQLiteRequirementGraphStore {
     }
 
     public synchronized void saveConflicts(String snapshotId, List<Conflict> conflicts) {
+        assertMutable(snapshotId);
         try (Connection connection = open()) {
             connection.setAutoCommit(false);
             try {
@@ -859,6 +878,42 @@ public class SQLiteRequirementGraphStore {
             }
         } catch (SQLException exception) {
             throw failure("Unable to read requirement graph snapshot", exception);
+        }
+    }
+
+    public synchronized Optional<GraphSnapshot> findSnapshotById(String snapshotId) {
+        if (snapshotId == null || snapshotId.isBlank()) return Optional.empty();
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(
+                "select * from requirement_graph_snapshot where id=?")) {
+            statement.setString(1, snapshotId);
+            try (ResultSet result = statement.executeQuery()) {
+                return result.next() ? Optional.of(snapshot(result)) : Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw failure("Unable to read requirement graph snapshot", exception);
+        }
+    }
+
+    /** 按业务唯一域查询快照（project/doc/version/sourceRev/prompt），用于内容身份复用与迁移兼容。 */
+    public synchronized Optional<GraphSnapshot> findSnapshotByScope(String projectId, String documentId,
+                                                                    String version, String sourceRevision,
+                                                                    String promptVersion) {
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement("""
+                select * from requirement_graph_snapshot
+                where business_project_id=? and document_id=? and requirement_version=?
+                  and source_revision=? and prompt_version=?
+                order by updated_at desc limit 1
+                """)) {
+            statement.setString(1, projectId);
+            statement.setString(2, documentId);
+            statement.setString(3, version);
+            statement.setString(4, sourceRevision);
+            statement.setString(5, promptVersion);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? Optional.of(snapshot(rows)) : Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw failure("Unable to find requirement graph snapshot by scope", exception);
         }
     }
 

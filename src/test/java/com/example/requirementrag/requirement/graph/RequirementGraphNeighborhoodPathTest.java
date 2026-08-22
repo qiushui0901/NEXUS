@@ -29,7 +29,7 @@ class RequirementGraphNeighborhoodPathTest {
         SQLiteRequirementGraphStore store = new SQLiteRequirementGraphStore(new ObjectMapper(), properties);
         Instant now = Instant.now();
         GraphSnapshot snapshot = new GraphSnapshot("reqgraph:path", "orders", "requirements", "2.0",
-                "source", "model", "v1", SnapshotStatus.PUBLISHED, 3, 2, now, now, now);
+                "source", "model", "v1", SnapshotStatus.DRAFT, 3, 2, now, now, null);
         Entity first = entity("entity:first", snapshot.id(), "订单");
         Entity middle = entity("entity:middle", snapshot.id(), "库存");
         Entity last = entity("entity:last", snapshot.id(), "回滚");
@@ -37,6 +37,7 @@ class RequirementGraphNeighborhoodPathTest {
         Relation two = relation("relation:two", snapshot.id(), middle.id(), last.id());
         store.saveSnapshot(snapshot);
         store.replaceDraft(snapshot, List.of(first, middle, last), List.of(one, two));
+        store.updateStatus(snapshot.id(), SnapshotStatus.PUBLISHED, null);
         RequirementGraphSearchService search = new RequirementGraphSearchService(store,
                 mock(QdrantHybridStore.class), mock(com.example.requirementrag.config.ProjectRegistry.class), properties);
 

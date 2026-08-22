@@ -130,7 +130,7 @@ class SQLiteRequirementGraphStoreTest {
         SQLiteRequirementGraphStore store = store("graph-evidence.db");
         Instant now = Instant.now();
         GraphSnapshot published = new GraphSnapshot("reqgraph:ev-pub", "orders", "requirements", "2.0",
-                "source-hash-1", "model", "v1", SnapshotStatus.PUBLISHED, 1, 0, now, now, now);
+                "source-hash-1", "model", "v1", SnapshotStatus.REVIEW_REQUIRED, 1, 0, now, now, null);
         GraphSnapshot draft = new GraphSnapshot("reqgraph:ev-draft", "orders", "requirements", "2.0",
                 "source-hash-2", "model", "v1", SnapshotStatus.DRAFT, 1, 0, now, now, null);
         store.saveSnapshot(published);
@@ -142,6 +142,7 @@ class SQLiteRequirementGraphStoreTest {
                 "cancel", "取消订单", List.of(), "", List.of(evidence.evidenceId()), List.of(), List.of("hash"),
                 0.9, EntityStatus.EXTRACTED);
         store.saveDraftSnapshot(published, List.of(entity), List.of(), List.of(evidence), List.of(), List.of());
+        store.updateStatus(published.id(), SnapshotStatus.PUBLISHED, null);
         Entity draftEntity = new Entity("entity:ev-draft", draft.id(), RequirementGraphModels.EntityType.FEATURE,
                 "cancel", "取消订单", List.of(), "", List.of(evidence.evidenceId()), List.of(), List.of("hash"),
                 0.9, EntityStatus.EXTRACTED);
@@ -197,6 +198,24 @@ class SQLiteRequirementGraphStoreTest {
         assertThatThrownBy(() -> store.replaceClaimEvidence(snapshot.id(), entity.id(),
                 List.of("requirement:not-saved"), 0.9))
                 .isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    void publishedSnapshotRejectsGraphWrites() {
+        SQLiteRequirementGraphStore store = store("graph-immutable.db");
+        Instant now = Instant.now();
+        GraphSnapshot snapshot = new GraphSnapshot("reqgraph:immutable", "orders", "requirements", "2.0",
+                "source-hash", "model", "v1", SnapshotStatus.PUBLISHED, 1, 0, now, now, now);
+        store.saveSnapshot(snapshot);
+
+        assertThatThrownBy(() -> store.saveDraftSnapshot(snapshot, List.of(), List.of(), List.of(), List.of(), List.of()))
+                .isInstanceOf(RequirementGraphException.class)
+                .satisfies(exception -> assertThat(((RequirementGraphException) exception).code())
+                        .isEqualTo("GRAPH_SNAPSHOT_IMMUTABLE"));
+        assertThatThrownBy(() -> store.replaceDraft(snapshot, List.of(), List.of()))
+                .isInstanceOf(RequirementGraphException.class)
+                .satisfies(exception -> assertThat(((RequirementGraphException) exception).code())
+                        .isEqualTo("GRAPH_SNAPSHOT_IMMUTABLE"));
     }
 
     private Entity entity(String id, String snapshotId) {

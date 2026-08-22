@@ -82,7 +82,7 @@ class RequirementGraphBuildJobServiceTest {
             // 模拟“快照已创建但构建未完成”：
             Instant created = Instant.now();
             store.saveSnapshot(new GraphSnapshot("snapshot-1", "orders", "requirements", "2.0",
-                    "source", "model", "v1", SnapshotStatus.REVIEW_REQUIRED, 0, 0, created, created, null,
+                    "source", "model", "v1", SnapshotStatus.PARTIAL_FAILED, 0, 0, created, created, null,
                     2, "v1", 1.0, 1, 1, 0, 0, buildId, null, null, null));
             snapshotSaved.countDown();
             awaitCancelIgnoreInterrupt(store, buildId);

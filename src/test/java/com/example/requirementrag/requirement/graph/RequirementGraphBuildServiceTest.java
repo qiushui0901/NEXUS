@@ -72,6 +72,73 @@ class RequirementGraphBuildServiceTest {
     }
 
     @Test
+    void rebuildAfterPublishReusesImmutablePublishedSnapshot() {
+        SQLiteRequirementGraphStore store = new SQLiteRequirementGraphStore(new ObjectMapper(),
+                new RequirementGraphProperties(true, true, true, tempDir.resolve("graph-reuse.db").toString(),
+                        20, 30, 20_000, 2, 40, "model", "v1"));
+        RequirementGraphExtractionService extractor = mock(RequirementGraphExtractionService.class);
+        RequirementSnapshotRepository snapshots = mock(RequirementSnapshotRepository.class);
+        com.example.requirementrag.retrieval.QdrantHybridStore qdrant =
+                mock(com.example.requirementrag.retrieval.QdrantHybridStore.class);
+        ProjectRegistry registry = mock(ProjectRegistry.class);
+        when(registry.resolveRequirementCollection("orders")).thenReturn("requirements_orders");
+        RequirementGraphProperties properties = new RequirementGraphProperties(
+                true, true, true, tempDir.resolve("graph-reuse.db").toString(), 20, 30, 20_000, 2, 40, "model", "v1");
+        Snapshot source = new Snapshot(1, "orders", "requirements", "2.0", null, List.of(),
+                "2026-08-20T00:00:00Z", List.of(), List.of(
+                        new Entry("entry-1", "orders.md", 0, "玩家购买成长基金并影响库存。", "hash-1")));
+        when(snapshots.materialize("orders", "requirements", "2.0")).thenReturn(Optional.of(source));
+        when(extractor.extract(any())).thenReturn(new ExtractionResult(
+                List.of(new ExtractedEntity("e1", "FEATURE", "成长基金", List.of(), "", List.of("玩家购买成长基金"), 0.9),
+                        new ExtractedEntity("e2", "MODULE", "库存", List.of(), "", List.of("影响库存"), 0.8)),
+                List.of(new ExtractedRelation("e1", "AFFECTS_MODULE", "e2", "成长基金影响库存",
+                        List.of("玩家购买成长基金并影响库存"), 0.8)), List.of()));
+        RequirementGraphBuildService service = new RequirementGraphBuildService(
+                store, extractor, snapshots, qdrant, registry, properties);
+        BuildRequest request = new BuildRequest("orders", "requirements", "2.0", "requirements_orders");
+        GraphSnapshot built = service.build(request);
+        store.updateStatus(built.id(), RequirementGraphModels.SnapshotStatus.PUBLISHED, null);
+
+        GraphSnapshot rebuilt = service.build(request);
+
+        assertThat(rebuilt.id()).isEqualTo(built.id());
+        assertThat(rebuilt.status()).isEqualTo(RequirementGraphModels.SnapshotStatus.PUBLISHED);
+        assertThat(store.findLatest("orders", "requirements", "2.0")).contains(rebuilt);
+    }
+
+    @Test
+    void resumeFromPublishedSnapshotRejected() {
+        SQLiteRequirementGraphStore store = new SQLiteRequirementGraphStore(new ObjectMapper(),
+                new RequirementGraphProperties(true, true, true, tempDir.resolve("graph-resume-pub.db").toString(),
+                        20, 30, 20_000, 2, 40, "model", "v1"));
+        RequirementGraphExtractionService extractor = mock(RequirementGraphExtractionService.class);
+        RequirementSnapshotRepository snapshots = mock(RequirementSnapshotRepository.class);
+        com.example.requirementrag.retrieval.QdrantHybridStore qdrant =
+                mock(com.example.requirementrag.retrieval.QdrantHybridStore.class);
+        ProjectRegistry registry = mock(ProjectRegistry.class);
+        when(registry.resolveRequirementCollection("orders")).thenReturn("requirements_orders");
+        RequirementGraphProperties properties = new RequirementGraphProperties(
+                true, true, true, tempDir.resolve("graph-resume-pub.db").toString(), 20, 30, 20_000, 2, 40, "model", "v1");
+        Snapshot source = new Snapshot(1, "orders", "requirements", "2.0", null, List.of(),
+                "2026-08-20T00:00:00Z", List.of(), List.of(
+                        new Entry("entry-1", "orders.md", 0, "玩家购买成长基金并影响库存。", "hash-1")));
+        when(snapshots.materialize("orders", "requirements", "2.0")).thenReturn(Optional.of(source));
+        when(extractor.extract(any())).thenReturn(new ExtractionResult(
+                List.of(new ExtractedEntity("e1", "FEATURE", "成长基金", List.of(), "", List.of("玩家购买成长基金"), 0.9)),
+                List.of(), List.of()));
+        RequirementGraphBuildService service = new RequirementGraphBuildService(
+                store, extractor, snapshots, qdrant, registry, properties);
+        GraphSnapshot built = service.build(new BuildRequest("orders", "requirements", "2.0", "requirements_orders"));
+        store.updateStatus(built.id(), RequirementGraphModels.SnapshotStatus.PUBLISHED, null);
+
+        assertThatThrownBy(() -> service.build(new BuildRequest("orders", "requirements", "2.0",
+                "requirements_orders", built.id(), false)))
+                .isInstanceOf(RequirementGraphException.class)
+                .satisfies(exception -> assertThat(((RequirementGraphException) exception).code())
+                        .isEqualTo("GRAPH_SNAPSHOT_IMMUTABLE"));
+    }
+
+    @Test
     void tokenBudgetStopsFurtherModelCalls() {
         RequirementGraphProperties tokenProperties = tokenProperties();
         SQLiteRequirementGraphStore store = new SQLiteRequirementGraphStore(new ObjectMapper(), tokenProperties);

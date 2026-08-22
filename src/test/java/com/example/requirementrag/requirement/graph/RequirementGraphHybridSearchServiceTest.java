@@ -12,6 +12,7 @@ import com.example.requirementrag.requirement.graph.RequirementGraphModels.Relat
 import com.example.requirementrag.requirement.graph.RequirementGraphModels.RelationType;
 import com.example.requirementrag.requirement.graph.RequirementGraphModels.SearchMode;
 import com.example.requirementrag.requirement.graph.RequirementGraphModels.SearchRequest;
+import com.example.requirementrag.requirement.graph.RequirementGraphModels.SearchResponse;
 import com.example.requirementrag.requirement.graph.RequirementGraphModels.SnapshotStatus;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
 import com.example.requirementrag.retrieval.EmbeddingBatcher;
@@ -40,7 +41,7 @@ class RequirementGraphHybridSearchServiceTest {
         SQLiteRequirementGraphStore store = new SQLiteRequirementGraphStore(new ObjectMapper(), properties);
         Instant now = Instant.now();
         GraphSnapshot snapshot = new GraphSnapshot("reqgraph:hybrid", "orders", "requirements", "2.0", "source",
-                "model", "v1", SnapshotStatus.PUBLISHED, 2, 1, now, now, now);
+                "model", "v1", SnapshotStatus.DRAFT, 2, 1, now, now, null);
         Entity verified = new Entity("entity:verified", snapshot.id(), RequirementGraphModels.EntityType.FEATURE,
                 "cancel", "取消订单", List.of(), "", List.of(), List.of(), List.of(), 0.9, EntityStatus.EXTRACTED,
                 RequirementGraphModels.ClaimStatus.VERIFIED, "reviewer", "context", "window", "window",
@@ -49,6 +50,7 @@ class RequirementGraphHybridSearchServiceTest {
                 "inventory", "库存", List.of(), "", List.of(), List.of(), List.of(), 0.8, EntityStatus.EXTRACTED);
         store.saveSnapshot(snapshot);
         store.replaceDraft(snapshot, List.of(verified, extracted), List.of());
+        store.updateStatus(snapshot.id(), SnapshotStatus.PUBLISHED, null);
         RequirementGraphSearchService legacy = new RequirementGraphSearchService(store, mock(QdrantHybridStore.class),
                 mock(com.example.requirementrag.config.ProjectRegistry.class), properties);
         RequirementGraphHybridSearchService hybrid = new RequirementGraphHybridSearchService(store,
@@ -69,7 +71,7 @@ class RequirementGraphHybridSearchServiceTest {
         QdrantHybridStore qdrant = mock(QdrantHybridStore.class);
         Instant now = Instant.now();
         GraphSnapshot snapshot = new GraphSnapshot("reqgraph:mix", "orders", "requirements", "2.0", "source",
-                "model", "v1", SnapshotStatus.PUBLISHED, 2, 1, now, now, now);
+                "model", "v1", SnapshotStatus.DRAFT, 2, 1, now, now, null);
         Entity cancel = new Entity("entity:cancel", snapshot.id(), RequirementGraphModels.EntityType.FEATURE,
                 "cancel", "取消订单", List.of(), "用户发起取消", List.of("requirement:abc"), List.of(), List.of("hash-abc"),
                 0.9, EntityStatus.EXTRACTED, RequirementGraphModels.ClaimStatus.VERIFIED, "reviewer", "ctx", "w1", "w1",
@@ -89,6 +91,7 @@ class RequirementGraphHybridSearchServiceTest {
                         "订单", "用户发起取消订单", 0, 6, RequirementGraphModels.EvidenceResolutionStatus.RESOLVED),
                 new RequirementGraphModels.Evidence("requirement:def", "orders.md", "p2", 1, "2.0", "库存扣减", "hash-def",
                         "库存", "取消订单后扣减库存", 0, 6, RequirementGraphModels.EvidenceResolutionStatus.RESOLVED)));
+        store.updateStatus(snapshot.id(), SnapshotStatus.PUBLISHED, null);
 
         ChunkRecord chunk = new ChunkRecord("chunk:1", "requirements", "2.0", "orders.md", "p1",
                 "取消订单相关需求说明", "用户发起取消订单", "hash-abc", 0, 0);
@@ -147,7 +150,7 @@ class RequirementGraphHybridSearchServiceTest {
         QdrantHybridStore qdrant = mock(QdrantHybridStore.class);
         Instant now = Instant.now();
         GraphSnapshot snapshot = new GraphSnapshot("reqgraph:order", "orders", "requirements", "2.0", "source",
-                "model", "v1", SnapshotStatus.PUBLISHED, 2, 0, now, now, now);
+                "model", "v1", SnapshotStatus.DRAFT, 2, 0, now, now, null);
         Entity first = new Entity("entity:order-a", snapshot.id(), RequirementGraphModels.EntityType.FEATURE,
                 "cancel-a", "取消订单", List.of(), "第一个取消订单实体", List.of("requirement:abc"), List.of(), List.of("hash-abc"),
                 0.8, EntityStatus.EXTRACTED, RequirementGraphModels.ClaimStatus.VERIFIED, "reviewer", "ctx", "w", "w",
@@ -163,6 +166,7 @@ class RequirementGraphHybridSearchServiceTest {
                 new RequirementGraphModels.Evidence("requirement:def", "orders.md", "parent-2", 0, "2.0", "取消订单", "hash-def",
                         "订单", "用户再次取消订单", 0, 6, RequirementGraphModels.EvidenceResolutionStatus.RESOLVED)),
                 List.of(), List.of());
+        store.updateStatus(snapshot.id(), SnapshotStatus.PUBLISHED, null);
         ChunkRecord chunk = new ChunkRecord("chunk:hot", "requirements", "2.0", "orders.md", "parent-1",
                 "取消订单需求说明", "用户发起取消订单", "hash-abc", 0, 0);
         when(qdrant.hybridSearchWithScores(anyString(), anyString(), anyString(), anyString()))
@@ -187,13 +191,14 @@ class RequirementGraphHybridSearchServiceTest {
         QdrantHybridStore qdrant = mock(QdrantHybridStore.class);
         Instant now = Instant.now();
         GraphSnapshot snapshot = new GraphSnapshot("reqgraph:unavailable", "orders", "requirements", "2.0",
-                "source", "model", "v1", SnapshotStatus.PUBLISHED, 1, 0, now, now, now);
+                "source", "model", "v1", SnapshotStatus.DRAFT, 1, 0, now, now, null);
         Entity verified = new Entity("entity:unavail", snapshot.id(), RequirementGraphModels.EntityType.FEATURE,
                 "cancel", "取消订单", List.of(), "", List.of(), List.of(), List.of(), 0.9, EntityStatus.EXTRACTED,
                 RequirementGraphModels.ClaimStatus.VERIFIED, "reviewer", "ctx", "w", "w",
                 List.of(), List.of(), "reviewer", now, "verified");
         store.saveSnapshot(snapshot);
         store.replaceDraft(snapshot, List.of(verified), List.of());
+        store.updateStatus(snapshot.id(), SnapshotStatus.PUBLISHED, null);
         when(qdrant.hybridSearchWithScores(anyString(), anyString(), anyString(), anyString()))
                 .thenThrow(new RuntimeException("connection refused"));
 
@@ -217,7 +222,7 @@ class RequirementGraphHybridSearchServiceTest {
         QdrantHybridStore qdrant = mock(QdrantHybridStore.class);
         Instant now = Instant.now();
         GraphSnapshot snapshot = new GraphSnapshot("reqgraph:page", "orders", "requirements", "2.0",
-                "source", "model", "v1", SnapshotStatus.PUBLISHED, 3, 2, now, now, now);
+                "source", "model", "v1", SnapshotStatus.DRAFT, 3, 2, now, now, null);
         Entity cancel = new Entity("entity:cancel", snapshot.id(), RequirementGraphModels.EntityType.FEATURE,
                 "cancel", "取消订单", List.of(), "", List.of(), List.of(), List.of(), 0.9, EntityStatus.EXTRACTED,
                 RequirementGraphModels.ClaimStatus.VERIFIED, "reviewer", "ctx", "w", "w",
@@ -239,6 +244,7 @@ class RequirementGraphHybridSearchServiceTest {
                         RequirementGraphModels.ClaimStatus.VERIFIED, "", "", List.of(), List.of(), List.of(), null));
         store.saveSnapshot(snapshot);
         store.replaceDraft(snapshot, List.of(cancel, inventory, warehouse), relations);
+        store.updateStatus(snapshot.id(), SnapshotStatus.PUBLISHED, null);
         assertThat(store.entities(snapshot.id(), "取消订单", null, 10)).isNotEmpty();
         assertThat(store.allRelations(snapshot.id(), 10)).hasSize(2);
         assertThat(store.allRelations(snapshot.id(), 10))
@@ -259,10 +265,19 @@ class RequirementGraphHybridSearchServiceTest {
         var page1 = hybrid.search(new SearchRequest("orders", "requirements", "2.0", "取消订单", SearchMode.MIX, 1, 1,
                 List.of(RequirementGraphModels.ClaimStatus.VERIFIED), false, 1), null);
 
-        assertThat(page0.sourceChunks()).extracting(ChunkRecord::id).containsExactly("chunk:page-1");
-        assertThat(page1.sourceChunks()).extracting(ChunkRecord::id).containsExactly("chunk:page-2");
-        assertThat(page0.paths()).hasSize(1);
-        assertThat(page1.paths()).hasSize(1);
-        assertThat(page0.paths().get(0).entityIds()).isNotEqualTo(page1.paths().get(0).entityIds());
+        assertThat(page0.total()).isEqualTo(page1.total());
+        assertThat(page0.total()).isGreaterThan(1);
+        assertThat(unifiedKeys(page1)).doesNotContainAnyElementsOf(unifiedKeys(page0));
+    }
+
+    /** 统一分页下每个候选使用跨通道稳定键，保证不同页之间不重复。 */
+    private java.util.List<String> unifiedKeys(SearchResponse response) {
+        java.util.List<String> keys = new java.util.ArrayList<>();
+        response.sourceChunks().forEach(chunk -> keys.add("TEXT:" + chunk.id()));
+        response.paths().forEach(path -> keys.add("PATH:" + String.join(">", path.entityIds())));
+        response.entities().forEach(entity -> keys.add("ENTITY:" + entity.id()));
+        response.relations().forEach(relation -> keys.add("RELATION:" + relation.id()));
+        response.evidence().forEach(evidence -> keys.add("EVIDENCE:" + evidence.evidenceId()));
+        return keys;
     }
 }

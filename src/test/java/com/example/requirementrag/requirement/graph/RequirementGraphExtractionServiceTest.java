@@ -64,4 +64,38 @@ class RequirementGraphExtractionServiceTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("未知需求实体类型");
     }
+
+    @Test
+    void rejectsSelfLoopRelation() {
+        ExtractionResult result = new ExtractionResult(
+                List.of(new ExtractedEntity("e1", "MODULE", "库存", List.of(), "",
+                        List.of("库存"), 0.8)),
+                List.of(new ExtractedRelation("e1", "AFFECTS_MODULE", "e1", "库存影响库存",
+                        List.of("影响库存"), 0.7)), List.of());
+
+        assertThatThrownBy(() -> service.validate(input, result))
+                .isInstanceOf(RequirementGraphException.class)
+                .satisfies(exception -> assertThat(((RequirementGraphException) exception).code())
+                        .isEqualTo("GRAPH_SCHEMA_INVALID"))
+                .hasMessageContaining("自环");
+    }
+
+    @Test
+    void rejectsDuplicateRelation() {
+        ExtractionResult result = new ExtractionResult(
+                List.of(new ExtractedEntity("e1", "FEATURE", "成长基金", List.of(), "",
+                                List.of("玩家购买成长基金"), 0.9),
+                        new ExtractedEntity("e2", "MODULE", "库存", List.of(), "",
+                                List.of("影响库存"), 0.8)),
+                List.of(
+                        new ExtractedRelation("e1", "AFFECTS_MODULE", "e2", "成长基金影响库存",
+                                List.of("玩家购买成长基金并影响库存"), 0.8),
+                        new ExtractedRelation("e1", "AFFECTS_MODULE", "e2", "成长基金影响库存（重复）",
+                                List.of("玩家购买成长基金并影响库存"), 0.7)),
+                List.of());
+
+        assertThatThrownBy(() -> service.validate(input, result))
+                .isInstanceOf(RequirementGraphException.class)
+                .hasMessageContaining("重复关系");
+    }
 }

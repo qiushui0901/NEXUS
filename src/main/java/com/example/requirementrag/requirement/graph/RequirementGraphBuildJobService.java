@@ -82,6 +82,16 @@ public class RequirementGraphBuildJobService {
             throw new RequirementGraphException("GRAPH_WINDOW_FAILED", "当前构建任务不允许恢复");
         }
         BuildRequest oldRequest = readRequest(stored);
+        if (previous.snapshotId() != null && !previous.snapshotId().isBlank()) {
+            store.findSnapshotById(previous.snapshotId()).ifPresent(snapshot -> {
+                if (snapshot.status() == SnapshotStatus.PUBLISHED
+                        || snapshot.status() == SnapshotStatus.VERIFIED
+                        || snapshot.status() == SnapshotStatus.REVIEW_REQUIRED) {
+                    throw new RequirementGraphException("GRAPH_SNAPSHOT_IMMUTABLE",
+                            "已发布/已审核快照不可作为恢复目标，请直接发起新构建");
+                }
+            });
+        }
         BuildRequest request;
         if (previous.snapshotId() == null || previous.snapshotId().isBlank()) {
             // 任务尚未创建快照（例如启动恢复标记的 QUEUED 任务）：按原请求重新排队即可，不要求存在旧快照。

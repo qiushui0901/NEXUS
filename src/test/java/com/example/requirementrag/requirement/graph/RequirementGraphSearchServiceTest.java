@@ -35,7 +35,7 @@ class RequirementGraphSearchServiceTest {
                         20, 30, 20_000, 2, 40, "model", "v1"));
         Instant now = Instant.now();
         GraphSnapshot snapshot = new GraphSnapshot("reqgraph:search", "orders", "requirements", "2.0",
-                "source", "model", "v1", SnapshotStatus.PUBLISHED, 2, 1, now, now, now);
+                "source", "model", "v1", SnapshotStatus.DRAFT, 2, 1, now, now, null);
         store.saveSnapshot(snapshot);
         Entity feature = entity("entity:feature", snapshot.id(), "取消订单", RequirementGraphModels.EntityType.FEATURE);
         Entity inventory = entity("entity:inventory", snapshot.id(), "库存", RequirementGraphModels.EntityType.MODULE);
@@ -59,6 +59,7 @@ class RequirementGraphSearchServiceTest {
         store.replaceDraft(snapshot, List.of(backedFeature, inventory),
                 List.of(new Relation(relation.id(), snapshot.id(), feature.id(), relation.type(), inventory.id(),
                         relation.statement(), List.of(evidenceId), relation.confidence(), relation.status(), null, null)));
+        store.updateStatus(snapshot.id(), SnapshotStatus.PUBLISHED, null);
 
         RequirementGraphSearchService service = new RequirementGraphSearchService(store, qdrant, registry,
                 new RequirementGraphProperties(true, true, true, tempDir.resolve("graph.db").toString(),

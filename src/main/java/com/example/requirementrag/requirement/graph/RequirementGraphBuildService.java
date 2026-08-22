@@ -28,6 +28,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -119,18 +120,31 @@ public class RequirementGraphBuildService {
                 || !sourceRevision.equals(previous.sourceRevision()))) {
             throw new RequirementGraphException("GRAPH_SNAPSHOT_STALE", "恢复快照与当前需求版本不匹配");
         }
+        if (previous != null && (previous.status() == SnapshotStatus.PUBLISHED
+                || previous.status() == SnapshotStatus.VERIFIED
+                || previous.status() == SnapshotStatus.REVIEW_REQUIRED)) {
+            throw new RequirementGraphException("GRAPH_SNAPSHOT_IMMUTABLE",
+                    "已发布/已审核快照不可作为恢复目标，请直接发起新构建");
+        }
         String buildId = request.buildId() != null && !request.buildId().isBlank()
                 ? request.buildId()
                 : previous != null && previous.buildId() != null && !previous.buildId().isBlank()
                 ? previous.buildId() : "graph-build:" + UUID.randomUUID();
-        String snapshotId = previous == null
-                ? properties.schemaVersion() <= 1
-                ? "reqgraph:" + sha256(projectId + "|" + request.documentId() + "|"
-                + request.requirementVersion() + "|" + sourceRevision + "|" + properties.ontologyVersion()
-                + "|" + properties.extractionPromptVersion()).substring(0, 40)
-                : "reqgraph:" + sha256(projectId + "|" + request.documentId() + "|"
-                + request.requirementVersion() + "|" + sourceRevision + "|" + buildId).substring(0, 40)
-                : previous.id();
+        // 快照身份采用“内容/配置身份”，buildId 只属于一次具体构建任务：
+        // 相同输入重复构建复用同一快照（幂等），不同输入/配置生成不同快照。
+        // 老库中 v2 快照 ID 曾包含 buildId，这里优先按业务唯一域复用旧 ID，避免唯一约束冲突。
+        String snapshotId;
+        if (previous != null) {
+            snapshotId = previous.id();
+        } else {
+            String extractionPrompt = properties.extractionPromptVersion();
+            snapshotId = store.findSnapshotByScope(projectId, request.documentId(), request.requirementVersion(),
+                            sourceRevision, extractionPrompt)
+                    .map(GraphSnapshot::id)
+                    .orElseGet(() -> "reqgraph:" + sha256(projectId + "|" + request.documentId() + "|"
+                            + request.requirementVersion() + "|" + sourceRevision + "|" + properties.ontologyVersion()
+                            + "|" + extractionPrompt).substring(0, 40));
+        }
 
         List<PlannedChunk> planned = planChunks(chunks);
         int windowCount = planned.stream().mapToInt(item -> item.plan().windowCount()).sum();
@@ -143,6 +157,17 @@ public class RequirementGraphBuildService {
                 request.requirementVersion(), sourceRevision, extractionModel(), properties.extractionPromptVersion(),
                 SnapshotStatus.BUILDING, 0, 0, now, now, null, properties.schemaVersion(),
                 properties.ontologyVersion(), coverage, windowCount, 0, 0, 0, buildId, null, null, null);
+        Optional<GraphSnapshot> existing = store.findSnapshotById(snapshotId);
+        if (existing.isPresent()) {
+            GraphSnapshot current = existing.get();
+            if (current.status() == SnapshotStatus.PUBLISHED
+                    || current.status() == SnapshotStatus.VERIFIED
+                    || current.status() == SnapshotStatus.REVIEW_REQUIRED) {
+                // 幂等复用：同一内容/配置已完成构建，直接返回已有快照，不修改审核/发布结果。
+                observability.count("nexus.requirement_graph.build.reused", projectId, current.status().name());
+                return current;
+            }
+        }
         store.saveSnapshot(building);
         store.saveWindows(snapshotId, planned.stream().flatMap(item -> item.plan().windows().stream())
                 .map(window -> newWindowView(snapshotId, window, WindowStatus.PENDING, 0, null, null, null)).toList());

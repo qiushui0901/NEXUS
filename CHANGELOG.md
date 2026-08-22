@@ -30,9 +30,13 @@
   - 修复 MIX 文本与图通道 ID 空间不一致：通过父块 `filename|parentId|parentOrder|contentHash` 把 Qdrant 命中文本块关联到同父块的 span Evidence，文本命中真正参与实体/关系融合排序，并补排序回归测试。
   - 文本检索通道不再把故障伪装成空结果：区分 `GRAPH_TEXT_NO_HITS`/`GRAPH_TEXT_RETRIEVAL_UNAVAILABLE`/`GRAPH_TEXT_RETRIEVAL_TIMEOUT` 并显式返回 warning。
   - `QueryPlan` 真正驱动 MIX 检索（状态集合、hops、各通道上限、实体/关系关键词、章节关键词），并移除无调用方的 `planMIX()`。
-  - MIX 改为各通道独立分页：文本块、路径、证据不再每页重复返回第一页内容。
+  - MIX 统一召回、融合、稳定排序后一次性分页（跨文本/实体/关系/路径/证据通道），避免跨页重复与漏 Evidence。
   - `maxEstimatedTokens` 生效：达到 Token 预算后停止后续模型调用。
   - 无快照的 QUEUED 任务重启后可按原请求重新排队恢复；取消期间模型调用抛普通异常时不再把已持久化的 CANCELLED 覆盖为 FAILED。
+- 第五轮开发（改进方案 Phase 0/1 核心）：
+  - 已发布快照只读：`build`/`resume`/全部图数据写入口拒绝修改 `PUBLISHED` 快照，新增 `GRAPH_SNAPSHOT_IMMUTABLE`；`VERIFIED/REVIEW_REQUIRED` 不可作为恢复目标。
+  - buildId 与 snapshotId 解耦：schema v2 快照 ID 不再包含 buildId，改为内容/配置身份；相同输入重复构建幂等复用同域快照，兼容旧库按业务唯一域复用旧 ID，修复同输入重建时的唯一约束冲突。
+  - 新增确定性关系质量门禁：拒绝自环关系和重复关系，先校验原文证据再进入图谱。
 
 ## 0.9.1 — 2026-08-18
 

@@ -15,10 +15,12 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /** 借鉴 LightRAG 的实体/关系抽取，但要求每个结果回指当前需求父块原文证据。 */
 @Service
@@ -115,6 +117,7 @@ public class RequirementGraphExtractionService {
             normalizedEntities.add(normalized);
         }
         List<ExtractedRelation> normalizedRelations = new ArrayList<>();
+        Set<String> seenRelations = new HashSet<>();
         for (ExtractedRelation raw : result.relations()) {
             if (raw == null || raw.sourceLocalId() == null || raw.targetLocalId() == null
                     || raw.sourceLocalId().isBlank() || raw.targetLocalId().isBlank()
@@ -125,9 +128,17 @@ public class RequirementGraphExtractionService {
                 throw new RequirementGraphException("GRAPH_SCHEMA_INVALID", "需求语义图关系引用不存在的实体");
             }
             RelationType type = parseRelationType(raw.type());
+            String relationKey = raw.sourceLocalId().trim() + "|" + type + "|" + raw.targetLocalId().trim();
+            if (!seenRelations.add(relationKey)) {
+                throw new RequirementGraphException("GRAPH_SCHEMA_INVALID", "需求语义图存在重复关系");
+            }
+            List<String> quotes = evidenceQuotes(input.text(), raw.evidenceQuotes());
+            if (raw.sourceLocalId().equals(raw.targetLocalId())) {
+                throw new RequirementGraphException("GRAPH_SCHEMA_INVALID", "需求语义图关系不能是自环");
+            }
             normalizedRelations.add(new ExtractedRelation(raw.sourceLocalId().trim(), type.name(),
                     raw.targetLocalId().trim(), bounded(raw.statement(), 1_000),
-                    evidenceQuotes(input.text(), raw.evidenceQuotes()), confidence(raw.confidence()),
+                    quotes, confidence(raw.confidence()),
                     bounded(raw.condition(), 500), bounded(raw.scenario(), 500)));
         }
         return new ExtractionResult(normalizedEntities, normalizedRelations,

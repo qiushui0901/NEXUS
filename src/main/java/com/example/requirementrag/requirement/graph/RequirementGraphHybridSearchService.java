@@ -233,9 +233,6 @@ public class RequirementGraphHybridSearchService {
                 ? Set.of(ClaimStatus.VERIFIED) : Set.copyOf(request.statuses()));
         int hops = plan != null ? Math.min(Math.max(plan.maxHops(), 0), 4)
                 : Math.min(Math.max(request.maxHops() == null ? properties.maxHops() : request.maxHops(), 0), 4);
-        int entityLimit = plan != null ? Math.max(1, plan.maxEntities()) : limit;
-        int relationLimit = plan != null ? Math.max(1, plan.maxRelations()) : limit;
-        int evidenceLimit = plan != null ? Math.max(1, plan.maxEvidence()) : limit;
         String entityQuery = plan != null && !plan.entityKeywords().isEmpty()
                 ? String.join(" ", plan.entityKeywords()) : request.query();
         String normalizedEntityQuery = entityQuery.toLowerCase(Locale.ROOT);
@@ -251,15 +248,16 @@ public class RequirementGraphHybridSearchService {
         List<ChunkRecord> allChunks = new ArrayList<>();
         Set<String> chunkIds = new HashSet<>();
         Map<String, Double> chunkScoreByParentKey = new LinkedHashMap<>();
+        Map<String, Double> chunkScoreById = new LinkedHashMap<>();
         for (ScoredChunk scored : scoredChunks) {
             ChunkRecord chunk = scored.record();
             if (chunk == null) continue;
             double normalized = maxText > 0 ? scored.score() / maxText : 0.0;
             if (chunkIds.add(chunk.id())) allChunks.add(chunk);
+            chunkScoreById.merge(chunk.id(), normalized, Math::max);
             String parentKey = parentKey(chunk.filename(), chunk.parentId(), chunk.parentOrder(), chunk.contentHash());
             chunkScoreByParentKey.merge(parentKey, normalized, Math::max);
         }
-        List<ChunkRecord> pageChunks = allChunks.stream().skip(offset).limit(limit).toList();
 
         // ---- 实体通道 ----
         Map<String, Entity> allById = new LinkedHashMap<>();
@@ -294,10 +292,9 @@ public class RequirementGraphHybridSearchService {
         // ---- 路径通道：从种子实体出发的一跳/多跳路径 ----
         Set<String> seedIds = entityCandidates.stream().map(Entity::id)
                 .collect(Collectors.toCollection(LinkedHashSet::new));
-        int pathBudget = Math.max(limit * (page + 1), Math.max(entityLimit, relationLimit) * (page + 1));
+        int pathBudget = Math.min(properties.maxGraphRows(), Math.max(200, limit * 10));
         List<GraphPath> allPaths = pathsFromSeeds(seedIds, allRelations, statuses,
                 Boolean.TRUE.equals(request.includeUnresolved()), hops, pathBudget);
-        List<GraphPath> pagePaths = allPaths.stream().skip(offset).limit(limit).toList();
         double maxPath = allPaths.stream().mapToDouble(GraphPath::score).max().orElse(0.0);
         Map<String, Double> pathScoreByEntity = new LinkedHashMap<>();
         Map<String, Double> pathScoreByRelation = new LinkedHashMap<>();
@@ -320,7 +317,7 @@ public class RequirementGraphHybridSearchService {
                 .forEach(entity -> evidenceIds.addAll(entity.sourceEvidenceIds()));
         relationRaw.keySet().stream().map(relationById::get).filter(Objects::nonNull)
                 .forEach(relation -> evidenceIds.addAll(relation.sourceEvidenceIds()));
-        for (ChunkRecord chunk : pageChunks) {
+        for (ChunkRecord chunk : allChunks) {
             evidenceIds.add(RequirementGraphEvidence.id(projectId, request.requirementVersion(), chunk));
         }
         List<Evidence> evidence = resolveEvidence(projectId, request, snapshot.id(), evidenceIds);
@@ -360,10 +357,6 @@ public class RequirementGraphHybridSearchService {
             entityFused.put(entityId, wEntity * entityScore + wText * textScore + wPath * pathScore
                     + wEvidence * evidenceScore + wFreshness * freshness);
         }
-        List<Entity> selectedEntities = entityFused.entrySet().stream()
-                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-                .map(Map.Entry::getKey).map(allById::get).filter(Objects::nonNull)
-                .skip(offset).limit(entityLimit).toList();
 
         Map<String, Double> relationFused = new LinkedHashMap<>();
         for (String relationId : relationRaw.keySet()) {
@@ -377,27 +370,58 @@ public class RequirementGraphHybridSearchService {
             relationFused.put(relationId, wRelation * relationScore + wText * textScore + wPath * pathScore
                     + wEvidence * evidenceScore + wFreshness * freshness);
         }
-        List<Relation> selectedRelations = relationFused.entrySet().stream()
-                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-                .map(Map.Entry::getKey).map(relationById::get).filter(Objects::nonNull)
-                .skip(offset).limit(relationLimit).toList();
 
-        // ---- 最终证据只保留返回结果引用的条目，并按通道得分分页 ----
-        Set<String> finalEvidenceIds = new LinkedHashSet<>();
-        selectedEntities.forEach(entity -> finalEvidenceIds.addAll(entity.sourceEvidenceIds()));
-        selectedRelations.forEach(relation -> finalEvidenceIds.addAll(relation.sourceEvidenceIds()));
-        pagePaths.forEach(path -> path.relationIds().stream().map(relationById::get).filter(Objects::nonNull)
-                .forEach(relation -> finalEvidenceIds.addAll(relation.sourceEvidenceIds())));
-        pageChunks.forEach(chunk -> finalEvidenceIds.add(RequirementGraphEvidence.id(projectId, request.requirementVersion(), chunk)));
-        List<Evidence> allFinalEvidence = resolveEvidence(projectId, request, snapshot.id(), finalEvidenceIds).stream()
-                .sorted(Comparator.comparingDouble((Evidence item) -> evidenceRaw.getOrDefault(item.evidenceId(), 0.0)).reversed())
+        // ---- 统一候选：全量召回 → 归一化 → 融合排序 → 一次性分页（禁止各通道分别分页） ----
+        Map<String, GraphPath> pathById = new LinkedHashMap<>();
+        for (GraphPath path : allPaths) pathById.put(pathKey(path), path);
+        Map<String, Evidence> evidenceById = new LinkedHashMap<>();
+        for (Evidence item : evidence) evidenceById.put(item.evidenceId(), item);
+        Map<String, ChunkRecord> chunkById = new LinkedHashMap<>();
+        for (ChunkRecord chunk : allChunks) chunkById.put(chunk.id(), chunk);
+
+        List<UnifiedCandidate> candidates = new ArrayList<>();
+        entityFused.forEach((id, score) -> candidates.add(new UnifiedCandidate("ENTITY", id, score)));
+        relationFused.forEach((id, score) -> candidates.add(new UnifiedCandidate("RELATION", id, score)));
+        for (ChunkRecord chunk : allChunks) {
+            candidates.add(new UnifiedCandidate("TEXT", chunk.id(),
+                    wText * chunkScoreById.getOrDefault(chunk.id(), 0.0)));
+        }
+        for (GraphPath path : allPaths) {
+            double score = wPath * (maxPath > 0 ? path.score() / maxPath : 0.0);
+            candidates.add(new UnifiedCandidate("PATH", pathKey(path), score));
+        }
+        for (Evidence item : evidence) {
+            double score = wEvidence * (maxEvidence > 0
+                    ? evidenceRaw.getOrDefault(item.evidenceId(), 0.0) / maxEvidence : 0.0);
+            candidates.add(new UnifiedCandidate("EVIDENCE", item.evidenceId(), score));
+        }
+        // 稳定排序：finalScore DESC，candidateType ASC，candidateId ASC；数据库返回顺序与页码不影响排名。
+        List<UnifiedCandidate> sorted = candidates.stream()
+                .sorted(Comparator.comparingDouble(UnifiedCandidate::score).reversed()
+                        .thenComparing(UnifiedCandidate::type)
+                        .thenComparing(UnifiedCandidate::id))
                 .toList();
-        List<Evidence> finalEvidence = allFinalEvidence.stream().skip(offset).limit(evidenceLimit).toList();
+        List<UnifiedCandidate> pageCandidates = sorted.stream().skip(offset).limit(limit).toList();
 
-        int total = entityFused.size() + relationFused.size() + allPaths.size() + allChunks.size() + allFinalEvidence.size();
+        List<Entity> selectedEntities = pageCandidates.stream()
+                .filter(candidate -> candidate.type().equals("ENTITY"))
+                .map(candidate -> allById.get(candidate.id())).filter(Objects::nonNull).toList();
+        List<Relation> selectedRelations = pageCandidates.stream()
+                .filter(candidate -> candidate.type().equals("RELATION"))
+                .map(candidate -> relationById.get(candidate.id())).filter(Objects::nonNull).toList();
+        List<ChunkRecord> pageChunks = pageCandidates.stream()
+                .filter(candidate -> candidate.type().equals("TEXT"))
+                .map(candidate -> chunkById.get(candidate.id())).filter(Objects::nonNull).toList();
+        List<GraphPath> pagePaths = pageCandidates.stream()
+                .filter(candidate -> candidate.type().equals("PATH"))
+                .map(candidate -> pathById.get(candidate.id())).filter(Objects::nonNull).toList();
+        List<Evidence> finalEvidence = pageCandidates.stream()
+                .filter(candidate -> candidate.type().equals("EVIDENCE"))
+                .map(candidate -> evidenceById.get(candidate.id())).filter(Objects::nonNull).toList();
+
+        int total = candidates.size();
         boolean truncated = allById.size() >= properties.maxGraphRows() || allRelations.size() >= properties.maxGraphRows()
-                || scoredChunks.size() > (long) page * limit + limit || entityFused.size() > offset + entityLimit
-                || relationFused.size() > offset + relationLimit || allPaths.size() > offset + limit;
+                || candidates.size() > offset + limit;
         List<RagWarning> warnings = new ArrayList<>();
         if (text.warningCode() != null) {
             warnings.add(new RagWarning("requirement.graph.text", text.warningCode(), text.warningMessage(), 0));
@@ -421,8 +445,7 @@ public class RequirementGraphHybridSearchService {
         observability.count("nexus.requirement_graph.search.completed", projectId, resultStatus);
         observability.timer("nexus.requirement_graph.search.duration", projectId, resultStatus,
                 Duration.ofNanos(System.nanoTime() - startedAt).toMillis());
-        observability.value("nexus.requirement_graph.search.results", projectId, resultStatus,
-                entityFused.size() + relationFused.size() + allPaths.size() + allChunks.size());
+        observability.value("nexus.requirement_graph.search.results", projectId, resultStatus, total);
 
         return new SearchResponse(snapshot, selectedEntities, selectedRelations, finalEvidence, warnings,
                 total, truncated, page, limit, pageChunks, pagePaths, plan, channelScores);
@@ -534,6 +557,14 @@ public class RequirementGraphHybridSearchService {
     }
 
     private record FusionPathState(String entityId, List<String> entityIds, List<String> relationIds, Set<String> seen) {
+    }
+
+    /** 统一候选：跨文本/实体/关系/路径/证据通道融合排序后的分页单元。 */
+    private record UnifiedCandidate(String type, String id, double score) {
+    }
+
+    private String pathKey(GraphPath path) {
+        return String.join(">", path.entityIds());
     }
 
     private double lexicalScore(Entity entity, String query) {
