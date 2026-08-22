@@ -17,7 +17,8 @@ public record MultiSourceKnowledgeProperties(
         boolean enabled,
         boolean llmFallbackEnabled,
         String intentModel,
-        Map<String, Boolean> projectEnabled
+        Map<String, Boolean> projectEnabled,
+        boolean relationLlmConfirmationEnabled
 ) {
     @ConstructorBinding
     public MultiSourceKnowledgeProperties {
@@ -25,14 +26,20 @@ public record MultiSourceKnowledgeProperties(
         intentModel = intentModel == null || intentModel.isBlank() ? null : intentModel.trim();
     }
 
-    /** 默认配置：全局关闭，关闭 LLM 回退，无项目白名单。 */
+    /** 兼容构造器：未配置跨源关系 LLM 确认时默认关闭。 */
+    public MultiSourceKnowledgeProperties(boolean enabled, boolean llmFallbackEnabled,
+                                          String intentModel, Map<String, Boolean> projectEnabled) {
+        this(enabled, llmFallbackEnabled, intentModel, projectEnabled, false);
+    }
+
+    /** 默认配置：全局关闭，关闭 LLM 回退，无项目白名单，关闭关系 LLM 确认。 */
     public static MultiSourceKnowledgeProperties disabledDefault() {
-        return new MultiSourceKnowledgeProperties(false, false, null, Map.of());
+        return new MultiSourceKnowledgeProperties(false, false, null, Map.of(), false);
     }
 
     /** 默认配置：全局开启，关闭 LLM 回退（测试/离线评估使用）。 */
     public static MultiSourceKnowledgeProperties enabledDefault() {
-        return new MultiSourceKnowledgeProperties(true, false, null, Map.of());
+        return new MultiSourceKnowledgeProperties(true, false, null, Map.of(), false);
     }
 
     /** 该项目是否启用多源检索：全局关闭则一律关闭；未在 project-enabled 配置时按全局开关。 */
@@ -49,6 +56,11 @@ public record MultiSourceKnowledgeProperties(
     /** 是否启用 LLM 意图回退。 */
     public boolean llmFallbackEnabled() {
         return llmFallbackEnabled;
+    }
+
+    /** 是否启用跨来源关系 LLM 语义确认（对规则抽取的关系做二次确认，失败默认保留）。 */
+    public boolean relationLlmConfirmationEnabled() {
+        return relationLlmConfirmationEnabled;
     }
 
     /** 解析 LLM 意图回退模型名：未配置时使用调用方提供的回退模型。 */

@@ -1,8 +1,11 @@
 package com.example.requirementrag.knowledge.multisource;
 
+import com.example.requirementrag.conflict.KnowledgeConflictModels.Authority;
+import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.DoubtClaim;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeQueryIntent;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.MultiSourceSearchResponse;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.UnifiedKnowledgeClaim;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -122,6 +125,76 @@ class MultiSourceSearchServiceTest {
 
         assertThat(response.intent()).isEqualTo(KnowledgeQueryIntent.GENERAL);
         assertThat(response.warnings()).doesNotContain("intent classified via LLM");
+    }
+
+    @Test
+    void llmRelationConfirmationRejectsFalseRelationsWhenEnabled() {
+        MultiSourceKnowledgeStore store = newStore();
+        store.replaceProjectVersion("fengshen", "5.1");
+        TestKnowledgeLoaders testLoaders = new TestKnowledgeLoaders(new ObjectMapper());
+        store.saveTestCases("fengshen", "5.1", List.of(testLoaders.parseTestCase(
+                "{\"testCaseId\":\"tc-1\",\"title\":\"取消订单\",\"expectedResult\":\"可取消\","
+                        + "\"module\":\"订单\",\"coveredRequirementId\":\"订单-001\",\"framework\":\"JUnit\"}",
+                "fengshen", "5.1", "OrderTest.java")));
+        MultiSourceCandidateAdapter requirementAdapter = requirementAdapter();
+
+        MultiSourceSearchService service = new MultiSourceSearchService(
+                store, new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(), List.of(requirementAdapter),
+                new CrossSourceRelationExtractor(), query -> Optional.empty(),
+                new MultiSourceKnowledgeProperties(true, false, null, Map.of(), true),
+                (source, relationType, target, evidence) ->
+                        new CrossSourceRelationConfirmer.Confirmation(false, "不相关"));
+
+        MultiSourceSearchResponse response = service.search(
+                "fengshen", "5.1", "取消订单", KnowledgeQueryIntent.VALIDATION, 20, 0);
+
+        assertThat(response.relations()).isEmpty();
+        assertThat(response.warnings()).contains("LLM 语义确认拒绝 1 条规则关系");
+    }
+
+    @Test
+    void llmRelationConfirmationKeepsConfirmedRelationsWhenEnabled() {
+        MultiSourceKnowledgeStore store = newStore();
+        store.replaceProjectVersion("fengshen", "5.1");
+        TestKnowledgeLoaders testLoaders = new TestKnowledgeLoaders(new ObjectMapper());
+        store.saveTestCases("fengshen", "5.1", List.of(testLoaders.parseTestCase(
+                "{\"testCaseId\":\"tc-1\",\"title\":\"取消订单\",\"expectedResult\":\"可取消\","
+                        + "\"module\":\"订单\",\"coveredRequirementId\":\"订单-001\",\"framework\":\"JUnit\"}",
+                "fengshen", "5.1", "OrderTest.java")));
+
+        MultiSourceSearchService service = new MultiSourceSearchService(
+                store, new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(), List.of(requirementAdapter()),
+                new CrossSourceRelationExtractor(), query -> Optional.empty(),
+                new MultiSourceKnowledgeProperties(true, false, null, Map.of(), true),
+                (source, relationType, target, evidence) ->
+                        new CrossSourceRelationConfirmer.Confirmation(true, "匹配"));
+
+        MultiSourceSearchResponse response = service.search(
+                "fengshen", "5.1", "取消订单", KnowledgeQueryIntent.VALIDATION, 20, 0);
+
+        assertThat(response.relations()).isNotEmpty();
+        assertThat(response.relations().get(0).type().name()).isEqualTo("VERIFIES");
+        assertThat(response.warnings()).doesNotContain("LLM 语义确认拒绝 1 条规则关系");
+    }
+
+    private MultiSourceCandidateAdapter requirementAdapter() {
+        return new MultiSourceCandidateAdapter() {
+            @Override
+            public SourceType sourceType() {
+                return SourceType.REQUIREMENT;
+            }
+
+            @Override
+            public List<UnifiedKnowledgeClaim> load(String projectId, String version, String query) {
+                return List.of(new UnifiedKnowledgeClaim("req:1", "fengshen", "5.1",
+                        "fengshen|5.1|订单|订单-001", "订单-001", "允许取消", "允许", "TEXT", null,
+                        SourceType.REQUIREMENT, Authority.PRIMARY,
+                        MultiSourceKnowledgeModels.KnowledgeStatus.VERIFIED,
+                        "5.1", null, "graph:s1#req:1", "订单"));
+            }
+        };
     }
 
     private MultiSourceKnowledgeStore newStore() {

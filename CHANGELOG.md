@@ -2,6 +2,12 @@
 
 ### Added
 
+- 第十六轮开发（多源知识生产加固收口：Qdrant 多源过滤 + live alias、真实 Token usage、跨源关系 LLM 语义确认）：
+  - Qdrant 多源过滤：`ChunkRecord` 新增 `sourceType`（默认 `REQUIREMENT`，兼容旧构造器），`QdrantHybridStore` 写入/读取 payload `sourceType`，并新增按来源类型过滤的 `hybridSearch`/`hybridSearchWithScores` 重载（单值 `match.value` / 多值 `match.any`）。
+  - Qdrant live alias：`QdrantHybridStore` 新增 `publishLiveAlias`（写版本化物理 collection → 校验点数 → Alias 原子创建/swap → 清理旧版本）、`aliasTarget` 与 `rollbackLiveAlias`（回滚到上一物理 collection），在线查询始终读完整版本，失败不切换 alias。
+  - 真实 Token usage：新增 `ChatTokenUsageTracker` + `TokenTrackingChatModel`，包装 `ChatClient` 依赖的 `ChatModel`，把模型 API 返回的真实 `TokenUsage`（prompt/completion/total）计入 Micrometer 指标（`rag.tokens.*`，含 stage 标签），监控页 `tokenUsage()` 可聚合真实数据；默认对所有 ChatClient 调用透明生效。
+  - 跨源关系 LLM 语义确认：新增 `CrossSourceRelationConfirmer` 接口 + `LlmCrossSourceRelationConfirmer` 实现；`MultiSourceSearchService` 在 `relation-llm-confirmation-enabled` 开启时对规则抽取的关系做 LLM 二次确认，仅丢弃明确判为不成立的关系（拒绝/引用缺失写入 warnings），失败/未解析默认 fail-open 保留规则基线。
+  - 新增 Qdrant 过滤/live alias、Token usage、关系 LLM 确认回归测试。
 - 第十四轮开发（多源知识生产加固：灰度开关 + LLM 意图回退 + HTTP API）：
   - 新增 `app.rag.multi-source` 配置（`MultiSourceKnowledgeProperties`）：全局总开关 + 按项目灰度开关（`project-enabled`）+ LLM 意图回退开关与模型名；关闭时保留已导入数据，多源检索返回 `NO_RESULT` + `MULTI_SOURCE_DISABLED` 降级响应，默认全关以符合灰度原则。
   - 新增 LLM 意图回退：`KnowledgeQueryIntentLlmFallback` 接口 + `LlmKnowledgeQueryIntentClassifier` 实现，规则分类器无法归类（GENERAL）且开启回退时调用 LLM 细化意图，任何失败/非法输出均降级为规则结果，并在响应 warnings 记录 `intent classified via LLM: X`。

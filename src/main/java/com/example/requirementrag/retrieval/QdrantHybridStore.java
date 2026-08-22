@@ -12,7 +12,9 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -33,6 +35,7 @@ public class QdrantHybridStore {
     private final SparseVectorizer sparseVectorizer;
     private final RagProperties properties;
     private final Set<String> initializedCollections = ConcurrentHashMap.newKeySet();
+    private static final org.slf4j.Logger LOGGER = org.slf4j.LoggerFactory.getLogger(QdrantHybridStore.class);
 
     /** 注入 Qdrant 客户端、嵌入模型、稀疏向量化器与配置。 */
     public QdrantHybridStore(RestClient qdrantRestClient,
@@ -307,7 +310,8 @@ public class QdrantHybridStore {
                             Map.entry("heading", chunk.heading()),
                             Map.entry("requirementId", chunk.requirementId()),
                             Map.entry("module", chunk.module()),
-                            Map.entry("acceptanceCriteria", chunk.acceptanceCriteria()))));
+                            Map.entry("acceptanceCriteria", chunk.acceptanceCriteria()),
+                            Map.entry("sourceType", chunk.sourceType() == null ? "REQUIREMENT" : chunk.sourceType()))));
         }
         return points;
     }
@@ -343,6 +347,27 @@ public class QdrantHybridStore {
         return extractPoints(response);
     }
 
+    /** 执行混合检索并按多源类型过滤：空集合表示不过滤。 */
+    public List<ChunkRecord> hybridSearch(String collection, String query, String documentId, String version,
+                                          Set<String> sourceTypes) {
+        ensureCollection(collection);
+        float[] dense = embeddingBatcher.embedAll(List.of(query)).get(0);
+        SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorize(query);
+        RagProperties.Retrieval cfg = properties.retrieval();
+        Map<String, Object> filter = filter(documentId, version, sourceTypes);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("prefetch", List.of(
+                Map.of("query", dense, "using", "dense", "limit", cfg.denseTopK(), "filter", filter),
+                Map.of("query", Map.of("indices", sparse.indices(), "values", sparse.values()), "using", "sparse", "limit", cfg.sparseTopK(), "filter", filter)));
+        body.put("query", Map.of("fusion", "rrf"));
+        body.put("limit", cfg.hybridTopK());
+        body.put("with_payload", true);
+        Map<String, Object> response = client.post().uri("/collections/{collection}/points/query", collection)
+                .contentType(MediaType.APPLICATION_JSON).body(body).retrieve()
+                .body(new ParameterizedTypeReference<>() {});
+        return extractPoints(response);
+    }
+
     /**
      * 执行混合检索并返回带 Qdrant 原生融合分数的结果。
      *
@@ -361,6 +386,27 @@ public class QdrantHybridStore {
         body.put("prefetch", List.of(
                 Map.of("query", dense, "using", "dense", "limit", cfg.denseTopK(), "filter", filter(documentId, version)),
                 Map.of("query", Map.of("indices", sparse.indices(), "values", sparse.values()), "using", "sparse", "limit", cfg.sparseTopK(), "filter", filter(documentId, version))));
+        body.put("query", Map.of("fusion", "rrf"));
+        body.put("limit", cfg.hybridTopK());
+        body.put("with_payload", true);
+        Map<String, Object> response = client.post().uri("/collections/{collection}/points/query", collection)
+                .contentType(MediaType.APPLICATION_JSON).body(body).retrieve()
+                .body(new ParameterizedTypeReference<>() {});
+        return extractScoredPoints(response);
+    }
+
+    /** 执行混合检索（含分数）并按多源类型过滤：空集合表示不过滤。 */
+    public List<ScoredChunk> hybridSearchWithScores(String collection, String query, String documentId, String version,
+                                                    Set<String> sourceTypes) {
+        ensureCollection(collection);
+        float[] dense = embeddingBatcher.embedAll(List.of(query)).get(0);
+        SparseVectorizer.SparseVector sparse = sparseVectorizer.vectorize(query);
+        RagProperties.Retrieval cfg = properties.retrieval();
+        Map<String, Object> filter = filter(documentId, version, sourceTypes);
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("prefetch", List.of(
+                Map.of("query", dense, "using", "dense", "limit", cfg.denseTopK(), "filter", filter),
+                Map.of("query", Map.of("indices", sparse.indices(), "values", sparse.values()), "using", "sparse", "limit", cfg.sparseTopK(), "filter", filter)));
         body.put("query", Map.of("fusion", "rrf"));
         body.put("limit", cfg.hybridTopK());
         body.put("with_payload", true);
@@ -495,6 +541,147 @@ public class QdrantHybridStore {
         throw new IllegalStateException("Qdrant 未就绪: " + properties.qdrant().baseUrl(), lastFailure);
     }
 
+    /**
+     * 安全发布需求知识到 live alias：
+     * 写入版本化物理 collection → 校验点数 → Qdrant Alias 原子切换/创建 → 清理旧版本。
+     * 任一步失败时 Alias 保持不变，在线查询始终读取上一个完整版本。
+     *
+     * @param alias  检索侧 live alias（如 {@code requirements_live}），物理 collection 为 {@code <alias>-<ts>}
+     * @param chunks 新版本的全部候选点
+     */
+    public void publishLiveAlias(String alias, List<ChunkRecord> chunks) {
+        if (chunks == null || chunks.isEmpty()) {
+            throw new IllegalArgumentException("cannot publish an empty requirement index");
+        }
+        String physical = alias + "-" + Instant.now().toEpochMilli();
+        ensureCollection(physical);
+        writePointBatches(physical, buildPointBatches(chunks, 32));
+        verifyPhysicalCount(physical, chunks.size());
+        publishAlias(alias, physical);
+        retireOldCollections(alias, physical);
+    }
+
+    /** 回滚 live alias 到指定物理 collection（如上一个成功版本）；alias 不存在时创建指向目标。 */
+    public void rollbackLiveAlias(String alias, String targetCollection) {
+        if (alias == null || alias.isBlank()) {
+            throw new IllegalArgumentException("alias must not be blank");
+        }
+        if (targetCollection == null || targetCollection.isBlank()) {
+            throw new IllegalArgumentException("targetCollection must not be blank");
+        }
+        String current = aliasTarget(alias);
+        if (targetCollection.equals(current)) {
+            return;
+        }
+        if (current != null) {
+            postAliasActions(Map.of("delete_alias", Map.of("alias_name", alias)));
+        }
+        postAliasActions(Map.of("create_alias", Map.of("collection_name", targetCollection, "alias_name", alias)));
+    }
+
+    /** 查询 global alias 列表，返回 alias 当前指向的物理 collection；不存在时返回 null。 */
+    public String aliasTarget(String alias) {
+        Map<String, Object> response = client.get().uri("/aliases").retrieve()
+                .body(new ParameterizedTypeReference<>() {});
+        Map<String, Object> result = map(response == null ? null : response.get("result"));
+        for (Object raw : list(result.get("aliases"))) {
+            Map<String, Object> entry = map(raw);
+            if (alias.equals(entry.get("alias_name"))) {
+                return (String) entry.get("collection_name");
+            }
+        }
+        return null;
+    }
+
+    /** 校验物理 collection 点数与预期一致；不一致时抛异常（Alias 不切换）。 */
+    private void verifyPhysicalCount(String collection, int expected) {
+        Map<String, Object> response = client.post().uri("/collections/{collection}/points/count", collection)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of())
+                .retrieve()
+                .body(new ParameterizedTypeReference<>() {});
+        Map<String, Object> result = map(response == null ? null : response.get("result"));
+        long count = ((Number) result.getOrDefault("count", 0)).longValue();
+        if (count != expected) {
+            throw new IllegalStateException("多源索引校验失败: collection " + collection
+                    + " 期望 " + expected + " 个 point, 实际 " + count);
+        }
+    }
+
+    /** 原子切换 Alias 到新物理 collection：alias 不存在则创建（并迁移删除旧物理 collection），存在则 swap（失败回退 delete+create）。 */
+    private void publishAlias(String alias, String physical) {
+        String current = aliasTarget(alias);
+        Map<String, Object> action;
+        if (current == null) {
+            action = Map.of("create_alias", Map.of("collection_name", physical, "alias_name", alias));
+            try {
+                postAliasActions(action);
+            } catch (HttpClientErrorException.Conflict conflict) {
+                LOGGER.warn("alias {} 与遗留物理 collection 冲突，清理后重试: {}", alias, conflict.getMessage());
+                deleteLegacyPhysical(alias);
+                postAliasActions(action);
+            }
+        } else {
+            action = Map.of("swap_aliases", List.of(
+                    Map.of("collection", current, "alias", alias),
+                    Map.of("collection", physical, "alias", alias)));
+            try {
+                postAliasActions(action);
+            } catch (HttpClientErrorException.BadRequest exception) {
+                LOGGER.warn("swap_aliases 不可用（{}），回退 delete+create 切换 alias {}", exception.getMessage(), alias);
+                postAliasActions(Map.of("delete_alias", Map.of("alias_name", alias)));
+                postAliasActions(Map.of("create_alias", Map.of("collection_name", physical, "alias_name", alias)));
+            }
+        }
+        if (current == null) {
+            deleteLegacyPhysical(alias);
+        }
+    }
+
+    private void postAliasActions(Map<String, Object> action) {
+        client.post().uri("/collections/aliases")
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("actions", List.of(action)))
+                .retrieve().toBodilessEntity();
+    }
+
+    /** 首次发布迁移：删除与 alias 同名的旧物理 collection（旧数据，best-effort）。 */
+    private void deleteLegacyPhysical(String alias) {
+        try {
+            client.delete().uri("/collections/{collection}", alias).retrieve().toBodilessEntity();
+        } catch (HttpClientErrorException.NotFound exception) {
+            // 无旧物理 collection（全新部署）
+        }
+    }
+
+    /** 清理过期物理 collection：保留最新 2 个（当前 + 上一个成功版本），其余删除。 */
+    private void retireOldCollections(String alias, String currentPhysical) {
+        String prefix = alias + "-";
+        Map<String, Object> response = client.get().uri("/collections").retrieve()
+                .body(new ParameterizedTypeReference<>() {});
+        Map<String, Object> result = map(response == null ? null : response.get("result"));
+        List<String> physicals = new ArrayList<>();
+        for (Object raw : list(result.get("collections"))) {
+            Map<String, Object> entry = map(raw);
+            String name = (String) entry.get("name");
+            if (name != null && name.startsWith(prefix)) {
+                physicals.add(name);
+            }
+        }
+        physicals.sort(Comparator.naturalOrder());
+        for (int index = 0; index < physicals.size() - 2; index++) {
+            String stale = physicals.get(index);
+            if (!stale.equals(currentPhysical)) {
+                try {
+                    client.delete().uri("/collections/{collection}", stale).retrieve().toBodilessEntity();
+                    LOGGER.info("Retired stale requirement index collection {}", stale);
+                } catch (RuntimeException exception) {
+                    LOGGER.warn("Failed to retire stale requirement index collection {}: {}", stale, exception.getMessage());
+                }
+            }
+        }
+    }
+
     /** 确保指定 collection 存在，不存在则按嵌入维度自动创建。 */
     private void ensureCollection(String collection) {
         if (initializedCollections.contains(collection)) {
@@ -550,9 +737,21 @@ public class QdrantHybridStore {
 
     /** 构建 documentId + version 的 Qdrant 过滤条件。 */
     private Map<String, Object> filter(String documentId, String version) {
-        return Map.of("must", List.of(
+        return filter(documentId, version, Set.of());
+    }
+
+    /** 构建 documentId + version + 可选多源类型过滤的 Qdrant 过滤条件。 */
+    private Map<String, Object> filter(String documentId, String version, Set<String> sourceTypes) {
+        List<Map<String, Object>> must = new ArrayList<>(List.of(
                 Map.of("key", "documentId", "match", Map.of("value", documentId)),
                 Map.of("key", "version", "match", Map.of("value", version))));
+        if (sourceTypes != null && !sourceTypes.isEmpty()) {
+            Map<String, Object> match = sourceTypes.size() == 1
+                    ? Map.of("value", sourceTypes.iterator().next())
+                    : Map.of("any", List.copyOf(sourceTypes));
+            must.add(Map.of("key", "sourceType", "match", match));
+        }
+        return Map.of("must", must);
     }
 
     /** 从查询响应中提取分块列表。 */
@@ -577,7 +776,9 @@ public class QdrantHybridStore {
                 string(p, "contentHash"), integer(p, "parentOrder"), integer(p, "childOrder"),
                 string(p, "sectionPath"), string(p, "heading"),
                 string(p, "requirementId"), string(p, "module"),
-                string(p, "acceptanceCriteria"));
+                string(p, "acceptanceCriteria"),
+                p.containsKey("sourceType") && p.get("sourceType") != null
+                        ? String.valueOf(p.get("sourceType")) : "REQUIREMENT");
     }
 
     /** 获取配置的 collection 名称。 */

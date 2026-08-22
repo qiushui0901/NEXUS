@@ -29,4 +29,5 @@
   - 冲突范围与分页结果一致（按当前页 Claim 计算状态）
 - [x] 生产加固第十四轮：按项目灰度开关（`app.rag.multi-source`）+ LLM 意图回退 + `POST /api/knowledge/multi-source/search` HTTP API
 - [x] 生产加固第十五轮：旧 `TEST` 数据回填清洗（`SourceType.normalized()` + `KnowledgeConflictService` 规范化回填 `TEST→TEST_CASE`，warnings 可见）
-- [ ] 生产加固（留待后续）：Qdrant payload 多源过滤、真实 Token usage、跨源关系 LLM 语义确认
+- [x] 生产加固第十六轮：Qdrant payload 多源过滤 + live alias（`publishLiveAlias`/`rollbackLiveAlias`/sourceTypes 过滤重载）、真实 Token usage（`ChatTokenUsageTracker`+`TokenTrackingChatModel`）、跨源关系 LLM 语义确认（`LlmCrossSourceRelationConfirmer` 可开关，fail-open）
+- [ ] 生产加固（留待后续）：无（当前清单中全部已推进完成，后续可做前端接入/线上压测）

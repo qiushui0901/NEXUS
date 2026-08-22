@@ -17,9 +17,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -42,8 +44,12 @@ public class MultiSourceSearchService {
     private final CrossSourceRelationExtractor relationExtractor;
     private final KnowledgeQueryIntentLlmFallback intentFallback;
     private final MultiSourceKnowledgeProperties properties;
+    private final CrossSourceRelationConfirmer relationConfirmer;
 
     private static final KnowledgeQueryIntentLlmFallback NO_OP_FALLBACK = query -> Optional.empty();
+    private static final CrossSourceRelationConfirmer NO_OP_CONFIRMER =
+            (source, relationType, target, evidence) ->
+                    new CrossSourceRelationConfirmer.Confirmation(true, "no-op");
 
     @Autowired
     public MultiSourceSearchService(MultiSourceKnowledgeStore store,
@@ -54,7 +60,8 @@ public class MultiSourceSearchService {
                                     List<MultiSourceCandidateAdapter> adapters,
                                     CrossSourceRelationExtractor relationExtractor,
                                     KnowledgeQueryIntentLlmFallback intentFallback,
-                                    MultiSourceKnowledgeProperties properties) {
+                                    MultiSourceKnowledgeProperties properties,
+                                    CrossSourceRelationConfirmer relationConfirmer) {
         this.store = store;
         this.classifier = classifier;
         this.gate = gate;
@@ -64,9 +71,10 @@ public class MultiSourceSearchService {
         this.relationExtractor = relationExtractor == null ? new CrossSourceRelationExtractor() : relationExtractor;
         this.intentFallback = intentFallback == null ? NO_OP_FALLBACK : intentFallback;
         this.properties = properties == null ? MultiSourceKnowledgeProperties.enabledDefault() : properties;
+        this.relationConfirmer = relationConfirmer == null ? NO_OP_CONFIRMER : relationConfirmer;
     }
 
-    /** 测试/离线场景无 LLM 回退与灰度配置时的兼容构造器（默认启用）。 */
+    /** 测试/离线场景无 LLM 回退、灰度配置与关系确认器时的兼容构造器（默认启用）。 */
     public MultiSourceSearchService(MultiSourceKnowledgeStore store,
                                     KnowledgeQueryIntentClassifier classifier,
                                     MultiSourceKnowledgeGate gate,
@@ -75,7 +83,21 @@ public class MultiSourceSearchService {
                                     List<MultiSourceCandidateAdapter> adapters,
                                     CrossSourceRelationExtractor relationExtractor) {
         this(store, classifier, gate, sourceFilter, conflictAnalyzer, adapters, relationExtractor,
-                NO_OP_FALLBACK, MultiSourceKnowledgeProperties.enabledDefault());
+                NO_OP_FALLBACK, MultiSourceKnowledgeProperties.enabledDefault(), NO_OP_CONFIRMER);
+    }
+
+    /** 测试/离线场景无关系确认器时的兼容构造器。 */
+    public MultiSourceSearchService(MultiSourceKnowledgeStore store,
+                                    KnowledgeQueryIntentClassifier classifier,
+                                    MultiSourceKnowledgeGate gate,
+                                    SourceFilterStrategy sourceFilter,
+                                    MultiSourceConflictAnalyzer conflictAnalyzer,
+                                    List<MultiSourceCandidateAdapter> adapters,
+                                    CrossSourceRelationExtractor relationExtractor,
+                                    KnowledgeQueryIntentLlmFallback intentFallback,
+                                    MultiSourceKnowledgeProperties properties) {
+        this(store, classifier, gate, sourceFilter, conflictAnalyzer, adapters, relationExtractor,
+                intentFallback, properties, NO_OP_CONFIRMER);
     }
 
     /** 测试/离线场景无适配器时的兼容构造器。 */
@@ -147,7 +169,8 @@ public class MultiSourceSearchService {
 
         // 跨来源关系：生产链路生成并持久化；未解析项作为 warning，不伪造悬空 target。
         CrossSourceExtraction extraction = relationExtractor.extract(candidates, doubts);
-        List<CrossSourceRelation> relations = extraction.relations();
+        RelationConfirmationResult confirmation = confirmRelations(candidates, doubts, extraction.relations());
+        List<CrossSourceRelation> relations = confirmation.relations();
         if (!relations.isEmpty()) {
             store.saveRelations(projectId, version, relations);
         }
@@ -160,6 +183,7 @@ public class MultiSourceSearchService {
                 .distinct().toList();
         List<String> explanations = explanations(claims, intent);
         List<String> warnings = new ArrayList<>(extraction.unresolved());
+        warnings.addAll(confirmation.warnings());
         if (intent == KnowledgeQueryIntent.NORMATIVE && !doubts.isEmpty()) {
             warnings.add("普通规范查询默认不返回 OPEN 存疑");
         }
@@ -168,6 +192,61 @@ public class MultiSourceSearchService {
         }
         return new MultiSourceSearchResponse(query, intent, status, claims, evidence, conflicts, doubts,
                 explanations, warnings, relations);
+    }
+
+    /** 关系确认结果：保留的关系 + 被 LLM 拒绝/不可用等 warning。 */
+    private record RelationConfirmationResult(List<CrossSourceRelation> relations, List<String> warnings) {
+    }
+
+    /** 可选 LLM 语义确认：默认关闭时为 no-op；开启时仅丢弃 LLM 明确判为不成立的关系。 */
+    private RelationConfirmationResult confirmRelations(List<UnifiedKnowledgeClaim> candidates,
+                                                        List<DoubtClaim> doubts,
+                                                        List<CrossSourceRelation> relations) {
+        if (!properties.relationLlmConfirmationEnabled() || relations.isEmpty()) {
+            return new RelationConfirmationResult(relations, List.of());
+        }
+        Map<String, CrossSourceRelationConfirmer.ClaimRef> refs = claimRefs(candidates, doubts);
+        List<CrossSourceRelation> confirmed = new ArrayList<>();
+        List<String> warnings = new ArrayList<>();
+        int rejected = 0;
+        for (CrossSourceRelation relation : relations) {
+            CrossSourceRelationConfirmer.ClaimRef source = refs.get(relation.sourceClaimId());
+            CrossSourceRelationConfirmer.ClaimRef target = refs.get(relation.targetClaimId());
+            if (source == null || target == null) {
+                warnings.add("LLM_RELATION_REF_MISSING:" + relation.relationId());
+                continue;
+            }
+            CrossSourceRelationConfirmer.Confirmation result = relationConfirmer.confirm(
+                    source, relation.type().name(), target, relation.evidenceLocation());
+            if (result.confirmed()) {
+                confirmed.add(relation);
+            } else {
+                rejected++;
+                warnings.add("LLM_REJECTED_RELATION:" + relation.relationId() + " reason=" + result.reason());
+            }
+        }
+        if (rejected > 0) {
+            warnings.add("LLM 语义确认拒绝 " + rejected + " 条规则关系");
+        }
+        return new RelationConfirmationResult(List.copyOf(confirmed), List.copyOf(warnings));
+    }
+
+    /** 构建关系参与方摘要：候选统一 Claim + 存疑 Claim。 */
+    private Map<String, CrossSourceRelationConfirmer.ClaimRef> claimRefs(List<UnifiedKnowledgeClaim> candidates,
+                                                                         List<DoubtClaim> doubts) {
+        Map<String, CrossSourceRelationConfirmer.ClaimRef> refs = new LinkedHashMap<>();
+        for (UnifiedKnowledgeClaim claim : candidates) {
+            String summary = safe(claim.module()) + " " + safe(claim.subject()) + " "
+                    + safe(claim.predicate()) + " " + safe(claim.value()) + " " + safe(claim.unit());
+            refs.put(claim.claimId(), new CrossSourceRelationConfirmer.ClaimRef(
+                    claim.claimId(), claim.sourceType().name(), summary));
+        }
+        for (DoubtClaim doubt : doubts == null ? List.<DoubtClaim>of() : doubts) {
+            String summary = safe(doubt.module()) + " 问题=" + safe(doubt.question()) + " 答案=" + safe(doubt.answer());
+            refs.put(doubt.doubtId(), new CrossSourceRelationConfirmer.ClaimRef(
+                    doubt.doubtId(), SourceType.DOUBT.name(), summary));
+        }
+        return refs;
     }
 
     /** 字段加权评分：factKey 命中权重最高，其次 subject/module/predicate/value/unit。 */

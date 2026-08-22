@@ -1,5 +1,7 @@
 package com.example.requirementrag.config;
 
+import com.example.requirementrag.observability.ChatTokenUsageTracker;
+import com.example.requirementrag.observability.TokenTrackingChatModel;
 import com.example.requirementrag.rerank.BgeReranker;
 import com.example.requirementrag.rerank.HttpBgeReranker;
 import org.springframework.ai.chat.client.ChatClient;
@@ -21,10 +23,11 @@ public class AiConfiguration {
     private static final int QDRANT_CONNECT_TIMEOUT_MS = 2_000;
     private static final int QDRANT_READ_TIMEOUT_MS = 5_000;
 
-    /** 构建 Spring AI ChatClient。 */
+    /** 构建 Spring AI ChatClient，并包装模型以捕获真实 Token usage。 */
     @Bean
-    ChatClient chatClient(@Qualifier("openAiChatModel") ChatModel chatModel) {
-        return ChatClient.builder(chatModel).build();
+    ChatClient chatClient(@Qualifier("openAiChatModel") ChatModel chatModel,
+                          ChatTokenUsageTracker tokenUsageTracker) {
+        return ChatClient.builder(new TokenTrackingChatModel(chatModel, tokenUsageTracker)).build();
     }
 
     /** Boot 3.x 自动配置只提供 ObjectMapper，补充 JsonMapper bean 供重排器序列化使用。 */
