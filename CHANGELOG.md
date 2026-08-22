@@ -44,6 +44,11 @@
   - 扩展 `KnowledgeConflictModels.SourceType`：新增 `TEST_CASE / TEST_RESULT / PARAMETER_TABLE / DOUBT`，旧 `TEST` 保留并兼容映射为 `TEST_CASE`（`SourceType.normalize`）。
   - 扩展 `Authority`：新增 `SECONDARY`（验证/实现证据），与 `PRIMARY / DERIVED` 并列。
   - 新增 Trellis 任务 `multi-source-requirement-knowledge`，将多源知识实施计划拆分为 Phase 0-5 可勾选清单。
+- 第八轮开发（多源需求知识 Phase 1 结构化解析层）：
+  - 新增 `ParameterTableLoader`：表头别名识别、数值类型化（INTEGER/DECIMAL/PERCENTAGE/DURATION/COUNT/BOOLEAN/ENUM/TEXT）、单位/范围/精度/边界保留、行列位置与 `factKey` 生成。
+  - 新增 `DoubtClaimParser`：从行级数据生成结构化 `DoubtClaim`（状态/负责人/严重级别/备选方案/Evidence 位置），默认 `OPEN`。
+  - 新增 `MultiSourceKnowledgeModels`：`KnowledgeQueryIntent / KnowledgeStatus / ParameterValueType / DoubtStatus / ParameterClaim / DoubtClaim`。
+  - 新增解析器回归测试（参数别名、类型化、版本、Evidence 位置、存疑状态）。
 
 ## 0.9.1 — 2026-08-18
 

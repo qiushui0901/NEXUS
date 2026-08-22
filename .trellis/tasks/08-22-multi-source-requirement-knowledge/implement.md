@@ -13,5 +13,6 @@
 
 - [x] 生成任务文档（PRD/design/implement）
 - [x] Phase 0 编码：扩展 SourceType/Authority + 兼容映射 + 测试
-- [ ] Phase 1 编码：ParameterTableLoader + DoubtClaim 结构化
+- [x] Phase 1 编码（结构化解析层）：ParameterTableLoader + DoubtClaimParser + 领域模型
+- [ ] Phase 1 剩余：SQLite/Qdrant 存储接入 + OPEN 存疑检索隔离
 - [ ] 更新 CHANGELOG/spec
