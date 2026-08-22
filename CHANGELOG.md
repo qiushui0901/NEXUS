@@ -53,6 +53,11 @@
   - 新增 `KnowledgeQueryIntentClassifier`：规则优先识别 `NORMATIVE / VALIDATION / PARAMETER / DOUBT / CONSISTENCY / IMPACT / GENERAL`。
   - 新增 `MultiSourceKnowledgeGate`：状态门禁（`REJECTED/STALE/OBSOLETE` 默认不返回）+ OPEN/UNDER_DISCUSSION 存疑仅在 DOUBT 意图下进入结果，RESOLVED 存疑可返回。
   - 新增意图分类与门禁回归测试。
+- 第十轮开发（多源知识 Phase 1 存储接入）：
+  - 新增 `MultiSourceKnowledgeStore`：SQLite 持久化参数 Claim 与存疑 Claim（upsert、按项目/版本查询、幂等重导）。
+  - 参数保留单位/范围/精度/边界/Evidence 位置；存疑保留状态/负责人/严重级别/备选方案。
+  - 门禁已接入存储读取：OPEN/UNDER_DISCUSSION 存疑不会进入普通规范查询结果。
+  - 新增存储与门禁集成回归测试。
 
 ## 0.9.1 — 2026-08-18
 
