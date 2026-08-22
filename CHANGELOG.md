@@ -20,6 +20,7 @@
 
 ### Fixed
 
+- 第十五轮开发（旧 `TEST` 数据回填清洗）：`KnowledgeConflictModels.SourceType` 新增 `normalized()` 归一化方法；`KnowledgeConflictService` 在声明规范化阶段把旧 `TEST` 统一回填为 `TEST_CASE`（含自动生成的 claimId 前缀 `test_case:`），并在报告 warnings 记录“已将 N 条旧 TEST 来源声明规范化为 TEST_CASE”，保证新代码路径不再出现遗留 TEST 来源、冲突归类与去重都基于 TEST_CASE。
 - 修复需求语义图启用模式下多个构造器未明确 Spring 注入入口的问题；构建和查询开关同时开启时 Spring 上下文可正常加载。
 - 修复多仓库代码统计读取基础 collection 而非实际 live alias、导致已发布代码点显示为 0 的问题，并区分不可用与真实零值。
 - 将需求语义图从单父块实验升级为受预算约束的结构化窗口构建：记录覆盖率、窗口状态、重试与可恢复结果，支持跨窗口不确定性/关系冲突、证据跨度、声明审核、审计发布、分页和可选混合检索；默认仍不影响 Qdrant 需求主检索。

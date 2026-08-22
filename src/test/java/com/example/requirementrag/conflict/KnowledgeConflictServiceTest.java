@@ -128,7 +128,24 @@ class KnowledgeConflictServiceTest {
         assertThat(SourceType.normalize("PARAMETER_TABLE")).isEqualTo(SourceType.PARAMETER_TABLE);
         assertThat(SourceType.normalize("DOUBT")).isEqualTo(SourceType.DOUBT);
         assertThat(SourceType.normalize("unknown-source")).isNull();
+        assertThat(SourceType.TEST.normalized()).isEqualTo(SourceType.TEST_CASE);
+        assertThat(SourceType.TEST_CASE.normalized()).isEqualTo(SourceType.TEST_CASE);
         assertThat(Authority.SECONDARY).isEqualTo(Authority.SECONDARY);
+    }
+
+    @Test
+    void legacyTestInputIsBackfilledToTestCaseInReport() {
+        var report = service.analyze("sample", "2.1", List.of(
+                claim("req-1", SourceType.REQUIREMENT, "result-state", "accepted", List.of()),
+                claim("test-1", SourceType.TEST, "result-state", "rejected", List.of())));
+
+        assertThat(report.status()).isEqualTo(ReportStatus.REVIEW_REQUIRED);
+        assertThat(report.warnings()).contains("已将 1 条旧 TEST 来源声明规范化为 TEST_CASE");
+        assertThat(report.conflicts()).anyMatch(conflict ->
+                conflict.type() == ConflictType.REQUIREMENT_TEST
+                        && conflict.claims().stream().anyMatch(claim ->
+                        claim.sourceType() == SourceType.TEST_CASE
+                                && claim.claimId().startsWith("test_case:")));
     }
 
     @Test

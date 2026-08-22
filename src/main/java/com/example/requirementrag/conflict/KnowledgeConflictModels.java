@@ -35,6 +35,11 @@ public final class KnowledgeConflictModels {
                 return null;
             }
         }
+
+        /** 返回规范化后的来源类型：旧 TEST 映射为 TEST_CASE，其余原样返回。 */
+        public SourceType normalized() {
+            return this == TEST ? TEST_CASE : this;
+        }
     }
 
     /** 声明权威级别：PRIMARY 为原始证据，SECONDARY 为验证/实现证据，DERIVED 为派生知识。 */

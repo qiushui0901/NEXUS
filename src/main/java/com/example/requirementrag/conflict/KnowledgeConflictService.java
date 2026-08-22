@@ -122,7 +122,11 @@ public class KnowledgeConflictService {
     private List<KnowledgeClaim> normalizeClaims(List<KnowledgeClaim> claims, List<String> warnings) {
         Map<String, KnowledgeClaim> unique = new LinkedHashMap<>();
         int ignored = 0;
+        int legacyTest = 0;
         for (KnowledgeClaim value : claims == null ? List.<KnowledgeClaim>of() : claims) {
+            if (value != null && value.sourceType() == SourceType.TEST) {
+                legacyTest++;
+            }
             KnowledgeClaim claim = normalize(value);
             if (claim == null) {
                 ignored++;
@@ -135,6 +139,9 @@ public class KnowledgeConflictService {
         }
         if (ignored > 0) {
             warnings.add("已忽略 " + ignored + " 条缺少项目、版本、事实键、事实值或证据标识的声明");
+        }
+        if (legacyTest > 0) {
+            warnings.add("已将 " + legacyTest + " 条旧 TEST 来源声明规范化为 TEST_CASE");
         }
         int duplicates = Math.max(0, (claims == null ? 0 : claims.size()) - ignored - unique.size());
         if (duplicates > 0) {
@@ -160,7 +167,9 @@ public class KnowledgeConflictService {
         KnowledgeEvidence evidence = new KnowledgeEvidence(evidenceId,
                 clean(value.evidence().title(), 240), clean(value.evidence().source(), 360),
                 clean(value.evidence().location(), 360), clean(value.evidence().excerpt(), MAX_EXCERPT_CHARS));
-        Authority authority = value.sourceType() == SourceType.WIKI ? Authority.DERIVED : Authority.PRIMARY;
+        // 旧 TEST 统一回填为 TEST_CASE：新代码路径不再出现遗留 TEST 来源。
+        SourceType sourceType = value.sourceType().normalized();
+        Authority authority = sourceType == SourceType.WIKI ? Authority.DERIVED : Authority.PRIMARY;
         List<String> supporting = value.supportingEvidenceIds().stream()
                 .map(item -> clean(item, 240))
                 .filter(this::hasText)
@@ -168,10 +177,10 @@ public class KnowledgeConflictService {
                 .toList();
         String claimId = clean(value.claimId(), 240);
         if (!hasText(claimId)) {
-            claimId = value.sourceType().name().toLowerCase(Locale.ROOT) + ':' + evidenceId + ':' + factKey;
+            claimId = sourceType.name().toLowerCase(Locale.ROOT) + ':' + evidenceId + ':' + factKey;
         }
         return new KnowledgeClaim(claimId, projectId, version, factKey, factValue,
-                value.sourceType(), authority, evidence, supporting);
+                sourceType, authority, evidence, supporting);
     }
 
     /** 合并重复声明的支撑证据 ID（去重后仅在新增时重建声明）。 */
