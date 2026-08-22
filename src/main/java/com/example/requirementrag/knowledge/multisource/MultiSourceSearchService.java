@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -28,6 +29,7 @@ import java.util.Set;
  * -> 冲突分析 -> 结论状态与解释。
  *
  * <p>第一版为确定性检索，不依赖 Qdrant/LLM；便于建立 Golden Dataset 与离线评估基线。
+ * 灰度开关（按项目）与可选的 LLM 意图回退见 {@link MultiSourceKnowledgeProperties}。
  */
 @Service
 public class MultiSourceSearchService {
@@ -38,6 +40,10 @@ public class MultiSourceSearchService {
     private final MultiSourceConflictAnalyzer conflictAnalyzer;
     private final List<MultiSourceCandidateAdapter> adapters;
     private final CrossSourceRelationExtractor relationExtractor;
+    private final KnowledgeQueryIntentLlmFallback intentFallback;
+    private final MultiSourceKnowledgeProperties properties;
+
+    private static final KnowledgeQueryIntentLlmFallback NO_OP_FALLBACK = query -> Optional.empty();
 
     @Autowired
     public MultiSourceSearchService(MultiSourceKnowledgeStore store,
@@ -46,7 +52,9 @@ public class MultiSourceSearchService {
                                     SourceFilterStrategy sourceFilter,
                                     MultiSourceConflictAnalyzer conflictAnalyzer,
                                     List<MultiSourceCandidateAdapter> adapters,
-                                    CrossSourceRelationExtractor relationExtractor) {
+                                    CrossSourceRelationExtractor relationExtractor,
+                                    KnowledgeQueryIntentLlmFallback intentFallback,
+                                    MultiSourceKnowledgeProperties properties) {
         this.store = store;
         this.classifier = classifier;
         this.gate = gate;
@@ -54,6 +62,20 @@ public class MultiSourceSearchService {
         this.conflictAnalyzer = conflictAnalyzer;
         this.adapters = adapters == null ? List.of() : adapters;
         this.relationExtractor = relationExtractor == null ? new CrossSourceRelationExtractor() : relationExtractor;
+        this.intentFallback = intentFallback == null ? NO_OP_FALLBACK : intentFallback;
+        this.properties = properties == null ? MultiSourceKnowledgeProperties.enabledDefault() : properties;
+    }
+
+    /** 测试/离线场景无 LLM 回退与灰度配置时的兼容构造器（默认启用）。 */
+    public MultiSourceSearchService(MultiSourceKnowledgeStore store,
+                                    KnowledgeQueryIntentClassifier classifier,
+                                    MultiSourceKnowledgeGate gate,
+                                    SourceFilterStrategy sourceFilter,
+                                    MultiSourceConflictAnalyzer conflictAnalyzer,
+                                    List<MultiSourceCandidateAdapter> adapters,
+                                    CrossSourceRelationExtractor relationExtractor) {
+        this(store, classifier, gate, sourceFilter, conflictAnalyzer, adapters, relationExtractor,
+                NO_OP_FALLBACK, MultiSourceKnowledgeProperties.enabledDefault());
     }
 
     /** 测试/离线场景无适配器时的兼容构造器。 */
@@ -76,7 +98,21 @@ public class MultiSourceSearchService {
 
     public MultiSourceSearchResponse search(String projectId, String version, String query,
                                             KnowledgeQueryIntent intentOverride, int limit, int page) {
+        if (!properties.enabledFor(projectId)) {
+            return new MultiSourceSearchResponse(query,
+                    intentOverride != null ? intentOverride : KnowledgeQueryIntent.GENERAL,
+                    AnswerStatus.NO_RESULT, List.of(), List.of(), List.of(), List.of(), List.of(),
+                    List.of("MULTI_SOURCE_DISABLED"), List.of());
+        }
         KnowledgeQueryIntent intent = intentOverride != null ? intentOverride : classifier.classify(query);
+        boolean llmUsed = false;
+        if (intent == KnowledgeQueryIntent.GENERAL && properties.llmFallbackEnabled()) {
+            Optional<KnowledgeQueryIntent> llmIntent = intentFallback.tryClassify(query);
+            if (llmIntent.isPresent()) {
+                intent = llmIntent.get();
+                llmUsed = true;
+            }
+        }
         Set<SourceType> allowedSources = sourceFilter.allowedSources(intent);
         List<UnifiedKnowledgeClaim> candidates = loadCandidates(projectId, version, allowedSources, query).stream()
                 .filter(claim -> gate.isRetrievable(claim.status()))
@@ -126,6 +162,9 @@ public class MultiSourceSearchService {
         List<String> warnings = new ArrayList<>(extraction.unresolved());
         if (intent == KnowledgeQueryIntent.NORMATIVE && !doubts.isEmpty()) {
             warnings.add("普通规范查询默认不返回 OPEN 存疑");
+        }
+        if (llmUsed) {
+            warnings.add("intent classified via LLM: " + intent.name());
         }
         return new MultiSourceSearchResponse(query, intent, status, claims, evidence, conflicts, doubts,
                 explanations, warnings, relations);

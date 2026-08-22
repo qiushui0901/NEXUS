@@ -2,6 +2,7 @@ package com.example.requirementrag.config;
 
 import com.example.requirementrag.integration.gitlab.GitLabIntegrationProperties;
 import com.example.requirementrag.knowledge.management.KnowledgeManagementProperties;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeProperties;
 import com.example.requirementrag.project.BusinessProjectCatalogProperties;
 import com.example.requirementrag.requirement.graph.RequirementGraphFusionProperties;
 import com.example.requirementrag.requirement.graph.RequirementGraphProperties;
@@ -24,7 +25,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
         KnowledgeManagementProperties.class,
         BusinessProjectCatalogProperties.class,
         RequirementGraphProperties.class,
-        RequirementGraphFusionProperties.class
+        RequirementGraphFusionProperties.class,
+        MultiSourceKnowledgeProperties.class
 })
 public class WebMvcConfig implements WebMvcConfigurer {
 

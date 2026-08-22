@@ -2,6 +2,7 @@ package com.example.requirementrag.knowledge.multisource;
 
 import com.example.requirementrag.conflict.KnowledgeConflictModels.Authority;
 import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
+import jakarta.validation.constraints.NotBlank;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -232,6 +233,17 @@ public final class MultiSourceKnowledgeModels {
         public CrossSourceRelation {
             if (relationId == null || relationId.isBlank()) throw new IllegalArgumentException("relationId 不能为空");
         }
+    }
+
+    /** 多源检索请求：HTTP API 入参，意图可空（自动判定）。 */
+    public record MultiSourceSearchRequest(
+            @NotBlank String projectId,
+            @NotBlank String version,
+            @NotBlank String query,
+            KnowledgeQueryIntent intent,
+            Integer limit,
+            Integer page
+    ) {
     }
 
     /** 多源检索响应：统一 Claim、Evidence、冲突、存疑与解释。 */

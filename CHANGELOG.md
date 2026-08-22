@@ -2,6 +2,11 @@
 
 ### Added
 
+- 第十四轮开发（多源知识生产加固：灰度开关 + LLM 意图回退 + HTTP API）：
+  - 新增 `app.rag.multi-source` 配置（`MultiSourceKnowledgeProperties`）：全局总开关 + 按项目灰度开关（`project-enabled`）+ LLM 意图回退开关与模型名；关闭时保留已导入数据，多源检索返回 `NO_RESULT` + `MULTI_SOURCE_DISABLED` 降级响应，默认全关以符合灰度原则。
+  - 新增 LLM 意图回退：`KnowledgeQueryIntentLlmFallback` 接口 + `LlmKnowledgeQueryIntentClassifier` 实现，规则分类器无法归类（GENERAL）且开启回退时调用 LLM 细化意图，任何失败/非法输出均降级为规则结果，并在响应 warnings 记录 `intent classified via LLM: X`。
+  - 新增多源检索 HTTP API `POST /api/knowledge/multi-source/search`（`MultiSourceKnowledgeController` + `MultiSourceSearchRequest`），支持 projectId/version/query/intent/limit/page，校验项目存在与项目访问权限。
+  - 新增灰度开关、按项目关闭、LLM 回退启用/禁用与 HTTP API 回归测试。
 - 新增业务项目与代码仓库分层模型：业务项目共享需求、版本和 Wiki，支持多个独立代码仓库、显式公共库引用、项目级权限和多仓库联合检索。
 - 新增 Immortal 迁移预览、幂等目录迁移、版本主仓库解析、需求版本落后提示和多仓库 live alias 聚合统计能力。
 - 新增需求语义图旁路能力：按业务项目、文档和需求版本生成可审核实体关系快照，保留 evidence 绑定并回查 Qdrant 原文；不替换现有需求主检索链路。

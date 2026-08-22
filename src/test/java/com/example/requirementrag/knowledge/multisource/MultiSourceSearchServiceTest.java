@@ -11,6 +11,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -64,5 +65,67 @@ class MultiSourceSearchServiceTest {
         assertThat(response.intent()).isEqualTo(KnowledgeQueryIntent.CONSISTENCY);
         assertThat(response.doubts()).extracting(DoubtClaim::status)
                 .contains(MultiSourceKnowledgeModels.DoubtStatus.OPEN);
+    }
+
+    @Test
+    void globallyDisabledProjectReturnsDegradedEmptyResponse() {
+        MultiSourceSearchService disabled = new MultiSourceSearchService(
+                newStore(), new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(), List.of(),
+                new CrossSourceRelationExtractor(), query -> Optional.empty(),
+                new MultiSourceKnowledgeProperties(false, false, null, Map.of()));
+
+        MultiSourceSearchResponse response = disabled.search("fengshen", "5.1", "权限撤销传播时间是多少");
+
+        assertThat(response.answerStatus().name()).isEqualTo("NO_RESULT");
+        assertThat(response.claims()).isEmpty();
+        assertThat(response.warnings()).containsExactly("MULTI_SOURCE_DISABLED");
+    }
+
+    @Test
+    void perProjectSwitchCanDisableSingleProject() {
+        MultiSourceSearchService perProject = new MultiSourceSearchService(
+                newStore(), new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(), List.of(),
+                new CrossSourceRelationExtractor(), query -> Optional.empty(),
+                new MultiSourceKnowledgeProperties(true, false, null, Map.of("fengshen", false)));
+
+        MultiSourceSearchResponse response = perProject.search("fengshen", "5.1", "权限撤销传播时间是多少");
+
+        assertThat(response.answerStatus().name()).isEqualTo("NO_RESULT");
+        assertThat(response.warnings()).contains("MULTI_SOURCE_DISABLED");
+    }
+
+    @Test
+    void llmFallbackRefinesGenericQueryWhenEnabled() {
+        MultiSourceSearchService withFallback = new MultiSourceSearchService(
+                newStore(), new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(), List.of(),
+                new CrossSourceRelationExtractor(), query -> Optional.of(KnowledgeQueryIntent.PARAMETER),
+                new MultiSourceKnowledgeProperties(true, true, null, Map.of()));
+
+        MultiSourceSearchResponse response = withFallback.search("fengshen", "5.1", "随便聊聊");
+
+        assertThat(response.intent()).isEqualTo(KnowledgeQueryIntent.PARAMETER);
+        assertThat(response.warnings()).contains("intent classified via LLM: PARAMETER");
+    }
+
+    @Test
+    void llmFallbackIgnoredWhenDisabled() {
+        MultiSourceSearchService withoutFallback = new MultiSourceSearchService(
+                newStore(), new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(), List.of(),
+                new CrossSourceRelationExtractor(), query -> Optional.of(KnowledgeQueryIntent.PARAMETER),
+                new MultiSourceKnowledgeProperties(true, false, null, Map.of()));
+
+        MultiSourceSearchResponse response = withoutFallback.search("fengshen", "5.1", "随便聊聊");
+
+        assertThat(response.intent()).isEqualTo(KnowledgeQueryIntent.GENERAL);
+        assertThat(response.warnings()).doesNotContain("intent classified via LLM");
+    }
+
+    private MultiSourceKnowledgeStore newStore() {
+        ObjectMapper objectMapper = new ObjectMapper();
+        return new MultiSourceKnowledgeStore(tempDir.resolve(System.nanoTime() + "-search.db").toString(), objectMapper);
     }
 }

@@ -27,4 +27,5 @@
   - 参数生效版本按 claim.version 写入并校验，避免版本覆盖
   - 冲突惩罚改用冲突分组 Set，与 conflictGroups 对齐
   - 冲突范围与分页结果一致（按当前页 Claim 计算状态）
-- [ ] 生产加固（留待后续）：Qdrant payload 多源过滤、旧 `TEST` 数据回填清洗、按项目灰度开关、LLM 意图回退、真实 Token usage、跨源关系 LLM 语义确认
+- [x] 生产加固第十四轮：按项目灰度开关（`app.rag.multi-source`）+ LLM 意图回退 + `POST /api/knowledge/multi-source/search` HTTP API
+- [ ] 生产加固（留待后续）：Qdrant payload 多源过滤、旧 `TEST` 数据回填清洗、真实 Token usage、跨源关系 LLM 语义确认
