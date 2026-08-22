@@ -1,12 +1,15 @@
 package com.example.requirementrag.knowledge.multisource;
 
+import com.example.requirementrag.conflict.KnowledgeConflictModels.Authority;
+import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
+
 import java.math.BigDecimal;
 import java.util.List;
 
 /**
- * 多源需求知识领域模型：数值表参数 Claim 与需求存疑 Claim。
+ * 多源需求知识领域模型：数值表参数 Claim、需求存疑 Claim、测试用例/结果 Claim 与统一 Claim。
  *
- * <p>这些模型是结构化知识的最小载体：保留来源位置、单位、边界与状态，
+ * <p>这些模型是结构化知识的最小载体：保留来源位置、单位、边界、状态与来源类型，
  * 避免把数值表和存疑压成无类型纯文本后混排。
  */
 public final class MultiSourceKnowledgeModels {
@@ -111,6 +114,114 @@ public final class MultiSourceKnowledgeModels {
             status = status == null ? DoubtStatus.OPEN : status;
             if (doubtId == null || doubtId.isBlank()) throw new IllegalArgumentException("doubtId 不能为空");
             if (question == null || question.isBlank()) throw new IllegalArgumentException("question 不能为空");
+        }
+    }
+
+    /** 测试用例 Claim：验证定义，不等同于需求规范。 */
+    public record TestCaseClaim(
+            String claimId,
+            String projectId,
+            String version,
+            String testCaseId,
+            String title,
+            String module,
+            String preconditions,
+            String steps,
+            String expectedResult,
+            String coveredRequirementId,
+            String framework,
+            String filePath,
+            String testMethod,
+            String evidenceLocation
+    ) {
+        public TestCaseClaim {
+            if (claimId == null || claimId.isBlank()) throw new IllegalArgumentException("claimId 不能为空");
+            if (testCaseId == null || testCaseId.isBlank()) throw new IllegalArgumentException("testCaseId 不能为空");
+        }
+    }
+
+    /** 测试结果 Claim：实际执行证据，不覆盖需求规范。 */
+    public record TestResultClaim(
+            String claimId,
+            String projectId,
+            String version,
+            String testRunId,
+            String testCaseId,
+            String executionStatus,
+            String executedAt,
+            String environment,
+            String actualResult,
+            String failureMessage,
+            String evidenceLocation
+    ) {
+        public TestResultClaim {
+            if (claimId == null || claimId.isBlank()) throw new IllegalArgumentException("claimId 不能为空");
+            if (testCaseId == null || testCaseId.isBlank()) throw new IllegalArgumentException("testCaseId 不能为空");
+        }
+    }
+
+    /** 统一 Claim：跨来源的规范化事实视图，用于同 factKey 聚合与冲突分析。 */
+    public record UnifiedKnowledgeClaim(
+            String claimId,
+            String projectId,
+            String version,
+            String factKey,
+            String subject,
+            String predicate,
+            String value,
+            String valueType,
+            String unit,
+            SourceType sourceType,
+            Authority authority,
+            KnowledgeStatus status,
+            String effectiveFrom,
+            String effectiveTo,
+            String evidenceLocation,
+            String module
+    ) {
+    }
+
+    /** 多源结论状态。 */
+    public enum AnswerStatus {
+        CONFIRMED,
+        SUPPORTED,
+        PARTIALLY_SUPPORTED,
+        REVIEW_REQUIRED,
+        CONFLICTED,
+        NO_EVIDENCE,
+        NO_RESULT
+    }
+
+    /** 多源冲突类型（Phase 3 新增）。 */
+    public enum MultiSourceConflictType {
+        REQUIREMENT_PARAMETER,
+        PARAMETER_TEST,
+        TEST_RESULT_EXPECTATION,
+        REQUIREMENT_DOUBT,
+        VERSION_INTERNAL,
+        SOURCE_STALE,
+        MISSING_VALIDATION
+    }
+
+    /** 多源检索响应：统一 Claim、Evidence、冲突、存疑与解释。 */
+    public record MultiSourceSearchResponse(
+            String query,
+            KnowledgeQueryIntent intent,
+            AnswerStatus answerStatus,
+            List<UnifiedKnowledgeClaim> claims,
+            List<String> evidence,
+            List<String> conflicts,
+            List<DoubtClaim> doubts,
+            List<String> explanations,
+            List<String> warnings
+    ) {
+        public MultiSourceSearchResponse {
+            claims = claims == null ? List.of() : List.copyOf(claims);
+            evidence = evidence == null ? List.of() : List.copyOf(evidence);
+            conflicts = conflicts == null ? List.of() : List.copyOf(conflicts);
+            doubts = doubts == null ? List.of() : List.copyOf(doubts);
+            explanations = explanations == null ? List.of() : List.copyOf(explanations);
+            warnings = warnings == null ? List.of() : List.copyOf(warnings);
         }
     }
 }

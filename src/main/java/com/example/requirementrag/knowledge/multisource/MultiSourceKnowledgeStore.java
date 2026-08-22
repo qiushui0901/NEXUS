@@ -4,9 +4,13 @@ import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeMode
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeStatus;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.ParameterClaim;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.ParameterValueType;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.TestCaseClaim;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.TestResultClaim;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -27,9 +31,16 @@ import java.util.List;
  *
  * <p>独立于既有知识管理存储，避免改动成熟链路；schema 以来源元数据 + 版本 + 状态为核心。
  */
+@Component
 public class MultiSourceKnowledgeStore {
     private final String jdbcUrl;
     private final ObjectMapper objectMapper;
+
+    /** Spring 默认数据库路径。 */
+    @Autowired
+    public MultiSourceKnowledgeStore(ObjectMapper objectMapper) {
+        this("data/multi-source-knowledge.db", objectMapper);
+    }
 
     public MultiSourceKnowledgeStore(String databasePath, ObjectMapper objectMapper) {
         try {
@@ -92,6 +103,43 @@ public class MultiSourceKnowledgeStore {
                     """);
             statement.executeUpdate("create index if not exists idx_multi_source_param_scope on multi_source_parameter(project_id,version,fact_key)");
             statement.executeUpdate("create index if not exists idx_multi_source_doubt_scope on multi_source_doubt(project_id,version,status)");
+            statement.executeUpdate("""
+                    create table if not exists multi_source_test_case(
+                      claim_id text primary key,
+                      project_id text not null,
+                      version text not null,
+                      test_case_id text not null,
+                      title text,
+                      module text,
+                      preconditions text,
+                      steps text,
+                      expected_result text,
+                      covered_requirement_id text,
+                      framework text,
+                      file_path text,
+                      test_method text,
+                      evidence_location text not null,
+                      created_at text not null
+                    )
+                    """);
+            statement.executeUpdate("""
+                    create table if not exists multi_source_test_result(
+                      claim_id text primary key,
+                      project_id text not null,
+                      version text not null,
+                      test_run_id text,
+                      test_case_id text not null,
+                      execution_status text not null,
+                      executed_at text,
+                      environment text,
+                      actual_result text,
+                      failure_message text,
+                      evidence_location text not null,
+                      created_at text not null
+                    )
+                    """);
+            statement.executeUpdate("create index if not exists idx_multi_source_tc_scope on multi_source_test_case(project_id,version,covered_requirement_id)");
+            statement.executeUpdate("create index if not exists idx_multi_source_tr_scope on multi_source_test_result(project_id,version,test_case_id)");
         } catch (SQLException exception) {
             throw new IllegalStateException("无法初始化多源知识库", exception);
         }
@@ -229,20 +277,132 @@ public class MultiSourceKnowledgeStore {
         }
     }
 
+    public synchronized void saveTestCases(String projectId, String version, List<TestCaseClaim> claims) {
+        if (claims == null || claims.isEmpty()) return;
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement("""
+                insert into multi_source_test_case(
+                  claim_id,project_id,version,test_case_id,title,module,preconditions,steps,expected_result,
+                  covered_requirement_id,framework,file_path,test_method,evidence_location,created_at)
+                values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                on conflict(claim_id) do update set
+                  title=excluded.title,module=excluded.module,steps=excluded.steps,
+                  expected_result=excluded.expected_result,covered_requirement_id=excluded.covered_requirement_id,
+                  framework=excluded.framework,test_method=excluded.test_method,evidence_location=excluded.evidence_location
+                """)) {
+            String createdAt = Instant.now().toString();
+            for (TestCaseClaim claim : claims) {
+                statement.setString(1, claim.claimId());
+                statement.setString(2, projectId);
+                statement.setString(3, version);
+                statement.setString(4, claim.testCaseId());
+                statement.setString(5, claim.title());
+                statement.setString(6, claim.module());
+                statement.setString(7, claim.preconditions());
+                statement.setString(8, claim.steps());
+                statement.setString(9, claim.expectedResult());
+                statement.setString(10, claim.coveredRequirementId());
+                statement.setString(11, claim.framework());
+                statement.setString(12, claim.filePath());
+                statement.setString(13, claim.testMethod());
+                statement.setString(14, claim.evidenceLocation());
+                statement.setString(15, createdAt);
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("无法保存测试用例 Claim", exception);
+        }
+    }
+
+    public synchronized List<TestCaseClaim> findTestCases(String projectId, String version) {
+        List<TestCaseClaim> result = new ArrayList<>();
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(
+                "select * from multi_source_test_case where project_id=? and version=? order by test_case_id")) {
+            statement.setString(1, projectId);
+            statement.setString(2, version);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    result.add(new TestCaseClaim(
+                            rows.getString("claim_id"), rows.getString("project_id"), rows.getString("version"),
+                            rows.getString("test_case_id"), rows.getString("title"), rows.getString("module"),
+                            rows.getString("preconditions"), rows.getString("steps"), rows.getString("expected_result"),
+                            rows.getString("covered_requirement_id"), rows.getString("framework"),
+                            rows.getString("file_path"), rows.getString("test_method"), rows.getString("evidence_location")));
+                }
+            }
+            return List.copyOf(result);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("无法读取测试用例 Claim", exception);
+        }
+    }
+
+    public synchronized void saveTestResults(String projectId, String version, List<TestResultClaim> claims) {
+        if (claims == null || claims.isEmpty()) return;
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement("""
+                insert into multi_source_test_result(
+                  claim_id,project_id,version,test_run_id,test_case_id,execution_status,executed_at,
+                  environment,actual_result,failure_message,evidence_location,created_at)
+                values(?,?,?,?,?,?,?,?,?,?,?,?)
+                on conflict(claim_id) do update set
+                  execution_status=excluded.execution_status,executed_at=excluded.executed_at,
+                  environment=excluded.environment,actual_result=excluded.actual_result,
+                  failure_message=excluded.failure_message,evidence_location=excluded.evidence_location
+                """)) {
+            String createdAt = Instant.now().toString();
+            for (TestResultClaim claim : claims) {
+                statement.setString(1, claim.claimId());
+                statement.setString(2, projectId);
+                statement.setString(3, version);
+                statement.setString(4, claim.testRunId());
+                statement.setString(5, claim.testCaseId());
+                statement.setString(6, claim.executionStatus());
+                statement.setString(7, claim.executedAt());
+                statement.setString(8, claim.environment());
+                statement.setString(9, claim.actualResult());
+                statement.setString(10, claim.failureMessage());
+                statement.setString(11, claim.evidenceLocation());
+                statement.setString(12, createdAt);
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("无法保存测试结果 Claim", exception);
+        }
+    }
+
+    public synchronized List<TestResultClaim> findTestResults(String projectId, String version) {
+        List<TestResultClaim> result = new ArrayList<>();
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(
+                "select * from multi_source_test_result where project_id=? and version=? order by test_case_id")) {
+            statement.setString(1, projectId);
+            statement.setString(2, version);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    result.add(new TestResultClaim(
+                            rows.getString("claim_id"), rows.getString("project_id"), rows.getString("version"),
+                            rows.getString("test_run_id"), rows.getString("test_case_id"),
+                            rows.getString("execution_status"), rows.getString("executed_at"),
+                            rows.getString("environment"), rows.getString("actual_result"),
+                            rows.getString("failure_message"), rows.getString("evidence_location")));
+                }
+            }
+            return List.copyOf(result);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("无法读取测试结果 Claim", exception);
+        }
+    }
+
     /** 幂等重导：删除指定项目/版本的旧数据再写入。 */
     public synchronized void replaceProjectVersion(String projectId, String version) {
         try (Connection connection = open()) {
-            try (PreparedStatement parameters = connection.prepareStatement(
-                    "delete from multi_source_parameter where project_id=? and version=?")) {
-                parameters.setString(1, projectId);
-                parameters.setString(2, version);
-                parameters.executeUpdate();
-            }
-            try (PreparedStatement doubts = connection.prepareStatement(
-                    "delete from multi_source_doubt where project_id=? and version=?")) {
-                doubts.setString(1, projectId);
-                doubts.setString(2, version);
-                doubts.executeUpdate();
+            for (String table : List.of("multi_source_parameter", "multi_source_doubt",
+                    "multi_source_test_case", "multi_source_test_result")) {
+                try (PreparedStatement statement = connection.prepareStatement(
+                        "delete from " + table + " where project_id=? and version=?")) {
+                    statement.setString(1, projectId);
+                    statement.setString(2, version);
+                    statement.executeUpdate();
+                }
             }
         } catch (SQLException exception) {
             throw new IllegalStateException("无法清理多源知识", exception);

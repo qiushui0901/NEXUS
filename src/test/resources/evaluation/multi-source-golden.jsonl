@@ -1,0 +1,4 @@
+{"query":"权限撤销 传播时间 是多少","intent":"PARAMETER","minSources":["PARAMETER_TABLE"],"status":"CONFIRMED"}
+{"query":"是否有 测试 覆盖","intent":"VALIDATION","minSources":["TEST_CASE"],"status":"SUPPORTED"}
+{"query":"哪些 存疑 尚未确认","intent":"DOUBT","minDoubts":1,"status":"NO_RESULT"}
+{"query":"完全不存在的内容主题","intent":"GENERAL","minSources":[],"status":"NO_RESULT"}

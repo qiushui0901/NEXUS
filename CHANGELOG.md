@@ -58,6 +58,12 @@
   - 参数保留单位/范围/精度/边界/Evidence 位置；存疑保留状态/负责人/严重级别/备选方案。
   - 门禁已接入存储读取：OPEN/UNDER_DISCUSSION 存疑不会进入普通规范查询结果。
   - 新增存储与门禁集成回归测试。
+- 第十一轮开发（多源知识 Phase 2–5 核心闭环）：
+  - Phase 2：新增 `TestCaseClaim / TestResultClaim` 与 `TestKnowledgeLoaders`（JSON/JSONL 用例、JUnit XML 结果导入），存储新增测试用例/结果表与关联。
+  - Phase 3：新增 `UnifiedKnowledgeClaim` 统一视图、`MultiSourceConflictAnalyzer`（需求-参数、参数-测试、测试结果-预期冲突）+ 结论状态解析。
+  - Phase 4：新增 `SourceFilterStrategy`（按意图过滤来源）与 `MultiSourceSearchService`（意图分类 → 读取结构化知识 → 来源过滤 + 存疑门禁 → 关键词召回 → 冲突分析 → 结论状态与解释）。
+  - Phase 5：新增 `src/test/resources/evaluation/multi-source-golden.jsonl` Golden Dataset 与 `MultiSourceGoldenEvalTest` 离线评估（参数/验证/存疑/无结果四类断言）。
+  - `MultiSourceKnowledgeStore` 注册为 Spring Bean；全量多源链路（解析→存储→检索→评估）可离线运行。
 
 ## 0.9.1 — 2026-08-18
 
