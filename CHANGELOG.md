@@ -49,6 +49,10 @@
   - 新增 `DoubtClaimParser`：从行级数据生成结构化 `DoubtClaim`（状态/负责人/严重级别/备选方案/Evidence 位置），默认 `OPEN`。
   - 新增 `MultiSourceKnowledgeModels`：`KnowledgeQueryIntent / KnowledgeStatus / ParameterValueType / DoubtStatus / ParameterClaim / DoubtClaim`。
   - 新增解析器回归测试（参数别名、类型化、版本、Evidence 位置、存疑状态）。
+- 第九轮开发（多源知识意图路由基础）：
+  - 新增 `KnowledgeQueryIntentClassifier`：规则优先识别 `NORMATIVE / VALIDATION / PARAMETER / DOUBT / CONSISTENCY / IMPACT / GENERAL`。
+  - 新增 `MultiSourceKnowledgeGate`：状态门禁（`REJECTED/STALE/OBSOLETE` 默认不返回）+ OPEN/UNDER_DISCUSSION 存疑仅在 DOUBT 意图下进入结果，RESOLVED 存疑可返回。
+  - 新增意图分类与门禁回归测试。
 
 ## 0.9.1 — 2026-08-18
 

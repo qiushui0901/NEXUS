@@ -14,5 +14,6 @@
 - [x] 生成任务文档（PRD/design/implement）
 - [x] Phase 0 编码：扩展 SourceType/Authority + 兼容映射 + 测试
 - [x] Phase 1 编码（结构化解析层）：ParameterTableLoader + DoubtClaimParser + 领域模型
-- [ ] Phase 1 剩余：SQLite/Qdrant 存储接入 + OPEN 存疑检索隔离
+- [x] Phase 4 基础：KnowledgeQueryIntentClassifier（规则版）+ MultiSourceKnowledgeGate（OPEN 存疑隔离/状态过滤）
+- [ ] Phase 1 剩余：SQLite/Qdrant 存储接入 + OPEN 存疑检索隔离（门禁已就绪）
 - [ ] 更新 CHANGELOG/spec
