@@ -24,21 +24,32 @@ import java.util.Locale;
 @Component
 public class CrossSourceRelationExtractor {
 
-    /** 从统一 Claim 与存疑列表生成跨来源关系。 */
-    public List<CrossSourceRelation> extract(List<UnifiedKnowledgeClaim> candidates, List<DoubtClaim> doubts) {
+    /** 跨来源关系抽取结果：真实关系 + 未解析原因（不生成悬空 target）。 */
+    public record CrossSourceExtraction(List<CrossSourceRelation> relations, List<String> unresolved) {
+        public CrossSourceExtraction {
+            relations = relations == null ? List.of() : List.copyOf(relations);
+            unresolved = unresolved == null ? List.of() : List.copyOf(unresolved);
+        }
+    }
+
+    /** 从统一 Claim 与存疑列表生成跨来源关系；找不到真实目标时记录 unresolved 而不是伪造 ID。 */
+    public CrossSourceExtraction extract(List<UnifiedKnowledgeClaim> candidates, List<DoubtClaim> doubts) {
         List<CrossSourceRelation> result = new ArrayList<>();
+        List<String> unresolved = new ArrayList<>();
         List<UnifiedKnowledgeClaim> requirements = candidates.stream()
                 .filter(claim -> claim.sourceType() == SourceType.REQUIREMENT).toList();
 
         for (UnifiedKnowledgeClaim testCase : candidates) {
             if (testCase.sourceType() != SourceType.TEST_CASE) continue;
-            String target = targetRequirementId(testCase, requirements);
+            UnifiedKnowledgeClaim target = findRequirement(requirements, testCase.factKey());
             if (target != null) {
                 result.add(new CrossSourceRelation(
-                        relationId("verifies", testCase.claimId(), target),
-                        testCase.projectId(), testCase.version(), testCase.claimId(), target,
+                        relationId("verifies", testCase.claimId(), target.claimId()),
+                        testCase.projectId(), testCase.version(), testCase.claimId(), target.claimId(),
                         CrossSourceRelationType.VERIFIES, testCase.evidenceLocation(),
                         "coveredRequirementId=" + testCase.factKey()));
+            } else {
+                unresolved.add("TEST_CASE " + testCase.claimId() + " 未匹配到需求 Claim");
             }
         }
 
@@ -51,28 +62,30 @@ public class CrossSourceRelationExtractor {
                         parameter.projectId(), parameter.version(), parameter.claimId(), requirement.claimId(),
                         CrossSourceRelationType.SUPPORTS, parameter.evidenceLocation(),
                         "subject=" + parameter.subject() + ",predicate=" + parameter.predicate()));
+            } else {
+                unresolved.add("PARAMETER_TABLE " + parameter.claimId() + " 未匹配到需求 Claim");
             }
         }
 
         for (DoubtClaim doubt : doubts == null ? List.<DoubtClaim>of() : doubts) {
             UnifiedKnowledgeClaim requirement = findRequirement(requirements, safe(doubt.module()), null);
-            String target = requirement != null ? requirement.claimId() : safe(doubt.module());
-            result.add(new CrossSourceRelation(
-                    relationId("doubts", doubt.doubtId(), target),
-                    doubt.projectId(), doubt.version(), doubt.doubtId(), target,
-                    CrossSourceRelationType.RAISES_DOUBT, doubt.evidenceLocation(),
-                    "module=" + safe(doubt.module())));
+            if (requirement != null) {
+                result.add(new CrossSourceRelation(
+                        relationId("doubts", doubt.doubtId(), requirement.claimId()),
+                        doubt.projectId(), doubt.version(), doubt.doubtId(), requirement.claimId(),
+                        CrossSourceRelationType.RAISES_DOUBT, doubt.evidenceLocation(),
+                        "module=" + safe(doubt.module())));
+            } else {
+                unresolved.add("DOUBT " + doubt.doubtId() + " 未匹配到需求 Claim");
+            }
         }
-        return List.copyOf(result);
+        return new CrossSourceExtraction(List.copyOf(result), List.copyOf(unresolved));
     }
 
-    private String targetRequirementId(UnifiedKnowledgeClaim testCase, List<UnifiedKnowledgeClaim> requirements) {
-        // factKey 已包含 coveredRequirementId 或 module|title；优先匹配同 factKey 的 REQUIREMENT Claim。
+    private UnifiedKnowledgeClaim findRequirement(List<UnifiedKnowledgeClaim> requirements, String factKey) {
         return requirements.stream()
-                .filter(requirement -> requirement.factKey().equalsIgnoreCase(testCase.factKey()))
-                .map(UnifiedKnowledgeClaim::claimId)
-                .findFirst()
-                .orElse("req:" + testCase.factKey());
+                .filter(requirement -> requirement.factKey().equalsIgnoreCase(factKey))
+                .findFirst().orElse(null);
     }
 
     private UnifiedKnowledgeClaim findRequirement(List<UnifiedKnowledgeClaim> requirements, String subject, String predicate) {

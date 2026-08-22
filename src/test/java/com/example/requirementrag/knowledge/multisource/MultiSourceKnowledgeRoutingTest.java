@@ -76,7 +76,7 @@ class MultiSourceKnowledgeRoutingTest {
     void extractorProducesCrossSourceRelations() {
         UnifiedKnowledgeClaim requirement = claim("req-1", SourceType.REQUIREMENT, "权限撤销", "传播时间");
         UnifiedKnowledgeClaim testCase = new UnifiedKnowledgeClaim("tc-1", "p", "1.0",
-                "req:req-1", "权限撤销", "取消订单测试覆盖", "成功", "TEXT", null,
+                "权限撤销|传播时间", "权限撤销", "取消订单测试覆盖", "成功", "TEXT", null,
                 SourceType.TEST_CASE, Authority.SECONDARY, KnowledgeStatus.SUPPORTED,
                 "1.0", null, "test#tc-1", "权限撤销");
         UnifiedKnowledgeClaim parameter = new UnifiedKnowledgeClaim("param-1", "p", "1.0",
@@ -86,12 +86,27 @@ class MultiSourceKnowledgeRoutingTest {
         DoubtClaim doubt = new DoubtClaim("doubt-1", "p", "1.0", "权限撤销", "未确认", "",
                 "存疑", 1, DoubtStatus.OPEN, "owner", "高", null, List.of(), "存疑!2");
 
-        List<CrossSourceRelation> relations = relationExtractor.extract(
+        CrossSourceRelationExtractor.CrossSourceExtraction extraction = relationExtractor.extract(
                 List.of(requirement, testCase, parameter), List.of(doubt));
 
-        assertThat(relations).extracting(CrossSourceRelation::type)
+        assertThat(extraction.relations()).extracting(CrossSourceRelation::type)
                 .contains(CrossSourceRelationType.VERIFIES, CrossSourceRelationType.SUPPORTS,
                         CrossSourceRelationType.RAISES_DOUBT);
+        assertThat(extraction.unresolved()).isEmpty();
+    }
+
+    @Test
+    void extractorDoesNotCreateDanglingTargets() {
+        UnifiedKnowledgeClaim testCase = new UnifiedKnowledgeClaim("tc-1", "p", "1.0",
+                "req:no-such-requirement", "权限撤销", "取消订单测试覆盖", "成功", "TEXT", null,
+                SourceType.TEST_CASE, Authority.SECONDARY, KnowledgeStatus.SUPPORTED,
+                "1.0", null, "test#tc-1", "权限撤销");
+
+        CrossSourceRelationExtractor.CrossSourceExtraction extraction = relationExtractor.extract(
+                List.of(testCase), List.of());
+
+        assertThat(extraction.relations()).isEmpty();
+        assertThat(extraction.unresolved()).anyMatch(message -> message.contains("未匹配到需求 Claim"));
     }
 
     private UnifiedKnowledgeClaim claim(String claimId, SourceType type, String subject, String predicate) {

@@ -71,6 +71,14 @@
   - P1：多源检索改为字段加权评分 + 冲突惩罚 + 稳定排序 + Top-K 分页；中文无空格查询按 2-gram 分词。
   - P1：JUnit XML 改为 DOM 解析，区分 `PASSED/FAILED/SKIPPED/ERROR`。
   - P2：Claim 状态纳入领域模型并应用到 `MultiSourceKnowledgeGate`；`CONSISTENCY` 意图返回 OPEN 存疑；意图分类器修复中文一致性短语；多源重导改为事务性 `replaceSnapshot`；参数 Evidence 列范围指向真实数据行。
+- 第十三轮开发（多源知识 Code Review 第二轮整改）：
+  - P1：跨来源关系接入生产链路：`MultiSourceSearchService` 生成关系、`MultiSourceKnowledgeStore` 持久化（`multi_source_relation` 表）、`MultiSourceSearchResponse` 返回 `relations`。
+  - P1：关系目标必须真实 Claim：未匹配到需求时不再伪造 `req:xxx`，改输出 `unresolved` 原因。
+  - P1：REQUIREMENT 适配器保留实体/关系 `claimStatus` 与 `sourceEvidenceIds`，仅 VERIFIED 且可回查 Evidence 的 Claim 进入规范来源。
+  - P1：新增 `CodeKnowledgeCandidateAdapter`（接入 `CodeKnowledgeService`，投影符号为 CODE 统一 Claim）。
+  - P2：测试用例/结果 `status` 持久化（表新增 status 列 + 自动迁移，读写状态）。
+  - P2：参数生效版本按 `claim.version()` 写入并校验一致，避免版本被导入版本覆盖。
+  - P2：冲突惩罚改用冲突分组 `Set`，与 `conflictGroups` 对齐；冲突范围与分页结果一致（按当前页 Claim 计算状态）。
 
 ## 0.9.1 — 2026-08-18
 

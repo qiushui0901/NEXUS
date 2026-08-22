@@ -244,7 +244,8 @@ public final class MultiSourceKnowledgeModels {
             List<String> conflicts,
             List<DoubtClaim> doubts,
             List<String> explanations,
-            List<String> warnings
+            List<String> warnings,
+            List<CrossSourceRelation> relations
     ) {
         public MultiSourceSearchResponse {
             claims = claims == null ? List.of() : List.copyOf(claims);
@@ -253,6 +254,7 @@ public final class MultiSourceKnowledgeModels {
             doubts = doubts == null ? List.of() : List.copyOf(doubts);
             explanations = explanations == null ? List.of() : List.copyOf(explanations);
             warnings = warnings == null ? List.of() : List.copyOf(warnings);
+            relations = relations == null ? List.of() : List.copyOf(relations);
         }
     }
 }

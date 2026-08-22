@@ -9,9 +9,11 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 多源冲突分析器：按 factKey 聚合统一 Claim，比较规范化值，识别需求-参数、参数-测试、测试结果-预期冲突。
@@ -50,6 +52,31 @@ public class MultiSourceConflictAnalyzer {
             }
         }
         return List.copyOf(conflicts);
+    }
+
+    /** 返回冲突事实分组键集合（用于排序惩罚，避免解析展示字符串）。 */
+    public Set<String> conflictGroups(List<UnifiedKnowledgeClaim> claims) {
+        Set<String> groups = new LinkedHashSet<>();
+        Map<String, List<UnifiedKnowledgeClaim>> byFactKey = new LinkedHashMap<>();
+        for (UnifiedKnowledgeClaim claim : claims) {
+            if (claim == null) continue;
+            String group = groupKey(claim);
+            if (group.isBlank()) continue;
+            byFactKey.computeIfAbsent(group, ignored -> new ArrayList<>()).add(claim);
+        }
+        for (Map.Entry<String, List<UnifiedKnowledgeClaim>> entry : byFactKey.entrySet()) {
+            List<UnifiedKnowledgeClaim> group = entry.getValue();
+            UnifiedKnowledgeClaim requirement = firstType(group, SourceType.REQUIREMENT);
+            UnifiedKnowledgeClaim parameter = firstType(group, SourceType.PARAMETER_TABLE);
+            UnifiedKnowledgeClaim testCase = firstType(group, SourceType.TEST_CASE);
+            UnifiedKnowledgeClaim testResult = firstType(group, SourceType.TEST_RESULT);
+            if ((requirement != null && parameter != null && !sameValue(requirement.value(), parameter.value()))
+                    || (parameter != null && testCase != null && !sameValue(parameter.value(), testCase.value()))
+                    || (testResult != null && "FAILED".equalsIgnoreCase(testResult.value()))) {
+                groups.add(entry.getKey());
+            }
+        }
+        return Set.copyOf(groups);
     }
 
     /** 分组键：优先 subject|predicate（跨来源事实对齐），缺失时回退 factKey。 */

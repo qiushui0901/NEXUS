@@ -13,6 +13,6 @@ public interface MultiSourceCandidateAdapter {
     /** 该适配器负责的来源类型。 */
     SourceType sourceType();
 
-    /** 加载指定项目/版本下的统一 Claim。 */
-    List<UnifiedKnowledgeClaim> load(String projectId, String version);
+    /** 加载指定项目/版本/查询下的统一 Claim。 */
+    List<UnifiedKnowledgeClaim> load(String projectId, String version, String query);
 }

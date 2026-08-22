@@ -1,16 +1,18 @@
 package com.example.requirementrag.knowledge.multisource;
 
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.CrossSourceRelation;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.MultiSourceSearchResponse;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.ParameterClaim;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.TestCaseClaim;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.TestResultClaim;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.UnifiedKnowledgeClaim;
+import com.example.requirementrag.knowledge.multisource.CrossSourceRelationExtractor.CrossSourceExtraction;
 import com.example.requirementrag.conflict.KnowledgeConflictModels.Authority;
 import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.AnswerStatus;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.DoubtClaim;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeQueryIntent;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeStatus;
-import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.MultiSourceSearchResponse;
-import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.ParameterClaim;
-import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.TestCaseClaim;
-import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.TestResultClaim;
-import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.UnifiedKnowledgeClaim;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -35,6 +37,7 @@ public class MultiSourceSearchService {
     private final SourceFilterStrategy sourceFilter;
     private final MultiSourceConflictAnalyzer conflictAnalyzer;
     private final List<MultiSourceCandidateAdapter> adapters;
+    private final CrossSourceRelationExtractor relationExtractor;
 
     @Autowired
     public MultiSourceSearchService(MultiSourceKnowledgeStore store,
@@ -42,13 +45,15 @@ public class MultiSourceSearchService {
                                     MultiSourceKnowledgeGate gate,
                                     SourceFilterStrategy sourceFilter,
                                     MultiSourceConflictAnalyzer conflictAnalyzer,
-                                    List<MultiSourceCandidateAdapter> adapters) {
+                                    List<MultiSourceCandidateAdapter> adapters,
+                                    CrossSourceRelationExtractor relationExtractor) {
         this.store = store;
         this.classifier = classifier;
         this.gate = gate;
         this.sourceFilter = sourceFilter;
         this.conflictAnalyzer = conflictAnalyzer;
         this.adapters = adapters == null ? List.of() : adapters;
+        this.relationExtractor = relationExtractor == null ? new CrossSourceRelationExtractor() : relationExtractor;
     }
 
     /** 测试/离线场景无适配器时的兼容构造器。 */
@@ -57,7 +62,7 @@ public class MultiSourceSearchService {
                                     MultiSourceKnowledgeGate gate,
                                     SourceFilterStrategy sourceFilter,
                                     MultiSourceConflictAnalyzer conflictAnalyzer) {
-        this(store, classifier, gate, sourceFilter, conflictAnalyzer, List.of());
+        this(store, classifier, gate, sourceFilter, conflictAnalyzer, List.of(), new CrossSourceRelationExtractor());
     }
 
     public MultiSourceSearchResponse search(String projectId, String version, String query) {
@@ -73,12 +78,12 @@ public class MultiSourceSearchService {
                                             KnowledgeQueryIntent intentOverride, int limit, int page) {
         KnowledgeQueryIntent intent = intentOverride != null ? intentOverride : classifier.classify(query);
         Set<SourceType> allowedSources = sourceFilter.allowedSources(intent);
-        List<UnifiedKnowledgeClaim> candidates = loadCandidates(projectId, version, allowedSources).stream()
+        List<UnifiedKnowledgeClaim> candidates = loadCandidates(projectId, version, allowedSources, query).stream()
                 .filter(claim -> gate.isRetrievable(claim.status()))
                 .toList();
         List<String> tokens = tokenize(query);
         String normalizedQuery = query == null ? "" : query.toLowerCase(Locale.ROOT);
-        List<String> conflicts = conflictAnalyzer.analyze(candidates);
+        Set<String> conflictGroups = conflictAnalyzer.conflictGroups(candidates);
 
         // 确定性评分召回：字段加权 + 冲突惩罚，稳定排序后一次性分页。
         int effectiveLimit = Math.max(1, Math.min(limit <= 0 ? 20 : limit, 50));
@@ -86,7 +91,7 @@ public class MultiSourceSearchService {
         List<ScoredClaim> scored = new ArrayList<>();
         for (UnifiedKnowledgeClaim claim : candidates) {
             double base = score(claim, normalizedQuery, tokens);
-            double penalty = conflictPenalty(claim, conflicts);
+            double penalty = conflictPenalty(claim, conflictGroups);
             if (normalizedQuery.isEmpty() || base > 0) {
                 scored.add(new ScoredClaim(claim, Math.max(0, base - penalty)));
             }
@@ -104,17 +109,26 @@ public class MultiSourceSearchService {
                 ? gate.filterDoubts(store.findDoubts(projectId, version), intent)
                 : List.of();
 
+        // 跨来源关系：生产链路生成并持久化；未解析项作为 warning，不伪造悬空 target。
+        CrossSourceExtraction extraction = relationExtractor.extract(candidates, doubts);
+        List<CrossSourceRelation> relations = extraction.relations();
+        if (!relations.isEmpty()) {
+            store.saveRelations(projectId, version, relations);
+        }
+
+        // 冲突范围与分页一致：只对当前页 Claim 做冲突分析与结论状态。
+        List<String> conflicts = conflictAnalyzer.analyze(claims);
         AnswerStatus status = conflictAnalyzer.resolveStatus(claims, conflicts);
         List<String> evidence = claims.stream().map(UnifiedKnowledgeClaim::evidenceLocation)
                 .filter(location -> location != null && !location.isBlank())
                 .distinct().toList();
         List<String> explanations = explanations(claims, intent);
-        List<String> warnings = new ArrayList<>();
+        List<String> warnings = new ArrayList<>(extraction.unresolved());
         if (intent == KnowledgeQueryIntent.NORMATIVE && !doubts.isEmpty()) {
             warnings.add("普通规范查询默认不返回 OPEN 存疑");
         }
         return new MultiSourceSearchResponse(query, intent, status, claims, evidence, conflicts, doubts,
-                explanations, warnings);
+                explanations, warnings, relations);
     }
 
     /** 字段加权评分：factKey 命中权重最高，其次 subject/module/predicate/value/unit。 */
@@ -140,17 +154,13 @@ public class MultiSourceSearchService {
     }
 
     /** 冲突惩罚：命中冲突事实组的 Claim 扣分。 */
-    private double conflictPenalty(UnifiedKnowledgeClaim claim, List<String> conflicts) {
-        if (conflicts.isEmpty()) return 0.0;
+    private double conflictPenalty(UnifiedKnowledgeClaim claim, Set<String> conflictGroups) {
+        if (conflictGroups.isEmpty()) return 0.0;
         String group = (safe(claim.subject()) + "|" + safe(claim.predicate())).toLowerCase(Locale.ROOT);
-        String marker;
         if ("|".equals(group)) {
-            marker = "factKey=" + safe(claim.factKey());
-        } else {
-            marker = "factKey=" + group;
+            group = safe(claim.factKey()).toLowerCase(Locale.ROOT);
         }
-        final String conflictMarker = marker;
-        return conflicts.stream().anyMatch(message -> message.contains(conflictMarker)) ? 0.2 : 0.0;
+        return conflictGroups.contains(group) ? 0.2 : 0.0;
     }
 
     /** CJK/英文分词：中文无空格查询按 2-gram 切分，避免整句匹配失败。 */
@@ -179,7 +189,8 @@ public class MultiSourceSearchService {
     private record ScoredClaim(UnifiedKnowledgeClaim claim, double score) {
     }
 
-    private List<UnifiedKnowledgeClaim> loadCandidates(String projectId, String version, Set<SourceType> allowed) {
+    private List<UnifiedKnowledgeClaim> loadCandidates(String projectId, String version, Set<SourceType> allowed,
+                                                       String query) {
         Set<UnifiedKnowledgeClaim> result = new LinkedHashSet<>();
         if (allowed.contains(SourceType.PARAMETER_TABLE)) {
             store.findParameters(projectId, version).forEach(claim -> result.add(toUnified(claim)));
@@ -192,7 +203,7 @@ public class MultiSourceSearchService {
         }
         for (MultiSourceCandidateAdapter adapter : adapters) {
             if (allowed.contains(adapter.sourceType())) {
-                adapter.load(projectId, version).forEach(result::add);
+                adapter.load(projectId, version, query).forEach(result::add);
             }
         }
         return List.copyOf(result);

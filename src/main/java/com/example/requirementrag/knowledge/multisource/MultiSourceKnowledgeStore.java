@@ -1,5 +1,6 @@
 package com.example.requirementrag.knowledge.multisource;
 
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.CrossSourceRelation;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.DoubtClaim;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeStatus;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.ParameterClaim;
@@ -119,6 +120,7 @@ public class MultiSourceKnowledgeStore {
                       file_path text,
                       test_method text,
                       evidence_location text not null,
+                      status text not null default 'SUPPORTED',
                       created_at text not null
                     )
                     """);
@@ -135,11 +137,28 @@ public class MultiSourceKnowledgeStore {
                       actual_result text,
                       failure_message text,
                       evidence_location text not null,
+                      status text not null default 'SUPPORTED',
                       created_at text not null
                     )
                     """);
             statement.executeUpdate("create index if not exists idx_multi_source_tc_scope on multi_source_test_case(project_id,version,covered_requirement_id)");
             statement.executeUpdate("create index if not exists idx_multi_source_tr_scope on multi_source_test_result(project_id,version,test_case_id)");
+            statement.executeUpdate("""
+                    create table if not exists multi_source_relation(
+                      relation_id text primary key,
+                      project_id text not null,
+                      version text not null,
+                      source_claim_id text not null,
+                      target_claim_id text not null,
+                      relation_type text not null,
+                      evidence_location text,
+                      metadata text,
+                      created_at text not null
+                    )
+                    """);
+            statement.executeUpdate("create index if not exists idx_multi_source_rel_scope on multi_source_relation(project_id,version,relation_type)");
+            addColumnIfMissing(statement, "multi_source_test_case", "status", "text not null default 'SUPPORTED'");
+            addColumnIfMissing(statement, "multi_source_test_result", "status", "text not null default 'SUPPORTED'");
         } catch (SQLException exception) {
             throw new IllegalStateException("无法初始化多源知识库", exception);
         }
@@ -162,9 +181,12 @@ public class MultiSourceKnowledgeStore {
                 """)) {
             String createdAt = Instant.now().toString();
             for (ParameterClaim claim : claims) {
+                if (!version.equals(claim.version())) {
+                    throw new IllegalArgumentException("参数 Claim 版本与导入版本不一致: " + claim.version() + " != " + version);
+                }
                 statement.setString(1, claim.claimId());
                 statement.setString(2, projectId);
-                statement.setString(3, version);
+                statement.setString(3, claim.version());
                 statement.setString(4, claim.workbook());
                 statement.setString(5, claim.sheetName());
                 statement.setInt(6, claim.rowNumber());
@@ -283,12 +305,13 @@ public class MultiSourceKnowledgeStore {
         try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement("""
                 insert into multi_source_test_case(
                   claim_id,project_id,version,test_case_id,title,module,preconditions,steps,expected_result,
-                  covered_requirement_id,framework,file_path,test_method,evidence_location,created_at)
-                values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                  covered_requirement_id,framework,file_path,test_method,evidence_location,status,created_at)
+                values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 on conflict(claim_id) do update set
                   title=excluded.title,module=excluded.module,steps=excluded.steps,
                   expected_result=excluded.expected_result,covered_requirement_id=excluded.covered_requirement_id,
-                  framework=excluded.framework,test_method=excluded.test_method,evidence_location=excluded.evidence_location
+                  framework=excluded.framework,test_method=excluded.test_method,evidence_location=excluded.evidence_location,
+                  status=excluded.status
                 """)) {
             String createdAt = Instant.now().toString();
             for (TestCaseClaim claim : claims) {
@@ -306,7 +329,8 @@ public class MultiSourceKnowledgeStore {
                 statement.setString(12, claim.filePath());
                 statement.setString(13, claim.testMethod());
                 statement.setString(14, claim.evidenceLocation());
-                statement.setString(15, createdAt);
+                statement.setString(15, claim.status() == null ? KnowledgeStatus.SUPPORTED.name() : claim.status().name());
+                statement.setString(16, createdAt);
                 statement.addBatch();
             }
             statement.executeBatch();
@@ -329,7 +353,7 @@ public class MultiSourceKnowledgeStore {
                             rows.getString("preconditions"), rows.getString("steps"), rows.getString("expected_result"),
                             rows.getString("covered_requirement_id"), rows.getString("framework"),
                             rows.getString("file_path"), rows.getString("test_method"), rows.getString("evidence_location"),
-                            KnowledgeStatus.SUPPORTED));
+                            KnowledgeStatus.valueOf(rows.getString("status"))));
                 }
             }
             return List.copyOf(result);
@@ -343,12 +367,13 @@ public class MultiSourceKnowledgeStore {
         try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement("""
                 insert into multi_source_test_result(
                   claim_id,project_id,version,test_run_id,test_case_id,execution_status,executed_at,
-                  environment,actual_result,failure_message,evidence_location,created_at)
-                values(?,?,?,?,?,?,?,?,?,?,?,?)
+                  environment,actual_result,failure_message,evidence_location,status,created_at)
+                values(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 on conflict(claim_id) do update set
                   execution_status=excluded.execution_status,executed_at=excluded.executed_at,
                   environment=excluded.environment,actual_result=excluded.actual_result,
-                  failure_message=excluded.failure_message,evidence_location=excluded.evidence_location
+                  failure_message=excluded.failure_message,evidence_location=excluded.evidence_location,
+                  status=excluded.status
                 """)) {
             String createdAt = Instant.now().toString();
             for (TestResultClaim claim : claims) {
@@ -363,7 +388,8 @@ public class MultiSourceKnowledgeStore {
                 statement.setString(9, claim.actualResult());
                 statement.setString(10, claim.failureMessage());
                 statement.setString(11, claim.evidenceLocation());
-                statement.setString(12, createdAt);
+                statement.setString(12, claim.status() == null ? KnowledgeStatus.SUPPORTED.name() : claim.status().name());
+                statement.setString(13, createdAt);
                 statement.addBatch();
             }
             statement.executeBatch();
@@ -386,12 +412,64 @@ public class MultiSourceKnowledgeStore {
                             rows.getString("execution_status"), rows.getString("executed_at"),
                             rows.getString("environment"), rows.getString("actual_result"),
                             rows.getString("failure_message"), rows.getString("evidence_location"),
-                            KnowledgeStatus.SUPPORTED));
+                            KnowledgeStatus.valueOf(rows.getString("status"))));
                 }
             }
             return List.copyOf(result);
         } catch (SQLException exception) {
             throw new IllegalStateException("无法读取测试结果 Claim", exception);
+        }
+    }
+
+    public synchronized void saveRelations(String projectId, String version, List<CrossSourceRelation> relations) {
+        if (relations == null || relations.isEmpty()) return;
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement("""
+                insert into multi_source_relation(
+                  relation_id,project_id,version,source_claim_id,target_claim_id,relation_type,
+                  evidence_location,metadata,created_at)
+                values(?,?,?,?,?,?,?,?,?)
+                on conflict(relation_id) do update set
+                  source_claim_id=excluded.source_claim_id,target_claim_id=excluded.target_claim_id,
+                  relation_type=excluded.relation_type,evidence_location=excluded.evidence_location,
+                  metadata=excluded.metadata
+                """)) {
+            String createdAt = Instant.now().toString();
+            for (CrossSourceRelation relation : relations) {
+                statement.setString(1, relation.relationId());
+                statement.setString(2, projectId);
+                statement.setString(3, version);
+                statement.setString(4, relation.sourceClaimId());
+                statement.setString(5, relation.targetClaimId());
+                statement.setString(6, relation.type().name());
+                statement.setString(7, relation.evidenceLocation());
+                statement.setString(8, relation.metadata());
+                statement.setString(9, createdAt);
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("无法保存跨来源关系", exception);
+        }
+    }
+
+    public synchronized List<CrossSourceRelation> findRelations(String projectId, String version) {
+        List<CrossSourceRelation> result = new ArrayList<>();
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(
+                "select * from multi_source_relation where project_id=? and version=? order by relation_type")) {
+            statement.setString(1, projectId);
+            statement.setString(2, version);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    result.add(new CrossSourceRelation(
+                            rows.getString("relation_id"), rows.getString("project_id"), rows.getString("version"),
+                            rows.getString("source_claim_id"), rows.getString("target_claim_id"),
+                            MultiSourceKnowledgeModels.CrossSourceRelationType.valueOf(rows.getString("relation_type")),
+                            rows.getString("evidence_location"), rows.getString("metadata")));
+                }
+            }
+            return List.copyOf(result);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("无法读取跨来源关系", exception);
         }
     }
 
@@ -401,9 +479,17 @@ public class MultiSourceKnowledgeStore {
     }
 
     /** 事务性重导：一次调用完成清理 + 参数/存疑/测试用例/测试结果写入，任一步失败整体回滚。 */
+    /** 事务性重导（不含关系）：兼容旧调用。 */
     public synchronized void replaceSnapshot(String projectId, String version, List<ParameterClaim> parameters,
                                              List<DoubtClaim> doubts, List<TestCaseClaim> testCases,
                                              List<TestResultClaim> testResults) {
+        replaceSnapshot(projectId, version, parameters, doubts, testCases, testResults, List.of());
+    }
+
+    /** 事务性重导：一次调用完成清理 + 参数/存疑/测试用例/测试结果/跨源关系写入，任一步失败整体回滚。 */
+    public synchronized void replaceSnapshot(String projectId, String version, List<ParameterClaim> parameters,
+                                             List<DoubtClaim> doubts, List<TestCaseClaim> testCases,
+                                             List<TestResultClaim> testResults, List<CrossSourceRelation> relations) {
         try (Connection connection = open()) {
             connection.setAutoCommit(false);
             try {
@@ -412,6 +498,7 @@ public class MultiSourceKnowledgeStore {
                 insertDoubts(connection, projectId, version, doubts);
                 insertTestCases(connection, projectId, version, testCases);
                 insertTestResults(connection, projectId, version, testResults);
+                insertRelations(connection, projectId, version, relations);
                 connection.commit();
             } catch (SQLException | RuntimeException exception) {
                 connection.rollback();
@@ -426,13 +513,43 @@ public class MultiSourceKnowledgeStore {
 
     private void deleteProjectVersion(Connection connection, String projectId, String version) throws SQLException {
         for (String table : List.of("multi_source_parameter", "multi_source_doubt",
-                "multi_source_test_case", "multi_source_test_result")) {
+                "multi_source_test_case", "multi_source_test_result", "multi_source_relation")) {
             try (PreparedStatement statement = connection.prepareStatement(
                     "delete from " + table + " where project_id=? and version=?")) {
                 statement.setString(1, projectId);
                 statement.setString(2, version);
                 statement.executeUpdate();
             }
+        }
+    }
+
+    private void insertRelations(Connection connection, String projectId, String version,
+                                 List<CrossSourceRelation> relations) throws SQLException {
+        if (relations == null || relations.isEmpty()) return;
+        try (PreparedStatement statement = connection.prepareStatement("""
+                insert into multi_source_relation(
+                  relation_id,project_id,version,source_claim_id,target_claim_id,relation_type,
+                  evidence_location,metadata,created_at)
+                values(?,?,?,?,?,?,?,?,?)
+                on conflict(relation_id) do update set
+                  source_claim_id=excluded.source_claim_id,target_claim_id=excluded.target_claim_id,
+                  relation_type=excluded.relation_type,evidence_location=excluded.evidence_location,
+                  metadata=excluded.metadata
+                """)) {
+            String createdAt = Instant.now().toString();
+            for (CrossSourceRelation relation : relations) {
+                statement.setString(1, relation.relationId());
+                statement.setString(2, projectId);
+                statement.setString(3, version);
+                statement.setString(4, relation.sourceClaimId());
+                statement.setString(5, relation.targetClaimId());
+                statement.setString(6, relation.type().name());
+                statement.setString(7, relation.evidenceLocation());
+                statement.setString(8, relation.metadata());
+                statement.setString(9, createdAt);
+                statement.addBatch();
+            }
+            statement.executeBatch();
         }
     }
 
@@ -454,9 +571,12 @@ public class MultiSourceKnowledgeStore {
                 """)) {
             String createdAt = Instant.now().toString();
             for (ParameterClaim claim : claims) {
+                if (!version.equals(claim.version())) {
+                    throw new IllegalArgumentException("参数 Claim 版本与导入版本不一致: " + claim.version() + " != " + version);
+                }
                 statement.setString(1, claim.claimId());
                 statement.setString(2, projectId);
-                statement.setString(3, version);
+                statement.setString(3, claim.version());
                 statement.setString(4, claim.workbook());
                 statement.setString(5, claim.sheetName());
                 statement.setInt(6, claim.rowNumber());
@@ -524,12 +644,13 @@ public class MultiSourceKnowledgeStore {
         try (PreparedStatement statement = connection.prepareStatement("""
                 insert into multi_source_test_case(
                   claim_id,project_id,version,test_case_id,title,module,preconditions,steps,expected_result,
-                  covered_requirement_id,framework,file_path,test_method,evidence_location,created_at)
-                values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                  covered_requirement_id,framework,file_path,test_method,evidence_location,status,created_at)
+                values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 on conflict(claim_id) do update set
                   title=excluded.title,module=excluded.module,steps=excluded.steps,
                   expected_result=excluded.expected_result,covered_requirement_id=excluded.covered_requirement_id,
-                  framework=excluded.framework,test_method=excluded.test_method,evidence_location=excluded.evidence_location
+                  framework=excluded.framework,test_method=excluded.test_method,evidence_location=excluded.evidence_location,
+                  status=excluded.status
                 """)) {
             String createdAt = Instant.now().toString();
             for (TestCaseClaim claim : claims) {
@@ -547,7 +668,8 @@ public class MultiSourceKnowledgeStore {
                 statement.setString(12, claim.filePath());
                 statement.setString(13, claim.testMethod());
                 statement.setString(14, claim.evidenceLocation());
-                statement.setString(15, createdAt);
+                statement.setString(15, claim.status() == null ? KnowledgeStatus.SUPPORTED.name() : claim.status().name());
+                statement.setString(16, createdAt);
                 statement.addBatch();
             }
             statement.executeBatch();
@@ -560,12 +682,13 @@ public class MultiSourceKnowledgeStore {
         try (PreparedStatement statement = connection.prepareStatement("""
                 insert into multi_source_test_result(
                   claim_id,project_id,version,test_run_id,test_case_id,execution_status,executed_at,
-                  environment,actual_result,failure_message,evidence_location,created_at)
-                values(?,?,?,?,?,?,?,?,?,?,?,?)
+                  environment,actual_result,failure_message,evidence_location,status,created_at)
+                values(?,?,?,?,?,?,?,?,?,?,?,?,?)
                 on conflict(claim_id) do update set
                   execution_status=excluded.execution_status,executed_at=excluded.executed_at,
                   environment=excluded.environment,actual_result=excluded.actual_result,
-                  failure_message=excluded.failure_message,evidence_location=excluded.evidence_location
+                  failure_message=excluded.failure_message,evidence_location=excluded.evidence_location,
+                  status=excluded.status
                 """)) {
             String createdAt = Instant.now().toString();
             for (TestResultClaim claim : claims) {
@@ -580,10 +703,21 @@ public class MultiSourceKnowledgeStore {
                 statement.setString(9, claim.actualResult());
                 statement.setString(10, claim.failureMessage());
                 statement.setString(11, claim.evidenceLocation());
-                statement.setString(12, createdAt);
+                statement.setString(12, claim.status() == null ? KnowledgeStatus.SUPPORTED.name() : claim.status().name());
+                statement.setString(13, createdAt);
                 statement.addBatch();
             }
             statement.executeBatch();
+        }
+    }
+
+    private void addColumnIfMissing(Statement statement, String table, String column, String definition) {
+        try {
+            statement.executeUpdate("alter table " + table + " add column " + column + " " + definition);
+        } catch (SQLException exception) {
+            if (!exception.getMessage().toLowerCase().contains("duplicate column")) {
+                throw new IllegalStateException("无法迁移多源知识表 " + table, exception);
+            }
         }
     }
 
