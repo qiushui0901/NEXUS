@@ -1,0 +1,30 @@
+{
+  "id": "multi-source-requirement-knowledge",
+  "name": "multi-source-requirement-knowledge",
+  "title": "多源需求知识统一管理与检索",
+  "description": "将需求文档、测试用例、测试结果、数值表、需求存疑统一为 Claim/Evidence 模型，支持意图路由、冲突分析与多源融合检索",
+  "status": "in_progress",
+  "dev_type": "backend",
+  "scope": "knowledge",
+  "package": "backend",
+  "priority": "P0",
+  "creator": "qiushui",
+  "assignee": "qiushui",
+  "createdAt": "2026-08-22",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "docs/multi-source-requirement-knowledge-implementation-plan.md"
+  ],
+  "notes": "",
+  "meta": {
+    "sourcePlan": "docs/multi-source-requirement-knowledge-implementation-plan.md"
+  }
+}

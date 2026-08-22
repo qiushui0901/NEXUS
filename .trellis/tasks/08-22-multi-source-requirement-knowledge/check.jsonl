@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/retrieval-and-version-knowledge.md", "reason": "多源检索/证据/版本隔离契约与语义图 Evidence/解释实现保持一致"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "该方案跨解析器、存储、检索、冲突与 API 多层，需检查跨层数据流"}

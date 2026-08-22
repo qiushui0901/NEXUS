@@ -1,0 +1,2 @@
+{"file": "docs/multi-source-requirement-knowledge-implementation-plan.md", "reason": "本次实现依据的实施计划"}
+{"file": ".trellis/spec/backend/retrieval-and-version-knowledge.md", "reason": "统一 Evidence、检索解释、版本隔离契约需在实现时同步维护"}

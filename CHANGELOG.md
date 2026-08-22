@@ -40,6 +40,10 @@
 - 第六轮开发（统一 span Evidence + 检索解释）：
   - 统一 span Evidence：检索层不再伪造父块级 Evidence ID，不再为缺失 Evidence 创建空字段占位对象；只返回实体/关系真实引用的 span Evidence，缺失仅通过 `GRAPH_EVIDENCE_UNAVAILABLE` warning 体现，旧父块 Evidence 仍按兼容读取。
   - 检索解释：`SearchResponse` 新增 `explanations`，MIX 每个返回候选附带命中通道（`matchedChannels`）、分数明细（`scoreBreakdown`）、关联 Evidence 与可读解释。
+- 第七轮开发（多源需求知识 Phase 0 元数据兼容层）：
+  - 扩展 `KnowledgeConflictModels.SourceType`：新增 `TEST_CASE / TEST_RESULT / PARAMETER_TABLE / DOUBT`，旧 `TEST` 保留并兼容映射为 `TEST_CASE`（`SourceType.normalize`）。
+  - 扩展 `Authority`：新增 `SECONDARY`（验证/实现证据），与 `PRIMARY / DERIVED` 并列。
+  - 新增 Trellis 任务 `multi-source-requirement-knowledge`，将多源知识实施计划拆分为 Phase 0-5 可勾选清单。
 
 ## 0.9.1 — 2026-08-18
 

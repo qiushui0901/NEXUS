@@ -11,17 +11,36 @@ public final class KnowledgeConflictModels {
     private KnowledgeConflictModels() {
     }
 
-    /** 声明来源类型：需求、代码、测试或 Wiki。 */
+    /** 声明来源类型：需求、测试、数值表、存疑、代码或 Wiki。旧 TEST 兼容映射为 TEST_CASE。 */
     public enum SourceType {
         REQUIREMENT,
+        TEST_CASE,
+        TEST_RESULT,
+        PARAMETER_TABLE,
+        DOUBT,
         CODE,
-        TEST,
-        WIKI
+        WIKI,
+        /** @deprecated 语义不明确，兼容读取时映射为 TEST_CASE；新数据禁止继续使用。 */
+        @Deprecated
+        TEST;
+
+        /** 兼容归一化：旧 TEST 映射为 TEST_CASE，未知值返回 null。 */
+        public static SourceType normalize(String value) {
+            if (value == null || value.isBlank()) return null;
+            String normalized = value.trim().toUpperCase(java.util.Locale.ROOT).replace('-', '_').replace(' ', '_');
+            if ("TEST".equals(normalized)) return TEST_CASE;
+            try {
+                return valueOf(normalized);
+            } catch (IllegalArgumentException exception) {
+                return null;
+            }
+        }
     }
 
-    /** 声明权威级别：PRIMARY 为原始证据，DERIVED 为派生知识。 */
+    /** 声明权威级别：PRIMARY 为原始证据，SECONDARY 为验证/实现证据，DERIVED 为派生知识。 */
     public enum Authority {
         PRIMARY,
+        SECONDARY,
         DERIVED
     }
 

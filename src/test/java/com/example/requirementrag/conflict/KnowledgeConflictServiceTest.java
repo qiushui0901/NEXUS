@@ -121,6 +121,16 @@ class KnowledgeConflictServiceTest {
         assertThat(report.warnings()).containsExactly("已合并 1 条重复声明");
     }
 
+    @Test
+    void legacyTestMapsToTestCaseAndNewSourceTypesParse() {
+        assertThat(SourceType.normalize("TEST")).isEqualTo(SourceType.TEST_CASE);
+        assertThat(SourceType.normalize("test_case")).isEqualTo(SourceType.TEST_CASE);
+        assertThat(SourceType.normalize("PARAMETER_TABLE")).isEqualTo(SourceType.PARAMETER_TABLE);
+        assertThat(SourceType.normalize("DOUBT")).isEqualTo(SourceType.DOUBT);
+        assertThat(SourceType.normalize("unknown-source")).isNull();
+        assertThat(Authority.SECONDARY).isEqualTo(Authority.SECONDARY);
+    }
+
     private KnowledgeClaim claim(String evidenceId, SourceType sourceType, String factKey,
                                  String value, List<String> supportingEvidenceIds) {
         Authority authority = sourceType == SourceType.WIKI ? Authority.DERIVED : Authority.PRIMARY;
