@@ -37,6 +37,9 @@
   - 已发布快照只读：`build`/`resume`/全部图数据写入口拒绝修改 `PUBLISHED` 快照，新增 `GRAPH_SNAPSHOT_IMMUTABLE`；`VERIFIED/REVIEW_REQUIRED` 不可作为恢复目标。
   - buildId 与 snapshotId 解耦：schema v2 快照 ID 不再包含 buildId，改为内容/配置身份；相同输入重复构建幂等复用同域快照，兼容旧库按业务唯一域复用旧 ID，修复同输入重建时的唯一约束冲突。
   - 新增确定性关系质量门禁：拒绝自环关系和重复关系，先校验原文证据再进入图谱。
+- 第六轮开发（统一 span Evidence + 检索解释）：
+  - 统一 span Evidence：检索层不再伪造父块级 Evidence ID，不再为缺失 Evidence 创建空字段占位对象；只返回实体/关系真实引用的 span Evidence，缺失仅通过 `GRAPH_EVIDENCE_UNAVAILABLE` warning 体现，旧父块 Evidence 仍按兼容读取。
+  - 检索解释：`SearchResponse` 新增 `explanations`，MIX 每个返回候选附带命中通道（`matchedChannels`）、分数明细（`scoreBreakdown`）、关联 Evidence 与可读解释。
 
 ## 0.9.1 — 2026-08-18
 

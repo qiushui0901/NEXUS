@@ -115,6 +115,13 @@ class RequirementGraphHybridSearchServiceTest {
         assertThat(response.paths().get(0).entityIds()).contains("entity:cancel", "entity:inventory");
         assertThat(response.evidence()).isNotEmpty();
         assertThat(response.channelScores()).containsKeys("text", "entity", "relation", "path", "evidence", "freshness");
+        // 检索解释：每个返回候选带命中通道、分数明细与关联 Evidence。
+        assertThat(response.explanations()).isNotEmpty();
+        assertThat(response.explanations().get(0).scoreBreakdown()).containsKey("final");
+        // 统一 span Evidence：响应只含实体/关系真实引用的 span Evidence，不伪造父块级 Evidence。
+        String fabricatedParentId = RequirementGraphEvidence.id("orders", "2.0", chunk);
+        assertThat(response.evidence()).extracting(RequirementGraphModels.Evidence::evidenceId)
+                .doesNotContain(fabricatedParentId);
         assertThat(response.plan()).isSameAs(plan);
     }
 

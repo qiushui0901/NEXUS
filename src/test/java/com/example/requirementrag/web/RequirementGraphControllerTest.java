@@ -10,6 +10,7 @@ import com.example.requirementrag.requirement.graph.RequirementGraphModels.Graph
 import com.example.requirementrag.requirement.graph.RequirementGraphModels.GraphSnapshot;
 import com.example.requirementrag.requirement.graph.RequirementGraphModels.QueryPlan;
 import com.example.requirementrag.requirement.graph.RequirementGraphModels.SearchMode;
+import com.example.requirementrag.requirement.graph.RequirementGraphModels.SearchExplanation;
 import com.example.requirementrag.requirement.graph.RequirementGraphModels.SearchResponse;
 import com.example.requirementrag.requirement.graph.RequirementGraphModels.SnapshotStatus;
 import com.example.requirementrag.requirement.graph.RequirementGraphProperties;
@@ -102,7 +103,9 @@ class RequirementGraphControllerTest {
         SearchResponse response = new SearchResponse(null, List.of(), List.of(), List.of(), List.of(),
                 1, false, 0, 10, List.of(chunk), new ArrayList<>(List.of(
                         new GraphPath(List.of("entity:a", "entity:b"), List.of("rel:ab"), 1, 1.0))),
-                plan, Map.of("text", 0.30, "entity", 0.20, "relation", 0.15, "path", 0.15, "evidence", 0.15, "freshness", 0.05));
+                plan, Map.of("text", 0.30, "entity", 0.20, "relation", 0.15, "path", 0.15, "evidence", 0.15, "freshness", 0.05),
+                List.of(new SearchExplanation("TEXT", "chunk:http", List.of("TEXT"),
+                        "原始需求文本块命中", Map.of("text", 0.8, "final", 0.3), List.of())));
         when(hybrid.search(any(), eq(plan))).thenReturn(response);
 
         mvc.perform(post("/api/requirement-graphs/search")

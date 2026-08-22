@@ -144,7 +144,7 @@ public class RequirementGraphHybridSearchService {
         GraphSnapshot snapshot = store.findLatest(projectId, request.documentId(), request.requirementVersion())
                 .orElse(null);
         return new SearchResponse(snapshot, List.of(), List.of(), List.of(), warnings,
-                total, truncated, page, limit, pageChunks, List.of(), null, Map.of());
+                total, truncated, page, limit, pageChunks, List.of(), null, Map.of(), List.of());
     }
 
     /** HYBRID：文本向量/图实体邻域融合（历史实现，保持兼容）。 */
@@ -317,9 +317,7 @@ public class RequirementGraphHybridSearchService {
                 .forEach(entity -> evidenceIds.addAll(entity.sourceEvidenceIds()));
         relationRaw.keySet().stream().map(relationById::get).filter(Objects::nonNull)
                 .forEach(relation -> evidenceIds.addAll(relation.sourceEvidenceIds()));
-        for (ChunkRecord chunk : allChunks) {
-            evidenceIds.add(RequirementGraphEvidence.id(projectId, request.requirementVersion(), chunk));
-        }
+        // 统一 span Evidence：检索层不再按父块伪造 Evidence ID；只解析实体/关系真实引用的 span Evidence。
         List<Evidence> evidence = resolveEvidence(projectId, request, snapshot.id(), evidenceIds);
         Map<String, Double> evidenceRaw = new LinkedHashMap<>();
         for (Evidence item : evidence) {
@@ -419,6 +417,74 @@ public class RequirementGraphHybridSearchService {
                 .filter(candidate -> candidate.type().equals("EVIDENCE"))
                 .map(candidate -> evidenceById.get(candidate.id())).filter(Objects::nonNull).toList();
 
+        // ---- 检索解释：每个分页结果返回命中通道、分数明细与关联 Evidence ----
+        List<RequirementGraphModels.SearchExplanation> explanations = new ArrayList<>();
+        for (UnifiedCandidate candidate : pageCandidates) {
+            Map<String, Double> breakdown = new LinkedHashMap<>();
+            List<String> matchedChannels = new ArrayList<>();
+            List<String> explanationEvidenceIds = new ArrayList<>();
+            String explanation;
+            switch (candidate.type()) {
+                case "ENTITY" -> {
+                    Entity entity = allById.get(candidate.id());
+                    double entityScore = maxEntity > 0 ? entityRaw.getOrDefault(candidate.id(), 0.0) / maxEntity : 0.0;
+                    double textScore = maxChunkScore(entity.sourceEvidenceIds(), chunkScoreByEvidenceId);
+                    double pathScore = maxPath > 0 ? pathScoreByEntity.getOrDefault(candidate.id(), 0.0) / maxPath : 0.0;
+                    double evidenceScore = avgEvidenceScore(entity.sourceEvidenceIds(), evidenceRaw, maxEvidence);
+                    double freshness = freshness(entity.reviewedAt(), snapshot);
+                    breakdown.put("entity", entityScore);
+                    if (entityScore > 0) matchedChannels.add("ENTITY");
+                    if (textScore > 0) { breakdown.put("text", textScore); matchedChannels.add("TEXT"); }
+                    if (pathScore > 0) { breakdown.put("path", pathScore); matchedChannels.add("PATH"); }
+                    if (evidenceScore > 0) { breakdown.put("evidence", evidenceScore); matchedChannels.add("EVIDENCE"); }
+                    breakdown.put("freshness", freshness);
+                    explanationEvidenceIds.addAll(entity.sourceEvidenceIds());
+                    explanation = "实体命中" + (textScore > 0 ? "，且其 Evidence 所在父块命中了文本" : "");
+                }
+                case "RELATION" -> {
+                    Relation relation = relationById.get(candidate.id());
+                    double relationScore = maxRelation > 0 ? relationRaw.get(candidate.id()) / maxRelation : 0.0;
+                    double textScore = maxChunkScore(relation.sourceEvidenceIds(), chunkScoreByEvidenceId);
+                    double pathScore = maxPath > 0 ? pathScoreByRelation.getOrDefault(candidate.id(), 0.0) / maxPath : 0.0;
+                    double evidenceScore = avgEvidenceScore(relation.sourceEvidenceIds(), evidenceRaw, maxEvidence);
+                    double freshness = freshness(relation.reviewedAt(), snapshot);
+                    breakdown.put("relation", relationScore);
+                    if (relationScore > 0) matchedChannels.add("RELATION");
+                    if (textScore > 0) { breakdown.put("text", textScore); matchedChannels.add("TEXT"); }
+                    if (pathScore > 0) { breakdown.put("path", pathScore); matchedChannels.add("PATH"); }
+                    if (evidenceScore > 0) { breakdown.put("evidence", evidenceScore); matchedChannels.add("EVIDENCE"); }
+                    breakdown.put("freshness", freshness);
+                    explanationEvidenceIds.addAll(relation.sourceEvidenceIds());
+                    explanation = "关系命中" + (pathScore > 0 ? "，且位于命中的图路径上" : "");
+                }
+                case "TEXT" -> {
+                    double textScore = chunkScoreById.getOrDefault(candidate.id(), 0.0);
+                    breakdown.put("text", textScore);
+                    matchedChannels.add("TEXT");
+                    explanation = "原始需求文本块命中";
+                }
+                case "PATH" -> {
+                    GraphPath path = pathById.get(candidate.id());
+                    double pathScore = maxPath > 0 ? path.score() / maxPath : 0.0;
+                    breakdown.put("path", pathScore);
+                    matchedChannels.add("PATH");
+                    explanation = "图谱路径命中";
+                }
+                case "EVIDENCE" -> {
+                    double evidenceScore = maxEvidence > 0
+                            ? evidenceRaw.getOrDefault(candidate.id(), 0.0) / maxEvidence : 0.0;
+                    breakdown.put("evidence", evidenceScore);
+                    matchedChannels.add("EVIDENCE");
+                    explanationEvidenceIds.add(candidate.id());
+                    explanation = "Evidence 命中";
+                }
+                default -> explanation = "";
+            }
+            breakdown.put("final", candidate.score());
+            explanations.add(new RequirementGraphModels.SearchExplanation(candidate.type(), candidate.id(),
+                    matchedChannels, explanation, breakdown, explanationEvidenceIds));
+        }
+
         int total = candidates.size();
         boolean truncated = allById.size() >= properties.maxGraphRows() || allRelations.size() >= properties.maxGraphRows()
                 || candidates.size() > offset + limit;
@@ -448,7 +514,7 @@ public class RequirementGraphHybridSearchService {
         observability.value("nexus.requirement_graph.search.results", projectId, resultStatus, total);
 
         return new SearchResponse(snapshot, selectedEntities, selectedRelations, finalEvidence, warnings,
-                total, truncated, page, limit, pageChunks, pagePaths, plan, channelScores);
+                total, truncated, page, limit, pageChunks, pagePaths, plan, channelScores, explanations);
     }
 
     private List<Relation> boundedRelations(Set<String> seeds, List<Relation> relations, Integer maxHops,
@@ -647,7 +713,8 @@ public class RequirementGraphHybridSearchService {
             }
             return List.copyOf(result.values());
         } catch (RuntimeException exception) {
-            return ids.stream().map(id -> new Evidence(id, "", "", 0, request.requirementVersion(), "", "")).toList();
+            // 检索层故障不能伪装成空 Evidence；只返回已由快照表解析的部分。
+            return persisted;
         }
     }
 

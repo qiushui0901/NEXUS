@@ -400,6 +400,21 @@ public final class RequirementGraphModels {
         }
     }
 
+    public record SearchExplanation(
+            String candidateType,
+            String candidateId,
+            List<String> matchedChannels,
+            String explanation,
+            Map<String, Double> scoreBreakdown,
+            List<String> evidenceIds
+    ) {
+        public SearchExplanation {
+            matchedChannels = immutable(matchedChannels);
+            scoreBreakdown = scoreBreakdown == null ? Map.of() : Map.copyOf(scoreBreakdown);
+            evidenceIds = immutable(evidenceIds);
+        }
+    }
+
     public record SearchResponse(
             GraphSnapshot snapshot,
             List<Entity> entities,
@@ -413,7 +428,8 @@ public final class RequirementGraphModels {
             List<ChunkRecord> sourceChunks,
             List<GraphPath> paths,
             QueryPlan plan,
-            Map<String, Double> channelScores
+            Map<String, Double> channelScores,
+            List<SearchExplanation> explanations
     ) {
         public SearchResponse {
             entities = immutable(entities);
@@ -423,13 +439,14 @@ public final class RequirementGraphModels {
             sourceChunks = immutable(sourceChunks);
             paths = immutable(paths);
             channelScores = channelScores == null ? Map.of() : Map.copyOf(channelScores);
+            explanations = explanations == null ? List.of() : List.copyOf(explanations);
         }
 
         public SearchResponse(GraphSnapshot snapshot, List<Entity> entities, List<Relation> relations,
                               List<Evidence> evidence, List<RagWarning> warnings,
                               int total, boolean truncated, int page, int pageSize) {
             this(snapshot, entities, relations, evidence, warnings, total, truncated, page, pageSize,
-                    List.of(), List.of(), null, Map.of());
+                    List.of(), List.of(), null, Map.of(), List.of());
         }
 
         public SearchResponse(GraphSnapshot snapshot, List<Entity> entities, List<Relation> relations,

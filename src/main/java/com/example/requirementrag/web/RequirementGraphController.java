@@ -199,7 +199,8 @@ public class RequirementGraphController {
             response = new SearchResponse(
                     response.snapshot(), response.entities(), response.relations(), response.evidence(),
                     response.warnings(), response.total(), response.truncated(), response.page(), response.pageSize(),
-                    response.sourceChunks(), response.paths(), plan, response.channelScores());
+                    response.sourceChunks(), response.paths(), plan, response.channelScores(),
+                    response.explanations());
         }
         return response;
     }

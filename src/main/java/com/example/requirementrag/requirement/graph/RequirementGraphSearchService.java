@@ -368,10 +368,7 @@ public class RequirementGraphSearchService {
                         chunk.version(), RequirementGraphEvidence.excerpt(chunk.parentText(), 600), chunk.contentHash()));
             }
         } catch (RuntimeException ignored) {
-            // Add explicit unavailable records below; do not make an unresolved evidence ID look resolved.
-        }
-        if (resolved.isEmpty()) {
-            for (String id : ids) resolved.putIfAbsent(id, new Evidence(id, "", "", 0, version, "", ""));
+            // 检索层故障不伪造 Evidence；仅返回已由快照表解析的部分。
         }
         return List.copyOf(resolved.values());
     }
