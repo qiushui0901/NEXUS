@@ -26,6 +26,12 @@
   - `ChunkRecord` 扩展 `documentVersionId / authority / status / evidenceId / factKey`，`QdrantHybridStore` 写入/读取这些 payload 字段（旧构造器兼容）。
   - `QdrantHybridStore.setPayload`：payload-only 批量更新（不重算向量），用于已有点字段回填，避免全量 re-embed。
   - 新增 `MultiSourceKnowledgePublishTest` 与 `QdrantHybridStoreMultiSourceTest.setPayloadUpdatesPointsWithoutReembedding`。
+- Immortal 知识导入加载器：
+  - 新增 `XlsxTableReader`：轻量 ZIP+DOM 读取 XLSX 多 sheet（表头 + 按列索引行数据），不引入 POI。
+  - 新增 `XlsxTestCaseLoader`：把「分组/模块/操作步骤/预期结果」sheet 解析为 `TestCaseClaim`，保留文件/sheet/行号 Evidence，空行跳过。
+  - 新增 `ConfigTableLoader`：把第一行为列名的游戏/业务配置表按「行 × 列」生成 `ParameterClaim`（subject=列名、object=单元格值、module=sheet 名），保留行列定位。
+  - `DoubtClaimParser` 补 `跟进人 → owner`、`产品答疑 → answer` 别名。
+  - 新增 `ImmortalLoadersTest` 覆盖三个加载器。
 
 ## 0.9.2 — 2026-08-20
 

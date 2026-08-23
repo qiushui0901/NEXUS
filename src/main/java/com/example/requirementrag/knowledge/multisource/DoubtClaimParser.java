@@ -24,9 +24,9 @@ public class DoubtClaimParser {
                             String sourceSheet, int rowNumber) {
         String module = text(row, "module", "模块", "子系统", "功能");
         String question = text(row, "question", "问题", "疑问", "待确认");
-        String answer = text(row, "answer", "解答", "产品解答", "当前解答");
+        String answer = text(row, "answer", "解答", "产品解答", "产品答疑", "当前解答");
         String statusRaw = text(row, "status", "状态", "处理状态");
-        String owner = text(row, "owner", "负责人", "owner");
+        String owner = text(row, "owner", "负责人", "跟进人", "owner");
         String severity = text(row, "severity", "严重级别", "严重程度", "优先级");
         String dueDate = text(row, "dueDate", "截止日期", "due");
         String optionsRaw = text(row, "options", "备选方案", "建议", "proposedOptions");
