@@ -1,0 +1,28 @@
+{
+  "id": "nexus-093-multi-source-knowledge-storage",
+  "name": "nexus-093-multi-source-knowledge-storage",
+  "title": "NEXUS 0.9.3 多源知识存储落库",
+  "description": "将已有多源知识从可检索升级为可证明/可版本化/可复核/可回滚的知识主库：Document/Version/Evidence 目录、统一 Claim 主表、关系状态与审计、发布目录与索引一致性、评测与灰度。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "qiushui",
+  "assignee": "qiushui",
+  "createdAt": "2026-08-23",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-23-ms-093-phase-a-catalog-evidence"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

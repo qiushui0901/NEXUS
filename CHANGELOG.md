@@ -1,3 +1,16 @@
+## 0.9.3 — 2026-08-23
+
+### Added
+
+- 产品版本升级为 `0.9.3`，同步 Maven、README 与 MCP server 版本展示。
+- 新增 0.9.3 多源知识存储落库方案文档 `docs/nexus-0.9.3-multi-source-knowledge-storage-plan.md`，并修正两处 schema：`knowledge_document_version` 唯一键补 `business_version`；`knowledge_claim` 唯一键改为按 `object_value` 去重，允许同 fact_key 多值并存（冲突/历史）。
+- Phase A（统一目录与 Evidence）：
+  - 新增 `knowledge_document / knowledge_document_version / knowledge_evidence` 三张 catalog 表，沿用现有 SQLite 库并开启外键。
+  - 新增 `KnowledgeCatalogModels` 与 `KnowledgeEvidenceIdGenerator`（`ev:<projectId>:<documentVersionId>:<hash(locator|excerptHash)>` 稳定生成）。
+  - `MultiSourceKnowledgeStore` 新增 registerDocument / upsertDocumentVersion / saveEvidence / findDocumentVersion / findEvidenceById / findEvidenceByDocumentVersion / linkClaimToCatalog / findCatalogReference。
+  - 现有 `multi_source_parameter / doubt / test_case / test_result` 增加可空 `document_version_id`、`evidence_id` 列；`evidenceLocation` 继续兼容读取。
+  - 新增 `MultiSourceKnowledgeCatalogTest`：Document 幂等、DocumentVersion 幂等且按 business_version 隔离、Evidence ID 稳定、四类业务表可关联回查。
+
 ## 0.9.2 — 2026-08-20
 
 ### Added

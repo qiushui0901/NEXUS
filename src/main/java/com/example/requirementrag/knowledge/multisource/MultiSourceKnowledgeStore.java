@@ -1,5 +1,8 @@
 package com.example.requirementrag.knowledge.multisource;
 
+import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeDocument;
+import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeDocumentVersion;
+import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeEvidence;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.CrossSourceRelation;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.DoubtClaim;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeStatus;
@@ -26,6 +29,7 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * 多源知识 SQLite 存储：结构化参数 Claim 与需求存疑 Claim。
@@ -159,6 +163,72 @@ public class MultiSourceKnowledgeStore {
             statement.executeUpdate("create index if not exists idx_multi_source_rel_scope on multi_source_relation(project_id,version,relation_type)");
             addColumnIfMissing(statement, "multi_source_test_case", "status", "text not null default 'SUPPORTED'");
             addColumnIfMissing(statement, "multi_source_test_result", "status", "text not null default 'SUPPORTED'");
+
+            // 0.9.3 统一资料目录：Document / DocumentVersion / Evidence
+            statement.executeUpdate("""
+                    create table if not exists knowledge_document(
+                      document_id text primary key,
+                      project_id text not null,
+                      source_type text not null,
+                      logical_name text not null,
+                      original_name text,
+                      storage_uri text not null,
+                      authority text not null,
+                      created_at text not null,
+                      unique(project_id, source_type, logical_name)
+                    )
+                    """);
+            statement.executeUpdate("""
+                    create table if not exists knowledge_document_version(
+                      document_version_id text primary key,
+                      document_id text not null,
+                      project_id text not null,
+                      business_version text not null,
+                      content_hash text not null,
+                      parser_version text not null,
+                      extraction_version text not null,
+                      source_commit_sha text,
+                      status text not null,
+                      imported_at text not null,
+                      published_at text,
+                      foreign key(document_id) references knowledge_document(document_id),
+                      unique(document_id, business_version, content_hash, parser_version, extraction_version)
+                    )
+                    """);
+            statement.executeUpdate("""
+                    create table if not exists knowledge_evidence(
+                      evidence_id text primary key,
+                      document_version_id text not null,
+                      project_id text not null,
+                      source_type text not null,
+                      locator text not null,
+                      excerpt text not null,
+                      excerpt_hash text not null,
+                      start_line integer,
+                      end_line integer,
+                      sheet_name text,
+                      row_number integer,
+                      column_range text,
+                      repository_id text,
+                      commit_sha text,
+                      symbol_name text,
+                      created_at text not null,
+                      foreign key(document_version_id) references knowledge_document_version(document_version_id),
+                      unique(document_version_id, locator, excerpt_hash)
+                    )
+                    """);
+            statement.executeUpdate("create index if not exists idx_knowledge_doc_version_scope on knowledge_document_version(project_id,business_version)");
+            statement.executeUpdate("create index if not exists idx_knowledge_evidence_scope on knowledge_evidence(project_id,document_version_id)");
+
+            // 现有业务表关联 catalog 的可空列
+            addColumnIfMissing(statement, "multi_source_parameter", "document_version_id", "text");
+            addColumnIfMissing(statement, "multi_source_parameter", "evidence_id", "text");
+            addColumnIfMissing(statement, "multi_source_doubt", "document_version_id", "text");
+            addColumnIfMissing(statement, "multi_source_doubt", "evidence_id", "text");
+            addColumnIfMissing(statement, "multi_source_test_case", "document_version_id", "text");
+            addColumnIfMissing(statement, "multi_source_test_case", "evidence_id", "text");
+            addColumnIfMissing(statement, "multi_source_test_result", "document_version_id", "text");
+            addColumnIfMissing(statement, "multi_source_test_result", "evidence_id", "text");
         } catch (SQLException exception) {
             throw new IllegalStateException("无法初始化多源知识库", exception);
         }
@@ -753,5 +823,258 @@ public class MultiSourceKnowledgeStore {
 
     private Connection open() throws SQLException {
         return DriverManager.getConnection(jdbcUrl);
+    }
+
+    // ===== 0.9.3 统一资料目录（Document / DocumentVersion / Evidence）=====
+
+    /** 注册逻辑资料：按 (projectId, sourceType, logicalName) upsert，返回 documentId。 */
+    public String registerDocument(KnowledgeDocument document) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     insert into knowledge_document(
+                       document_id,project_id,source_type,logical_name,original_name,storage_uri,authority,created_at)
+                     values(?,?,?,?,?,?,?,?)
+                     on conflict(project_id, source_type, logical_name) do update set
+                       original_name=excluded.original_name, storage_uri=excluded.storage_uri
+                     """)) {
+            statement.setString(1, document.documentId());
+            statement.setString(2, document.projectId());
+            statement.setString(3, document.sourceType().name());
+            statement.setString(4, document.logicalName());
+            statement.setString(5, document.originalName());
+            statement.setString(6, document.storageUri());
+            statement.setString(7, document.authority().name());
+            statement.setString(8, document.createdAt());
+            statement.executeUpdate();
+            return document.documentId();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("注册资料失败", exception);
+        }
+    }
+
+    /**
+     * 幂等保存不可变资料版本：命中唯一键 (document_id, business_version, content_hash, parser_version, extraction_version)
+     * 时返回已有版本，否则插入新版本。
+     */
+    public KnowledgeDocumentVersion upsertDocumentVersion(KnowledgeDocumentVersion version) {
+        Optional<KnowledgeDocumentVersion> existing = findDocumentVersion(
+                version.documentId(), version.businessVersion(), version.contentHash(),
+                version.parserVersion(), version.extractionVersion());
+        if (existing.isPresent()) {
+            return existing.get();
+        }
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     insert into knowledge_document_version(
+                       document_version_id,document_id,project_id,business_version,content_hash,
+                       parser_version,extraction_version,source_commit_sha,status,imported_at,published_at)
+                     values(?,?,?,?,?,?,?,?,?,?,?)
+                     """)) {
+            statement.setString(1, version.documentVersionId());
+            statement.setString(2, version.documentId());
+            statement.setString(3, version.projectId());
+            statement.setString(4, version.businessVersion());
+            statement.setString(5, version.contentHash());
+            statement.setString(6, version.parserVersion());
+            statement.setString(7, version.extractionVersion());
+            statement.setString(8, version.sourceCommitSha());
+            statement.setString(9, version.status());
+            statement.setString(10, version.importedAt());
+            statement.setString(11, version.publishedAt());
+            statement.executeUpdate();
+            return version;
+        } catch (SQLException exception) {
+            throw new IllegalStateException("保存资料版本失败", exception);
+        }
+    }
+
+    /** 按唯一键查找资料版本。 */
+    public Optional<KnowledgeDocumentVersion> findDocumentVersion(String documentId, String businessVersion,
+                                                                  String contentHash, String parserVersion,
+                                                                  String extractionVersion) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select document_version_id,document_id,project_id,business_version,content_hash,
+                       parser_version,extraction_version,source_commit_sha,status,imported_at,published_at
+                     from knowledge_document_version
+                     where document_id=? and business_version=? and content_hash=?
+                       and parser_version=? and extraction_version=?
+                     """)) {
+            statement.setString(1, documentId);
+            statement.setString(2, businessVersion);
+            statement.setString(3, contentHash);
+            statement.setString(4, parserVersion);
+            statement.setString(5, extractionVersion);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? Optional.of(documentVersion(rows)) : Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询资料版本失败", exception);
+        }
+    }
+
+    /** 幂等保存 Evidence：命中唯一键 (document_version_id, locator, excerpt_hash) 时返回已有 evidenceId。 */
+    public String saveEvidence(KnowledgeEvidence evidence) {
+        Optional<KnowledgeEvidence> existing = findEvidenceById(evidence.evidenceId());
+        if (existing.isPresent()) {
+            return existing.get().evidenceId();
+        }
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     insert into knowledge_evidence(
+                       evidence_id,document_version_id,project_id,source_type,locator,excerpt,excerpt_hash,
+                       start_line,end_line,sheet_name,row_number,column_range,repository_id,commit_sha,symbol_name,created_at)
+                     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     """)) {
+            statement.setString(1, evidence.evidenceId());
+            statement.setString(2, evidence.documentVersionId());
+            statement.setString(3, evidence.projectId());
+            statement.setString(4, evidence.sourceType().name());
+            statement.setString(5, evidence.locator());
+            statement.setString(6, evidence.excerpt());
+            statement.setString(7, evidence.excerptHash());
+            statement.setObject(8, evidence.startLine(), java.sql.Types.INTEGER);
+            statement.setObject(9, evidence.endLine(), java.sql.Types.INTEGER);
+            statement.setString(10, evidence.sheetName());
+            statement.setObject(11, evidence.rowNumber(), java.sql.Types.INTEGER);
+            statement.setString(12, evidence.columnRange());
+            statement.setString(13, evidence.repositoryId());
+            statement.setString(14, evidence.commitSha());
+            statement.setString(15, evidence.symbolName());
+            statement.setString(16, evidence.createdAt());
+            statement.executeUpdate();
+            return evidence.evidenceId();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("保存 Evidence 失败", exception);
+        }
+    }
+
+    /** 按 Evidence ID 查询。 */
+    public Optional<KnowledgeEvidence> findEvidenceById(String evidenceId) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select evidence_id,document_version_id,project_id,source_type,locator,excerpt,excerpt_hash,
+                       start_line,end_line,sheet_name,row_number,column_range,repository_id,commit_sha,symbol_name,created_at
+                     from knowledge_evidence where evidence_id=?
+                     """)) {
+            statement.setString(1, evidenceId);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? Optional.of(evidence(rows)) : Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询 Evidence 失败", exception);
+        }
+    }
+
+    /** 按资料版本列出全部 Evidence。 */
+    public List<KnowledgeEvidence> findEvidenceByDocumentVersion(String documentVersionId) {
+        List<KnowledgeEvidence> result = new ArrayList<>();
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select evidence_id,document_version_id,project_id,source_type,locator,excerpt,excerpt_hash,
+                       start_line,end_line,sheet_name,row_number,column_range,repository_id,commit_sha,symbol_name,created_at
+                     from knowledge_evidence where document_version_id=? order by row_number,locator
+                     """)) {
+            statement.setString(1, documentVersionId);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    result.add(evidence(rows));
+                }
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询版本 Evidence 失败", exception);
+        }
+        return result;
+    }
+
+    /**
+     * 把一条现有来源 Claim 关联到 catalog 的 documentVersion 与 Evidence。
+     * 仅更新对应业务表的可空关联列，不改变 Claim 内容与既有 API。
+     *
+     * @param sourceType        来源类型（PARAMETER_TABLE/DOUBT/TEST_CASE/TEST_RESULT）
+     * @param claimId           Claim ID（对应表的 claim_id 或 doubt_id）
+     * @param documentVersionId 资料版本 ID
+     * @param evidenceId        结构化 Evidence ID
+     */
+    public void linkClaimToCatalog(String sourceType, String claimId,
+                                   String documentVersionId, String evidenceId) {
+        String table = switch (sourceType) {
+            case "PARAMETER_TABLE" -> "multi_source_parameter";
+            case "DOUBT" -> "multi_source_doubt";
+            case "TEST_CASE" -> "multi_source_test_case";
+            case "TEST_RESULT" -> "multi_source_test_result";
+            default -> throw new IllegalArgumentException("不支持的来源类型关联: " + sourceType);
+        };
+        String keyColumn = "DOUBT".equals(sourceType) ? "doubt_id" : "claim_id";
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(
+                     "update " + table + " set document_version_id=?, evidence_id=? where " + keyColumn + "=?")) {
+            statement.setString(1, documentVersionId);
+            statement.setString(2, evidenceId);
+            statement.setString(3, claimId);
+            int updated = statement.executeUpdate();
+            if (updated == 0) {
+                throw new IllegalArgumentException("未找到可关联的 Claim: " + claimId + " (" + sourceType + ")");
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("关联 Claim 到 catalog 失败", exception);
+        }
+    }
+
+    /** 查询某条业务 Claim 在 catalog 中的可回查关联。 */
+    public Optional<KnowledgeCatalogModels.CatalogReference> findCatalogReference(String sourceType, String claimId) {
+        String table = switch (sourceType) {
+            case "PARAMETER_TABLE" -> "multi_source_parameter";
+            case "DOUBT" -> "multi_source_doubt";
+            case "TEST_CASE" -> "multi_source_test_case";
+            case "TEST_RESULT" -> "multi_source_test_result";
+            default -> throw new IllegalArgumentException("不支持的来源类型关联: " + sourceType);
+        };
+        String keyColumn = "DOUBT".equals(sourceType) ? "doubt_id" : "claim_id";
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(
+                     "select document_version_id, evidence_id from " + table + " where " + keyColumn + "=?")) {
+            statement.setString(1, claimId);
+            try (ResultSet rows = statement.executeQuery()) {
+                if (!rows.next()) {
+                    return Optional.empty();
+                }
+                String documentVersionId = rows.getString("document_version_id");
+                String evidenceId = rows.getString("evidence_id");
+                if (documentVersionId == null || evidenceId == null) {
+                    return Optional.empty();
+                }
+                return Optional.of(new KnowledgeCatalogModels.CatalogReference(documentVersionId, evidenceId));
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询 Claim catalog 关联失败", exception);
+        }
+    }
+
+    private KnowledgeDocumentVersion documentVersion(ResultSet rows) throws SQLException {
+        return new KnowledgeDocumentVersion(
+                rows.getString("document_version_id"), rows.getString("document_id"),
+                rows.getString("project_id"), rows.getString("business_version"),
+                rows.getString("content_hash"), rows.getString("parser_version"),
+                rows.getString("extraction_version"), rows.getString("source_commit_sha"),
+                rows.getString("status"), rows.getString("imported_at"), rows.getString("published_at"));
+    }
+
+    private KnowledgeEvidence evidence(ResultSet rows) throws SQLException {
+        return new KnowledgeEvidence(
+                rows.getString("evidence_id"), rows.getString("document_version_id"),
+                rows.getString("project_id"),
+                com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType.valueOf(rows.getString("source_type")),
+                rows.getString("locator"), rows.getString("excerpt"), rows.getString("excerpt_hash"),
+                integerOrNull(rows, "start_line"), integerOrNull(rows, "end_line"),
+                rows.getString("sheet_name"), integerOrNull(rows, "row_number"),
+                rows.getString("column_range"), rows.getString("repository_id"),
+                rows.getString("commit_sha"), rows.getString("symbol_name"),
+                rows.getString("created_at"));
+    }
+
+    private Integer integerOrNull(ResultSet rows, String column) throws SQLException {
+        int value = rows.getInt(column);
+        return rows.wasNull() ? null : value;
     }
 }
