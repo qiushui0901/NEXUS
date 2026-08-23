@@ -166,4 +166,68 @@ public final class KnowledgeCatalogModels {
             createdAt = createdAt == null ? java.time.Instant.now().toString() : createdAt;
         }
     }
+
+    /** 统一关系：带状态、置信度、证据与确认审计。 */
+    public record KnowledgeRelation(
+            String relationId,
+            String projectId,
+            String version,
+            String sourceClaimId,
+            String targetClaimId,
+            String relationType,
+            String status,
+            Double confidence,
+            String evidenceId,
+            String extractionMethod,
+            String confirmationMethod,
+            String confirmationReason,
+            String createdAt,
+            String updatedAt
+    ) {
+        public KnowledgeRelation {
+            if (relationId == null || relationId.isBlank()) throw new IllegalArgumentException("relationId 不能为空");
+            if (projectId == null || projectId.isBlank()) throw new IllegalArgumentException("projectId 不能为空");
+            if (version == null || version.isBlank()) throw new IllegalArgumentException("version 不能为空");
+            if (sourceClaimId == null || sourceClaimId.isBlank()) throw new IllegalArgumentException("sourceClaimId 不能为空");
+            if (targetClaimId == null || targetClaimId.isBlank()) throw new IllegalArgumentException("targetClaimId 不能为空");
+            if (relationType == null || relationType.isBlank()) throw new IllegalArgumentException("relationType 不能为空");
+            status = status == null || status.isBlank() ? "RULE_PROPOSED" : status;
+            extractionMethod = extractionMethod == null || extractionMethod.isBlank() ? "RULE" : extractionMethod;
+            String now = java.time.Instant.now().toString();
+            createdAt = createdAt == null ? now : createdAt;
+            updatedAt = updatedAt == null ? createdAt : updatedAt;
+        }
+    }
+
+    /** 抽取运行审计：单次解析/抽取/关系生成任务账本。 */
+    public record ExtractionRun(
+            String extractionRunId,
+            String projectId,
+            String documentVersionId,
+            String parserName,
+            String parserVersion,
+            String modelName,
+            String promptVersion,
+            String inputHash,
+            String outputHash,
+            String status,
+            Integer promptTokens,
+            Integer completionTokens,
+            String errorMessage,
+            String startedAt,
+            String finishedAt
+    ) {
+        public ExtractionRun {
+            if (extractionRunId == null || extractionRunId.isBlank()) throw new IllegalArgumentException("extractionRunId 不能为空");
+            if (projectId == null || projectId.isBlank()) throw new IllegalArgumentException("projectId 不能为空");
+            if (documentVersionId == null || documentVersionId.isBlank()) {
+                throw new IllegalArgumentException("documentVersionId 不能为空");
+            }
+            if (parserName == null || parserName.isBlank()) throw new IllegalArgumentException("parserName 不能为空");
+            parserVersion = parserVersion == null || parserVersion.isBlank() ? "v1" : parserVersion;
+            inputHash = inputHash == null || inputHash.isBlank() ? "" : inputHash;
+            status = status == null || status.isBlank() ? "RUNNING" : status;
+            startedAt = startedAt == null ? java.time.Instant.now().toString() : startedAt;
+        }
+    }
 }

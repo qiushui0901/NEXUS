@@ -164,63 +164,11 @@ class MultiSourceSearchServiceTest {
     }
 
     @Test
-    void llmRelationConfirmationRejectsFalseRelationsWhenEnabled() {
+    void relationsReadFromStoreAreBoundedToCurrentPage() throws Exception {
         MultiSourceKnowledgeStore store = newStore();
         store.replaceProjectVersion("fengshen", "5.1");
         TestKnowledgeLoaders testLoaders = new TestKnowledgeLoaders(new ObjectMapper());
-        store.saveTestCases("fengshen", "5.1", List.of(testLoaders.parseTestCase(
-                "{\"testCaseId\":\"tc-1\",\"title\":\"取消订单\",\"expectedResult\":\"可取消\","
-                        + "\"module\":\"订单\",\"coveredRequirementId\":\"订单-001\",\"framework\":\"JUnit\"}",
-                "fengshen", "5.1", "OrderTest.java")));
-        MultiSourceCandidateAdapter requirementAdapter = requirementAdapter();
-
-        MultiSourceSearchService service = new MultiSourceSearchService(
-                store, new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
-                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(), List.of(requirementAdapter),
-                new CrossSourceRelationExtractor(), query -> Optional.empty(),
-                new MultiSourceKnowledgeProperties(true, false, null, Map.of(), true),
-                (source, relationType, target, evidence) ->
-                        new CrossSourceRelationConfirmer.Confirmation(false, "不相关"));
-
-        MultiSourceSearchResponse response = service.search(
-                "fengshen", "5.1", "取消订单", KnowledgeQueryIntent.VALIDATION, 20, 0);
-
-        assertThat(response.relations()).isEmpty();
-        assertThat(response.warnings()).contains("LLM 语义确认拒绝 1 条规则关系");
-    }
-
-    @Test
-    void llmRelationConfirmationKeepsConfirmedRelationsWhenEnabled() {
-        MultiSourceKnowledgeStore store = newStore();
-        store.replaceProjectVersion("fengshen", "5.1");
-        TestKnowledgeLoaders testLoaders = new TestKnowledgeLoaders(new ObjectMapper());
-        store.saveTestCases("fengshen", "5.1", List.of(testLoaders.parseTestCase(
-                "{\"testCaseId\":\"tc-1\",\"title\":\"取消订单\",\"expectedResult\":\"可取消\","
-                        + "\"module\":\"订单\",\"coveredRequirementId\":\"订单-001\",\"framework\":\"JUnit\"}",
-                "fengshen", "5.1", "OrderTest.java")));
-
-        MultiSourceSearchService service = new MultiSourceSearchService(
-                store, new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
-                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(), List.of(requirementAdapter()),
-                new CrossSourceRelationExtractor(), query -> Optional.empty(),
-                new MultiSourceKnowledgeProperties(true, false, null, Map.of(), true),
-                (source, relationType, target, evidence) ->
-                        new CrossSourceRelationConfirmer.Confirmation(true, "匹配"));
-
-        MultiSourceSearchResponse response = service.search(
-                "fengshen", "5.1", "取消订单", KnowledgeQueryIntent.VALIDATION, 20, 0);
-
-        assertThat(response.relations()).isNotEmpty();
-        assertThat(response.relations().get(0).type().name()).isEqualTo("VERIFIES");
-        assertThat(response.warnings()).doesNotContain("LLM 语义确认拒绝 1 条规则关系");
-    }
-
-    @Test
-    void relationsAreBoundedToCurrentPageClaims() {
-        MultiSourceKnowledgeStore store = newStore();
-        store.replaceProjectVersion("fengshen", "5.1");
-        TestKnowledgeLoaders testLoaders = new TestKnowledgeLoaders(new ObjectMapper());
-        store.saveTestCases("fengshen", "5.1", List.of(
+        List<MultiSourceKnowledgeModels.TestCaseClaim> testCases = List.of(
                 testLoaders.parseTestCase(
                         "{\"testCaseId\":\"tc-1\",\"title\":\"取消订单A\",\"expectedResult\":\"可取消\","
                                 + "\"module\":\"订单\",\"coveredRequirementId\":\"订单-001\",\"framework\":\"JUnit\"}",
@@ -228,27 +176,64 @@ class MultiSourceSearchServiceTest {
                 testLoaders.parseTestCase(
                         "{\"testCaseId\":\"tc-2\",\"title\":\"取消订单B\",\"expectedResult\":\"可取消\","
                                 + "\"module\":\"订单\",\"coveredRequirementId\":\"订单-001\",\"framework\":\"JUnit\"}",
-                        "fengshen", "5.1", "OrderTest.java")));
-        MultiSourceCandidateAdapter requirementAdapter = requirementAdapter();
+                        "fengshen", "5.1", "OrderTest.java"));
+        store.saveTestCases("fengshen", "5.1", testCases);
+        seedOfflineRelations(store, testCases);
 
         MultiSourceSearchService service = new MultiSourceSearchService(
                 store, new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
-                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(), List.of(requirementAdapter),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(), List.of(requirementAdapter()),
                 new CrossSourceRelationExtractor());
 
-        // 单条命中页：需求不在页内，规则关系被页边界挡住。
+        // 单条命中页：只返回页内测试用例的一跳关系（需求在页外也可作为一跳目标返回）。
         MultiSourceSearchResponse pageOne = service.search(
                 "fengshen", "5.1", "取消订单", KnowledgeQueryIntent.VALIDATION, 1, 0);
         assertThat(pageOne.claims()).hasSize(1);
         assertThat(pageOne.claims().get(0).sourceType().name()).isEqualTo("TEST_CASE");
-        assertThat(pageOne.relations()).isEmpty();
+        assertThat(pageOne.relations()).hasSize(1);
 
-        // 全量页：测试用例与需求同页，关系正常生成。
+        // 全量页：两条测试用例各返回一跳关系。
         MultiSourceSearchResponse fullPage = service.search(
                 "fengshen", "5.1", "取消订单", KnowledgeQueryIntent.VALIDATION, 20, 0);
         assertThat(fullPage.relations()).hasSize(2);
         assertThat(fullPage.relations()).allSatisfy(relation ->
                 org.assertj.core.api.Assertions.assertThat(relation.type().name()).isEqualTo("VERIFIES"));
+    }
+
+    /** 预置离线关系：建立 catalog 版本/Evidence、同步统一 Claim，并写入 knowledge_relation。 */
+    private void seedOfflineRelations(MultiSourceKnowledgeStore store,
+                                      List<MultiSourceKnowledgeModels.TestCaseClaim> testCases) throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        store.registerDocument(new KnowledgeCatalogModels.KnowledgeDocument(
+                "doc-1", "fengshen", SourceType.REQUIREMENT, "combat-requirement",
+                "combat.docx", "file:///data/combat.docx", Authority.PRIMARY, null));
+        store.upsertDocumentVersion(new KnowledgeCatalogModels.KnowledgeDocumentVersion(
+                "dv-1", "doc-1", "fengshen", "5.1", "hash-1", "v1", "v1", null, "DRAFT", null, null));
+        String evidenceId = KnowledgeEvidenceIdGenerator.generate("fengshen", "dv-1", "combat.md#3.2", "excerpt-1");
+        store.saveEvidence(new KnowledgeCatalogModels.KnowledgeEvidence(
+                evidenceId, "dv-1", "fengshen", SourceType.REQUIREMENT,
+                "combat.md#3.2", "excerpt", "excerpt-1", null, null, null, null, null, null, null, null, null));
+
+        Map<String, String> evidenceMap = new java.util.LinkedHashMap<>();
+        for (MultiSourceKnowledgeModels.TestCaseClaim testCase : testCases) {
+            evidenceMap.put(testCase.claimId(), evidenceId);
+        }
+        store.syncSnapshotClaims("fengshen", "5.1", "dv-1", evidenceMap);
+
+        // 需求 Claim 直接落主库
+        store.saveClaim(new KnowledgeCatalogModels.KnowledgeClaimRecord(
+                "req:1", "fengshen", "dv-1", SourceType.REQUIREMENT, Authority.PRIMARY,
+                KnowledgeFactKeyGenerator.generate("fengshen", "5.1", "订单", "订单-001", "允许取消"),
+                "订单-001", "允许取消", "允许", "TEXT", null, "VERIFIED",
+                null, null, null, "RULE", null, null, null));
+
+        for (MultiSourceKnowledgeModels.TestCaseClaim testCase : testCases) {
+            store.saveRelation(new KnowledgeCatalogModels.KnowledgeRelation(
+                    "rel:verifies:" + testCase.claimId() + ":req:1",
+                    "fengshen", "5.1", testCase.claimId(), "req:1",
+                    "VERIFIES", "RULE_PROPOSED", null, evidenceId,
+                    "RULE", null, null, null, null));
+        }
     }
 
     private MultiSourceCandidateAdapter requirementAdapter() {

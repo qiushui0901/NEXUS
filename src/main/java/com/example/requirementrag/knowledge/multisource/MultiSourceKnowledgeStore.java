@@ -2,11 +2,13 @@ package com.example.requirementrag.knowledge.multisource;
 
 import com.example.requirementrag.conflict.KnowledgeConflictModels.Authority;
 import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
+import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.ExtractionRun;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeClaimEvidence;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeClaimRecord;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeDocument;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeDocumentVersion;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeEvidence;
+import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeRelation;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.CrossSourceRelation;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.DoubtClaim;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeStatus;
@@ -35,6 +37,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * 多源知识 SQLite 存储：结构化参数 Claim 与需求存疑 Claim。
@@ -263,6 +266,51 @@ public class MultiSourceKnowledgeStore {
                     )
                     """);
             statement.executeUpdate("create index if not exists idx_knowledge_claim_fact on knowledge_claim(project_id,document_version_id,fact_key)");
+
+            // 0.9.3 Phase C：统一关系表 + 抽取运行审计表
+            statement.executeUpdate("""
+                    create table if not exists knowledge_relation(
+                      relation_id text primary key,
+                      project_id text not null,
+                      version text not null,
+                      source_claim_id text not null,
+                      target_claim_id text not null,
+                      relation_type text not null,
+                      status text not null,
+                      confidence real,
+                      evidence_id text,
+                      extraction_method text not null,
+                      confirmation_method text,
+                      confirmation_reason text,
+                      created_at text not null,
+                      updated_at text not null,
+                      foreign key(source_claim_id) references knowledge_claim(claim_id),
+                      foreign key(target_claim_id) references knowledge_claim(claim_id),
+                      foreign key(evidence_id) references knowledge_evidence(evidence_id),
+                      unique(project_id, version, source_claim_id, target_claim_id, relation_type)
+                    )
+                    """);
+            statement.executeUpdate("""
+                    create table if not exists knowledge_extraction_run(
+                      extraction_run_id text primary key,
+                      project_id text not null,
+                      document_version_id text not null,
+                      parser_name text not null,
+                      parser_version text not null,
+                      model_name text,
+                      prompt_version text,
+                      input_hash text not null,
+                      output_hash text,
+                      status text not null,
+                      prompt_tokens integer,
+                      completion_tokens integer,
+                      error_message text,
+                      started_at text not null,
+                      finished_at text,
+                      foreign key(document_version_id) references knowledge_document_version(document_version_id)
+                    )
+                    """);
+            statement.executeUpdate("create index if not exists idx_knowledge_relation_scope on knowledge_relation(project_id,version)");
 
             // 现有业务表关联 catalog 的可空列
             addColumnIfMissing(statement, "multi_source_parameter", "document_version_id", "text");
@@ -1341,6 +1389,195 @@ public class MultiSourceKnowledgeStore {
 
     private String fallbackStatus(String status) {
         return status == null || status.isBlank() ? "SUPPORTED" : status;
+    }
+
+    // ===== 0.9.3 Phase C：统一关系 + 抽取运行审计 =====
+
+    /** 幂等保存统一关系：命中唯一键时更新状态/置信度/审计字段。 */
+    public void saveRelation(KnowledgeRelation relation) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     insert into knowledge_relation(
+                       relation_id,project_id,version,source_claim_id,target_claim_id,relation_type,
+                       status,confidence,evidence_id,extraction_method,confirmation_method,confirmation_reason,
+                       created_at,updated_at)
+                     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     on conflict(project_id, version, source_claim_id, target_claim_id, relation_type) do update set
+                       relation_id=excluded.relation_id,
+                       status=excluded.status, confidence=excluded.confidence, evidence_id=excluded.evidence_id,
+                       extraction_method=excluded.extraction_method, confirmation_method=excluded.confirmation_method,
+                       confirmation_reason=excluded.confirmation_reason, updated_at=excluded.updated_at
+                     """)) {
+            statement.setString(1, relation.relationId());
+            statement.setString(2, relation.projectId());
+            statement.setString(3, relation.version());
+            statement.setString(4, relation.sourceClaimId());
+            statement.setString(5, relation.targetClaimId());
+            statement.setString(6, relation.relationType());
+            statement.setString(7, relation.status());
+            statement.setObject(8, relation.confidence(), java.sql.Types.DOUBLE);
+            statement.setString(9, relation.evidenceId());
+            statement.setString(10, relation.extractionMethod());
+            statement.setString(11, relation.confirmationMethod());
+            statement.setString(12, relation.confirmationReason());
+            statement.setString(13, relation.createdAt());
+            statement.setString(14, relation.updatedAt());
+            statement.executeUpdate();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("保存统一关系失败", exception);
+        }
+    }
+
+    /** 查询当前页命中 Claim 的一跳关系：source 或 target 任一在页内。 */
+    public List<KnowledgeRelation> findRelationsForClaims(String projectId, String version, Set<String> claimIds) {
+        if (claimIds == null || claimIds.isEmpty()) {
+            return List.of();
+        }
+        List<KnowledgeRelation> result = new ArrayList<>();
+        String placeholders = String.join(",", java.util.Collections.nCopies(claimIds.size(), "?"));
+        String sql = "select relation_id,project_id,version,source_claim_id,target_claim_id,relation_type," +
+                "status,confidence,evidence_id,extraction_method,confirmation_method,confirmation_reason," +
+                "created_at,updated_at from knowledge_relation where project_id=? and version=?" +
+                " and (source_claim_id in (" + placeholders + ") or target_claim_id in (" + placeholders + "))" +
+                " order by source_claim_id,target_claim_id,relation_type";
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            int index = 1;
+            statement.setString(index++, projectId);
+            statement.setString(index++, version);
+            for (String id : claimIds) {
+                statement.setString(index++, id);
+            }
+            for (String id : claimIds) {
+                statement.setString(index++, id);
+            }
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    result.add(relation(rows));
+                }
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询页内关系失败", exception);
+        }
+        return result;
+    }
+
+    /** 开始抽取运行审计记录。 */
+    public void startExtractionRun(ExtractionRun run) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     insert into knowledge_extraction_run(
+                       extraction_run_id,project_id,document_version_id,parser_name,parser_version,
+                       model_name,prompt_version,input_hash,output_hash,status,prompt_tokens,
+                       completion_tokens,error_message,started_at,finished_at)
+                     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     """)) {
+            statement.setString(1, run.extractionRunId());
+            statement.setString(2, run.projectId());
+            statement.setString(3, run.documentVersionId());
+            statement.setString(4, run.parserName());
+            statement.setString(5, run.parserVersion());
+            statement.setString(6, run.modelName());
+            statement.setString(7, run.promptVersion());
+            statement.setString(8, run.inputHash());
+            statement.setString(9, run.outputHash());
+            statement.setString(10, run.status());
+            statement.setObject(11, run.promptTokens(), java.sql.Types.INTEGER);
+            statement.setObject(12, run.completionTokens(), java.sql.Types.INTEGER);
+            statement.setString(13, run.errorMessage());
+            statement.setString(14, run.startedAt());
+            statement.setString(15, run.finishedAt());
+            statement.executeUpdate();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("开始抽取运行审计失败", exception);
+        }
+    }
+
+    /** 结束抽取运行，回写状态、输出 hash 与 token。 */
+    public void finishExtractionRun(String extractionRunId, String status, String outputHash,
+                                    Integer promptTokens, Integer completionTokens,
+                                    String errorMessage, String finishedAt) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     update knowledge_extraction_run
+                     set status=?, output_hash=?, prompt_tokens=?, completion_tokens=?, error_message=?, finished_at=?
+                     where extraction_run_id=?
+                     """)) {
+            statement.setString(1, status);
+            statement.setString(2, outputHash);
+            statement.setObject(3, promptTokens, java.sql.Types.INTEGER);
+            statement.setObject(4, completionTokens, java.sql.Types.INTEGER);
+            statement.setString(5, errorMessage);
+            statement.setString(6, finishedAt);
+            statement.setString(7, extractionRunId);
+            statement.executeUpdate();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("结束抽取运行审计失败", exception);
+        }
+    }
+
+    /** 查询抽取运行记录。 */
+    public Optional<ExtractionRun> findExtractionRun(String extractionRunId) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select extraction_run_id,project_id,document_version_id,parser_name,parser_version,
+                       model_name,prompt_version,input_hash,output_hash,status,prompt_tokens,
+                       completion_tokens,error_message,started_at,finished_at
+                     from knowledge_extraction_run where extraction_run_id=?
+                     """)) {
+            statement.setString(1, extractionRunId);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? Optional.of(extractionRun(rows)) : Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询抽取运行记录失败", exception);
+        }
+    }
+
+    private ExtractionRun extractionRun(ResultSet rows) throws SQLException {
+        Integer promptTokens = rows.getObject("prompt_tokens") == null ? null : rows.getInt("prompt_tokens");
+        Integer completionTokens = rows.getObject("completion_tokens") == null ? null : rows.getInt("completion_tokens");
+        return new ExtractionRun(
+                rows.getString("extraction_run_id"), rows.getString("project_id"),
+                rows.getString("document_version_id"), rows.getString("parser_name"),
+                rows.getString("parser_version"), rows.getString("model_name"),
+                rows.getString("prompt_version"), rows.getString("input_hash"),
+                rows.getString("output_hash"), rows.getString("status"),
+                promptTokens, completionTokens, rows.getString("error_message"),
+                rows.getString("started_at"), rows.getString("finished_at"));
+    }
+
+    /** 人工审核关系：更新状态、确认方式与原因。 */
+    public void reviewRelation(String relationId, String status, String confirmationMethod, String reason) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     update knowledge_relation
+                     set status=?, confirmation_method=?, confirmation_reason=?, updated_at=?
+                     where relation_id=?
+                     """)) {
+            statement.setString(1, status);
+            statement.setString(2, confirmationMethod);
+            statement.setString(3, reason);
+            statement.setString(4, Instant.now().toString());
+            statement.setString(5, relationId);
+            int updated = statement.executeUpdate();
+            if (updated == 0) {
+                throw new IllegalArgumentException("未找到关系: " + relationId);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("审核关系失败", exception);
+        }
+    }
+
+    private KnowledgeRelation relation(ResultSet rows) throws SQLException {
+        Double confidence = rows.getObject("confidence") == null ? null : rows.getDouble("confidence");
+        return new KnowledgeRelation(
+                rows.getString("relation_id"), rows.getString("project_id"), rows.getString("version"),
+                rows.getString("source_claim_id"), rows.getString("target_claim_id"),
+                rows.getString("relation_type"), rows.getString("status"), confidence,
+                rows.getString("evidence_id"), rows.getString("extraction_method"),
+                rows.getString("confirmation_method"), rows.getString("confirmation_reason"),
+                rows.getString("created_at"), rows.getString("updated_at"));
     }
 
     private KnowledgeDocumentVersion documentVersion(ResultSet rows) throws SQLException {

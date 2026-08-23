@@ -15,6 +15,12 @@
   - 新增 `KnowledgeFactKeyGenerator`：`<projectId>|<businessVersion>|<module>|<normalizedSubject>|<normalizedPredicate>` 确定性生成。
   - `MultiSourceKnowledgeStore` 新增 saveClaim / linkClaimEvidence / findClaimById / findClaimsByFactKey / findEvidenceIdsByClaimId / syncSnapshotClaims（事务内把参数/存疑/测试用例/测试结果批量生成为统一 Claim 并关联 Evidence、回填业务表关联列）。
   - 新增 `MultiSourceKnowledgeClaimTest`：Claim 幂等 upsert、同 fact_key 多值并存、fact_key 规范化、sync 后四类 claimId 可在主库回查版本/状态/Evidence 关联。
+- Phase C（关系、冲突与审核审计）：
+  - 新增 `knowledge_relation` 统一关系表（状态 `RULE_PROPOSED / LLM_CONFIRMED / LLM_REJECTED / HUMAN_CONFIRMED / STALE`、置信度、evidence、抽取/确认方式与原因）与 `knowledge_extraction_run` 抽取运行审计表（parser/模型/提示词版本/input-output hash/token/状态/耗时）。
+  - 新增 `KnowledgeRelationBuildService`：离线/发布前关系生产——规则抽取 + 可选 LLM 确认，结果落 `knowledge_relation` 并记录一次抽取运行；不再在查询侧生成/持久化/调用 LLM。
+  - `MultiSourceSearchService` 查询改为**只读预生成关系**并按当前命中页裁剪一跳邻域（新表优先，旧 `multi_source_relation` 只读回退）。
+  - 新增人工审核 API `POST /api/knowledge/review/relations/{relationId}`（确认/拒绝/标记过期，`KnowledgeReviewController` + `MultiSourceKnowledgeStore.reviewRelation`）。
+  - 新增 `KnowledgeRelationBuildServiceTest`（规则产出/LLM 拒绝保留审计/LLM 确认升级状态）与 `KnowledgeReviewControllerTest`。
 
 ## 0.9.2 — 2026-08-20
 
