@@ -95,6 +95,24 @@ class CodeCentricAlignmentStoreTest {
     }
 
     @Test
+    void alignmentRelationReviewLifecycle() {
+        String now = Instant.now().toString();
+        AlignmentRelation relation = new AlignmentRelation("ar-review", "immortal", "5.1", "vc-1",
+                "p-1", null, "PARAMETER_TABLE", null, "s-1", "CODE",
+                "READS_CONFIG", "NORMALIZED_NAME_EXACT", "RULE_CONFIRMED", 0.9,
+                null, "vc-1", "vc-1", "pending", now, now);
+        store.saveAlignmentRelation(relation);
+
+        store.reviewAlignmentRelation("ar-review", "HUMAN_CONFIRMED");
+        assertThat(store.findAlignmentRelationById("ar-review").orElseThrow().status())
+                .isEqualTo("HUMAN_CONFIRMED");
+
+        store.reviewAlignmentRelation("ar-review", "REJECTED");
+        assertThat(store.findAlignmentRelationById("ar-review").orElseThrow().status())
+                .isEqualTo("REJECTED");
+    }
+
+    @Test
     void alignmentRelationIsIsolatedByVersionContext() {
         String now = Instant.now().toString();
         AlignmentRelation staging = new AlignmentRelation("ar-staging", "immortal", "5.1", "vc-staging",

@@ -3,6 +3,7 @@ package com.example.requirementrag.web;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.knowledge.multisource.alignment.BusinessConceptService;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricAlignmentStore;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.AlignmentRelation;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.BuildResult;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DoubtImpact;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DoubtImpactBuildResult;
@@ -191,6 +192,22 @@ public class CodeCentricAlignmentController {
         accessGuard.requireProjectAccess(httpRequest, request.projectId());
         return doubtImpactService.resolve(request.projectId(), request.version(), request.environment(),
                 request.doubtId(), request.conclusion(), request.resolutionEvidenceId());
+    }
+
+    /** 人工审核对齐关系生命周期：HUMAN_CONFIRMED / REJECTED / STALE。 */
+    @RequiresPermission(Permission.WRITE)
+    @PostMapping("/alignment-relation/review")
+    public AlignmentRelation reviewAlignmentRelation(@RequestBody ReviewAlignmentRelationRequest request,
+                                                     HttpServletRequest httpRequest) {
+        projectRegistry.require(request.projectId());
+        accessGuard.requireProjectAccess(httpRequest, request.projectId());
+        alignmentStore.reviewAlignmentRelation(request.relationId(), request.action());
+        return alignmentStore.findAlignmentRelationById(request.relationId())
+                .orElseThrow(() -> new IllegalArgumentException("未找到对齐关系: " + request.relationId()));
+    }
+
+    /** 对齐关系审核请求。 */
+    public record ReviewAlignmentRelationRequest(String projectId, String relationId, String action) {
     }
 
     /** 存疑关闭请求。 */

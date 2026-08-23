@@ -27,9 +27,17 @@
     - 新增 `AlignmentEvaluationIT`（`-Dalignment.eval=true` 显式开启）：在进程内用真实 multi-source + code-graph 库构建对齐/漂移/存疑影响，并根据 `src/test/resources/alignment-eval/*.golden.jsonl` 计算 Precision/Recall/F1；金标为空时输出覆盖/诊断报告。
     - 新增空金标模板：`code-param.golden.jsonl`、`code-test.golden.jsonl`、`drift.golden.jsonl`。
     - 首次真实数据基线（immortal/5.1，commit `026394c19dae4f77717cde75363c866815674adc`）：AlignmentRelation 336,119、DriftItem 123、DoubtImpact 621,943；报告见 `docs/reports/alignment-eval-2026-08-23.md`。
+  - **文档级需求抽取（四次迭代垂直切片）**
+    - Phase 0+1：`RequirementGraphWindowPlanner` 新增 `PlanOptions`（minWindowChars / minProgressChars / maxWindowCountPerParent / 结构感知边界），无短窗、保证最小推进、超窗保留尾部不丢内容。
+    - Phase 2：新增 `DocumentStructureExtractor`（标题/编号需求/表格行/列表 → 结构树 + 不可变 `SourceAnchor`）与 `LogicalUnitPlanner`（REQUIREMENT/TABLE/LIST 逻辑单元不拆散）。
+    - Phase 3+4：新增 `CrossWindowIntegrator`（REQ 编号引用 → 跨窗口候选，缺目标端降级 `UNAVAILABLE`，绝不当作已证实）、`EvidenceComposer`（DIRECT/COMPOSITE_SUPPORTED/INFERRED/UNAVAILABLE 证据包）、`BuildFingerprintFactory` 与 `RequirementDocumentStructureStore`（结构/锚点/单元/证据包/指纹持久化）。
+    - 新增 `DocumentLevelBuildService` 与 `RequirementDocumentLevelController`（`/api/requirement-graphs/document-level/*`：build/structure/units/bundles）。
+    - 新增 `RequirementGraphWindowPlannerSafetyTest`、`DocumentStructureExtractorTest`、`DocumentLevelBuildServiceTest`、`RequirementDocumentLevelControllerTest`。
+  - **对齐关系人工审核生命周期（Phase 5）**
+    - `CodeCentricAlignmentStore` 新增 `findAlignmentRelationById` / `reviewAlignmentRelation`（HUMAN_CONFIRMED / REJECTED / STALE），`CodeCentricAlignmentController` 新增 `POST /api/knowledge/alignment/alignment-relation/review`。
   - **测试**
-    - 新增 `CodeCentricAlignmentStoreTest`、`BusinessConceptServiceTest`、`CodeParameterAlignmentServiceTest`、`CodeTestAlignmentServiceTest`、`RequirementCodeDriftServiceTest`、`DoubtImpactServiceTest`、`CodeCentricAlignmentControllerTest`（22 个用例）。
-    - 全量测试：716 tests 通过。
+    - 新增/更新对齐与文档级用例（含窗口安全、结构抽取、文档级构建、关系审核、文档级控制器）。
+    - 全量测试：724 tests 通过。
 
 ### Fixed
 

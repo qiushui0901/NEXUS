@@ -3,6 +3,7 @@ package com.example.requirementrag.web;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.knowledge.multisource.alignment.BusinessConceptService;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricAlignmentStore;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.AlignmentRelation;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.BuildResult;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DoubtImpact;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DoubtImpactBuildResult;
@@ -179,6 +180,23 @@ class CodeCentricAlignmentControllerTest {
                 .andExpect(jsonPath("$[0].doubtId").value("d-1"));
 
         verify(doubtImpactService).resolve("immortal", "5.1", "staging", "d-1", "已确认 12 秒", "ev-99");
+    }
+
+    @Test
+    void reviewsAlignmentRelation() throws Exception {
+        AlignmentRelation relation = new AlignmentRelation(
+                "ar-1", "immortal", "5.1", "vc-1", "p-1", null, "PARAMETER_TABLE",
+                null, "s-1", "CODE", "READS_CONFIG", "NORMALIZED_NAME_EXACT", "HUMAN_CONFIRMED",
+                0.9, null, "vc-1", "vc-1", "confirmed", null, null);
+        when(alignmentStore.findAlignmentRelationById("ar-1")).thenReturn(java.util.Optional.of(relation));
+
+        mvc.perform(post("/api/knowledge/alignment/alignment-relation/review")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"projectId\":\"immortal\",\"relationId\":\"ar-1\",\"action\":\"HUMAN_CONFIRMED\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("HUMAN_CONFIRMED"));
+
+        verify(alignmentStore).reviewAlignmentRelation("ar-1", "HUMAN_CONFIRMED");
     }
 
     @Test

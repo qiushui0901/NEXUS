@@ -584,6 +584,27 @@ public class CodeCentricAlignmentStore {
                 """, projectId, version, versionContextId, externalId, externalId);
     }
 
+    public Optional<AlignmentRelation> findAlignmentRelationById(String relationId) {
+        return queryOne("select * from alignment_relation where relation_id=?", relationId);
+    }
+
+    /** 人工审核关系生命周期：确认/拒绝/过期。 */
+    public void reviewAlignmentRelation(String relationId, String status) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(
+                     "update alignment_relation set status=?, updated_at=? where relation_id=?")) {
+            statement.setString(1, status);
+            statement.setString(2, Instant.now().toString());
+            statement.setString(3, relationId);
+            int updated = statement.executeUpdate();
+            if (updated == 0) {
+                throw new IllegalArgumentException("未找到可审核的对齐关系: " + relationId);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("审核对齐关系失败", exception);
+        }
+    }
+
     public void deleteAlignmentRelations(String projectId, String version, String versionContextId) {
         execute("delete from alignment_relation where project_id=? and version=? and version_context_id=?",
                 projectId, version, versionContextId);
