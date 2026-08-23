@@ -32,6 +32,11 @@
   - 新增 `ConfigTableLoader`：把第一行为列名的游戏/业务配置表按「行 × 列」生成 `ParameterClaim`（subject=列名、object=单元格值、module=sheet 名），保留行列定位。
   - `DoubtClaimParser` 补 `跟进人 → owner`、`产品答疑 → answer` 别名。
   - 新增 `ImmortalLoadersTest` 覆盖三个加载器。
+- Immortal 知识导入编排与缓存：
+  - 新增 `ImmortalKnowledgeImporter`：扫描 `document/immortal/{prd,data,qa,case}` 四类目录，按文件注册 Document/Version/Evidence，经各加载器写入业务表并 `syncClaims` 生成统一 Claim；PRD HTML 生成轻量 REQUIREMENT Claim。
+  - 内容 hash 缓存：相同 (document, businessVersion, contentHash, parserVersion, extractionVersion) 直接跳过，重跑不再解析/写库（幂等增量）。
+  - `MultiSourceKnowledgeStore.syncClaims` 支持按 claim 范围同步，避免多文件导入互相覆盖 catalog 关联；`insertClaim` 改为先按 claim_id 更新、不存在再 `INSERT OR IGNORE`，对完全重复事实静默去重。
+  - 新增 `ImmortalImportIT`（`-Dimmortal.import=true` 显式开启）作为本地导入入口；已完成首次导入：参数 779,129、存疑 2,100、测试用例 26,168、需求 123、Evidence 807,520。
 
 ## 0.9.2 — 2026-08-20
 

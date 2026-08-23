@@ -1244,22 +1244,28 @@ public class MultiSourceKnowledgeStore {
      */
     public synchronized void syncSnapshotClaims(String projectId, String version, String documentVersionId,
                                                 Map<String, String> evidenceIdByClaimId) {
+        syncClaims(projectId, version, documentVersionId, evidenceIdByClaimId, Set.of());
+    }
+
+    /** 同步指定范围内 Claim 到统一主表：空集合表示该版本全部行。 */
+    public synchronized void syncClaims(String projectId, String version, String documentVersionId,
+                                        Map<String, String> evidenceIdByClaimId, Set<String> claimIds) {
         try (Connection connection = open()) {
             connection.setAutoCommit(false);
             try {
-                syncTableClaims(connection, projectId, version, documentVersionId, evidenceIdByClaimId,
+                syncTableClaims(connection, projectId, version, documentVersionId, evidenceIdByClaimId, claimIds,
                         "multi_source_parameter", "claim_id", "parameter", "value",
                         "normalized_value", "value_type", "unit", "status", "module",
                         SourceType.PARAMETER_TABLE, Authority.PRIMARY);
-                syncTableClaims(connection, projectId, version, documentVersionId, evidenceIdByClaimId,
+                syncTableClaims(connection, projectId, version, documentVersionId, evidenceIdByClaimId, claimIds,
                         "multi_source_doubt", "doubt_id", "module", "question",
                         "answer", null, null, "status", "module",
                         SourceType.DOUBT, Authority.PRIMARY);
-                syncTableClaims(connection, projectId, version, documentVersionId, evidenceIdByClaimId,
+                syncTableClaims(connection, projectId, version, documentVersionId, evidenceIdByClaimId, claimIds,
                         "multi_source_test_case", "claim_id", "title", "expectedResult",
                         "expected_result", null, null, "status", "module",
                         SourceType.TEST_CASE, Authority.SECONDARY);
-                syncTableClaims(connection, projectId, version, documentVersionId, evidenceIdByClaimId,
+                syncTableClaims(connection, projectId, version, documentVersionId, evidenceIdByClaimId, claimIds,
                         "multi_source_test_result", "claim_id", "test_case_id", "executionStatus",
                         "execution_status", null, null, "status", "test_case_id",
                         SourceType.TEST_RESULT, Authority.SECONDARY);
@@ -1277,18 +1283,29 @@ public class MultiSourceKnowledgeStore {
 
     private void syncTableClaims(Connection connection, String projectId, String version,
                                  String documentVersionId, Map<String, String> evidenceIdByClaimId,
-                                 String table, String keyColumn, String subjectColumn, String predicateLiteral,
-                                 String objectColumn, String valueTypeColumn, String unitColumn,
-                                 String statusColumn, String moduleColumn, SourceType sourceType,
-                                 Authority authority) throws SQLException {
+                                 Set<String> scope, String table, String keyColumn, String subjectColumn,
+                                 String predicateLiteral, String objectColumn, String valueTypeColumn,
+                                 String unitColumn, String statusColumn, String moduleColumn,
+                                 SourceType sourceType, Authority authority) throws SQLException {
         String valueTypeSelect = valueTypeColumn == null ? "''" : valueTypeColumn;
         String unitSelect = unitColumn == null ? "''" : unitColumn;
-        try (PreparedStatement statement = connection.prepareStatement(
-                "select " + keyColumn + "," + moduleColumn + "," + subjectColumn + "," + objectColumn + ","
-                        + valueTypeSelect + "," + unitSelect + "," + statusColumn
-                        + " from " + table + " where project_id=? and version=?")) {
-            statement.setString(1, projectId);
-            statement.setString(2, version);
+        String scopeSql = "";
+        if (scope != null && !scope.isEmpty()) {
+            String placeholders = String.join(",", java.util.Collections.nCopies(scope.size(), "?"));
+            scopeSql = " and " + keyColumn + " in (" + placeholders + ")";
+        }
+        String sql = "select " + keyColumn + "," + moduleColumn + "," + subjectColumn + "," + objectColumn + ","
+                + valueTypeSelect + "," + unitSelect + "," + statusColumn
+                + " from " + table + " where project_id=? and version=?" + scopeSql;
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            int index = 1;
+            statement.setString(index++, projectId);
+            statement.setString(index++, version);
+            if (scope != null && !scope.isEmpty()) {
+                for (String claimId : scope) {
+                    statement.setString(index++, claimId);
+                }
+            }
             try (ResultSet rows = statement.executeQuery()) {
                 while (rows.next()) {
                     String claimId = rows.getString(1);
@@ -1317,41 +1334,64 @@ public class MultiSourceKnowledgeStore {
     }
 
     private void insertClaim(Connection connection, KnowledgeClaimRecord claim) throws SQLException {
-        try (PreparedStatement statement = connection.prepareStatement("""
-                insert into knowledge_claim(
+        // 先按 claim_id 更新；不存在则 INSERT OR IGNORE。
+        // 同 project/documentVersion/sourceType/factKey/objectValue 的完全重复由唯一键静默去重。
+        try (PreparedStatement update = connection.prepareStatement("""
+                update knowledge_claim set
+                  document_version_id=?, source_type=?, authority=?, fact_key=?,
+                  subject=?, predicate=?, object_value=?, value_type=?, unit=?, status=?,
+                  confidence=?, effective_from=?, effective_to=?, extraction_method=?,
+                  extraction_run_id=?, updated_at=?
+                where claim_id=?
+                """)) {
+            update.setString(1, claim.documentVersionId());
+            update.setString(2, claim.sourceType().name());
+            update.setString(3, claim.authority().name());
+            update.setString(4, claim.factKey());
+            update.setString(5, claim.subject());
+            update.setString(6, claim.predicate());
+            update.setString(7, claim.objectValue());
+            update.setString(8, claim.valueType());
+            update.setString(9, claim.unit());
+            update.setString(10, claim.status());
+            update.setObject(11, claim.confidence(), java.sql.Types.DOUBLE);
+            update.setString(12, claim.effectiveFrom());
+            update.setString(13, claim.effectiveTo());
+            update.setString(14, claim.extractionMethod());
+            update.setString(15, claim.extractionRunId());
+            update.setString(16, claim.updatedAt());
+            update.setString(17, claim.claimId());
+            if (update.executeUpdate() > 0) {
+                return;
+            }
+        }
+        try (PreparedStatement insert = connection.prepareStatement("""
+                insert or ignore into knowledge_claim(
                   claim_id,project_id,document_version_id,source_type,authority,fact_key,
                   subject,predicate,object_value,value_type,unit,status,confidence,
                   effective_from,effective_to,extraction_method,extraction_run_id,created_at,updated_at)
                 values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                on conflict(claim_id) do update set
-                  document_version_id=excluded.document_version_id,
-                  source_type=excluded.source_type, authority=excluded.authority, fact_key=excluded.fact_key,
-                  subject=excluded.subject, predicate=excluded.predicate, object_value=excluded.object_value,
-                  value_type=excluded.value_type, unit=excluded.unit, status=excluded.status,
-                  confidence=excluded.confidence, effective_from=excluded.effective_from,
-                  effective_to=excluded.effective_to, extraction_method=excluded.extraction_method,
-                  extraction_run_id=excluded.extraction_run_id, updated_at=excluded.updated_at
                 """)) {
-            statement.setString(1, claim.claimId());
-            statement.setString(2, claim.projectId());
-            statement.setString(3, claim.documentVersionId());
-            statement.setString(4, claim.sourceType().name());
-            statement.setString(5, claim.authority().name());
-            statement.setString(6, claim.factKey());
-            statement.setString(7, claim.subject());
-            statement.setString(8, claim.predicate());
-            statement.setString(9, claim.objectValue());
-            statement.setString(10, claim.valueType());
-            statement.setString(11, claim.unit());
-            statement.setString(12, claim.status());
-            statement.setObject(13, claim.confidence(), java.sql.Types.DOUBLE);
-            statement.setString(14, claim.effectiveFrom());
-            statement.setString(15, claim.effectiveTo());
-            statement.setString(16, claim.extractionMethod());
-            statement.setString(17, claim.extractionRunId());
-            statement.setString(18, claim.createdAt());
-            statement.setString(19, claim.updatedAt());
-            statement.executeUpdate();
+            insert.setString(1, claim.claimId());
+            insert.setString(2, claim.projectId());
+            insert.setString(3, claim.documentVersionId());
+            insert.setString(4, claim.sourceType().name());
+            insert.setString(5, claim.authority().name());
+            insert.setString(6, claim.factKey());
+            insert.setString(7, claim.subject());
+            insert.setString(8, claim.predicate());
+            insert.setString(9, claim.objectValue());
+            insert.setString(10, claim.valueType());
+            insert.setString(11, claim.unit());
+            insert.setString(12, claim.status());
+            insert.setObject(13, claim.confidence(), java.sql.Types.DOUBLE);
+            insert.setString(14, claim.effectiveFrom());
+            insert.setString(15, claim.effectiveTo());
+            insert.setString(16, claim.extractionMethod());
+            insert.setString(17, claim.extractionRunId());
+            insert.setString(18, claim.createdAt());
+            insert.setString(19, claim.updatedAt());
+            insert.executeUpdate();
         }
     }
 
