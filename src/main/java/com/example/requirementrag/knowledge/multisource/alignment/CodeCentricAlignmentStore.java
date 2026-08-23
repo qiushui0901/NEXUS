@@ -55,6 +55,15 @@ public class CodeCentricAlignmentStore {
     private void initialize() {
         try (Connection connection = open(); Statement statement = connection.createStatement()) {
             statement.execute("PRAGMA foreign_keys=ON");
+            // 对齐层是派生数据（可重建），旧 schema 直接重建，避免旧唯一约束阻止新作用域隔离。
+            dropTableIfOldSchema(statement, "version_context",
+                    "unique(project_id, business_version, environment, repository_id, commit_sha)");
+            dropTableIfOldSchema(statement, "business_concept_member",
+                    "unique(project_id, concept_id, source_type, external_id, business_version)");
+            dropTableIfOldSchema(statement, "alignment_relation",
+                    "unique(project_id, version, version_context_id, source_claim_id");
+            dropTableIfOldSchema(statement, "drift_item",
+                    "unique(project_id, version, version_context_id, concept_id, drift_type)");
             statement.executeUpdate("""
                     create table if not exists version_context(
                       context_id text primary key,
@@ -371,6 +380,53 @@ public class CodeCentricAlignmentStore {
         }
     }
 
+        /** 批量保存概念成员（单事务，供大规模重建使用）。 */
+    public int upsertMembers(List<ConceptMember> members) {
+        if (members == null || members.isEmpty()) return 0;
+        try (Connection connection = open()) {
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement("""
+                     insert into business_concept_member(member_id,project_id,concept_id,claim_id,source_type,
+                       truth_role,external_id,display_name,repository_id,commit_sha,evidence_id,
+                       business_version,version_context_id,created_at)
+                     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     on conflict(project_id, concept_id, source_type, external_id, business_version) do update set
+                       claim_id=excluded.claim_id, truth_role=excluded.truth_role,
+                       display_name=excluded.display_name, repository_id=excluded.repository_id,
+                       commit_sha=excluded.commit_sha, evidence_id=excluded.evidence_id,
+                       version_context_id=excluded.version_context_id
+                     """)) {
+                for (ConceptMember member : members) {
+                    statement.setString(1, member.memberId());
+                    statement.setString(2, member.projectId());
+                    statement.setString(3, member.conceptId());
+                    statement.setString(4, member.claimId());
+                    statement.setString(5, member.sourceType());
+                    statement.setString(6, member.truthRole());
+                    statement.setString(7, member.externalId());
+                    statement.setString(8, member.displayName());
+                    statement.setString(9, member.repositoryId());
+                    statement.setString(10, member.commitSha());
+                    statement.setString(11, member.evidenceId());
+                    statement.setString(12, member.businessVersion());
+                    statement.setString(13, member.versionContextId());
+                    statement.setString(14, member.createdAt());
+                    statement.addBatch();
+                }
+                int[] results = statement.executeBatch();
+                connection.commit();
+                return results.length;
+            } catch (SQLException | RuntimeException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("批量保存概念成员失败", exception);
+        }
+    }
+
     /** 按业务版本查询概念成员；businessVersion 为空时不过滤版本。 */
     public List<ConceptMember> findMembers(String projectId, String conceptId, String businessVersion) {
         if (businessVersion == null || businessVersion.isBlank()) {
@@ -452,6 +508,56 @@ public class CodeCentricAlignmentStore {
         }
     }
 
+    /** 批量保存对齐关系（单事务）。 */
+    public int saveAlignmentRelations(List<AlignmentRelation> relations) {
+        if (relations == null || relations.isEmpty()) return 0;
+        try (Connection connection = open()) {
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement("""
+                     insert or replace into alignment_relation(
+                       relation_id,project_id,version,version_context_id,source_claim_id,source_external_id,source_type,
+                       target_claim_id,target_external_id,target_type,relation_type,match_method,status,
+                       confidence,evidence_id,source_version_context_id,target_version_context_id,detail,
+                       created_at,updated_at)
+                     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     """)) {
+                for (AlignmentRelation relation : relations) {
+                    statement.setString(1, relation.relationId());
+                    statement.setString(2, relation.projectId());
+                    statement.setString(3, relation.version());
+                    statement.setString(4, relation.versionContextId());
+                    statement.setString(5, relation.sourceClaimId());
+                    statement.setString(6, relation.sourceExternalId());
+                    statement.setString(7, relation.sourceType());
+                    statement.setString(8, relation.targetClaimId());
+                    statement.setString(9, relation.targetExternalId());
+                    statement.setString(10, relation.targetType());
+                    statement.setString(11, relation.relationType());
+                    statement.setString(12, relation.matchMethod());
+                    statement.setString(13, relation.status());
+                    statement.setObject(14, relation.confidence(), java.sql.Types.DOUBLE);
+                    statement.setString(15, relation.evidenceId());
+                    statement.setString(16, relation.sourceVersionContextId());
+                    statement.setString(17, relation.targetVersionContextId());
+                    statement.setString(18, relation.detail());
+                    statement.setString(19, relation.createdAt());
+                    statement.setString(20, relation.updatedAt());
+                    statement.addBatch();
+                }
+                int[] results = statement.executeBatch();
+                connection.commit();
+                return results.length;
+            } catch (SQLException | RuntimeException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("批量保存对齐关系失败", exception);
+        }
+    }
+
     public List<AlignmentRelation> findAlignmentRelations(String projectId, String version,
                                                           String versionContextId, String relationType) {
         if (relationType == null || relationType.isBlank()) {
@@ -528,6 +634,56 @@ public class CodeCentricAlignmentStore {
         }
     }
 
+    /** 批量保存漂移结论（单事务）。 */
+    public int saveDriftItems(List<DriftItem> items) {
+        if (items == null || items.isEmpty()) return 0;
+        try (Connection connection = open()) {
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement("""
+                     insert into drift_item(drift_id,project_id,version,version_context_id,concept_id,concept_key,
+                       drift_type,severity,truth_role,source_claim_id,target_claim_id,source_value,target_value,
+                       detail,status,created_at,updated_at)
+                     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     on conflict(project_id, version, version_context_id, concept_id, drift_type) do update set
+                       concept_key=excluded.concept_key, severity=excluded.severity, truth_role=excluded.truth_role,
+                       source_claim_id=excluded.source_claim_id, target_claim_id=excluded.target_claim_id,
+                       source_value=excluded.source_value, target_value=excluded.target_value,
+                       detail=excluded.detail, status=excluded.status, updated_at=excluded.updated_at
+                     """)) {
+                for (DriftItem item : items) {
+                    statement.setString(1, item.driftId());
+                    statement.setString(2, item.projectId());
+                    statement.setString(3, item.version());
+                    statement.setString(4, item.versionContextId());
+                    statement.setString(5, item.conceptId());
+                    statement.setString(6, item.conceptKey());
+                    statement.setString(7, item.driftType());
+                    statement.setString(8, item.severity());
+                    statement.setString(9, item.truthRole());
+                    statement.setString(10, item.sourceClaimId());
+                    statement.setString(11, item.targetClaimId());
+                    statement.setString(12, item.sourceValue());
+                    statement.setString(13, item.targetValue());
+                    statement.setString(14, item.detail());
+                    statement.setString(15, item.status());
+                    statement.setString(16, item.createdAt());
+                    statement.setString(17, item.updatedAt());
+                    statement.addBatch();
+                }
+                int[] results = statement.executeBatch();
+                connection.commit();
+                return results.length;
+            } catch (SQLException | RuntimeException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("批量保存漂移结论失败", exception);
+        }
+    }
+
     public List<DriftItem> findDriftItems(String projectId, String version, String versionContextId,
                                           String driftType) {
         if (driftType == null || driftType.isBlank()) {
@@ -590,6 +746,55 @@ public class CodeCentricAlignmentStore {
             return impact.impactId();
         } catch (SQLException exception) {
             throw new IllegalStateException("保存存疑影响失败", exception);
+        }
+    }
+
+    /** 批量保存存疑影响（单事务）。 */
+    public int saveDoubtImpacts(List<DoubtImpact> impacts) {
+        if (impacts == null || impacts.isEmpty()) return 0;
+        try (Connection connection = open()) {
+            connection.setAutoCommit(false);
+            try (PreparedStatement statement = connection.prepareStatement("""
+                     insert or replace into doubt_impact(
+                       impact_id,project_id,version,version_context_id,doubt_id,question,concept_id,concept_key,
+                       target_type,target_claim_id,target_external_id,target_name,severity,owner,due_date,
+                       status,resolution_evidence_id,resolution_conclusion,created_at,resolved_at)
+                     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     """)) {
+                for (DoubtImpact impact : impacts) {
+                    statement.setString(1, impact.impactId());
+                    statement.setString(2, impact.projectId());
+                    statement.setString(3, impact.version());
+                    statement.setString(4, impact.versionContextId());
+                    statement.setString(5, impact.doubtId());
+                    statement.setString(6, impact.question());
+                    statement.setString(7, impact.conceptId());
+                    statement.setString(8, impact.conceptKey());
+                    statement.setString(9, impact.targetType());
+                    statement.setString(10, impact.targetClaimId());
+                    statement.setString(11, impact.targetExternalId());
+                    statement.setString(12, impact.targetName());
+                    statement.setString(13, impact.severity());
+                    statement.setString(14, impact.owner());
+                    statement.setString(15, impact.dueDate());
+                    statement.setString(16, impact.status());
+                    statement.setString(17, impact.resolutionEvidenceId());
+                    statement.setString(18, impact.resolutionConclusion());
+                    statement.setString(19, impact.createdAt());
+                    statement.setString(20, impact.resolvedAt());
+                    statement.addBatch();
+                }
+                int[] results = statement.executeBatch();
+                connection.commit();
+                return results.length;
+            } catch (SQLException | RuntimeException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("批量保存存疑影响失败", exception);
         }
     }
 
@@ -658,6 +863,21 @@ public class CodeCentricAlignmentStore {
             }
         }
         statement.executeUpdate("alter table " + table + " add column " + column + " " + definition);
+    }
+
+    /** 检测对齐表是否为旧 schema（缺少 requiredMarker），是则重建（派生数据可直接重建）。 */
+    private void dropTableIfOldSchema(Statement statement, String table, String requiredMarker) throws SQLException {
+        String sql = null;
+        try (ResultSet rows = statement.executeQuery(
+                "select sql from sqlite_master where type='table' and name='" + table + "'")) {
+            if (rows.next()) {
+                sql = rows.getString(1);
+            }
+        }
+        if (sql == null || sql.contains(requiredMarker)) {
+            return;
+        }
+        statement.executeUpdate("drop table " + table);
     }
 
     private void execute(String sql, String... args) {

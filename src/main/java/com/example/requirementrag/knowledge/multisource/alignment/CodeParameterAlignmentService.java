@@ -42,6 +42,9 @@ public class CodeParameterAlignmentService {
         }
     }
 
+    /** 包含匹配仅在索引小时启用，避免 779k 参数 × 8.5k 符号的全量扫描。 */
+    private static final int CONTAINS_MATCH_MAX_INDEX_SIZE = 2000;
+
     private final MultiSourceKnowledgeStore knowledgeStore;
     private final CodeCentricAlignmentStore alignmentStore;
     private final CodeSymbolLoader codeSymbolLoader;
@@ -82,6 +85,8 @@ public class CodeParameterAlignmentService {
         int relations = 0;
         int drifts = 0;
         Set<String> seen = new HashSet<>();
+        List<AlignmentRelation> relationBatch = new ArrayList<>();
+        List<DriftItem> driftBatch = new ArrayList<>();
         for (ParameterClaim parameter : parameters) {
             List<CodeSymbolView> matches = match(parameter.parameter(), byName);
             for (CodeSymbolView symbol : matches) {
@@ -92,7 +97,7 @@ public class CodeParameterAlignmentService {
                 String relationId = relationId(projectId, version, context.contextId(),
                         parameter.claimId(), symbol.id(), "READS_CONFIG");
                 if (seen.add(relationId)) {
-                    alignmentStore.saveAlignmentRelation(new AlignmentRelation(
+                    relationBatch.add(new AlignmentRelation(
                             relationId, projectId, version, context.contextId(),
                             parameter.claimId(), null, "PARAMETER_TABLE",
                             null, symbol.id(), "CODE", "READS_CONFIG",
@@ -109,7 +114,7 @@ public class CodeParameterAlignmentService {
                 if (codeValue.isPresent() && differs(parameter.normalizedValue(), codeValue.get().value())) {
                     String driftId = driftId(projectId, version, context.contextId(),
                             parameter.claimId(), symbol.id(), "CONFIG_DRIFT");
-                    alignmentStore.saveDriftItem(new DriftItem(
+                    driftBatch.add(new DriftItem(
                             driftId, projectId, version, context.contextId(),
                             "UNKNOWN", "param:" + AlignmentNaming.keySegment(parameter.module()) + "."
                                     + AlignmentNaming.keySegment(parameter.parameter()),
@@ -123,6 +128,8 @@ public class CodeParameterAlignmentService {
                 }
             }
         }
+        alignmentStore.saveAlignmentRelations(relationBatch);
+        alignmentStore.saveDriftItems(driftBatch);
         return new BuildResult(0, 0, 0, relations, drifts);
     }
 
@@ -139,6 +146,9 @@ public class CodeParameterAlignmentService {
         List<CodeSymbolView> exact = byName.get(normalized);
         if (exact != null && !exact.isEmpty()) {
             return cap(exact);
+        }
+        if (byName.size() > CONTAINS_MATCH_MAX_INDEX_SIZE) {
+            return List.of();
         }
         List<CodeSymbolView> result = new ArrayList<>();
         for (Map.Entry<String, List<CodeSymbolView>> entry : byName.entrySet()) {

@@ -12,8 +12,10 @@ import org.springframework.stereotype.Service;
 import java.security.MessageDigest;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 /**
@@ -51,13 +53,19 @@ public class DoubtImpactService {
 
         List<DoubtClaim> doubts = knowledgeStore.findDoubts(projectId, version);
         List<BusinessConcept> concepts = alignmentStore.findConcepts(projectId);
+        Map<String, List<ConceptMember>> membersByConcept = new HashMap<>();
+        for (BusinessConcept concept : concepts) {
+            membersByConcept.put(concept.conceptId(),
+                    alignmentStore.findMembers(projectId, concept.conceptId(), version));
+        }
 
         int totalImpacts = 0;
         int affectedDoubts = 0;
+        List<DoubtImpact> impactBatch = new ArrayList<>();
         for (DoubtClaim doubt : doubts) {
             int before = totalImpacts;
             for (BusinessConcept concept : matchConcepts(concepts, doubt)) {
-                List<ConceptMember> members = alignmentStore.findMembers(projectId, concept.conceptId(), version);
+                List<ConceptMember> members = membersByConcept.getOrDefault(concept.conceptId(), List.of());
                 for (ConceptMember member : members) {
                     if (!IMPACT_TARGET_TYPES.contains(member.sourceType())) continue;
                     String targetClaimId = member.claimId();
@@ -65,7 +73,7 @@ public class DoubtImpactService {
                     String targetName = member.displayName();
                     String impactId = impactId(projectId, version, context.contextId(), doubt.doubtId(),
                             member.sourceType(), targetClaimId, targetExternalId);
-                    alignmentStore.saveDoubtImpact(new DoubtImpact(
+                    impactBatch.add(new DoubtImpact(
                             impactId, projectId, version, context.contextId(),
                             doubt.doubtId(), doubt.question(), concept.conceptId(), concept.canonicalKey(),
                             member.sourceType(), targetClaimId, targetExternalId, targetName,
@@ -78,6 +86,7 @@ public class DoubtImpactService {
                 affectedDoubts++;
             }
         }
+        alignmentStore.saveDoubtImpacts(impactBatch);
         return new DoubtImpactBuildResult(totalImpacts, affectedDoubts);
     }
 

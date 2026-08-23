@@ -23,11 +23,18 @@
     - 新增 `CodeCentricAlignmentController`（`/api/knowledge/alignment/*`）：版本上下文 resolve/list、概念 build/query、代码—参数 build/query、代码—测试 build/query、漂移 build/report、存疑影响 build/list/resolve；查询类接口按 environment 解析对应 VersionContext，只返回该上下文记录。
   - **文档状态**
     - `docs/nexus-0.9.3-multi-source-knowledge-storage-plan.md` 与 `docs/code-centric-cross-source-knowledge-graph-improvement-plan.md` 增加“实施状态（截至 0.9.4）”清单，按 [已实现]/[部分实现]/[待实施]/[待验证] 标注入当前真实状态。
+  - **真实数据评测入口**
+    - 新增 `AlignmentEvaluationIT`（`-Dalignment.eval=true` 显式开启）：在进程内用真实 multi-source + code-graph 库构建对齐/漂移/存疑影响，并根据 `src/test/resources/alignment-eval/*.golden.jsonl` 计算 Precision/Recall/F1；金标为空时输出覆盖/诊断报告。
+    - 新增空金标模板：`code-param.golden.jsonl`、`code-test.golden.jsonl`、`drift.golden.jsonl`。
+    - 首次真实数据基线（immortal/5.1，commit `026394c19dae4f77717cde75363c866815674adc`）：AlignmentRelation 336,119、DriftItem 123、DoubtImpact 621,943；报告见 `docs/reports/alignment-eval-2026-08-23.md`。
   - **测试**
     - 新增 `CodeCentricAlignmentStoreTest`、`BusinessConceptServiceTest`、`CodeParameterAlignmentServiceTest`、`CodeTestAlignmentServiceTest`、`RequirementCodeDriftServiceTest`、`DoubtImpactServiceTest`、`CodeCentricAlignmentControllerTest`（22 个用例）。
     - 全量测试：716 tests 通过。
 
 ### Fixed
+
+- **真实数据构建性能**：`BusinessConceptService` / `CodeParameterAlignmentService` / `CodeTestAlignmentService` / `DoubtImpactService` 改为批量写入（成员、关系、漂移、存疑影响各单事务 batch），并给包含匹配加索引规模阈值（超过 2000 只用精确匹配），避免 779k 参数 × 8.5k 代码符号的全量扫描导致真实数据无法构建。
+- **旧 schema 自动重建**：`CodeCentricAlignmentStore` 启动时检测对齐层派生表的旧唯一约束（缺少 `business_version` / `version_context_id`），直接重建为当前 schema，避免旧约束阻止新作用域隔离（对齐层数据可从源数据重建）。
 
 - **对齐结论按 VersionContext 隔离，不再跨环境/跨 commit 互相覆盖**：
   - `version_context` 唯一键扩展为 `(project_id, business_version, environment, repository_id, commit_sha)`，`contextId` 含 commit；commit 切换会生成新的上下文记录，旧基线保留可审计。

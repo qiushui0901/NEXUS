@@ -33,6 +33,9 @@ import java.util.Set;
 @Service
 public class CodeTestAlignmentService {
 
+    /** 包含匹配仅在索引小时启用，避免大代码库上的全量扫描。 */
+    private static final int CONTAINS_MATCH_MAX_INDEX_SIZE = 2000;
+
     private final MultiSourceKnowledgeStore knowledgeStore;
     private final CodeCentricAlignmentStore alignmentStore;
     private final CodeSymbolLoader codeSymbolLoader;
@@ -78,6 +81,8 @@ public class CodeTestAlignmentService {
         Map<String, TestCaseClaim> byTestCaseId = new HashMap<>();
         Map<String, List<String>> testCaseToCode = new HashMap<>();
         Set<String> seen = new HashSet<>();
+        List<AlignmentRelation> relationBatch = new ArrayList<>();
+        List<DriftItem> driftBatch = new ArrayList<>();
 
         for (TestCaseClaim testCase : testCases) {
             byTestCaseId.put(testCase.testCaseId(), testCase);
@@ -90,7 +95,7 @@ public class CodeTestAlignmentService {
                 String relationId = relationId(projectId, version, context.contextId(),
                         testCase.claimId(), symbol.id(), "VERIFIES");
                 if (seen.add(relationId)) {
-                    alignmentStore.saveAlignmentRelation(new AlignmentRelation(
+                    relationBatch.add(new AlignmentRelation(
                             relationId, projectId, version, context.contextId(),
                             testCase.claimId(), null, "TEST_CASE",
                             null, symbol.id(), "CODE", "VERIFIES",
@@ -113,7 +118,7 @@ public class CodeTestAlignmentService {
             String confirmId = relationId(projectId, version, context.contextId(),
                     result.claimId(), testCase.claimId(), "CONFIRMS");
             if (seen.add(confirmId)) {
-                alignmentStore.saveAlignmentRelation(new AlignmentRelation(
+                relationBatch.add(new AlignmentRelation(
                         confirmId, projectId, version, context.contextId(),
                         result.claimId(), null, "TEST_RESULT",
                         testCase.claimId(), null, "TEST_CASE", "CONFIRMS",
@@ -129,7 +134,7 @@ public class CodeTestAlignmentService {
                 List<String> codeIds = testCaseToCode.getOrDefault(result.testCaseId(), List.of());
                 String driftId = driftId(projectId, version, context.contextId(), result.claimId(), "TEST_DRIFT");
                 if (codeIds.isEmpty()) {
-                    alignmentStore.saveDriftItem(new DriftItem(
+                    driftBatch.add(new DriftItem(
                             driftId, projectId, version, context.contextId(),
                             "UNKNOWN", "test:" + AlignmentNaming.keySegment(testCase.module()),
                             DriftType.TEST_DRIFT.name(), "ERROR", TruthRole.OBSERVATION.name(),
@@ -139,7 +144,7 @@ public class CodeTestAlignmentService {
                             "OPEN", null, Instant.now().toString()));
                 } else {
                     for (String codeId : codeIds) {
-                        alignmentStore.saveDriftItem(new DriftItem(
+                        driftBatch.add(new DriftItem(
                                 driftId + ":" + codeId, projectId, version, context.contextId(),
                                 "UNKNOWN", "test:" + AlignmentNaming.keySegment(testCase.module()),
                                 DriftType.TEST_DRIFT.name(), "ERROR", TruthRole.OBSERVATION.name(),
@@ -152,6 +157,8 @@ public class CodeTestAlignmentService {
                 drifts++;
             }
         }
+        alignmentStore.saveAlignmentRelations(relationBatch);
+        alignmentStore.saveDriftItems(driftBatch);
         return new BuildResult(0, 0, 0, relations, drifts);
     }
 
@@ -183,6 +190,7 @@ public class CodeTestAlignmentService {
             if (exact != null && !exact.isEmpty()) return cap(exact);
         }
         for (String candidate : candidates) {
+            if (testSymbols.size() > CONTAINS_MATCH_MAX_INDEX_SIZE) break;
             for (Map.Entry<String, List<CodeSymbolView>> entry : testSymbols.entrySet()) {
                 if (AlignmentNaming.namesRelated(entry.getKey(), candidate)) {
                     return cap(entry.getValue());

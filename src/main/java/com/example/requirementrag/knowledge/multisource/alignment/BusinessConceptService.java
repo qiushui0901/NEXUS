@@ -31,6 +31,9 @@ import java.util.Set;
 @Service
 public class BusinessConceptService {
 
+    /** 包含匹配仅在索引小时启用，避免 8.5k 代码符号 × 数十万别名的全量扫描。 */
+    private static final int CONTAINS_MATCH_MAX_INDEX_SIZE = 2000;
+
     private final MultiSourceKnowledgeStore knowledgeStore;
     private final CodeCentricAlignmentStore alignmentStore;
     private final CodeSymbolLoader codeSymbolLoader;
@@ -55,6 +58,7 @@ public class BusinessConceptService {
 
         Set<String> conceptKeys = new HashSet<>();
         Map<String, List<String>> aliasToConcept = new LinkedHashMap<>();
+        List<ConceptMember> memberBatch = new ArrayList<>();
         int concepts = 0;
         int aliases = 0;
         int members = 0;
@@ -64,30 +68,31 @@ public class BusinessConceptService {
             ConceptKey key = conceptFor(claim);
             if (key == null || key.canonicalKey().isBlank()) continue;
 
+            String conceptId;
             if (conceptKeys.add(key.canonicalKey())) {
-                String conceptId = conceptId(projectId, key.canonicalKey());
+                conceptId = conceptId(projectId, key.canonicalKey());
                 alignmentStore.upsertConcept(new BusinessConcept(
                         conceptId, projectId, key.canonicalKey(), key.displayName(), key.type(),
                         key.module(), null, "ACTIVE", null, Instant.now().toString()));
                 concepts++;
+            } else {
+                conceptId = conceptId(projectId, key.canonicalKey());
             }
-            BusinessConcept concept = alignmentStore.findConceptByKey(projectId, key.canonicalKey())
-                    .orElseThrow(() -> new IllegalStateException("概念未保存: " + key.canonicalKey()));
 
             String aliasName = claim.subject();
             if (aliasName != null && !aliasName.isBlank()) {
-                String aliasId = aliasId(projectId, concept.conceptId(), aliasName, claim.sourceType().name());
+                String aliasId = aliasId(projectId, conceptId, aliasName, claim.sourceType().name());
                 alignmentStore.upsertAlias(new ConceptAlias(
-                        aliasId, projectId, concept.conceptId(), aliasName, claim.sourceType().name(),
+                        aliasId, projectId, conceptId, aliasName, claim.sourceType().name(),
                         "SOURCE_NAME", 1.0, Instant.now().toString()));
                 aliases++;
                 aliasToConcept.computeIfAbsent(AlignmentNaming.normalize(aliasName),
-                        ignored -> new ArrayList<>()).add(concept.conceptId());
+                        ignored -> new ArrayList<>()).add(conceptId);
             }
 
-            alignmentStore.upsertMember(new ConceptMember(
-                    memberId(projectId, concept.conceptId(), claim.sourceType().name(), claim.claimId(), version),
-                    projectId, concept.conceptId(), claim.claimId(), claim.sourceType().name(),
+            memberBatch.add(new ConceptMember(
+                    memberId(projectId, conceptId, claim.sourceType().name(), claim.claimId(), version),
+                    projectId, conceptId, claim.claimId(), claim.sourceType().name(),
                     truthRole(claim.sourceType()).name(), claim.claimId(), claim.subject(),
                     null, null, null, version, contextId, Instant.now().toString()));
             members++;
@@ -97,7 +102,7 @@ public class BusinessConceptService {
         if (loaded.commitSha() != null) {
             for (CodeSymbolView symbol : loaded.symbols()) {
                 for (String conceptId : matchConcepts(aliasToConcept, symbol.simpleName())) {
-                    alignmentStore.upsertMember(new ConceptMember(
+                    memberBatch.add(new ConceptMember(
                             memberId(projectId, conceptId, "CODE", symbol.id(), version),
                             projectId, conceptId, null, "CODE",
                             TruthRole.IMPLEMENTATION.name(), symbol.id(), symbol.simpleName(),
@@ -108,6 +113,7 @@ public class BusinessConceptService {
             }
         }
 
+        alignmentStore.upsertMembers(memberBatch);
         return new BuildResult(concepts, aliases, members, 0, 0);
     }
 
@@ -129,6 +135,9 @@ public class BusinessConceptService {
         String normalized = AlignmentNaming.normalize(symbolName);
         if (normalized.isBlank()) return List.of();
         Set<String> result = new HashSet<>(aliasToConcept.getOrDefault(normalized, List.of()));
+        if (aliasToConcept.size() > CONTAINS_MATCH_MAX_INDEX_SIZE) {
+            return List.copyOf(result);
+        }
         if (normalized.length() >= 4) {
             for (Map.Entry<String, List<String>> entry : aliasToConcept.entrySet()) {
                 if (result.size() >= 5) break;
