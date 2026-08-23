@@ -65,7 +65,7 @@ public class CodeCentricAlignmentStore {
                       status text not null default 'ACTIVE',
                       created_at text not null,
                       updated_at text not null,
-                      unique(project_id, business_version, environment)
+                      unique(project_id, business_version, environment, repository_id, commit_sha)
                     )
                     """);
             statement.executeUpdate("""
@@ -110,8 +110,10 @@ public class CodeCentricAlignmentStore {
                       repository_id text,
                       commit_sha text,
                       evidence_id text,
+                      business_version text not null default '',
+                      version_context_id text,
                       created_at text not null,
-                      unique(project_id, concept_id, source_type, external_id),
+                      unique(project_id, concept_id, source_type, external_id, business_version),
                       foreign key(concept_id) references business_concept(concept_id)
                     )
                     """);
@@ -120,6 +122,7 @@ public class CodeCentricAlignmentStore {
                       relation_id text primary key,
                       project_id text not null,
                       version text not null,
+                      version_context_id text not null,
                       source_claim_id text,
                       source_external_id text,
                       source_type text not null,
@@ -136,8 +139,8 @@ public class CodeCentricAlignmentStore {
                       detail text,
                       created_at text not null,
                       updated_at text not null,
-                      unique(project_id, version, source_claim_id, source_external_id, source_type,
-                             target_claim_id, target_external_id, target_type, relation_type)
+                      unique(project_id, version, version_context_id, source_claim_id, source_external_id,
+                             source_type, target_claim_id, target_external_id, target_type, relation_type)
                     )
                     """);
             statement.executeUpdate("""
@@ -145,6 +148,7 @@ public class CodeCentricAlignmentStore {
                       drift_id text primary key,
                       project_id text not null,
                       version text not null,
+                      version_context_id text not null,
                       concept_id text not null,
                       concept_key text not null,
                       drift_type text not null,
@@ -158,7 +162,7 @@ public class CodeCentricAlignmentStore {
                       status text not null default 'OPEN',
                       created_at text not null,
                       updated_at text not null,
-                      unique(project_id, version, concept_id, drift_type)
+                      unique(project_id, version, version_context_id, concept_id, drift_type)
                     )
                     """);
             statement.executeUpdate("create index if not exists idx_concept_scope on business_concept(project_id)");
@@ -167,10 +171,15 @@ public class CodeCentricAlignmentStore {
             statement.executeUpdate("create index if not exists idx_alignment_relation_scope on alignment_relation(project_id,version,relation_type)");
             statement.executeUpdate("""
                     create unique index if not exists ux_alignment_relation_scope on alignment_relation(
-                      project_id, version, ifnull(source_claim_id,''), ifnull(source_external_id,''), source_type,
-                      ifnull(target_claim_id,''), ifnull(target_external_id,''), target_type, relation_type)
+                      project_id, version, version_context_id, ifnull(source_claim_id,''),
+                      ifnull(source_external_id,''), source_type, ifnull(target_claim_id,''),
+                      ifnull(target_external_id,''), target_type, relation_type)
                     """);
             statement.executeUpdate("create index if not exists idx_drift_scope on drift_item(project_id,version,drift_type)");
+            addColumnIfMissing(statement, "business_concept_member", "business_version", "text not null default ''");
+            addColumnIfMissing(statement, "business_concept_member", "version_context_id", "text");
+            addColumnIfMissing(statement, "alignment_relation", "version_context_id", "text not null default ''");
+            addColumnIfMissing(statement, "drift_item", "version_context_id", "text not null default ''");
         } catch (SQLException exception) {
             throw new IllegalStateException("初始化跨源对齐库失败", exception);
         }
@@ -184,8 +193,7 @@ public class CodeCentricAlignmentStore {
                      insert into version_context(context_id,project_id,business_version,repository_id,commit_sha,
                        environment,status,created_at,updated_at)
                      values(?,?,?,?,?,?,?,?,?)
-                     on conflict(project_id, business_version, environment) do update set
-                       repository_id=excluded.repository_id, commit_sha=excluded.commit_sha,
+                     on conflict(project_id, business_version, environment, repository_id, commit_sha) do update set
                        status=excluded.status, updated_at=excluded.updated_at
                      """)) {
             statement.setString(1, context.contextId());
@@ -210,6 +218,7 @@ public class CodeCentricAlignmentStore {
                 select context_id,project_id,business_version,repository_id,commit_sha,environment,status,
                   created_at,updated_at from version_context
                 where project_id=? and business_version=? and environment=?
+                order by updated_at desc limit 1
                 """, projectId, businessVersion, env);
     }
 
@@ -301,12 +310,14 @@ public class CodeCentricAlignmentStore {
         try (Connection connection = open();
              PreparedStatement statement = connection.prepareStatement("""
                      insert into business_concept_member(member_id,project_id,concept_id,claim_id,source_type,
-                       truth_role,external_id,display_name,repository_id,commit_sha,evidence_id,created_at)
-                     values(?,?,?,?,?,?,?,?,?,?,?,?)
-                     on conflict(project_id, concept_id, source_type, external_id) do update set
+                       truth_role,external_id,display_name,repository_id,commit_sha,evidence_id,
+                       business_version,version_context_id,created_at)
+                     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     on conflict(project_id, concept_id, source_type, external_id, business_version) do update set
                        claim_id=excluded.claim_id, truth_role=excluded.truth_role,
                        display_name=excluded.display_name, repository_id=excluded.repository_id,
-                       commit_sha=excluded.commit_sha, evidence_id=excluded.evidence_id
+                       commit_sha=excluded.commit_sha, evidence_id=excluded.evidence_id,
+                       version_context_id=excluded.version_context_id
                      """)) {
             statement.setString(1, member.memberId());
             statement.setString(2, member.projectId());
@@ -319,7 +330,9 @@ public class CodeCentricAlignmentStore {
             statement.setString(9, member.repositoryId());
             statement.setString(10, member.commitSha());
             statement.setString(11, member.evidenceId());
-            statement.setString(12, member.createdAt());
+            statement.setString(12, member.businessVersion());
+            statement.setString(13, member.versionContextId());
+            statement.setString(14, member.createdAt());
             statement.executeUpdate();
             return member.memberId();
         } catch (SQLException exception) {
@@ -327,21 +340,46 @@ public class CodeCentricAlignmentStore {
         }
     }
 
-    public List<ConceptMember> findMembers(String projectId, String conceptId) {
+    /** 按业务版本查询概念成员；businessVersion 为空时不过滤版本。 */
+    public List<ConceptMember> findMembers(String projectId, String conceptId, String businessVersion) {
+        if (businessVersion == null || businessVersion.isBlank()) {
+            return queryAll("""
+                    select member_id,project_id,concept_id,claim_id,source_type,truth_role,external_id,display_name,
+                      repository_id,commit_sha,evidence_id,business_version,version_context_id,created_at
+                    from business_concept_member where project_id=? and concept_id=? order by source_type,external_id
+                    """, projectId, conceptId);
+        }
         return queryAll("""
                 select member_id,project_id,concept_id,claim_id,source_type,truth_role,external_id,display_name,
-                  repository_id,commit_sha,evidence_id,created_at
-                from business_concept_member where project_id=? and concept_id=? order by source_type,external_id
-                """, projectId, conceptId);
+                  repository_id,commit_sha,evidence_id,business_version,version_context_id,created_at
+                from business_concept_member
+                where project_id=? and concept_id=? and business_version=?
+                order by source_type,external_id
+                """, projectId, conceptId, businessVersion);
     }
 
-    public List<ConceptMember> findMembersBySource(String projectId, String sourceType, String externalId) {
+    public List<ConceptMember> findMembersBySource(String projectId, String sourceType, String externalId,
+                                                   String businessVersion) {
+        if (businessVersion == null || businessVersion.isBlank()) {
+            return queryAll("""
+                    select member_id,project_id,concept_id,claim_id,source_type,truth_role,external_id,display_name,
+                      repository_id,commit_sha,evidence_id,business_version,version_context_id,created_at
+                    from business_concept_member
+                    where project_id=? and source_type=? and external_id=?
+                    """, projectId, sourceType, externalId);
+        }
         return queryAll("""
                 select member_id,project_id,concept_id,claim_id,source_type,truth_role,external_id,display_name,
-                  repository_id,commit_sha,evidence_id,created_at
+                  repository_id,commit_sha,evidence_id,business_version,version_context_id,created_at
                 from business_concept_member
-                where project_id=? and source_type=? and external_id=?
-                """, projectId, sourceType, externalId);
+                where project_id=? and source_type=? and external_id=? and business_version=?
+                """, projectId, sourceType, externalId, businessVersion);
+    }
+
+    /** 重建成员前清理：按项目+业务版本原子替换成员作用域，避免旧 commit 成员残留。 */
+    public void deleteMembersByVersion(String projectId, String businessVersion) {
+        execute("delete from business_concept_member where project_id=? and business_version=?",
+                projectId, businessVersion);
     }
 
     // ===== AlignmentRelation =====
@@ -350,31 +388,32 @@ public class CodeCentricAlignmentStore {
         try (Connection connection = open();
              PreparedStatement statement = connection.prepareStatement("""
                      insert or replace into alignment_relation(
-                       relation_id,project_id,version,source_claim_id,source_external_id,source_type,
+                       relation_id,project_id,version,version_context_id,source_claim_id,source_external_id,source_type,
                        target_claim_id,target_external_id,target_type,relation_type,match_method,status,
                        confidence,evidence_id,source_version_context_id,target_version_context_id,detail,
                        created_at,updated_at)
-                     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                      """)) {
             statement.setString(1, relation.relationId());
             statement.setString(2, relation.projectId());
             statement.setString(3, relation.version());
-            statement.setString(4, relation.sourceClaimId());
-            statement.setString(5, relation.sourceExternalId());
-            statement.setString(6, relation.sourceType());
-            statement.setString(7, relation.targetClaimId());
-            statement.setString(8, relation.targetExternalId());
-            statement.setString(9, relation.targetType());
-            statement.setString(10, relation.relationType());
-            statement.setString(11, relation.matchMethod());
-            statement.setString(12, relation.status());
-            statement.setObject(13, relation.confidence(), java.sql.Types.DOUBLE);
-            statement.setString(14, relation.evidenceId());
-            statement.setString(15, relation.sourceVersionContextId());
-            statement.setString(16, relation.targetVersionContextId());
-            statement.setString(17, relation.detail());
-            statement.setString(18, relation.createdAt());
-            statement.setString(19, relation.updatedAt());
+            statement.setString(4, relation.versionContextId());
+            statement.setString(5, relation.sourceClaimId());
+            statement.setString(6, relation.sourceExternalId());
+            statement.setString(7, relation.sourceType());
+            statement.setString(8, relation.targetClaimId());
+            statement.setString(9, relation.targetExternalId());
+            statement.setString(10, relation.targetType());
+            statement.setString(11, relation.relationType());
+            statement.setString(12, relation.matchMethod());
+            statement.setString(13, relation.status());
+            statement.setObject(14, relation.confidence(), java.sql.Types.DOUBLE);
+            statement.setString(15, relation.evidenceId());
+            statement.setString(16, relation.sourceVersionContextId());
+            statement.setString(17, relation.targetVersionContextId());
+            statement.setString(18, relation.detail());
+            statement.setString(19, relation.createdAt());
+            statement.setString(20, relation.updatedAt());
             statement.executeUpdate();
             return relation.relationId();
         } catch (SQLException exception) {
@@ -382,34 +421,41 @@ public class CodeCentricAlignmentStore {
         }
     }
 
-    public List<AlignmentRelation> findAlignmentRelations(String projectId, String version, String relationType) {
+    public List<AlignmentRelation> findAlignmentRelations(String projectId, String version,
+                                                          String versionContextId, String relationType) {
         if (relationType == null || relationType.isBlank()) {
             return queryAll("""
-                    select * from alignment_relation where project_id=? and version=? order by relation_type,source_type
-                    """, projectId, version);
+                    select * from alignment_relation
+                    where project_id=? and version=? and version_context_id=?
+                    order by relation_type,source_type
+                    """, projectId, version, versionContextId);
         }
         return queryAll("""
-                select * from alignment_relation where project_id=? and version=? and relation_type=?
+                select * from alignment_relation
+                where project_id=? and version=? and version_context_id=? and relation_type=?
                 order by source_type,target_type
-                """, projectId, version, relationType);
+                """, projectId, version, versionContextId, relationType);
     }
 
     public List<AlignmentRelation> findAlignmentRelationsForExternal(
-            String projectId, String version, String externalId) {
+            String projectId, String version, String versionContextId, String externalId) {
         return queryAll("""
                 select * from alignment_relation
-                where project_id=? and version=? and (source_external_id=? or target_external_id=?)
+                where project_id=? and version=? and version_context_id=?
+                  and (source_external_id=? or target_external_id=?)
                 order by relation_type
-                """, projectId, version, externalId, externalId);
+                """, projectId, version, versionContextId, externalId, externalId);
     }
 
-    public void deleteAlignmentRelations(String projectId, String version) {
-        execute("delete from alignment_relation where project_id=? and version=?", projectId, version);
+    public void deleteAlignmentRelations(String projectId, String version, String versionContextId) {
+        execute("delete from alignment_relation where project_id=? and version=? and version_context_id=?",
+                projectId, version, versionContextId);
     }
 
-    public void deleteAlignmentRelationsByType(String projectId, String version, String relationType) {
-        execute("delete from alignment_relation where project_id=? and version=? and relation_type=?",
-                projectId, version, relationType);
+    public void deleteAlignmentRelationsByType(String projectId, String version, String versionContextId,
+                                               String relationType) {
+        execute("delete from alignment_relation where project_id=? and version=? and version_context_id=? and relation_type=?",
+                projectId, version, versionContextId, relationType);
     }
 
     // ===== DriftItem =====
@@ -417,11 +463,11 @@ public class CodeCentricAlignmentStore {
     public String saveDriftItem(DriftItem item) {
         try (Connection connection = open();
              PreparedStatement statement = connection.prepareStatement("""
-                     insert into drift_item(drift_id,project_id,version,concept_id,concept_key,drift_type,
-                       severity,truth_role,source_claim_id,target_claim_id,source_value,target_value,
+                     insert into drift_item(drift_id,project_id,version,version_context_id,concept_id,concept_key,
+                       drift_type,severity,truth_role,source_claim_id,target_claim_id,source_value,target_value,
                        detail,status,created_at,updated_at)
-                     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                     on conflict(project_id, version, concept_id, drift_type) do update set
+                     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     on conflict(project_id, version, version_context_id, concept_id, drift_type) do update set
                        concept_key=excluded.concept_key, severity=excluded.severity, truth_role=excluded.truth_role,
                        source_claim_id=excluded.source_claim_id, target_claim_id=excluded.target_claim_id,
                        source_value=excluded.source_value, target_value=excluded.target_value,
@@ -430,19 +476,20 @@ public class CodeCentricAlignmentStore {
             statement.setString(1, item.driftId());
             statement.setString(2, item.projectId());
             statement.setString(3, item.version());
-            statement.setString(4, item.conceptId());
-            statement.setString(5, item.conceptKey());
-            statement.setString(6, item.driftType());
-            statement.setString(7, item.severity());
-            statement.setString(8, item.truthRole());
-            statement.setString(9, item.sourceClaimId());
-            statement.setString(10, item.targetClaimId());
-            statement.setString(11, item.sourceValue());
-            statement.setString(12, item.targetValue());
-            statement.setString(13, item.detail());
-            statement.setString(14, item.status());
-            statement.setString(15, item.createdAt());
-            statement.setString(16, item.updatedAt());
+            statement.setString(4, item.versionContextId());
+            statement.setString(5, item.conceptId());
+            statement.setString(6, item.conceptKey());
+            statement.setString(7, item.driftType());
+            statement.setString(8, item.severity());
+            statement.setString(9, item.truthRole());
+            statement.setString(10, item.sourceClaimId());
+            statement.setString(11, item.targetClaimId());
+            statement.setString(12, item.sourceValue());
+            statement.setString(13, item.targetValue());
+            statement.setString(14, item.detail());
+            statement.setString(15, item.status());
+            statement.setString(16, item.createdAt());
+            statement.setString(17, item.updatedAt());
             statement.executeUpdate();
             return item.driftId();
         } catch (SQLException exception) {
@@ -450,30 +497,47 @@ public class CodeCentricAlignmentStore {
         }
     }
 
-    public List<DriftItem> findDriftItems(String projectId, String version, String driftType) {
+    public List<DriftItem> findDriftItems(String projectId, String version, String versionContextId,
+                                          String driftType) {
         if (driftType == null || driftType.isBlank()) {
             return queryAll("""
-                    select * from drift_item where project_id=? and version=? order by drift_type,concept_key
-                    """, projectId, version);
+                    select * from drift_item
+                    where project_id=? and version=? and version_context_id=?
+                    order by drift_type,concept_key
+                    """, projectId, version, versionContextId);
         }
         return queryAll("""
-                select * from drift_item where project_id=? and version=? and drift_type=? order by concept_key
-                """, projectId, version, driftType);
+                select * from drift_item
+                where project_id=? and version=? and version_context_id=? and drift_type=?
+                order by concept_key
+                """, projectId, version, versionContextId, driftType);
     }
 
-    public void deleteDriftItems(String projectId, String version) {
-        execute("delete from drift_item where project_id=? and version=?", projectId, version);
+    public void deleteDriftItems(String projectId, String version, String versionContextId) {
+        execute("delete from drift_item where project_id=? and version=? and version_context_id=?",
+                projectId, version, versionContextId);
     }
 
-    public void deleteDriftItemsByType(String projectId, String version, String driftType) {
-        execute("delete from drift_item where project_id=? and version=? and drift_type=?",
-                projectId, version, driftType);
+    public void deleteDriftItemsByType(String projectId, String version, String versionContextId,
+                                       String driftType) {
+        execute("delete from drift_item where project_id=? and version=? and version_context_id=? and drift_type=?",
+                projectId, version, versionContextId, driftType);
     }
 
     // ===== helpers =====
 
     private Connection open() throws SQLException {
         return DriverManager.getConnection(jdbcUrl);
+    }
+
+    private void addColumnIfMissing(Statement statement, String table, String column,
+                                    String definition) throws SQLException {
+        try (ResultSet columns = statement.executeQuery("PRAGMA table_info(" + table + ")")) {
+            while (columns.next()) {
+                if (column.equals(columns.getString("name"))) return;
+            }
+        }
+        statement.executeUpdate("alter table " + table + " add column " + column + " " + definition);
     }
 
     private void execute(String sql, String... args) {
@@ -571,12 +635,15 @@ public class CodeCentricAlignmentStore {
                 rows.getString("member_id"), rows.getString("project_id"), rows.getString("concept_id"),
                 rows.getString("claim_id"), rows.getString("source_type"), rows.getString("truth_role"),
                 rows.getString("external_id"), rows.getString("display_name"), rows.getString("repository_id"),
-                rows.getString("commit_sha"), rows.getString("evidence_id"), rows.getString("created_at"));
+                rows.getString("commit_sha"), rows.getString("evidence_id"),
+                rows.getString("business_version"), rows.getString("version_context_id"),
+                rows.getString("created_at"));
     }
 
     private AlignmentRelation relation(ResultSet rows) throws SQLException {
         return new AlignmentRelation(
                 rows.getString("relation_id"), rows.getString("project_id"), rows.getString("version"),
+                rows.getString("version_context_id"),
                 rows.getString("source_claim_id"), rows.getString("source_external_id"),
                 rows.getString("source_type"), rows.getString("target_claim_id"),
                 rows.getString("target_external_id"), rows.getString("target_type"),
@@ -590,6 +657,7 @@ public class CodeCentricAlignmentStore {
     private DriftItem drift(ResultSet rows) throws SQLException {
         return new DriftItem(
                 rows.getString("drift_id"), rows.getString("project_id"), rows.getString("version"),
+                rows.getString("version_context_id"),
                 rows.getString("concept_id"), rows.getString("concept_key"), rows.getString("drift_type"),
                 rows.getString("severity"), rows.getString("truth_role"), rows.getString("source_claim_id"),
                 rows.getString("target_claim_id"), rows.getString("source_value"), rows.getString("target_value"),

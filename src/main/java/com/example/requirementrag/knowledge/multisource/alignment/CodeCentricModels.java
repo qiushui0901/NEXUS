@@ -71,6 +71,8 @@ public final class CodeCentricModels {
         ALIGNED,
         DOCUMENT_DRIFT,
         UNMAPPED,
+        /** 名称已映射但缺少确定性实现证据，不宣称已实现。 */
+        MAPPED_NO_IMPLEMENTATION_ASSERTION,
         IMPLEMENTATION_REVIEW_REQUIRED,
         CONFIG_DRIFT,
         TEST_DRIFT
@@ -170,6 +172,8 @@ public final class CodeCentricModels {
             String repositoryId,
             String commitSha,
             String evidenceId,
+            String businessVersion,
+            String versionContextId,
             String createdAt
     ) {
         public ConceptMember {
@@ -183,11 +187,12 @@ public final class CodeCentricModels {
         }
     }
 
-    /** 跨源对齐关系：可回查、带匹配方法与版本上下文。 */
+    /** 跨源对齐关系：可回查、带匹配方法与版本上下文（按 versionContextId 作用域隔离）。 */
     public record AlignmentRelation(
             String relationId,
             String projectId,
             String version,
+            String versionContextId,
             String sourceClaimId,
             String sourceExternalId,
             String sourceType,
@@ -209,6 +214,9 @@ public final class CodeCentricModels {
             if (relationId == null || relationId.isBlank()) throw new IllegalArgumentException("relationId 不能为空");
             if (projectId == null || projectId.isBlank()) throw new IllegalArgumentException("projectId 不能为空");
             if (version == null || version.isBlank()) throw new IllegalArgumentException("version 不能为空");
+            if (versionContextId == null || versionContextId.isBlank()) {
+                throw new IllegalArgumentException("versionContextId 不能为空");
+            }
             if (sourceType == null || sourceType.isBlank()) throw new IllegalArgumentException("sourceType 不能为空");
             if (targetType == null || targetType.isBlank()) throw new IllegalArgumentException("targetType 不能为空");
             if (relationType == null || relationType.isBlank()) throw new IllegalArgumentException("relationType 不能为空");
@@ -225,6 +233,7 @@ public final class CodeCentricModels {
             String driftId,
             String projectId,
             String version,
+            String versionContextId,
             String conceptId,
             String conceptKey,
             String driftType,
@@ -243,6 +252,9 @@ public final class CodeCentricModels {
             if (driftId == null || driftId.isBlank()) throw new IllegalArgumentException("driftId 不能为空");
             if (projectId == null || projectId.isBlank()) throw new IllegalArgumentException("projectId 不能为空");
             if (version == null || version.isBlank()) throw new IllegalArgumentException("version 不能为空");
+            if (versionContextId == null || versionContextId.isBlank()) {
+                throw new IllegalArgumentException("versionContextId 不能为空");
+            }
             if (conceptId == null || conceptId.isBlank()) throw new IllegalArgumentException("conceptId 不能为空");
             if (conceptKey == null || conceptKey.isBlank()) throw new IllegalArgumentException("conceptKey 不能为空");
             if (driftType == null || driftType.isBlank()) throw new IllegalArgumentException("driftType 不能为空");
@@ -266,6 +278,7 @@ public final class CodeCentricModels {
             int aligned,
             int documentDrift,
             int unmapped,
+            int mappedNoAssertion,
             int reviewRequired,
             List<DriftItem> items
     ) {

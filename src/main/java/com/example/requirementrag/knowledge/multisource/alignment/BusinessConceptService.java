@@ -34,17 +34,22 @@ public class BusinessConceptService {
     private final MultiSourceKnowledgeStore knowledgeStore;
     private final CodeCentricAlignmentStore alignmentStore;
     private final CodeSymbolLoader codeSymbolLoader;
+    private final VersionContextService versionContextService;
 
     public BusinessConceptService(MultiSourceKnowledgeStore knowledgeStore,
                                   CodeCentricAlignmentStore alignmentStore,
-                                  CodeSymbolLoader codeSymbolLoader) {
+                                  CodeSymbolLoader codeSymbolLoader,
+                                  VersionContextService versionContextService) {
         this.knowledgeStore = knowledgeStore;
         this.alignmentStore = alignmentStore;
         this.codeSymbolLoader = codeSymbolLoader;
+        this.versionContextService = versionContextService;
     }
 
-    /** 重建项目/版本的概念层：概念 + 别名 + 成员（幂等 upsert）。 */
+    /** 重建项目/版本的概念层：概念 + 别名 + 成员（先原子清理该业务版本的旧成员，避免旧 commit 残留）。 */
     public BuildResult build(String projectId, String version) {
+        String contextId = versionContextService.resolve(projectId, version, "default").contextId();
+        alignmentStore.deleteMembersByVersion(projectId, version);
         List<KnowledgeClaimRecord> claims = knowledgeStore.findClaimsByProjectVersion(projectId, version);
         LoadedCode loaded = codeSymbolLoader.load(projectId);
 
@@ -81,10 +86,10 @@ public class BusinessConceptService {
             }
 
             alignmentStore.upsertMember(new ConceptMember(
-                    memberId(projectId, concept.conceptId(), claim.sourceType().name(), claim.claimId()),
+                    memberId(projectId, concept.conceptId(), claim.sourceType().name(), claim.claimId(), version),
                     projectId, concept.conceptId(), claim.claimId(), claim.sourceType().name(),
                     truthRole(claim.sourceType()).name(), claim.claimId(), claim.subject(),
-                    null, null, null, Instant.now().toString()));
+                    null, null, null, version, contextId, Instant.now().toString()));
             members++;
         }
 
@@ -93,11 +98,11 @@ public class BusinessConceptService {
             for (CodeSymbolView symbol : loaded.symbols()) {
                 for (String conceptId : matchConcepts(aliasToConcept, symbol.simpleName())) {
                     alignmentStore.upsertMember(new ConceptMember(
-                            memberId(projectId, conceptId, "CODE", symbol.id()),
+                            memberId(projectId, conceptId, "CODE", symbol.id(), version),
                             projectId, conceptId, null, "CODE",
                             TruthRole.IMPLEMENTATION.name(), symbol.id(), symbol.simpleName(),
                             symbol.projectId(), symbol.commitSha(), codeEvidenceId(symbol),
-                            Instant.now().toString()));
+                            version, contextId, Instant.now().toString()));
                     members++;
                 }
             }
@@ -116,7 +121,7 @@ public class BusinessConceptService {
         return Map.of(
                 "concept", alignmentStore.findConcepts(projectId).stream()
                         .filter(concept -> concept.conceptId().equals(conceptId)).findFirst().orElse(null),
-                "members", alignmentStore.findMembers(projectId, conceptId),
+                "members", alignmentStore.findMembers(projectId, conceptId, null),
                 "aliases", alignmentStore.findAliases(projectId, conceptId));
     }
 
@@ -189,8 +194,10 @@ public class BusinessConceptService {
         return "cal:" + sha256(projectId + "|" + conceptId + "|" + alias + "|" + sourceType).substring(0, 24);
     }
 
-    private String memberId(String projectId, String conceptId, String sourceType, String externalId) {
-        return "cm:" + sha256(projectId + "|" + conceptId + "|" + sourceType + "|" + externalId).substring(0, 24);
+    private String memberId(String projectId, String conceptId, String sourceType, String externalId,
+                                String businessVersion) {
+        return "cm:" + sha256(projectId + "|" + conceptId + "|" + sourceType + "|" + externalId
+                + "|" + businessVersion).substring(0, 24);
     }
 
     private String codeEvidenceId(CodeSymbolView symbol) {

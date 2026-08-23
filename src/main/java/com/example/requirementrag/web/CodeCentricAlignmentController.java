@@ -108,10 +108,11 @@ public class CodeCentricAlignmentController {
     @GetMapping("/code-parameter")
     public List<com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.AlignmentRelation> codeParameter(
             @RequestParam String projectId, @RequestParam String version,
+            @RequestParam(required = false) String environment,
             @RequestParam(required = false) String relationType, HttpServletRequest httpRequest) {
         projectRegistry.require(projectId);
         accessGuard.requireProjectAccess(httpRequest, projectId);
-        return codeParameterAlignmentService.relations(projectId, version, relationType);
+        return codeParameterAlignmentService.relations(projectId, version, environment, relationType);
     }
 
     /** 构建代码—测试图谱（Phase 3）。 */
@@ -128,10 +129,11 @@ public class CodeCentricAlignmentController {
     @GetMapping("/code-test")
     public List<com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.AlignmentRelation> codeTest(
             @RequestParam String projectId, @RequestParam String version,
+            @RequestParam(required = false) String environment,
             @RequestParam(required = false) String relationType, HttpServletRequest httpRequest) {
         projectRegistry.require(projectId);
         accessGuard.requireProjectAccess(httpRequest, projectId);
-        return codeTestAlignmentService.relations(projectId, version, relationType);
+        return codeTestAlignmentService.relations(projectId, version, environment, relationType);
     }
 
     /** 构建需求—代码漂移报告（Phase 4）。 */

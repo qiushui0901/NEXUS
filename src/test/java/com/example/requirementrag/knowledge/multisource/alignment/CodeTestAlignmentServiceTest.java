@@ -49,16 +49,19 @@ class CodeTestAlignmentServiceTest {
         assertThat(result.relations()).isPositive();
         assertThat(result.drifts()).isPositive();
 
-        List<AlignmentRelation> verifies = service.relations("immortal", "5.1", "VERIFIES");
+        List<AlignmentRelation> verifies = service.relations("immortal", "5.1", "staging", "VERIFIES");
         assertThat(verifies).singleElement().satisfies(relation -> {
             assertThat(relation.sourceClaimId()).isEqualTo("tc-1");
             assertThat(relation.targetExternalId()).isEqualTo("s-1");
+            assertThat(relation.versionContextId()).isNotBlank();
         });
-        List<AlignmentRelation> confirms = service.relations("immortal", "5.1", "CONFIRMS");
+        List<AlignmentRelation> confirms = service.relations("immortal", "5.1", "staging", "CONFIRMS");
         assertThat(confirms).hasSize(2);
         assertThat(confirms).allSatisfy(relation -> assertThat(relation.relationType()).isEqualTo("CONFIRMS"));
 
-        List<DriftItem> drifts = stores.alignment().findDriftItems("immortal", "5.1", "TEST_DRIFT");
+        String contextId = stores.alignment()
+                .findVersionContext("immortal", "5.1", "staging").orElseThrow().contextId();
+        List<DriftItem> drifts = stores.alignment().findDriftItems("immortal", "5.1", contextId, "TEST_DRIFT");
         assertThat(drifts).isNotEmpty();
     }
 
@@ -84,7 +87,9 @@ class CodeTestAlignmentServiceTest {
         BuildResult result = service.build("immortal", "5.1", "staging");
 
         assertThat(result.drifts()).isPositive();
-        List<DriftItem> drifts = stores.alignment().findDriftItems("immortal", "5.1", "TEST_DRIFT");
+        String contextId = stores.alignment()
+                .findVersionContext("immortal", "5.1", "staging").orElseThrow().contextId();
+        List<DriftItem> drifts = stores.alignment().findDriftItems("immortal", "5.1", contextId, "TEST_DRIFT");
         assertThat(drifts).isNotEmpty();
     }
 }

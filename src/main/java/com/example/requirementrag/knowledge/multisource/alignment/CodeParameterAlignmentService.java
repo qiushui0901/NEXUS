@@ -64,7 +64,7 @@ public class CodeParameterAlignmentService {
         return this;
     }
 
-    /** 构建代码—参数对齐关系（幂等重建 Phase 2 的关系）。 */
+    /** 构建代码—参数对齐关系（幂等重建 Phase 2 的关系，按 VersionContext 隔离）。 */
     public BuildResult build(String projectId, String version, String environment) {
         VersionContext context = versionContextService.resolve(projectId, version, environment);
         LoadedCode loaded = codeSymbolLoader.load(projectId);
@@ -74,10 +74,10 @@ public class CodeParameterAlignmentService {
         Map<String, List<CodeSymbolView>> byName = codeSymbolLoader.indexBySimpleName(loaded);
         List<ParameterClaim> parameters = knowledgeStore.findParameters(projectId, version);
 
-        alignmentStore.deleteAlignmentRelationsByType(projectId, version, "READS_CONFIG");
-        alignmentStore.deleteAlignmentRelationsByType(projectId, version, "USES_PARAMETER");
-        alignmentStore.deleteAlignmentRelationsByType(projectId, version, "CONFIG_DRIFT");
-        alignmentStore.deleteDriftItemsByType(projectId, version, "CONFIG_DRIFT");
+        alignmentStore.deleteAlignmentRelationsByType(projectId, version, context.contextId(), "READS_CONFIG");
+        alignmentStore.deleteAlignmentRelationsByType(projectId, version, context.contextId(), "USES_PARAMETER");
+        alignmentStore.deleteAlignmentRelationsByType(projectId, version, context.contextId(), "CONFIG_DRIFT");
+        alignmentStore.deleteDriftItemsByType(projectId, version, context.contextId(), "CONFIG_DRIFT");
 
         int relations = 0;
         int drifts = 0;
@@ -89,10 +89,11 @@ public class CodeParameterAlignmentService {
                         .equals(AlignmentNaming.normalize(symbol.simpleName()))
                         ? MatchMethod.NORMALIZED_NAME_EXACT.name()
                         : MatchMethod.NORMALIZED_NAME_CONTAINS.name();
-                String relationId = relationId(projectId, version, parameter.claimId(), symbol.id(), "READS_CONFIG");
+                String relationId = relationId(projectId, version, context.contextId(),
+                        parameter.claimId(), symbol.id(), "READS_CONFIG");
                 if (seen.add(relationId)) {
                     alignmentStore.saveAlignmentRelation(new AlignmentRelation(
-                            relationId, projectId, version,
+                            relationId, projectId, version, context.contextId(),
                             parameter.claimId(), null, "PARAMETER_TABLE",
                             null, symbol.id(), "CODE", "READS_CONFIG",
                             matchMethod, "RULE_CONFIRMED", 0.9,
@@ -106,9 +107,10 @@ public class CodeParameterAlignmentService {
 
                 Optional<CodeValueProvider.CodeValue> codeValue = valueProvider.resolve(symbol);
                 if (codeValue.isPresent() && differs(parameter.normalizedValue(), codeValue.get().value())) {
-                    String driftId = driftId(projectId, version, parameter.claimId(), symbol.id(), "CONFIG_DRIFT");
+                    String driftId = driftId(projectId, version, context.contextId(),
+                            parameter.claimId(), symbol.id(), "CONFIG_DRIFT");
                     alignmentStore.saveDriftItem(new DriftItem(
-                            driftId, projectId, version,
+                            driftId, projectId, version, context.contextId(),
                             "UNKNOWN", "param:" + AlignmentNaming.keySegment(parameter.module()) + "."
                                     + AlignmentNaming.keySegment(parameter.parameter()),
                             DriftType.CONFIG_DRIFT.name(),
@@ -124,9 +126,11 @@ public class CodeParameterAlignmentService {
         return new BuildResult(0, 0, 0, relations, drifts);
     }
 
-    /** 查询代码—参数对齐关系。 */
-    public List<AlignmentRelation> relations(String projectId, String version, String relationType) {
-        return alignmentStore.findAlignmentRelations(projectId, version, relationType);
+    /** 查询指定环境下代码—参数对齐关系。 */
+    public List<AlignmentRelation> relations(String projectId, String version, String environment,
+                                             String relationType) {
+        VersionContext context = versionContextService.resolve(projectId, version, environment);
+        return alignmentStore.findAlignmentRelations(projectId, version, context.contextId(), relationType);
     }
 
     private List<CodeSymbolView> match(String parameterName, Map<String, List<CodeSymbolView>> byName) {
@@ -173,16 +177,16 @@ public class CodeParameterAlignmentService {
         }
     }
 
-    private String relationId(String projectId, String version, String sourceClaimId, String targetExternalId,
-                              String type) {
-        return "ar:" + sha256(projectId + "|" + version + "|" + sourceClaimId + "|" + targetExternalId
-                + "|" + type).substring(0, 32);
+    private String relationId(String projectId, String version, String versionContextId,
+                                  String sourceClaimId, String targetExternalId, String type) {
+        return "ar:" + sha256(projectId + "|" + version + "|" + versionContextId + "|" + sourceClaimId
+                + "|" + targetExternalId + "|" + type).substring(0, 32);
     }
 
-    private String driftId(String projectId, String version, String sourceClaimId, String targetExternalId,
-                           String type) {
-        return "di:" + sha256(projectId + "|" + version + "|" + sourceClaimId + "|" + targetExternalId
-                + "|" + type).substring(0, 32);
+    private String driftId(String projectId, String version, String versionContextId,
+                           String sourceClaimId, String targetExternalId, String type) {
+        return "di:" + sha256(projectId + "|" + version + "|" + versionContextId + "|" + sourceClaimId
+                + "|" + targetExternalId + "|" + type).substring(0, 32);
     }
 
     private String sha256(String value) {

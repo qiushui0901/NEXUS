@@ -11,6 +11,7 @@ import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricMod
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.CodeSymbolView;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.ConceptMember;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.ConceptAlias;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.LoadedCode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -46,12 +47,13 @@ class BusinessConceptServiceTest {
                 AlignmentTestSupport.symbol("s-1", "method", "com.game.skill.resolveFireballCd",
                         "Fireball_CD", "FireballSkill.java", 10, 30, false));
 
+        LoadedCode loaded = AlignmentTestSupport.loadedCode(symbols);
         AlignmentTestSupport.seed(stores, "immortal", "5.1", List.of(param), List.of(doubt),
                 List.of(testCase), List.of(testResult), List.of());
 
         BusinessConceptService service = new BusinessConceptService(
-                stores.multiSource(), stores.alignment(), AlignmentTestSupport.stubLoader(
-                        AlignmentTestSupport.loadedCode(symbols)));
+                stores.multiSource(), stores.alignment(), AlignmentTestSupport.stubLoader(loaded),
+                new VersionContextService(stores.alignment(), AlignmentTestSupport.stubLoader(loaded)));
 
         BuildResult result = service.build("immortal", "5.1");
 
@@ -65,13 +67,13 @@ class BusinessConceptServiceTest {
         assertThat(concept.displayName()).isEqualTo("Fireball_CD");
         assertThat(stores.alignment().findAliases("immortal", concept.conceptId()))
                 .extracting(ConceptAlias::alias).contains("Fireball_CD");
-        assertThat(stores.alignment().findMembers("immortal", concept.conceptId()))
+        assertThat(stores.alignment().findMembers("immortal", concept.conceptId(), "5.1"))
                 .extracting(ConceptMember::sourceType)
                 .contains("PARAMETER_TABLE", "CODE");
     }
 
     @Test
-    void buildIsIdempotent() {
+    void buildIsIdempotentAndReplacesMembersForBusinessVersion() {
         AlignmentTestSupport.Stores stores = AlignmentTestSupport.stores(tempDir);
         ParameterClaim param = new ParameterClaim(
                 "p-1", "immortal", "5.1", "skills.xlsx", "技能参数", 1, "A1", "combat",
@@ -80,15 +82,28 @@ class BusinessConceptServiceTest {
                 "skills.xlsx#A1", KnowledgeStatus.SUPPORTED);
         AlignmentTestSupport.seed(stores, "immortal", "5.1", List.of(param), List.of(),
                 List.of(), List.of(), List.of());
+        LoadedCode firstCode = AlignmentTestSupport.loadedCode(List.of(
+                AlignmentTestSupport.symbol("s-old", "method", "com.game.old.OldMethod",
+                        "Cooldown", "OldMethod.java", 1, 5, false)));
+        LoadedCode secondCode = AlignmentTestSupport.loadedCode(List.of(
+                AlignmentTestSupport.symbol("s-new", "method", "com.game.new.NewMethod",
+                        "Cooldown", "NewMethod.java", 1, 5, false)));
 
         BusinessConceptService service = new BusinessConceptService(
-                stores.multiSource(), stores.alignment(), AlignmentTestSupport.stubLoader(
-                        AlignmentTestSupport.loadedCode(List.of())));
+                stores.multiSource(), stores.alignment(), AlignmentTestSupport.stubLoader(firstCode),
+                new VersionContextService(stores.alignment(), AlignmentTestSupport.stubLoader(firstCode)));
+        service.build("immortal", "5.1");
 
-        BuildResult first = service.build("immortal", "5.1");
-        BuildResult second = service.build("immortal", "5.1");
+        // 旧代码仓库只有 s-old；重建时换成 s-new 后，旧 CODE member 必须被清除
+        BusinessConceptService newService = new BusinessConceptService(
+                stores.multiSource(), stores.alignment(), AlignmentTestSupport.stubLoader(secondCode),
+                new VersionContextService(stores.alignment(), AlignmentTestSupport.stubLoader(secondCode)));
+        newService.build("immortal", "5.1");
 
-        assertThat(second.concepts()).isEqualTo(first.concepts());
-        assertThat(stores.alignment().findConcepts("immortal")).hasSize(first.concepts());
+        BusinessConcept concept = stores.alignment()
+                .findConceptByKey("immortal", "param:combat.cooldown")
+                .orElseThrow();
+        List<ConceptMember> members = stores.alignment().findMembers("immortal", concept.conceptId(), "5.1");
+        assertThat(members).extracting(ConceptMember::externalId).contains("s-new").doesNotContain("s-old");
     }
 }

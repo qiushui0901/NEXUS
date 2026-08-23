@@ -13,14 +13,23 @@
   - **Phase 3 代码—测试图谱**
     - `CodeTestAlignmentService`：业务测试用例经 testMethod/testCaseId/title 映射到代码测试符号生成 `VERIFIES`；测试结果按 testCaseId 生成 `CONFIRMS`；FAILED 观测生成 `TEST_DRIFT`（含未映射代码时的降级结论）。
   - **Phase 4 需求—代码漂移检测**
-    - `RequirementCodeDriftService`：每个需求映射到业务概念——有代码成员且无配置冲突 → `ALIGNED`；无代码成员 → `UNMAPPED`（不宣称已实现）；有代码成员且需求值与配置值不一致 → `DOCUMENT_DRIFT`（创建文档更新候选，不自动覆盖任一侧）；输出 `DriftReport`（aligned/documentDrift/unmapped/reviewRequired 统计 + 明细清单）。
+    - `RequirementCodeDriftService`：每个需求映射到业务概念并绑定 VersionContext——无代码成员 → `UNMAPPED`；需求值与配置值不一致 → `DOCUMENT_DRIFT`（创建文档更新候选，不自动覆盖任一侧）；仅名称映射而无确定性实现关系 → `MAPPED_NO_IMPLEMENTATION_ASSERTION`（不宣称已实现）；只有存在 `READS_CONFIG / IMPLEMENTED_BY / ALIGNED_WITH` 确定性关系且无冲突才 → `ALIGNED`；输出 `DriftReport`（aligned/documentDrift/unmapped/mappedNoAssertion/reviewRequired 统计 + 明细清单）。
   - **对齐存储**
-    - 新增 `CodeCentricAlignmentStore`（与多源知识库共用同一 SQLite 文件）：`alignment_relation`（带 matchMethod/status/confidence/evidence/版本上下文，NULL 安全的表达式唯一索引 + `insert or replace` 幂等）、`drift_item`（按概念+类型幂等）。
+    - 新增 `CodeCentricAlignmentStore`（与多源知识库共用同一 SQLite 文件）：`alignment_relation`（带 matchMethod/status/confidence/evidence、按 `version_context_id` 作用域隔离，NULL 安全的表达式唯一索引 + `insert or replace` 幂等）、`drift_item`（按 `version_context_id` + 概念 + 类型幂等）、`business_concept_member`（按 `business_version` 作用域隔离）。
   - **API**
-    - 新增 `CodeCentricAlignmentController`（`/api/knowledge/alignment/*`）：版本上下文 resolve/list、概念 build/query、代码—参数 build/query、代码—测试 build/query、漂移 build/report。
+    - 新增 `CodeCentricAlignmentController`（`/api/knowledge/alignment/*`）：版本上下文 resolve/list、概念 build/query、代码—参数 build/query、代码—测试 build/query、漂移 build/report；查询类接口按 environment 解析对应 VersionContext，只返回该上下文记录。
   - **测试**
-    - 新增 `CodeCentricAlignmentStoreTest`、`BusinessConceptServiceTest`、`CodeParameterAlignmentServiceTest`、`CodeTestAlignmentServiceTest`、`RequirementCodeDriftServiceTest`、`CodeCentricAlignmentControllerTest`（16 个用例）。
-    - 全量测试：711 tests 通过。
+    - 新增 `CodeCentricAlignmentStoreTest`、`BusinessConceptServiceTest`、`CodeParameterAlignmentServiceTest`、`CodeTestAlignmentServiceTest`、`RequirementCodeDriftServiceTest`、`CodeCentricAlignmentControllerTest`（18 个用例）。
+    - 全量测试：712 tests 通过。
+
+### Fixed
+
+- **对齐结论按 VersionContext 隔离，不再跨环境/跨 commit 互相覆盖**：
+  - `version_context` 唯一键扩展为 `(project_id, business_version, environment, repository_id, commit_sha)`，`contextId` 含 commit；commit 切换会生成新的上下文记录，旧基线保留可审计。
+  - `business_concept_member` 增加 `business_version` 与 `version_context_id`，唯一键含业务版本；`BusinessConceptService.build` 构建前先原子清理该业务版本的旧成员，代码符号删除/改名后旧 `CODE` 成员不再充当当前实现证据。
+  - `alignment_relation` / `drift_item` 增加 `version_context_id` 列，纳入唯一约束、索引、删除与查询条件；构建/查询按 environment 解析对应 VersionContext，staging 与 production（或新旧 commit）各自保留独立基线，报告只返回请求环境上下文记录。
+- **`ALIGNED` 不再仅凭同名代码符号产生**：需求—代码漂移只有在存在确定性实现关系（`READS_CONFIG` / `IMPLEMENTED_BY` / `ALIGNED_WITH`）且无配置冲突时才判定 `ALIGNED`；仅名称映射降级为 `MAPPED_NO_IMPLEMENTATION_ASSERTION`，避免 getter/DTO/测试辅助方法被误判为“代码已实现”。
+- **修正方案文档行尾空白**：`docs/code-centric-cross-source-knowledge-graph-improvement-plan.md` 去除 trailing whitespace，`git diff --check` 通过。
 
 ## 0.9.3 — 2026-08-23
 

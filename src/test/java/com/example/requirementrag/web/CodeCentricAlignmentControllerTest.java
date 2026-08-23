@@ -117,7 +117,7 @@ class CodeCentricAlignmentControllerTest {
     void reportsDrift() throws Exception {
         when(requirementCodeDriftService.report("immortal", "5.1", "staging"))
                 .thenReturn(new DriftReport("immortal", "5.1", "abc123",
-                        5, 2, 3, 1, List.of()));
+                        5, 2, 3, 1, 1, List.of()));
 
         mvc.perform(get("/api/knowledge/alignment/drift")
                         .param("projectId", "immortal")
@@ -126,7 +126,8 @@ class CodeCentricAlignmentControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.aligned").value(5))
                 .andExpect(jsonPath("$.documentDrift").value(2))
-                .andExpect(jsonPath("$.unmapped").value(3));
+                .andExpect(jsonPath("$.unmapped").value(3))
+                .andExpect(jsonPath("$.mappedNoAssertion").value(1));
 
         verify(requirementCodeDriftService).report("immortal", "5.1", "staging");
     }

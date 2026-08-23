@@ -4,6 +4,7 @@ import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeClaimRecord;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.ParameterClaim;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeStore;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.AlignmentRelation;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.BuildResult;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.BusinessConcept;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.ConceptMember;
@@ -17,22 +18,26 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.security.MessageDigest;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.Set;
 
 /**
  * 需求—代码漂移检测（Phase 4）：把需求从默认裁决者调整为可审计的意图/漂移来源。
  *
- * <p>每个需求声明映射到业务概念：有代码成员 → ALIGNED；无代码成员 → UNMAPPED；
- * 需求值与配置（参数表）值结构化不一致 → DOCUMENT_DRIFT（文档过期候选）；
- * 需求与配置一致但存在代码成员时保留 ALIGNED，不自动裁决任一侧。
+ * <p>每个需求声明映射到业务概念，全部结论绑定 VersionContext：
+ * 无代码成员 → UNMAPPED；需求值与配置值不一致 → DOCUMENT_DRIFT；
+ * 存在确定性代码关系（READS_CONFIG / IMPLEMENTED_BY / ALIGNED_WITH）且无冲突 → ALIGNED；
+ * 仅名称映射而无实现证据 → MAPPED_NO_IMPLEMENTATION_ASSERTION（不宣称已实现）。
  */
 @Service
 public class RequirementCodeDriftService {
+
+    /** 只有这些确定性关系才算“实现已验证”，避免同名符号被误判为已对齐。 */
+    private static final Set<String> IMPLEMENTATION_EVIDENCE_TYPES =
+            Set.of("READS_CONFIG", "IMPLEMENTED_BY", "ALIGNED_WITH");
 
     private final MultiSourceKnowledgeStore knowledgeStore;
     private final CodeCentricAlignmentStore alignmentStore;
@@ -46,17 +51,17 @@ public class RequirementCodeDriftService {
         this.versionContextService = versionContextService;
     }
 
-    /** 构建项目/版本的需求—代码漂移报告（幂等重建 Phase 4 结论）。 */
+    /** 构建项目/版本的需求—代码漂移报告（按 VersionContext 隔离，幂等重建 Phase 4 结论）。 */
     public BuildResult build(String projectId, String version, String environment) {
-        versionContextService.resolve(projectId, version, environment);
+        VersionContext context = versionContextService.resolve(projectId, version, environment);
         List<KnowledgeClaimRecord> requirements = knowledgeStore.findClaimsByProjectVersion(projectId, version)
                 .stream().filter(claim -> claim.sourceType() == SourceType.REQUIREMENT).toList();
         List<ParameterClaim> parameters = knowledgeStore.findParameters(projectId, version);
 
-        alignmentStore.deleteDriftItemsByType(projectId, version, "ALIGNED");
-        alignmentStore.deleteDriftItemsByType(projectId, version, "DOCUMENT_DRIFT");
-        alignmentStore.deleteDriftItemsByType(projectId, version, "UNMAPPED");
-        alignmentStore.deleteDriftItemsByType(projectId, version, "IMPLEMENTATION_REVIEW_REQUIRED");
+        for (String type : List.of("ALIGNED", "DOCUMENT_DRIFT", "UNMAPPED",
+                "MAPPED_NO_IMPLEMENTATION_ASSERTION", "IMPLEMENTATION_REVIEW_REQUIRED")) {
+            alignmentStore.deleteDriftItemsByType(projectId, version, context.contextId(), type);
+        }
 
         Map<String, String> paramValueByNormalizedSubject = new HashMap<>();
         for (ParameterClaim parameter : parameters) {
@@ -65,14 +70,11 @@ public class RequirementCodeDriftService {
         }
 
         int drifts = 0;
-        int aligned = 0;
-        int unmapped = 0;
-        int review = 0;
         for (KnowledgeClaimRecord requirement : requirements) {
             String conceptKey = "req:" + AlignmentNaming.keySegment(requirement.subject());
             BusinessConcept concept = alignmentStore.findConceptByKey(projectId, conceptKey).orElse(null);
             List<ConceptMember> codeMembers = concept == null ? List.of()
-                    : alignmentStore.findMembers(projectId, concept.conceptId()).stream()
+                    : alignmentStore.findMembers(projectId, concept.conceptId(), version).stream()
                     .filter(member -> "CODE".equals(member.sourceType())).toList();
 
             String configValue = paramValueByNormalizedSubject.get(AlignmentNaming.normalize(requirement.subject()));
@@ -85,56 +87,79 @@ public class RequirementCodeDriftService {
                     : "需求[" + requirement.subject() + "]";
 
             String conceptId = concept == null ? "UNKNOWN" : concept.conceptId();
+            boolean hasCodeEvidence = hasImplementationEvidence(projectId, version, context.contextId(), codeMembers);
+
             if (codeMembers.isEmpty()) {
-                String driftId = driftId(projectId, version, requirement.claimId(), "UNMAPPED");
-                alignmentStore.saveDriftItem(new DriftItem(
-                        driftId, projectId, version, conceptId, conceptKey,
+                save(projectId, version, context.contextId(), requirement, conceptId, conceptKey,
                         DriftType.UNMAPPED.name(), configMismatch ? "WARNING" : "INFO",
-                        TruthRole.INTENT.name(), requirement.claimId(), null,
                         requirement.objectValue(), configValue,
-                        detail + "：未映射到代码符号（不宣称已实现）",
-                        "OPEN", null, Instant.now().toString()));
-                unmapped++;
+                        detail + "：未映射到代码符号（不宣称已实现）", "OPEN");
                 drifts++;
             } else if (configMismatch) {
-                String driftId = driftId(projectId, version, requirement.claimId(), "DOCUMENT_DRIFT");
-                alignmentStore.saveDriftItem(new DriftItem(
-                        driftId, projectId, version, conceptId, conceptKey,
+                save(projectId, version, context.contextId(), requirement, conceptId, conceptKey,
                         DriftType.DOCUMENT_DRIFT.name(), "WARNING",
-                        TruthRole.INTENT.name(), requirement.claimId(), null,
                         requirement.objectValue(), configValue,
-                        detail + "：需求声明与配置不一致，创建文档更新候选；代码不自动覆盖需求",
-                        "OPEN", null, Instant.now().toString()));
+                        detail + "：需求声明与配置不一致，创建文档更新候选；代码不自动覆盖需求", "OPEN");
+                drifts++;
+            } else if (hasCodeEvidence) {
+                save(projectId, version, context.contextId(), requirement, conceptId, conceptKey,
+                        DriftType.ALIGNED.name(), "INFO",
+                        requirement.objectValue(), null,
+                        detail + "：已映射到 " + codeMembers.size() + " 个代码符号，且存在确定性实现关系，未发现配置冲突",
+                        "CLOSED");
                 drifts++;
             } else {
-                String driftId = driftId(projectId, version, requirement.claimId(), "ALIGNED");
-                alignmentStore.saveDriftItem(new DriftItem(
-                        driftId, projectId, version, conceptId, conceptKey,
-                        DriftType.ALIGNED.name(), "INFO",
-                        TruthRole.INTENT.name(), requirement.claimId(), null,
+                save(projectId, version, context.contextId(), requirement, conceptId, conceptKey,
+                        DriftType.MAPPED_NO_IMPLEMENTATION_ASSERTION.name(), "INFO",
                         requirement.objectValue(), null,
-                        detail + "：已映射到 " + codeMembers.size() + " 个代码符号，未发现配置冲突",
-                        "CLOSED", null, Instant.now().toString()));
-                aligned++;
+                        detail + "：名称映射到 " + codeMembers.size() + " 个代码符号，但缺少确定性实现证据（不宣称已实现）",
+                        "OPEN");
                 drifts++;
             }
         }
         return new BuildResult(0, 0, 0, 0, drifts);
     }
 
-    /** 查询漂移报告（含统计与清单）。 */
+    /** 查询指定环境下的漂移报告（含统计与清单）。 */
     public DriftReport report(String projectId, String version, String environment) {
-        List<DriftItem> items = alignmentStore.findDriftItems(projectId, version, null);
+        VersionContext context = versionContextService.resolve(projectId, version, environment);
+        List<DriftItem> items = alignmentStore.findDriftItems(projectId, version, context.contextId(), null);
         long aligned = items.stream().filter(item -> DriftType.ALIGNED.name().equals(item.driftType())).count();
         long documentDrift = items.stream()
                 .filter(item -> DriftType.DOCUMENT_DRIFT.name().equals(item.driftType())).count();
         long unmapped = items.stream().filter(item -> DriftType.UNMAPPED.name().equals(item.driftType())).count();
+        long mappedNoAssertion = items.stream()
+                .filter(item -> DriftType.MAPPED_NO_IMPLEMENTATION_ASSERTION.name().equals(item.driftType())).count();
         long review = items.stream()
                 .filter(item -> DriftType.IMPLEMENTATION_REVIEW_REQUIRED.name().equals(item.driftType())).count();
-        String commitSha = versionContextService.find(projectId, version, environment)
-                .map(VersionContext::commitSha).orElse(null);
-        return new DriftReport(projectId, version, commitSha,
-                (int) aligned, (int) documentDrift, (int) unmapped, (int) review, items);
+        return new DriftReport(projectId, version, context.commitSha(),
+                (int) aligned, (int) documentDrift, (int) unmapped, (int) mappedNoAssertion,
+                (int) review, items);
+    }
+
+    /** 是否存在确定性实现关系：代码成员作为关系目标且类型属于实现证据。 */
+    private boolean hasImplementationEvidence(String projectId, String version, String contextId,
+                                              List<ConceptMember> codeMembers) {
+        for (ConceptMember member : codeMembers) {
+            if (member.externalId() == null) continue;
+            for (AlignmentRelation relation : alignmentStore.findAlignmentRelationsForExternal(
+                    projectId, version, contextId, member.externalId())) {
+                if (IMPLEMENTATION_EVIDENCE_TYPES.contains(relation.relationType())) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private void save(String projectId, String version, String contextId, KnowledgeClaimRecord requirement,
+                      String conceptId, String conceptKey, String driftType, String severity,
+                      String sourceValue, String targetValue, String detail, String status) {
+        String driftId = driftId(projectId, version, contextId, requirement.claimId(), driftType);
+        alignmentStore.saveDriftItem(new DriftItem(
+                driftId, projectId, version, contextId, conceptId, conceptKey, driftType, severity,
+                TruthRole.INTENT.name(), requirement.claimId(), null, sourceValue, targetValue,
+                detail, status, null, Instant.now().toString()));
     }
 
     private boolean differs(String requirementValue, String configValue) {
@@ -155,8 +180,9 @@ public class RequirementCodeDriftService {
         }
     }
 
-    private String driftId(String projectId, String version, String sourceClaimId, String type) {
-        return "di:" + sha256(projectId + "|" + version + "|" + sourceClaimId + "|" + type).substring(0, 32);
+    private String driftId(String projectId, String version, String contextId, String sourceClaimId, String type) {
+        return "di:" + sha256(projectId + "|" + version + "|" + contextId + "|" + sourceClaimId
+                + "|" + type).substring(0, 32);
     }
 
     private String sha256(String value) {

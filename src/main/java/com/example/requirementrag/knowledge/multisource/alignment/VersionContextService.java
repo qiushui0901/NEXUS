@@ -26,12 +26,13 @@ public class VersionContextService {
         this.codeSymbolLoader = codeSymbolLoader;
     }
 
-    /** 解析并保存当前版本上下文（幂等：按项目/版本/环境 upsert）。 */
+    /** 解析并保存当前版本上下文（幂等：按 项目/版本/环境/repository/commit 唯一）。 */
     public VersionContext resolve(String projectId, String businessVersion, String environment) {
         String codeProjectId = codeSymbolLoader.codeProjectId(projectId);
         String commitSha = codeSymbolLoader.load(projectId).commitSha();
         String env = environment == null || environment.isBlank() ? "default" : environment;
-        String contextId = "vc:" + sha256(projectId + "|" + businessVersion + "|" + env).substring(0, 24);
+        String contextId = "vc:" + sha256(projectId + "|" + businessVersion + "|" + env
+                + "|" + codeProjectId + "|" + (commitSha == null ? "" : commitSha)).substring(0, 24);
         VersionContext context = new VersionContext(
                 contextId, projectId, businessVersion, codeProjectId, commitSha, env,
                 "ACTIVE", null, Instant.now().toString());

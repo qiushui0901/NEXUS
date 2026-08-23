@@ -6,8 +6,8 @@ import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeMode
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.AlignmentRelation;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.BuildResult;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.CodeSymbolView;
-import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.LoadedCode;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DriftItem;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.LoadedCode;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -42,11 +42,12 @@ class CodeParameterAlignmentServiceTest {
         BuildResult result = service.build("immortal", "5.1", "staging");
 
         assertThat(result.relations()).isPositive();
-        List<AlignmentRelation> relations = service.relations("immortal", "5.1", "READS_CONFIG");
+        List<AlignmentRelation> relations = service.relations("immortal", "5.1", "staging", "READS_CONFIG");
         assertThat(relations).singleElement().satisfies(relation -> {
             assertThat(relation.sourceClaimId()).isEqualTo("p-1");
             assertThat(relation.targetExternalId()).isEqualTo("s-1");
             assertThat(relation.matchMethod()).isEqualTo("NORMALIZED_NAME_EXACT");
+            assertThat(relation.versionContextId()).isNotBlank();
         });
     }
 
@@ -76,10 +77,13 @@ class CodeParameterAlignmentServiceTest {
         BuildResult result = service.build("immortal", "5.1", "staging");
 
         assertThat(result.drifts()).isPositive();
-        List<DriftItem> drifts = stores.alignment().findDriftItems("immortal", "5.1", "CONFIG_DRIFT");
+        String contextId = stores.alignment()
+                .findVersionContext("immortal", "5.1", "staging").orElseThrow().contextId();
+        List<DriftItem> drifts = stores.alignment().findDriftItems("immortal", "5.1", contextId, "CONFIG_DRIFT");
         assertThat(drifts).singleElement().satisfies(item -> {
             assertThat(item.sourceValue()).isEqualTo("10");
             assertThat(item.targetValue()).isEqualTo("12");
+            assertThat(item.versionContextId()).isEqualTo(contextId);
         });
     }
 }

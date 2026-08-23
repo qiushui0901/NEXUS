@@ -48,17 +48,17 @@ public class CodeTestAlignmentService {
         this.versionContextService = versionContextService;
     }
 
-    /** 构建代码—测试对齐关系（幂等重建 Phase 3 的关系）。 */
+    /** 构建代码—测试对齐关系（幂等重建 Phase 3 的关系，按 VersionContext 隔离）。 */
     public BuildResult build(String projectId, String version, String environment) {
         VersionContext context = versionContextService.resolve(projectId, version, environment);
         LoadedCode loaded = codeSymbolLoader.load(projectId);
         List<TestCaseClaim> testCases = knowledgeStore.findTestCases(projectId, version);
         List<TestResultClaim> testResults = knowledgeStore.findTestResults(projectId, version);
 
-        alignmentStore.deleteAlignmentRelationsByType(projectId, version, "VERIFIES");
-        alignmentStore.deleteAlignmentRelationsByType(projectId, version, "CONFIRMS");
-        alignmentStore.deleteAlignmentRelationsByType(projectId, version, "TEST_DRIFT");
-        alignmentStore.deleteDriftItemsByType(projectId, version, "TEST_DRIFT");
+        alignmentStore.deleteAlignmentRelationsByType(projectId, version, context.contextId(), "VERIFIES");
+        alignmentStore.deleteAlignmentRelationsByType(projectId, version, context.contextId(), "CONFIRMS");
+        alignmentStore.deleteAlignmentRelationsByType(projectId, version, context.contextId(), "TEST_DRIFT");
+        alignmentStore.deleteDriftItemsByType(projectId, version, context.contextId(), "TEST_DRIFT");
 
         Map<String, List<CodeSymbolView>> testSymbols = new HashMap<>();
         Map<String, List<CodeSymbolView>> allSymbols = new HashMap<>();
@@ -87,10 +87,11 @@ public class CodeTestAlignmentService {
             for (CodeSymbolView symbol : matches) {
                 String matchMethod = exactMatch(testCase, symbol)
                         ? MatchMethod.TEST_SYMBOL_EXACT.name() : MatchMethod.HEURISTIC.name();
-                String relationId = relationId(projectId, version, testCase.claimId(), symbol.id(), "VERIFIES");
+                String relationId = relationId(projectId, version, context.contextId(),
+                        testCase.claimId(), symbol.id(), "VERIFIES");
                 if (seen.add(relationId)) {
                     alignmentStore.saveAlignmentRelation(new AlignmentRelation(
-                            relationId, projectId, version,
+                            relationId, projectId, version, context.contextId(),
                             testCase.claimId(), null, "TEST_CASE",
                             null, symbol.id(), "CODE", "VERIFIES",
                             matchMethod, "RULE_CONFIRMED", 0.85,
@@ -109,10 +110,11 @@ public class CodeTestAlignmentService {
         for (TestResultClaim result : testResults) {
             TestCaseClaim testCase = byTestCaseId.get(result.testCaseId());
             if (testCase == null) continue;
-            String confirmId = relationId(projectId, version, result.claimId(), testCase.claimId(), "CONFIRMS");
+            String confirmId = relationId(projectId, version, context.contextId(),
+                    result.claimId(), testCase.claimId(), "CONFIRMS");
             if (seen.add(confirmId)) {
                 alignmentStore.saveAlignmentRelation(new AlignmentRelation(
-                        confirmId, projectId, version,
+                        confirmId, projectId, version, context.contextId(),
                         result.claimId(), null, "TEST_RESULT",
                         testCase.claimId(), null, "TEST_CASE", "CONFIRMS",
                         MatchMethod.TEST_CASE_ID_EXACT.name(), "RULE_CONFIRMED", 1.0,
@@ -125,10 +127,10 @@ public class CodeTestAlignmentService {
             }
             if ("FAILED".equalsIgnoreCase(result.executionStatus())) {
                 List<String> codeIds = testCaseToCode.getOrDefault(result.testCaseId(), List.of());
-                String driftId = driftId(projectId, version, result.claimId(), "TEST_DRIFT");
+                String driftId = driftId(projectId, version, context.contextId(), result.claimId(), "TEST_DRIFT");
                 if (codeIds.isEmpty()) {
                     alignmentStore.saveDriftItem(new DriftItem(
-                            driftId, projectId, version,
+                            driftId, projectId, version, context.contextId(),
                             "UNKNOWN", "test:" + AlignmentNaming.keySegment(testCase.module()),
                             DriftType.TEST_DRIFT.name(), "ERROR", TruthRole.OBSERVATION.name(),
                             result.claimId(), testCase.claimId(), result.executionStatus(),
@@ -138,7 +140,7 @@ public class CodeTestAlignmentService {
                 } else {
                     for (String codeId : codeIds) {
                         alignmentStore.saveDriftItem(new DriftItem(
-                                driftId + ":" + codeId, projectId, version,
+                                driftId + ":" + codeId, projectId, version, context.contextId(),
                                 "UNKNOWN", "test:" + AlignmentNaming.keySegment(testCase.module()),
                                 DriftType.TEST_DRIFT.name(), "ERROR", TruthRole.OBSERVATION.name(),
                                 result.claimId(), testCase.claimId(), result.executionStatus(),
@@ -153,9 +155,11 @@ public class CodeTestAlignmentService {
         return new BuildResult(0, 0, 0, relations, drifts);
     }
 
-    /** 查询代码—测试对齐关系。 */
-    public List<AlignmentRelation> relations(String projectId, String version, String relationType) {
-        return alignmentStore.findAlignmentRelations(projectId, version, relationType);
+    /** 查询指定环境下代码—测试对齐关系。 */
+    public List<AlignmentRelation> relations(String projectId, String version, String environment,
+                                             String relationType) {
+        VersionContext context = versionContextService.resolve(projectId, version, environment);
+        return alignmentStore.findAlignmentRelations(projectId, version, context.contextId(), relationType);
     }
 
     private List<CodeSymbolView> matchTestCase(TestCaseClaim testCase, Map<String, List<CodeSymbolView>> testSymbols,
@@ -204,14 +208,16 @@ public class CodeTestAlignmentService {
         return evidence.isEmpty() ? fallback : evidence.get(0);
     }
 
-    private String relationId(String projectId, String version, String sourceClaimId, String targetExternalId,
-                              String type) {
-        return "ar:" + sha256(projectId + "|" + version + "|" + sourceClaimId + "|" + targetExternalId
-                + "|" + type).substring(0, 32);
+    private String relationId(String projectId, String version, String versionContextId,
+                                  String sourceClaimId, String targetExternalId, String type) {
+        return "ar:" + sha256(projectId + "|" + version + "|" + versionContextId + "|" + sourceClaimId
+                + "|" + targetExternalId + "|" + type).substring(0, 32);
     }
 
-    private String driftId(String projectId, String version, String sourceClaimId, String type) {
-        return "di:" + sha256(projectId + "|" + version + "|" + sourceClaimId + "|" + type).substring(0, 32);
+    private String driftId(String projectId, String version, String versionContextId,
+                           String sourceClaimId, String type) {
+        return "di:" + sha256(projectId + "|" + version + "|" + versionContextId + "|" + sourceClaimId
+                + "|" + type).substring(0, 32);
     }
 
     private String sha256(String value) {
