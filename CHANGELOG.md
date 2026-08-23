@@ -10,6 +10,11 @@
   - `MultiSourceKnowledgeStore` 新增 registerDocument / upsertDocumentVersion / saveEvidence / findDocumentVersion / findEvidenceById / findEvidenceByDocumentVersion / linkClaimToCatalog / findCatalogReference。
   - 现有 `multi_source_parameter / doubt / test_case / test_result` 增加可空 `document_version_id`、`evidence_id` 列；`evidenceLocation` 继续兼容读取。
   - 新增 `MultiSourceKnowledgeCatalogTest`：Document 幂等、DocumentVersion 幂等且按 business_version 隔离、Evidence ID 稳定、四类业务表可关联回查。
+- Phase B（统一 Claim 主表与扩展表映射）：
+  - 新增 `knowledge_claim` 主表（`claim_id` 与业务表主键一致，唯一键按 `object_value` 去重，允许同 fact_key 多值并存）与 `knowledge_claim_evidence` 关联表（role：SUPPORTS/CONTRADICTS/CONTEXT/RESOLUTION）。
+  - 新增 `KnowledgeFactKeyGenerator`：`<projectId>|<businessVersion>|<module>|<normalizedSubject>|<normalizedPredicate>` 确定性生成。
+  - `MultiSourceKnowledgeStore` 新增 saveClaim / linkClaimEvidence / findClaimById / findClaimsByFactKey / findEvidenceIdsByClaimId / syncSnapshotClaims（事务内把参数/存疑/测试用例/测试结果批量生成为统一 Claim 并关联 Evidence、回填业务表关联列）。
+  - 新增 `MultiSourceKnowledgeClaimTest`：Claim 幂等 upsert、同 fact_key 多值并存、fact_key 规范化、sync 后四类 claimId 可在主库回查版本/状态/Evidence 关联。
 
 ## 0.9.2 — 2026-08-20
 

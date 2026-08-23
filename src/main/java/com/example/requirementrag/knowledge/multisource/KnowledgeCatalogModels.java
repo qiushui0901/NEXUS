@@ -102,4 +102,68 @@ public final class KnowledgeCatalogModels {
     /** 业务表到 catalog 的可回查关联。 */
     public record CatalogReference(String documentVersionId, String evidenceId) {
     }
+
+    /** Claim ↔ Evidence 关联角色。 */
+    public enum ClaimEvidenceRole {
+        SUPPORTS,
+        CONTRADICTS,
+        CONTEXT,
+        RESOLUTION
+    }
+
+    /** 来源无关的统一 Claim 主记录：claim_id 与业务表主键一致，便于回查。 */
+    public record KnowledgeClaimRecord(
+            String claimId,
+            String projectId,
+            String documentVersionId,
+            SourceType sourceType,
+            Authority authority,
+            String factKey,
+            String subject,
+            String predicate,
+            String objectValue,
+            String valueType,
+            String unit,
+            String status,
+            Double confidence,
+            String effectiveFrom,
+            String effectiveTo,
+            String extractionMethod,
+            String extractionRunId,
+            String createdAt,
+            String updatedAt
+    ) {
+        public KnowledgeClaimRecord {
+            if (claimId == null || claimId.isBlank()) throw new IllegalArgumentException("claimId 不能为空");
+            if (projectId == null || projectId.isBlank()) throw new IllegalArgumentException("projectId 不能为空");
+            if (documentVersionId == null || documentVersionId.isBlank()) {
+                throw new IllegalArgumentException("documentVersionId 不能为空");
+            }
+            if (sourceType == null) throw new IllegalArgumentException("sourceType 不能为空");
+            if (authority == null) throw new IllegalArgumentException("authority 不能为空");
+            if (subject == null || subject.isBlank()) throw new IllegalArgumentException("subject 不能为空");
+            if (predicate == null) predicate = "";
+            if (factKey == null || factKey.isBlank()) throw new IllegalArgumentException("factKey 不能为空");
+            status = status == null || status.isBlank() ? "SUPPORTED" : status;
+            extractionMethod = extractionMethod == null || extractionMethod.isBlank() ? "RULE" : extractionMethod;
+            String now = java.time.Instant.now().toString();
+            createdAt = createdAt == null ? now : createdAt;
+            updatedAt = updatedAt == null ? createdAt : updatedAt;
+        }
+    }
+
+    /** Claim 与 Evidence 关联记录。 */
+    public record KnowledgeClaimEvidence(
+            String claimId,
+            String evidenceId,
+            ClaimEvidenceRole role,
+            String createdAt
+    ) {
+        public KnowledgeClaimEvidence {
+            if (claimId == null || claimId.isBlank()) throw new IllegalArgumentException("claimId 不能为空");
+            if (evidenceId == null || evidenceId.isBlank()) throw new IllegalArgumentException("evidenceId 不能为空");
+            role = role == null ? ClaimEvidenceRole.SUPPORTS : role;
+            createdAt = createdAt == null ? java.time.Instant.now().toString() : createdAt;
+        }
+    }
 }

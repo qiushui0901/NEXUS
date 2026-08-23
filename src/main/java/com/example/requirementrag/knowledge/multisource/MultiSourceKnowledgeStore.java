@@ -1,5 +1,9 @@
 package com.example.requirementrag.knowledge.multisource;
 
+import com.example.requirementrag.conflict.KnowledgeConflictModels.Authority;
+import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
+import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeClaimEvidence;
+import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeClaimRecord;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeDocument;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeDocumentVersion;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeEvidence;
@@ -29,6 +33,7 @@ import java.sql.Statement;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -219,6 +224,45 @@ public class MultiSourceKnowledgeStore {
                     """);
             statement.executeUpdate("create index if not exists idx_knowledge_doc_version_scope on knowledge_document_version(project_id,business_version)");
             statement.executeUpdate("create index if not exists idx_knowledge_evidence_scope on knowledge_evidence(project_id,document_version_id)");
+
+            // 0.9.3 Phase B：统一 Claim 主表与 Claim-Evidence 关联
+            statement.executeUpdate("""
+                    create table if not exists knowledge_claim(
+                      claim_id text primary key,
+                      project_id text not null,
+                      document_version_id text not null,
+                      source_type text not null,
+                      authority text not null,
+                      fact_key text not null,
+                      subject text not null,
+                      predicate text not null,
+                      object_value text,
+                      value_type text,
+                      unit text,
+                      status text not null,
+                      confidence real,
+                      effective_from text,
+                      effective_to text,
+                      extraction_method text not null,
+                      extraction_run_id text,
+                      created_at text not null,
+                      updated_at text not null,
+                      foreign key(document_version_id) references knowledge_document_version(document_version_id),
+                      unique(project_id, document_version_id, source_type, fact_key, object_value)
+                    )
+                    """);
+            statement.executeUpdate("""
+                    create table if not exists knowledge_claim_evidence(
+                      claim_id text not null,
+                      evidence_id text not null,
+                      role text not null default 'SUPPORTS',
+                      created_at text not null,
+                      primary key(claim_id, evidence_id),
+                      foreign key(claim_id) references knowledge_claim(claim_id),
+                      foreign key(evidence_id) references knowledge_evidence(evidence_id)
+                    )
+                    """);
+            statement.executeUpdate("create index if not exists idx_knowledge_claim_fact on knowledge_claim(project_id,document_version_id,fact_key)");
 
             // 现有业务表关联 catalog 的可空列
             addColumnIfMissing(statement, "multi_source_parameter", "document_version_id", "text");
@@ -1049,6 +1093,254 @@ public class MultiSourceKnowledgeStore {
         } catch (SQLException exception) {
             throw new IllegalStateException("查询 Claim catalog 关联失败", exception);
         }
+    }
+
+    // ===== 0.9.3 Phase B：统一 Claim 主表 =====
+
+    /** 幂等保存统一 Claim：同 claim_id 存在时更新非空字段与 updated_at。 */
+    public void saveClaim(KnowledgeClaimRecord claim) {
+        try (Connection connection = open()) {
+            insertClaim(connection, claim);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("保存统一 Claim 失败", exception);
+        }
+    }
+
+    /** 关联 Claim 与 Evidence（幂等）。 */
+    public void linkClaimEvidence(String claimId, String evidenceId, String role) {
+        try (Connection connection = open()) {
+            linkEvidence(connection, claimId, evidenceId, role);
+        } catch (SQLException exception) {
+            throw new IllegalStateException("关联 Claim Evidence 失败", exception);
+        }
+    }
+
+    /** 按 claimId 查询统一 Claim。 */
+    public Optional<KnowledgeClaimRecord> findClaimById(String claimId) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select claim_id,project_id,document_version_id,source_type,authority,fact_key,
+                       subject,predicate,object_value,value_type,unit,status,confidence,
+                       effective_from,effective_to,extraction_method,extraction_run_id,created_at,updated_at
+                     from knowledge_claim where claim_id=?
+                     """)) {
+            statement.setString(1, claimId);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? Optional.of(claim(rows)) : Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询统一 Claim 失败", exception);
+        }
+    }
+
+    /** 按项目/资料版本/事实键查询统一 Claim（可命中多来源）。 */
+    public List<KnowledgeClaimRecord> findClaimsByFactKey(String projectId, String documentVersionId, String factKey) {
+        List<KnowledgeClaimRecord> result = new ArrayList<>();
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select claim_id,project_id,document_version_id,source_type,authority,fact_key,
+                       subject,predicate,object_value,value_type,unit,status,confidence,
+                       effective_from,effective_to,extraction_method,extraction_run_id,created_at,updated_at
+                     from knowledge_claim
+                     where project_id=? and document_version_id=? and fact_key=?
+                     order by source_type,claim_id
+                     """)) {
+            statement.setString(1, projectId);
+            statement.setString(2, documentVersionId);
+            statement.setString(3, factKey);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    result.add(claim(rows));
+                }
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("按事实键查询 Claim 失败", exception);
+        }
+        return result;
+    }
+
+    /** 查询某条 Claim 关联的 Evidence ID 列表。 */
+    public List<String> findEvidenceIdsByClaimId(String claimId) {
+        List<String> result = new ArrayList<>();
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select evidence_id from knowledge_claim_evidence
+                     where claim_id=? order by evidence_id
+                     """)) {
+            statement.setString(1, claimId);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    result.add(rows.getString("evidence_id"));
+                }
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询 Claim Evidence 失败", exception);
+        }
+        return result;
+    }
+
+    /**
+     * 把一次快照中的四类业务表行批量同步为统一 Claim。
+     * 同一事务内：生成 Claim、关联 Evidence、并把业务表可空列回填 document_version_id/evidence_id。
+     */
+    public synchronized void syncSnapshotClaims(String projectId, String version, String documentVersionId,
+                                                Map<String, String> evidenceIdByClaimId) {
+        try (Connection connection = open()) {
+            connection.setAutoCommit(false);
+            try {
+                syncTableClaims(connection, projectId, version, documentVersionId, evidenceIdByClaimId,
+                        "multi_source_parameter", "claim_id", "parameter", "value",
+                        "normalized_value", "value_type", "unit", "status", "module",
+                        SourceType.PARAMETER_TABLE, Authority.PRIMARY);
+                syncTableClaims(connection, projectId, version, documentVersionId, evidenceIdByClaimId,
+                        "multi_source_doubt", "doubt_id", "module", "question",
+                        "answer", null, null, "status", "module",
+                        SourceType.DOUBT, Authority.PRIMARY);
+                syncTableClaims(connection, projectId, version, documentVersionId, evidenceIdByClaimId,
+                        "multi_source_test_case", "claim_id", "title", "expectedResult",
+                        "expected_result", null, null, "status", "module",
+                        SourceType.TEST_CASE, Authority.SECONDARY);
+                syncTableClaims(connection, projectId, version, documentVersionId, evidenceIdByClaimId,
+                        "multi_source_test_result", "claim_id", "test_case_id", "executionStatus",
+                        "execution_status", null, null, "status", "test_case_id",
+                        SourceType.TEST_RESULT, Authority.SECONDARY);
+                connection.commit();
+            } catch (SQLException | RuntimeException exception) {
+                connection.rollback();
+                throw exception;
+            } finally {
+                connection.setAutoCommit(true);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("同步快照 Claim 失败", exception);
+        }
+    }
+
+    private void syncTableClaims(Connection connection, String projectId, String version,
+                                 String documentVersionId, Map<String, String> evidenceIdByClaimId,
+                                 String table, String keyColumn, String subjectColumn, String predicateLiteral,
+                                 String objectColumn, String valueTypeColumn, String unitColumn,
+                                 String statusColumn, String moduleColumn, SourceType sourceType,
+                                 Authority authority) throws SQLException {
+        String valueTypeSelect = valueTypeColumn == null ? "''" : valueTypeColumn;
+        String unitSelect = unitColumn == null ? "''" : unitColumn;
+        try (PreparedStatement statement = connection.prepareStatement(
+                "select " + keyColumn + "," + moduleColumn + "," + subjectColumn + "," + objectColumn + ","
+                        + valueTypeSelect + "," + unitSelect + "," + statusColumn
+                        + " from " + table + " where project_id=? and version=?")) {
+            statement.setString(1, projectId);
+            statement.setString(2, version);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    String claimId = rows.getString(1);
+                    String module = rows.getString(2);
+                    String rawSubject = rows.getString(3);
+                    String subject = (rawSubject != null && !rawSubject.isBlank())
+                            ? rawSubject
+                            : (module != null && !module.isBlank() ? module : claimId);
+                    String objectValue = rows.getString(4);
+                    String valueType = rows.getString(5);
+                    String unit = rows.getString(6);
+                    String status = rows.getString(7);
+                    KnowledgeClaimRecord claim = new KnowledgeClaimRecord(
+                            claimId, projectId, documentVersionId, sourceType, authority,
+                            KnowledgeFactKeyGenerator.generate(projectId, version, module, subject, predicateLiteral),
+                            subject, predicateLiteral, objectValue,
+                            valueType, unit, fallbackStatus(status), null, null, null,
+                            "RULE", null, null, null);
+                    insertClaim(connection, claim);
+                    String evidenceId = evidenceIdByClaimId == null ? null : evidenceIdByClaimId.get(claimId);
+                    linkEvidence(connection, claimId, evidenceId, "SUPPORTS");
+                    updateBusinessCatalogRef(connection, table, keyColumn, claimId, documentVersionId, evidenceId);
+                }
+            }
+        }
+    }
+
+    private void insertClaim(Connection connection, KnowledgeClaimRecord claim) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                insert into knowledge_claim(
+                  claim_id,project_id,document_version_id,source_type,authority,fact_key,
+                  subject,predicate,object_value,value_type,unit,status,confidence,
+                  effective_from,effective_to,extraction_method,extraction_run_id,created_at,updated_at)
+                values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                on conflict(claim_id) do update set
+                  document_version_id=excluded.document_version_id,
+                  source_type=excluded.source_type, authority=excluded.authority, fact_key=excluded.fact_key,
+                  subject=excluded.subject, predicate=excluded.predicate, object_value=excluded.object_value,
+                  value_type=excluded.value_type, unit=excluded.unit, status=excluded.status,
+                  confidence=excluded.confidence, effective_from=excluded.effective_from,
+                  effective_to=excluded.effective_to, extraction_method=excluded.extraction_method,
+                  extraction_run_id=excluded.extraction_run_id, updated_at=excluded.updated_at
+                """)) {
+            statement.setString(1, claim.claimId());
+            statement.setString(2, claim.projectId());
+            statement.setString(3, claim.documentVersionId());
+            statement.setString(4, claim.sourceType().name());
+            statement.setString(5, claim.authority().name());
+            statement.setString(6, claim.factKey());
+            statement.setString(7, claim.subject());
+            statement.setString(8, claim.predicate());
+            statement.setString(9, claim.objectValue());
+            statement.setString(10, claim.valueType());
+            statement.setString(11, claim.unit());
+            statement.setString(12, claim.status());
+            statement.setObject(13, claim.confidence(), java.sql.Types.DOUBLE);
+            statement.setString(14, claim.effectiveFrom());
+            statement.setString(15, claim.effectiveTo());
+            statement.setString(16, claim.extractionMethod());
+            statement.setString(17, claim.extractionRunId());
+            statement.setString(18, claim.createdAt());
+            statement.setString(19, claim.updatedAt());
+            statement.executeUpdate();
+        }
+    }
+
+    private void linkEvidence(Connection connection, String claimId, String evidenceId, String role) throws SQLException {
+        if (evidenceId == null || evidenceId.isBlank()) {
+            return;
+        }
+        try (PreparedStatement statement = connection.prepareStatement("""
+                insert or ignore into knowledge_claim_evidence(claim_id,evidence_id,role,created_at)
+                values(?,?,?,?)
+                """)) {
+            statement.setString(1, claimId);
+            statement.setString(2, evidenceId);
+            statement.setString(3, role == null || role.isBlank() ? "SUPPORTS" : role);
+            statement.setString(4, Instant.now().toString());
+            statement.executeUpdate();
+        }
+    }
+
+    private void updateBusinessCatalogRef(Connection connection, String table, String keyColumn,
+                                          String claimId, String documentVersionId, String evidenceId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "update " + table + " set document_version_id=?, evidence_id=? where " + keyColumn + "=?")) {
+            statement.setString(1, documentVersionId);
+            statement.setString(2, evidenceId);
+            statement.setString(3, claimId);
+            statement.executeUpdate();
+        }
+    }
+
+    private KnowledgeClaimRecord claim(ResultSet rows) throws SQLException {
+        Double confidence = rows.getObject("confidence") == null ? null : rows.getDouble("confidence");
+        return new KnowledgeClaimRecord(
+                rows.getString("claim_id"), rows.getString("project_id"),
+                rows.getString("document_version_id"),
+                SourceType.valueOf(rows.getString("source_type")),
+                Authority.valueOf(rows.getString("authority")),
+                rows.getString("fact_key"), rows.getString("subject"),
+                rows.getString("predicate"), rows.getString("object_value"),
+                rows.getString("value_type"), rows.getString("unit"),
+                rows.getString("status"), confidence,
+                rows.getString("effective_from"), rows.getString("effective_to"),
+                rows.getString("extraction_method"), rows.getString("extraction_run_id"),
+                rows.getString("created_at"), rows.getString("updated_at"));
+    }
+
+    private String fallbackStatus(String status) {
+        return status == null || status.isBlank() ? "SUPPORTED" : status;
     }
 
     private KnowledgeDocumentVersion documentVersion(ResultSet rows) throws SQLException {
