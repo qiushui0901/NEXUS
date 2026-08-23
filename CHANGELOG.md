@@ -1,3 +1,27 @@
+## 0.9.4 — 2026-08-23
+
+### Added
+
+- 产品版本升级为 `0.9.4`，同步 Maven、README、MCP server 与前端外壳版本展示。
+- 新增改进方案文档 `docs/code-centric-cross-source-knowledge-graph-improvement-plan.md`，并把其 Phase 1-4（业务概念与版本上下文、代码—参数对齐、代码—测试图谱、需求—代码漂移）落地为独立的**跨源对齐子系统** `knowledge/multisource/alignment`：
+  - **Phase 1 业务概念与版本上下文**
+    - 新增 `version_context`（project + businessVersion + repositoryId + commitSha + environment，幂等 upsert），`VersionContextService` 从代码符号图解析当前 commit，不存在的代码快照不伪造 commit。
+    - 新增 `business_concept` / `business_concept_alias` / `business_concept_member` 三表：业务概念 canonicalKey 稳定生成（`param:<module>.<name>`、`req:<name>`、`test:<module>`、`obs:<module>`、`doubt:<module>`），声明作为概念成员并标注 `truthRole`（IMPLEMENTATION/CONFIGURATION/OBSERVATION/INTENT/QUESTION/DERIVED）；代码符号经规范化名称/别名匹配挂到对应概念（truthRole=IMPLEMENTATION，一个代码符号可同时实现参数与需求概念）。
+    - `BusinessConceptService`：从统一 Claim + 代码符号重建概念/别名/成员，幂等；可按项目查询概念。
+  - **Phase 2 代码—参数表关系**
+    - `CodeParameterAlignmentService`：确定性把参数 Claim 与代码符号按规范化名称匹配，生成 `READS_CONFIG`（`NORMALIZED_NAME_EXACT/CONTAINS`，`RULE_CONFIRMED`）；提供 `CodeValueProvider` SPI 读取代码侧值，与参数值结构化比较，不一致生成 `CONFIG_DRIFT`（默认不提供值 → 不宣称漂移）。
+  - **Phase 3 代码—测试图谱**
+    - `CodeTestAlignmentService`：业务测试用例经 testMethod/testCaseId/title 映射到代码测试符号生成 `VERIFIES`；测试结果按 testCaseId 生成 `CONFIRMS`；FAILED 观测生成 `TEST_DRIFT`（含未映射代码时的降级结论）。
+  - **Phase 4 需求—代码漂移检测**
+    - `RequirementCodeDriftService`：每个需求映射到业务概念——有代码成员且无配置冲突 → `ALIGNED`；无代码成员 → `UNMAPPED`（不宣称已实现）；有代码成员且需求值与配置值不一致 → `DOCUMENT_DRIFT`（创建文档更新候选，不自动覆盖任一侧）；输出 `DriftReport`（aligned/documentDrift/unmapped/reviewRequired 统计 + 明细清单）。
+  - **对齐存储**
+    - 新增 `CodeCentricAlignmentStore`（与多源知识库共用同一 SQLite 文件）：`alignment_relation`（带 matchMethod/status/confidence/evidence/版本上下文，NULL 安全的表达式唯一索引 + `insert or replace` 幂等）、`drift_item`（按概念+类型幂等）。
+  - **API**
+    - 新增 `CodeCentricAlignmentController`（`/api/knowledge/alignment/*`）：版本上下文 resolve/list、概念 build/query、代码—参数 build/query、代码—测试 build/query、漂移 build/report。
+  - **测试**
+    - 新增 `CodeCentricAlignmentStoreTest`、`BusinessConceptServiceTest`、`CodeParameterAlignmentServiceTest`、`CodeTestAlignmentServiceTest`、`RequirementCodeDriftServiceTest`、`CodeCentricAlignmentControllerTest`（16 个用例）。
+    - 全量测试：711 tests 通过。
+
 ## 0.9.3 — 2026-08-23
 
 ### Added

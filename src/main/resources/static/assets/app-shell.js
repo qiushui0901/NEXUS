@@ -1,5 +1,5 @@
 (function (global) {
-  const VERSION = "0.9.3";
+  const VERSION = "0.9.4";
   const pages = [
     ["home", "总览", "/"],
     ["knowledge", "知识库", "/knowledge"],
@@ -116,7 +116,7 @@
     const brand = document.createElement("a");
     brand.className = "nexus-brand";
     brand.href = href("/");
-    brand.innerHTML = '<span class="nexus-brand-mark">NX</span><span>NEXUS</span><small class="nexus-brand-version">0.9.3</small>';
+    brand.innerHTML = '<span class="nexus-brand-mark">NX</span><span>NEXUS</span><small class="nexus-brand-version">0.9.4</small>';
 
     const brandGroup = document.createElement("div");
     brandGroup.style.display = "flex";

@@ -14,7 +14,7 @@
 </p>
 
 <p>
-  <strong>0.9.3</strong> · Java 21 · Spring Boot 4.1 · Spring AI 2.0 · Qdrant · Tree-sitter · SQLite
+  <strong>0.9.4</strong> · Java 21 · Spring Boot 4.1 · Spring AI 2.0 · Qdrant · Tree-sitter · SQLite
 </p>
 
 </div>
@@ -351,7 +351,7 @@ flowchart TB
 
 ## 当前状态与路线
 
-当前版本：**0.9.3**，活跃开发中。
+当前版本：**0.9.4**，活跃开发中。
 
 已具备：
 

@@ -1,0 +1,145 @@
+package com.example.requirementrag.web;
+
+import com.example.requirementrag.config.ProjectRegistry;
+import com.example.requirementrag.knowledge.multisource.alignment.BusinessConceptService;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricAlignmentStore;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.BuildResult;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DriftReport;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.VersionContext;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeParameterAlignmentService;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeTestAlignmentService;
+import com.example.requirementrag.knowledge.multisource.alignment.RequirementCodeDriftService;
+import com.example.requirementrag.knowledge.multisource.alignment.VersionContextService;
+import com.example.requirementrag.model.Permission;
+import jakarta.servlet.http.HttpServletRequest;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+class CodeCentricAlignmentControllerTest {
+    private MockMvc mvc;
+    private ProjectRegistry projectRegistry;
+    private ProjectAccessGuard accessGuard;
+    private VersionContextService versionContextService;
+    private BusinessConceptService businessConceptService;
+    private CodeParameterAlignmentService codeParameterAlignmentService;
+    private CodeTestAlignmentService codeTestAlignmentService;
+    private RequirementCodeDriftService requirementCodeDriftService;
+    private CodeCentricAlignmentStore alignmentStore;
+
+    @BeforeEach
+    void setUp() {
+        projectRegistry = mock(ProjectRegistry.class);
+        accessGuard = mock(ProjectAccessGuard.class);
+        versionContextService = mock(VersionContextService.class);
+        businessConceptService = mock(BusinessConceptService.class);
+        codeParameterAlignmentService = mock(CodeParameterAlignmentService.class);
+        codeTestAlignmentService = mock(CodeTestAlignmentService.class);
+        requirementCodeDriftService = mock(RequirementCodeDriftService.class);
+        alignmentStore = mock(CodeCentricAlignmentStore.class);
+        CodeCentricAlignmentController controller = new CodeCentricAlignmentController(
+                projectRegistry, accessGuard, versionContextService, businessConceptService,
+                codeParameterAlignmentService, codeTestAlignmentService, requirementCodeDriftService,
+                alignmentStore);
+        mvc = MockMvcBuilders.standaloneSetup(controller)
+                .setControllerAdvice(new ApiExceptionHandler())
+                .build();
+    }
+
+    @Test
+    void resolvesVersionContext() throws Exception {
+        VersionContext context = new VersionContext("vc-1", "immortal", "5.1",
+                "immortal-game-service", "abc123", "staging", "ACTIVE", null, null);
+        when(versionContextService.resolve("immortal", "5.1", "staging")).thenReturn(context);
+
+        mvc.perform(post("/api/knowledge/alignment/version-context")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"projectId\":\"immortal\",\"version\":\"5.1\",\"environment\":\"staging\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.commitSha").value("abc123"));
+
+        verify(versionContextService).resolve("immortal", "5.1", "staging");
+        verify(accessGuard).requireProjectAccess(any(HttpServletRequest.class), eq("immortal"));
+    }
+
+    @Test
+    void buildsConcepts() throws Exception {
+        when(businessConceptService.build("immortal", "5.1"))
+                .thenReturn(new BuildResult(4, 6, 8, 0, 0));
+
+        mvc.perform(post("/api/knowledge/alignment/concepts/build")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"projectId\":\"immortal\",\"version\":\"5.1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.concepts").value(4))
+                .andExpect(jsonPath("$.aliases").value(6))
+                .andExpect(jsonPath("$.members").value(8));
+
+        verify(businessConceptService).build("immortal", "5.1");
+    }
+
+    @Test
+    void buildsCodeParameterAndCodeTest() throws Exception {
+        when(codeParameterAlignmentService.build("immortal", "5.1", null))
+                .thenReturn(new BuildResult(0, 0, 0, 3, 1));
+        when(codeTestAlignmentService.build("immortal", "5.1", null))
+                .thenReturn(new BuildResult(0, 0, 0, 2, 1));
+
+        mvc.perform(post("/api/knowledge/alignment/code-parameter/build")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"projectId\":\"immortal\",\"version\":\"5.1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.relations").value(3));
+
+        mvc.perform(post("/api/knowledge/alignment/code-test/build")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"projectId\":\"immortal\",\"version\":\"5.1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.relations").value(2));
+    }
+
+    @Test
+    void reportsDrift() throws Exception {
+        when(requirementCodeDriftService.report("immortal", "5.1", "staging"))
+                .thenReturn(new DriftReport("immortal", "5.1", "abc123",
+                        5, 2, 3, 1, List.of()));
+
+        mvc.perform(get("/api/knowledge/alignment/drift")
+                        .param("projectId", "immortal")
+                        .param("version", "5.1")
+                        .param("environment", "staging"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.aligned").value(5))
+                .andExpect(jsonPath("$.documentDrift").value(2))
+                .andExpect(jsonPath("$.unmapped").value(3));
+
+        verify(requirementCodeDriftService).report("immortal", "5.1", "staging");
+    }
+
+    @Test
+    void buildEndpointsRequireWritePermission() throws Exception {
+        assertThat(CodeCentricAlignmentController.class.getMethod("buildConcepts",
+                CodeCentricAlignmentController.ScopeRequest.class, HttpServletRequest.class)
+                .getAnnotation(RequiresPermission.class).value())
+                .isEqualTo(Permission.WRITE);
+        assertThat(CodeCentricAlignmentController.class.getMethod("buildDrift",
+                CodeCentricAlignmentController.ScopeRequest.class, HttpServletRequest.class)
+                .getAnnotation(RequiresPermission.class).value())
+                .isEqualTo(Permission.WRITE);
+    }
+}
