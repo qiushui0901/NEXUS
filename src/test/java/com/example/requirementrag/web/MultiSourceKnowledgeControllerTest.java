@@ -50,7 +50,8 @@ class MultiSourceKnowledgeControllerTest {
         MultiSourceSearchResponse response = new MultiSourceSearchResponse(
                 "权限撤销传播时间是多少", KnowledgeQueryIntent.PARAMETER,
                 MultiSourceKnowledgeModels.AnswerStatus.CONFIRMED,
-                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                3, 0, 20, true);
         when(searchService.search(eq("fengshen"), eq("5.1"), eq("权限撤销传播时间是多少"),
                 any(), anyInt(), anyInt())).thenReturn(response);
 
@@ -65,7 +66,11 @@ class MultiSourceKnowledgeControllerTest {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.intent").value("PARAMETER"))
-                .andExpect(jsonPath("$.answerStatus").value("CONFIRMED"));
+                .andExpect(jsonPath("$.answerStatus").value("CONFIRMED"))
+                .andExpect(jsonPath("$.total").value(3))
+                .andExpect(jsonPath("$.page").value(0))
+                .andExpect(jsonPath("$.limit").value(20))
+                .andExpect(jsonPath("$.hasMore").value(true));
 
         verify(searchService).search(eq("fengshen"), eq("5.1"), eq("权限撤销传播时间是多少"),
                 eq(null), eq(20), eq(0));

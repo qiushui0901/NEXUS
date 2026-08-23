@@ -26,6 +26,11 @@
 
 ### Fixed
 
+- 第十七轮开发（多源知识生产级 Review 整改）：
+  - P1 Alias 原子性：`QdrantHybridStore.publishAlias` 的 `swap_aliases` 失败回退与 `rollbackLiveAlias` 改为在单个 `/collections/aliases` 请求的 `actions` 数组中原子提交 delete+create，不再用两个独立请求；任一请求失败时旧 alias 保持可查询，新增“创建失败后旧 alias 仍可查询”集成测试。
+  - P1 流式 Token 计量：`TokenTrackingChatModel.stream` 只在订阅开始时计一次 `rag.tokens.requests`，并仅用最后一个携带 usage 的终止分片记录 token，避免按 SSE 分片重复累加请求数与累计式 usage；补充多分片/最终帧/取消/异常四类测试。
+  - P1 关系页边界：跨来源关系抽取、LLM 确认与持久化改为严格基于当前命中页 `claims`（两端均在页内）生成，不再用评分前全量候选，避免响应体膨胀、与查询无关的关系写库与无谓 LLM 调用。
+  - P2 分页元数据：`MultiSourceSearchResponse` 新增 `total / page / limit / hasMore`，服务端在分页边界、超范围页与 limit 截断上补齐契约测试，HTTP API 与控制器测试同步覆盖。
 - 第十五轮开发（旧 `TEST` 数据回填清洗）：`KnowledgeConflictModels.SourceType` 新增 `normalized()` 归一化方法；`KnowledgeConflictService` 在声明规范化阶段把旧 `TEST` 统一回填为 `TEST_CASE`（含自动生成的 claimId 前缀 `test_case:`），并在报告 warnings 记录“已将 N 条旧 TEST 来源声明规范化为 TEST_CASE”，保证新代码路径不再出现遗留 TEST 来源、冲突归类与去重都基于 TEST_CASE。
 - 修复需求语义图启用模式下多个构造器未明确 Spring 注入入口的问题；构建和查询开关同时开启时 Spring 上下文可正常加载。
 - 修复多仓库代码统计读取基础 collection 而非实际 live alias、导致已发布代码点显示为 0 的问题，并区分不可用与真实零值。

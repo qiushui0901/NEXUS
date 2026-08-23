@@ -29,9 +29,20 @@ public class ChatTokenUsageTracker {
      * @param usage 模型响应中的真实用量；null 或全空时只记录一次请求计数
      */
     public void record(String stage, Usage usage) {
+        recordRequest(stage);
+        recordUsage(stage, usage);
+    }
+
+    /** 只记录一次模型请求计数（流式调用在订阅开始时调用一次，不要按分片累加）。 */
+    public void recordRequest(String stage) {
         String safeStage = stage == null || stage.isBlank() ? "chat" : stage;
         Counter.builder("rag.tokens.requests").tag("stage", safeStage)
                 .register(meterRegistry).increment();
+    }
+
+    /** 只记录模型用量；不递增请求计数（供流式最终分片调用）。 */
+    public void recordUsage(String stage, Usage usage) {
+        String safeStage = stage == null || stage.isBlank() ? "chat" : stage;
         if (usage == null) {
             return;
         }

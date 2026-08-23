@@ -120,11 +120,14 @@ public class MultiSourceSearchService {
 
     public MultiSourceSearchResponse search(String projectId, String version, String query,
                                             KnowledgeQueryIntent intentOverride, int limit, int page) {
+        int effectiveLimit = Math.max(1, Math.min(limit <= 0 ? 20 : limit, 50));
+        int effectivePage = Math.max(0, page);
         if (!properties.enabledFor(projectId)) {
             return new MultiSourceSearchResponse(query,
                     intentOverride != null ? intentOverride : KnowledgeQueryIntent.GENERAL,
                     AnswerStatus.NO_RESULT, List.of(), List.of(), List.of(), List.of(), List.of(),
-                    List.of("MULTI_SOURCE_DISABLED"), List.of());
+                    List.of("MULTI_SOURCE_DISABLED"), List.of(),
+                    0, effectivePage, effectiveLimit, false);
         }
         KnowledgeQueryIntent intent = intentOverride != null ? intentOverride : classifier.classify(query);
         boolean llmUsed = false;
@@ -144,8 +147,6 @@ public class MultiSourceSearchService {
         Set<String> conflictGroups = conflictAnalyzer.conflictGroups(candidates);
 
         // 确定性评分召回：字段加权 + 冲突惩罚，稳定排序后一次性分页。
-        int effectiveLimit = Math.max(1, Math.min(limit <= 0 ? 20 : limit, 50));
-        int effectivePage = Math.max(0, page);
         List<ScoredClaim> scored = new ArrayList<>();
         for (UnifiedKnowledgeClaim claim : candidates) {
             double base = score(claim, normalizedQuery, tokens);
@@ -167,9 +168,10 @@ public class MultiSourceSearchService {
                 ? gate.filterDoubts(store.findDoubts(projectId, version), intent)
                 : List.of();
 
-        // 跨来源关系：生产链路生成并持久化；未解析项作为 warning，不伪造悬空 target。
-        CrossSourceExtraction extraction = relationExtractor.extract(candidates, doubts);
-        RelationConfirmationResult confirmation = confirmRelations(candidates, doubts, extraction.relations());
+        // 跨来源关系：严格以当前命中页 Claim 为边界生成并确认，避免与查询无关的全量关系
+        // 进入响应/持久化；未解析项作为 warning，不伪造悬空 target。
+        CrossSourceExtraction extraction = relationExtractor.extract(claims, doubts);
+        RelationConfirmationResult confirmation = confirmRelations(claims, doubts, extraction.relations());
         List<CrossSourceRelation> relations = confirmation.relations();
         if (!relations.isEmpty()) {
             store.saveRelations(projectId, version, relations);
@@ -190,8 +192,9 @@ public class MultiSourceSearchService {
         if (llmUsed) {
             warnings.add("intent classified via LLM: " + intent.name());
         }
+        boolean hasMore = (long) (effectivePage + 1) * effectiveLimit < scored.size();
         return new MultiSourceSearchResponse(query, intent, status, claims, evidence, conflicts, doubts,
-                explanations, warnings, relations);
+                explanations, warnings, relations, scored.size(), effectivePage, effectiveLimit, hasMore);
     }
 
     /** 关系确认结果：保留的关系 + 被 LLM 拒绝/不可用等 warning。 */

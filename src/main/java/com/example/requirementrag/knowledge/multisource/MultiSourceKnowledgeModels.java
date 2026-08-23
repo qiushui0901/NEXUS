@@ -246,7 +246,7 @@ public final class MultiSourceKnowledgeModels {
     ) {
     }
 
-    /** 多源检索响应：统一 Claim、Evidence、冲突、存疑与解释。 */
+    /** 多源检索响应：统一 Claim、Evidence、冲突、存疑与解释，附带分页元数据。 */
     public record MultiSourceSearchResponse(
             String query,
             KnowledgeQueryIntent intent,
@@ -257,7 +257,11 @@ public final class MultiSourceKnowledgeModels {
             List<DoubtClaim> doubts,
             List<String> explanations,
             List<String> warnings,
-            List<CrossSourceRelation> relations
+            List<CrossSourceRelation> relations,
+            int total,
+            int page,
+            int limit,
+            boolean hasMore
     ) {
         public MultiSourceSearchResponse {
             claims = claims == null ? List.of() : List.copyOf(claims);

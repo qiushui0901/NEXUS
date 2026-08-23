@@ -59,6 +59,42 @@ class MultiSourceSearchServiceTest {
         assertThat(page0.claims()).hasSize(1);
         assertThat(page0.claims().get(0).claimId()).isNotEqualTo(
                 page1.claims().isEmpty() ? "" : page1.claims().get(0).claimId());
+        assertThat(page0.total()).isEqualTo(1);
+        assertThat(page0.page()).isEqualTo(0);
+        assertThat(page0.limit()).isEqualTo(1);
+        assertThat(page0.hasMore()).isFalse();
+        assertThat(page1.total()).isEqualTo(1);
+        assertThat(page1.page()).isEqualTo(1);
+        assertThat(page1.limit()).isEqualTo(1);
+        assertThat(page1.hasMore()).isFalse();
+    }
+
+    @Test
+    void paginationMetadataExposesHasMoreAndOutOfRangePages() {
+        MultiSourceKnowledgeStore store = newStore();
+        ParameterTableLoader loader = new ParameterTableLoader();
+        var layout = loader.parseHeaders(List.of("模块", "参数", "值", "单位", "版本"));
+        store.replaceProjectVersion("fengshen", "5.1");
+        store.saveParameters("fengshen", "5.1", loader.parse(layout, List.of(
+                Map.of("0", "权限撤销", "1", "传播时间", "2", "5分钟", "3", "分钟", "4", "5.1"),
+                Map.of("0", "权限撤销", "1", "重试次数", "2", "3次", "3", "次", "4", "5.1")),
+                "fengshen", "5.1", "参数表.xlsx", "5.1参数"));
+        MultiSourceSearchService paged = new MultiSourceSearchService(store,
+                new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer());
+
+        MultiSourceSearchResponse first = paged.search("fengshen", "5.1", "权限撤销", null, 1, 0);
+        MultiSourceSearchResponse second = paged.search("fengshen", "5.1", "权限撤销", null, 1, 1);
+        MultiSourceSearchResponse outOfRange = paged.search("fengshen", "5.1", "权限撤销", null, 1, 99);
+
+        assertThat(first.total()).isEqualTo(2);
+        assertThat(first.page()).isEqualTo(0);
+        assertThat(first.limit()).isEqualTo(1);
+        assertThat(first.hasMore()).isTrue();
+        assertThat(second.hasMore()).isFalse();
+        assertThat(outOfRange.claims()).isEmpty();
+        assertThat(outOfRange.page()).isEqualTo(99);
+        assertThat(outOfRange.hasMore()).isFalse();
     }
 
     @Test
@@ -177,6 +213,42 @@ class MultiSourceSearchServiceTest {
         assertThat(response.relations()).isNotEmpty();
         assertThat(response.relations().get(0).type().name()).isEqualTo("VERIFIES");
         assertThat(response.warnings()).doesNotContain("LLM 语义确认拒绝 1 条规则关系");
+    }
+
+    @Test
+    void relationsAreBoundedToCurrentPageClaims() {
+        MultiSourceKnowledgeStore store = newStore();
+        store.replaceProjectVersion("fengshen", "5.1");
+        TestKnowledgeLoaders testLoaders = new TestKnowledgeLoaders(new ObjectMapper());
+        store.saveTestCases("fengshen", "5.1", List.of(
+                testLoaders.parseTestCase(
+                        "{\"testCaseId\":\"tc-1\",\"title\":\"取消订单A\",\"expectedResult\":\"可取消\","
+                                + "\"module\":\"订单\",\"coveredRequirementId\":\"订单-001\",\"framework\":\"JUnit\"}",
+                        "fengshen", "5.1", "OrderTest.java"),
+                testLoaders.parseTestCase(
+                        "{\"testCaseId\":\"tc-2\",\"title\":\"取消订单B\",\"expectedResult\":\"可取消\","
+                                + "\"module\":\"订单\",\"coveredRequirementId\":\"订单-001\",\"framework\":\"JUnit\"}",
+                        "fengshen", "5.1", "OrderTest.java")));
+        MultiSourceCandidateAdapter requirementAdapter = requirementAdapter();
+
+        MultiSourceSearchService service = new MultiSourceSearchService(
+                store, new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(), List.of(requirementAdapter),
+                new CrossSourceRelationExtractor());
+
+        // 单条命中页：需求不在页内，规则关系被页边界挡住。
+        MultiSourceSearchResponse pageOne = service.search(
+                "fengshen", "5.1", "取消订单", KnowledgeQueryIntent.VALIDATION, 1, 0);
+        assertThat(pageOne.claims()).hasSize(1);
+        assertThat(pageOne.claims().get(0).sourceType().name()).isEqualTo("TEST_CASE");
+        assertThat(pageOne.relations()).isEmpty();
+
+        // 全量页：测试用例与需求同页，关系正常生成。
+        MultiSourceSearchResponse fullPage = service.search(
+                "fengshen", "5.1", "取消订单", KnowledgeQueryIntent.VALIDATION, 20, 0);
+        assertThat(fullPage.relations()).hasSize(2);
+        assertThat(fullPage.relations()).allSatisfy(relation ->
+                org.assertj.core.api.Assertions.assertThat(relation.type().name()).isEqualTo("VERIFIES"));
     }
 
     private MultiSourceCandidateAdapter requirementAdapter() {

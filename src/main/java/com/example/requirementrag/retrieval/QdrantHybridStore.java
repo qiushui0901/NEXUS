@@ -573,10 +573,13 @@ public class QdrantHybridStore {
         if (targetCollection.equals(current)) {
             return;
         }
+        List<Map<String, Object>> actions = new ArrayList<>();
         if (current != null) {
-            postAliasActions(Map.of("delete_alias", Map.of("alias_name", alias)));
+            actions.add(Map.of("delete_alias", Map.of("alias_name", alias)));
         }
-        postAliasActions(Map.of("create_alias", Map.of("collection_name", targetCollection, "alias_name", alias)));
+        actions.add(Map.of("create_alias", Map.of("collection_name", targetCollection, "alias_name", alias)));
+        // 单请求内提交 delete+create：失败时旧 alias 不会被单独删除，回滚原子性可审计。
+        postAliasActions(actions);
     }
 
     /** 查询 global alias 列表，返回 alias 当前指向的物理 collection；不存在时返回 null。 */
@@ -628,9 +631,13 @@ public class QdrantHybridStore {
             try {
                 postAliasActions(action);
             } catch (HttpClientErrorException.BadRequest exception) {
-                LOGGER.warn("swap_aliases 不可用（{}），回退 delete+create 切换 alias {}", exception.getMessage(), alias);
-                postAliasActions(Map.of("delete_alias", Map.of("alias_name", alias)));
-                postAliasActions(Map.of("create_alias", Map.of("collection_name", physical, "alias_name", alias)));
+                // 本机 Qdrant 1.15.4 对 swap_aliases 解析失败（AliasOperations untagged enum 400）。
+                // 回退为单请求 delete+create：两个动作放在同一批 actions 中原子执行，
+                // 即使该请求失败，旧 alias 也未被单独删除，仍可在线查询。
+                LOGGER.warn("swap_aliases 不可用（{}），回退单请求 delete+create 切换 alias {}", exception.getMessage(), alias);
+                postAliasActions(List.of(
+                        Map.of("delete_alias", Map.of("alias_name", alias)),
+                        Map.of("create_alias", Map.of("collection_name", physical, "alias_name", alias))));
             }
         }
         if (current == null) {
@@ -638,11 +645,15 @@ public class QdrantHybridStore {
         }
     }
 
-    private void postAliasActions(Map<String, Object> action) {
+    private void postAliasActions(List<Map<String, Object>> actions) {
         client.post().uri("/collections/aliases")
                 .contentType(MediaType.APPLICATION_JSON)
-                .body(Map.of("actions", List.of(action)))
+                .body(Map.of("actions", actions))
                 .retrieve().toBodilessEntity();
+    }
+
+    private void postAliasActions(Map<String, Object> action) {
+        postAliasActions(List.of(action));
     }
 
     /** 首次发布迁移：删除与 alias 同名的旧物理 collection（旧数据，best-effort）。 */

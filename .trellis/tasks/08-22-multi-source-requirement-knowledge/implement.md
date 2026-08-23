@@ -30,4 +30,5 @@
 - [x] 生产加固第十四轮：按项目灰度开关（`app.rag.multi-source`）+ LLM 意图回退 + `POST /api/knowledge/multi-source/search` HTTP API
 - [x] 生产加固第十五轮：旧 `TEST` 数据回填清洗（`SourceType.normalized()` + `KnowledgeConflictService` 规范化回填 `TEST→TEST_CASE`，warnings 可见）
 - [x] 生产加固第十六轮：Qdrant payload 多源过滤 + live alias（`publishLiveAlias`/`rollbackLiveAlias`/sourceTypes 过滤重载）、真实 Token usage（`ChatTokenUsageTracker`+`TokenTrackingChatModel`）、跨源关系 LLM 语义确认（`LlmCrossSourceRelationConfirmer` 可开关，fail-open）
-- [ ] 生产加固（留待后续）：无（当前清单中全部已推进完成，后续可做前端接入/线上压测）
+- [x] 生产级 Review 整改（第十七轮）：Alias 切换/回滚改为单请求原子 delete+create（失败保留旧 alias）；流式 Token 只计一次请求并仅消费最终分片 usage；跨源关系严格按命中页边界生成/确认/持久化；`MultiSourceSearchResponse` 新增 `total/page/limit/hasMore` 分页元数据
+- [ ] 生产加固（留待后续）：无（当前清单与生产级 Review 项全部推进完成，后续可做前端工作台接入与线上压测）

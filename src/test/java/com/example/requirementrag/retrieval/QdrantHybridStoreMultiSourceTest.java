@@ -118,7 +118,7 @@ class QdrantHybridStoreMultiSourceTest {
     }
 
     @Test
-    void rollbackLiveAliasDeletesAndRecreatesAliasToPreviousCollection() throws Exception {
+    void rollbackLiveAliasDeletesAndRecreatesAliasInSingleAtomicRequest() throws Exception {
         RestClient.Builder builder = RestClient.builder();
         MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
         RestClient client = builder.build();
@@ -133,12 +133,113 @@ class QdrantHybridStoreMultiSourceTest {
                         """, MediaType.APPLICATION_JSON));
         server.expect(requestTo(containsString("/collections/aliases")))
                 .andExpect(method(HttpMethod.POST))
-                .andRespond(withSuccess());
-        server.expect(requestTo(containsString("/collections/aliases")))
-                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.actions.length()").value(2))
+                .andExpect(jsonPath("$.actions[0].delete_alias.alias_name").value("requirements_live"))
+                .andExpect(jsonPath("$.actions[1].create_alias.collection_name").value("requirements_live-1"))
                 .andRespond(withSuccess());
 
         store.rollbackLiveAlias("requirements_live", "requirements_live-1");
+
+        server.verify();
+    }
+
+    @Test
+    void publishFallbackSwitchsAliasWithSingleAtomicDeleteCreateRequest() throws Exception {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        RestClient client = builder.build();
+        RagProperties properties = retrievalProperties();
+        EmbeddingBatcher batcher = mock(EmbeddingBatcher.class);
+        when(batcher.embedAll(any())).thenReturn(List.of(new float[2], new float[2]));
+        QdrantHybridStore store = store(client, properties, batcher);
+
+        server.expect(requestTo(startsWith("/collections/requirements_live-")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND));
+        server.expect(requestTo(startsWith("/collections/requirements_live-")))
+                .andExpect(method(HttpMethod.PUT))
+                .andRespond(withSuccess());
+        server.expect(requestTo(containsString("/points?wait=true")))
+                .andExpect(method(HttpMethod.PUT))
+                .andRespond(withSuccess());
+        server.expect(requestTo(containsString("/points/count")))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"result\": {\"count\": 2}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/aliases")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("""
+                        {"result": {"aliases": [{"alias_name": "requirements_live", "collection_name": "old"}]}}
+                        """, MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/collections/aliases")))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.actions[0].swap_aliases").exists())
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST));
+        server.expect(requestTo(containsString("/collections/aliases")))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.actions.length()").value(2))
+                .andExpect(jsonPath("$.actions[0].delete_alias.alias_name").value("requirements_live"))
+                .andExpect(jsonPath("$.actions[1].create_alias.collection_name").exists())
+                .andRespond(withSuccess());
+        server.expect(requestTo(containsString("/collections")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("{\"result\": {\"collections\": []}}", MediaType.APPLICATION_JSON));
+
+        store.publishLiveAlias("requirements_live", List.of(
+                chunk("r1", "REQUIREMENT"),
+                chunk("r2", "REQUIREMENT")));
+
+        server.verify();
+    }
+
+    @Test
+    void aliasRemainsQueryableWhenAtomicFallbackRequestFails() throws Exception {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        RestClient client = builder.build();
+        RagProperties properties = retrievalProperties();
+        EmbeddingBatcher batcher = mock(EmbeddingBatcher.class);
+        when(batcher.embedAll(any())).thenReturn(List.of(new float[2], new float[2]));
+        QdrantHybridStore store = store(client, properties, batcher);
+
+        server.expect(requestTo(startsWith("/collections/requirements_live-")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withStatus(HttpStatus.NOT_FOUND));
+        server.expect(requestTo(startsWith("/collections/requirements_live-")))
+                .andExpect(method(HttpMethod.PUT))
+                .andRespond(withSuccess());
+        server.expect(requestTo(containsString("/points?wait=true")))
+                .andExpect(method(HttpMethod.PUT))
+                .andRespond(withSuccess());
+        server.expect(requestTo(containsString("/points/count")))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess("{\"result\": {\"count\": 2}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/aliases")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("""
+                        {"result": {"aliases": [{"alias_name": "requirements_live", "collection_name": "old"}]}}
+                        """, MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/collections/aliases")))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.actions[0].swap_aliases").exists())
+                .andRespond(withStatus(HttpStatus.BAD_REQUEST));
+        server.expect(requestTo(containsString("/collections/aliases")))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.actions[0].delete_alias").exists())
+                .andExpect(jsonPath("$.actions[1].create_alias").exists())
+                .andRespond(withStatus(HttpStatus.INTERNAL_SERVER_ERROR));
+        server.expect(requestTo(containsString("/aliases")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("""
+                        {"result": {"aliases": [{"alias_name": "requirements_live", "collection_name": "old"}]}}
+                        """, MediaType.APPLICATION_JSON));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() ->
+                store.publishLiveAlias("requirements_live", List.of(
+                        chunk("r1", "REQUIREMENT"),
+                        chunk("r2", "REQUIREMENT"))))
+                .isInstanceOf(RuntimeException.class);
+        org.assertj.core.api.Assertions.assertThat(store.aliasTarget("requirements_live"))
+                .isEqualTo("old");
 
         server.verify();
     }
