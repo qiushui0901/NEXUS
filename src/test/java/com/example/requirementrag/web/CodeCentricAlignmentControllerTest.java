@@ -4,10 +4,13 @@ import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.knowledge.multisource.alignment.BusinessConceptService;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricAlignmentStore;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.BuildResult;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DoubtImpact;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DoubtImpactBuildResult;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DriftReport;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.VersionContext;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeParameterAlignmentService;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeTestAlignmentService;
+import com.example.requirementrag.knowledge.multisource.alignment.DoubtImpactService;
 import com.example.requirementrag.knowledge.multisource.alignment.RequirementCodeDriftService;
 import com.example.requirementrag.knowledge.multisource.alignment.VersionContextService;
 import com.example.requirementrag.model.Permission;
@@ -40,6 +43,7 @@ class CodeCentricAlignmentControllerTest {
     private CodeParameterAlignmentService codeParameterAlignmentService;
     private CodeTestAlignmentService codeTestAlignmentService;
     private RequirementCodeDriftService requirementCodeDriftService;
+    private DoubtImpactService doubtImpactService;
     private CodeCentricAlignmentStore alignmentStore;
 
     @BeforeEach
@@ -51,11 +55,12 @@ class CodeCentricAlignmentControllerTest {
         codeParameterAlignmentService = mock(CodeParameterAlignmentService.class);
         codeTestAlignmentService = mock(CodeTestAlignmentService.class);
         requirementCodeDriftService = mock(RequirementCodeDriftService.class);
+        doubtImpactService = mock(DoubtImpactService.class);
         alignmentStore = mock(CodeCentricAlignmentStore.class);
         CodeCentricAlignmentController controller = new CodeCentricAlignmentController(
                 projectRegistry, accessGuard, versionContextService, businessConceptService,
                 codeParameterAlignmentService, codeTestAlignmentService, requirementCodeDriftService,
-                alignmentStore);
+                doubtImpactService, alignmentStore);
         mvc = MockMvcBuilders.standaloneSetup(controller)
                 .setControllerAdvice(new ApiExceptionHandler())
                 .build();
@@ -133,12 +138,60 @@ class CodeCentricAlignmentControllerTest {
     }
 
     @Test
+    void buildsDoubtImpact() throws Exception {
+        when(doubtImpactService.build("immortal", "5.1", "staging"))
+                .thenReturn(new DoubtImpactBuildResult(4, 1));
+
+        mvc.perform(post("/api/knowledge/alignment/doubt-impact/build")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"projectId\":\"immortal\",\"version\":\"5.1\",\"environment\":\"staging\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.totalImpacts").value(4))
+                .andExpect(jsonPath("$.affectedDoubts").value(1));
+
+        verify(doubtImpactService).build("immortal", "5.1", "staging");
+    }
+
+    @Test
+    void queriesAndResolvesDoubtImpact() throws Exception {
+        DoubtImpact impact = new DoubtImpact("imp-1", "immortal", "5.1", "vc-1", "d-1",
+                "火球冷却是否已确认", "con-1", "doubt:combat", "CODE", null, "s-1",
+                "resolveFireballCd", "P1", "tester", null, "OPEN", null, null, null, null);
+        when(doubtImpactService.impacts("immortal", "5.1", "staging", "OPEN"))
+                .thenReturn(List.of(impact));
+        when(doubtImpactService.resolve("immortal", "5.1", "staging", "d-1",
+                "已确认 12 秒", "ev-99"))
+                .thenReturn(List.of(impact));
+
+        mvc.perform(get("/api/knowledge/alignment/doubt-impact")
+                        .param("projectId", "immortal")
+                        .param("version", "5.1")
+                        .param("environment", "staging")
+                        .param("status", "OPEN"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].doubtId").value("d-1"));
+
+        mvc.perform(post("/api/knowledge/alignment/doubt-impact/resolve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"projectId\":\"immortal\",\"version\":\"5.1\",\"environment\":\"staging\","
+                                + "\"doubtId\":\"d-1\",\"conclusion\":\"已确认 12 秒\",\"resolutionEvidenceId\":\"ev-99\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].doubtId").value("d-1"));
+
+        verify(doubtImpactService).resolve("immortal", "5.1", "staging", "d-1", "已确认 12 秒", "ev-99");
+    }
+
+    @Test
     void buildEndpointsRequireWritePermission() throws Exception {
         assertThat(CodeCentricAlignmentController.class.getMethod("buildConcepts",
                 CodeCentricAlignmentController.ScopeRequest.class, HttpServletRequest.class)
                 .getAnnotation(RequiresPermission.class).value())
                 .isEqualTo(Permission.WRITE);
         assertThat(CodeCentricAlignmentController.class.getMethod("buildDrift",
+                CodeCentricAlignmentController.ScopeRequest.class, HttpServletRequest.class)
+                .getAnnotation(RequiresPermission.class).value())
+                .isEqualTo(Permission.WRITE);
+        assertThat(CodeCentricAlignmentController.class.getMethod("buildDoubtImpact",
                 CodeCentricAlignmentController.ScopeRequest.class, HttpServletRequest.class)
                 .getAnnotation(RequiresPermission.class).value())
                 .isEqualTo(Permission.WRITE);

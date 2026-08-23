@@ -1,9 +1,26 @@
 # 代码事实基线驱动的跨源知识图谱改进方案
 
 > **目标版本**：0.9.3 后续迭代
-> **状态**：开发方案
+> **状态**：实施状态清单（Phase 1-5 已落地，待真实数据评测）
 > **适用范围**：代码图谱、需求语义图、数值表、测试用例、测试结果、需求存疑及其跨源关联
 > **核心原则**：以指定代码仓库与 `commitSha` 为“当前实现事实”基线；需求文档保留为意图、背景和漂移检测对象，不能在冲突时静默覆盖代码。
+
+---
+
+## 0. 实施状态（截至 0.9.4）
+
+> 本文档最初是 Phase 1-5 开发方案；Phase 1-5 已实现并通过全量测试，当前主要缺口是**代码值/配置读取的确定性提取**与**真实数据评测**。
+
+| Phase / 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| Phase 1：BusinessConcept / VersionContext | [已实现] | `version_context`、`business_concept`、`business_concept_alias`、`business_concept_member`；context 含 repository+commit，成员按业务版本隔离，重建清理旧成员。 |
+| Phase 2：代码—参数关系 | [已实现] | `READS_CONFIG / USES_PARAMETER / CONFIG_DRIFT`，按 VersionContext 隔离；`CodeValueProvider` SPI 预留。 |
+| Phase 3：代码—测试图谱 | [已实现] | `VERIFIES / CONFIRMS / TEST_DRIFT`，测试结果按 testCaseId 关联。 |
+| Phase 4：需求—代码漂移检测 | [已实现] | `ALIGNED / DOCUMENT_DRIFT / UNMAPPED / MAPPED_NO_IMPLEMENTATION_ASSERTION`；`ALIGNED` 需确定性实现关系门槛。 |
+| Phase 5：存疑影响分析 | [已实现] | OPEN 存疑自动补全受影响代码/参数/测试（`doubt_impact`），关闭时绑定人工结论与 Resolution Evidence，并更新 Doubt 状态。 |
+| 代码值 / 配置读取的确定性验证 | [部分实现] | 数据模型与漂移语义已落地，但代码侧值抽取（常量/枚举/属性绑定）依赖 `CodeValueProvider`，默认空实现。 |
+| 对齐关系人工审核与生命周期 | [部分实现] | `doubt_impact` 有关闭闭环；`AlignmentRelation` 的人工确认/拒绝/失效工作流仍待完善。 |
+| 真实数据评测（Precision/Recall/污染率） | [待验证] | 需要一批人工已知答案的 golden 样本，测代码—参数、代码—测试、文档漂移与跨版本污染率。 |
 
 ---
 

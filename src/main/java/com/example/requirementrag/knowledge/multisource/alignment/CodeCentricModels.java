@@ -287,6 +287,49 @@ public final class CodeCentricModels {
         }
     }
 
+    /** 存疑影响项：OPEN 存疑自动补全受影响的代码/参数/测试，支持关闭证据闭环。 */
+    public record DoubtImpact(
+            String impactId,
+            String projectId,
+            String version,
+            String versionContextId,
+            String doubtId,
+            String question,
+            String conceptId,
+            String conceptKey,
+            String targetType,
+            String targetClaimId,
+            String targetExternalId,
+            String targetName,
+            String severity,
+            String owner,
+            String dueDate,
+            String status,
+            String resolutionEvidenceId,
+            String resolutionConclusion,
+            String createdAt,
+            String resolvedAt
+    ) {
+        public DoubtImpact {
+            if (impactId == null || impactId.isBlank()) throw new IllegalArgumentException("impactId 不能为空");
+            if (projectId == null || projectId.isBlank()) throw new IllegalArgumentException("projectId 不能为空");
+            if (version == null || version.isBlank()) throw new IllegalArgumentException("version 不能为空");
+            if (versionContextId == null || versionContextId.isBlank()) {
+                throw new IllegalArgumentException("versionContextId 不能为空");
+            }
+            if (doubtId == null || doubtId.isBlank()) throw new IllegalArgumentException("doubtId 不能为空");
+            if (conceptId == null || conceptId.isBlank()) throw new IllegalArgumentException("conceptId 不能为空");
+            if (targetType == null || targetType.isBlank()) throw new IllegalArgumentException("targetType 不能为空");
+            if (targetName == null || targetName.isBlank()) throw new IllegalArgumentException("targetName 不能为空");
+            status = status == null || status.isBlank() ? "OPEN" : status;
+            createdAt = createdAt == null ? java.time.Instant.now().toString() : createdAt;
+        }
+    }
+
+    /** 存疑影响构建结果。 */
+    public record DoubtImpactBuildResult(int totalImpacts, int affectedDoubts) {
+    }
+
     /** 代码符号加载结果：绑定代码项目与 commit 的全部符号。 */
     public record LoadedCode(String codeProjectId, String commitSha, List<CodeSymbolView> symbols) {
         public LoadedCode {

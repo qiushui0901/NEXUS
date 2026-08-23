@@ -4,6 +4,7 @@ import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricMod
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.BusinessConcept;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.ConceptAlias;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.ConceptMember;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DoubtImpact;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DriftItem;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.VersionContext;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -165,6 +166,30 @@ public class CodeCentricAlignmentStore {
                       unique(project_id, version, version_context_id, concept_id, drift_type)
                     )
                     """);
+            statement.executeUpdate("""
+                    create table if not exists doubt_impact(
+                      impact_id text primary key,
+                      project_id text not null,
+                      version text not null,
+                      version_context_id text not null,
+                      doubt_id text not null,
+                      question text,
+                      concept_id text not null,
+                      concept_key text,
+                      target_type text not null,
+                      target_claim_id text,
+                      target_external_id text,
+                      target_name text not null,
+                      severity text,
+                      owner text,
+                      due_date text,
+                      status text not null default 'OPEN',
+                      resolution_evidence_id text,
+                      resolution_conclusion text,
+                      created_at text not null,
+                      resolved_at text
+                    )
+                    """);
             statement.executeUpdate("create index if not exists idx_concept_scope on business_concept(project_id)");
             statement.executeUpdate("create index if not exists idx_concept_member_scope on business_concept_member(project_id,concept_id)");
             statement.executeUpdate("create index if not exists idx_concept_member_external on business_concept_member(project_id,source_type,external_id)");
@@ -176,6 +201,12 @@ public class CodeCentricAlignmentStore {
                       ifnull(target_external_id,''), target_type, relation_type)
                     """);
             statement.executeUpdate("create index if not exists idx_drift_scope on drift_item(project_id,version,drift_type)");
+            statement.executeUpdate("""
+                    create unique index if not exists ux_doubt_impact_scope on doubt_impact(
+                      project_id, version, version_context_id, doubt_id, target_type,
+                      ifnull(target_claim_id,''), ifnull(target_external_id,''))
+                    """);
+            statement.executeUpdate("create index if not exists idx_doubt_impact_scope on doubt_impact(project_id,version,status)");
             addColumnIfMissing(statement, "business_concept_member", "business_version", "text not null default ''");
             addColumnIfMissing(statement, "business_concept_member", "version_context_id", "text");
             addColumnIfMissing(statement, "alignment_relation", "version_context_id", "text not null default ''");
@@ -524,6 +555,95 @@ public class CodeCentricAlignmentStore {
                 projectId, version, versionContextId, driftType);
     }
 
+    // ===== DoubtImpact =====
+
+    public String saveDoubtImpact(DoubtImpact impact) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     insert or replace into doubt_impact(
+                       impact_id,project_id,version,version_context_id,doubt_id,question,concept_id,concept_key,
+                       target_type,target_claim_id,target_external_id,target_name,severity,owner,due_date,
+                       status,resolution_evidence_id,resolution_conclusion,created_at,resolved_at)
+                     values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     """)) {
+            statement.setString(1, impact.impactId());
+            statement.setString(2, impact.projectId());
+            statement.setString(3, impact.version());
+            statement.setString(4, impact.versionContextId());
+            statement.setString(5, impact.doubtId());
+            statement.setString(6, impact.question());
+            statement.setString(7, impact.conceptId());
+            statement.setString(8, impact.conceptKey());
+            statement.setString(9, impact.targetType());
+            statement.setString(10, impact.targetClaimId());
+            statement.setString(11, impact.targetExternalId());
+            statement.setString(12, impact.targetName());
+            statement.setString(13, impact.severity());
+            statement.setString(14, impact.owner());
+            statement.setString(15, impact.dueDate());
+            statement.setString(16, impact.status());
+            statement.setString(17, impact.resolutionEvidenceId());
+            statement.setString(18, impact.resolutionConclusion());
+            statement.setString(19, impact.createdAt());
+            statement.setString(20, impact.resolvedAt());
+            statement.executeUpdate();
+            return impact.impactId();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("保存存疑影响失败", exception);
+        }
+    }
+
+    public List<DoubtImpact> findDoubtImpacts(
+            String projectId, String version, String versionContextId, String status) {
+        if (status == null || status.isBlank()) {
+            return queryAll("""
+                    select * from doubt_impact
+                    where project_id=? and version=? and version_context_id=?
+                    order by doubt_id,target_type
+                    """, projectId, version, versionContextId);
+        }
+        return queryAll("""
+                select * from doubt_impact
+                where project_id=? and version=? and version_context_id=? and status=?
+                order by doubt_id,target_type
+                """, projectId, version, versionContextId, status);
+    }
+
+    public List<DoubtImpact> findDoubtImpactsByDoubt(
+            String projectId, String version, String versionContextId, String doubtId) {
+        return queryAll("""
+                select * from doubt_impact
+                where project_id=? and version=? and version_context_id=? and doubt_id=?
+                order by target_type
+                """, projectId, version, versionContextId, doubtId);
+    }
+
+    public void resolveDoubtImpacts(String projectId, String version, String versionContextId, String doubtId,
+                                    String conclusion, String evidenceId) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     update doubt_impact set
+                       status='RESOLVED', resolution_conclusion=?, resolution_evidence_id=?, resolved_at=?
+                     where project_id=? and version=? and version_context_id=? and doubt_id=? and status='OPEN'
+                     """)) {
+            statement.setString(1, conclusion);
+            statement.setString(2, evidenceId);
+            statement.setString(3, java.time.Instant.now().toString());
+            statement.setString(4, projectId);
+            statement.setString(5, version);
+            statement.setString(6, versionContextId);
+            statement.setString(7, doubtId);
+            statement.executeUpdate();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("关闭存疑影响失败", exception);
+        }
+    }
+
+    public void deleteDoubtImpactsByVersion(String projectId, String version, String versionContextId) {
+        execute("delete from doubt_impact where project_id=? and version=? and version_context_id=?",
+                projectId, version, versionContextId);
+    }
+
     // ===== helpers =====
 
     private Connection open() throws SQLException {
@@ -603,6 +723,9 @@ public class CodeCentricAlignmentStore {
         if ("drift_item".equals(table)) {
             return drift(rows);
         }
+        if ("doubt_impact".equals(table)) {
+            return doubtImpact(rows);
+        }
         throw new IllegalStateException("未知对齐表: " + table);
     }
 
@@ -663,5 +786,16 @@ public class CodeCentricAlignmentStore {
                 rows.getString("target_claim_id"), rows.getString("source_value"), rows.getString("target_value"),
                 rows.getString("detail"), rows.getString("status"),
                 rows.getString("created_at"), rows.getString("updated_at"));
+    }
+
+    private DoubtImpact doubtImpact(ResultSet rows) throws SQLException {
+        return new DoubtImpact(
+                rows.getString("impact_id"), rows.getString("project_id"), rows.getString("version"),
+                rows.getString("version_context_id"), rows.getString("doubt_id"), rows.getString("question"),
+                rows.getString("concept_id"), rows.getString("concept_key"), rows.getString("target_type"),
+                rows.getString("target_claim_id"), rows.getString("target_external_id"), rows.getString("target_name"),
+                rows.getString("severity"), rows.getString("owner"), rows.getString("due_date"),
+                rows.getString("status"), rows.getString("resolution_evidence_id"),
+                rows.getString("resolution_conclusion"), rows.getString("created_at"), rows.getString("resolved_at"));
     }
 }

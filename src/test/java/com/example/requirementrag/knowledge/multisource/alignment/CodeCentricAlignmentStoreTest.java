@@ -4,6 +4,7 @@ import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricMod
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.BusinessConcept;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.ConceptAlias;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.ConceptMember;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DoubtImpact;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DriftItem;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.VersionContext;
 import org.junit.jupiter.api.BeforeEach;
@@ -143,5 +144,26 @@ class CodeCentricAlignmentStoreTest {
         store.deleteDriftItemsByType("immortal", "5.1", "vc-1", "DOCUMENT_DRIFT");
         assertThat(store.findDriftItems("immortal", "5.1", "vc-1", null)).isEmpty();
         assertThat(store.findDriftItems("immortal", "5.1", "vc-2", "DOCUMENT_DRIFT")).hasSize(1);
+    }
+
+    @Test
+    void doubtImpactSaveAndResolveRoundTrips() {
+        DoubtImpact impact = new DoubtImpact("imp-1", "immortal", "5.1", "vc-1", "d-1",
+                "火球冷却是否已确认", "con-1", "doubt:combat", "CODE", null, "s-1",
+                "resolveFireballCd", "P1", "tester", "2026-12-31", "OPEN",
+                null, null, "2026-01-01T00:00:00Z", null);
+        store.saveDoubtImpact(impact);
+
+        assertThat(store.findDoubtImpacts("immortal", "5.1", "vc-1", "OPEN"))
+                .extracting(DoubtImpact::doubtId).containsExactly("d-1");
+        assertThat(store.findDoubtImpactsByDoubt("immortal", "5.1", "vc-1", "d-1")).hasSize(1);
+
+        store.resolveDoubtImpacts("immortal", "5.1", "vc-1", "d-1", "已确认 12 秒", "ev-99");
+        List<DoubtImpact> resolved = store.findDoubtImpactsByDoubt("immortal", "5.1", "vc-1", "d-1");
+        assertThat(resolved).singleElement().satisfies(item -> {
+            assertThat(item.status()).isEqualTo("RESOLVED");
+            assertThat(item.resolutionConclusion()).isEqualTo("已确认 12 秒");
+            assertThat(item.resolutionEvidenceId()).isEqualTo("ev-99");
+        });
     }
 }

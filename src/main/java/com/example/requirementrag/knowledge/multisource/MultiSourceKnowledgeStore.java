@@ -509,6 +509,22 @@ public class MultiSourceKnowledgeStore {
         }
     }
 
+    /** 人工关闭存疑：更新答案与状态（Resolution Evidence 由对齐层 doubt_impact 记录）。 */
+    public synchronized void updateDoubtResolution(String doubtId, String answer, String status) {
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(
+                "update multi_source_doubt set answer=?, status=? where doubt_id=?")) {
+            statement.setString(1, answer);
+            statement.setString(2, status);
+            statement.setString(3, doubtId);
+            int updated = statement.executeUpdate();
+            if (updated == 0) {
+                throw new IllegalArgumentException("未找到可关闭的存疑: " + doubtId);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("关闭存疑失败", exception);
+        }
+    }
+
     public synchronized void saveTestCases(String projectId, String version, List<TestCaseClaim> claims) {
         if (claims == null || claims.isEmpty()) return;
         try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement("""

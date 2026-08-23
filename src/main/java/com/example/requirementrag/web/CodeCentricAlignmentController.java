@@ -4,10 +4,13 @@ import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.knowledge.multisource.alignment.BusinessConceptService;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricAlignmentStore;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.BuildResult;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DoubtImpact;
+import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DoubtImpactBuildResult;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.DriftReport;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.VersionContext;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeParameterAlignmentService;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeTestAlignmentService;
+import com.example.requirementrag.knowledge.multisource.alignment.DoubtImpactService;
 import com.example.requirementrag.knowledge.multisource.alignment.RequirementCodeDriftService;
 import com.example.requirementrag.knowledge.multisource.alignment.VersionContextService;
 import com.example.requirementrag.model.Permission;
@@ -22,8 +25,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 代码事实基线驱动的跨源对齐 API（改进方案 Phase 1-4）：
- * 版本上下文、业务概念、代码—参数、代码—测试与需求—代码漂移报告。
+ * 代码事实基线驱动的跨源对齐 API（改进方案 Phase 1-5）：
+ * 版本上下文、业务概念、代码—参数、代码—测试、需求—代码漂移报告与存疑影响分析。
  */
 @RestController
 @RequestMapping("/api/knowledge/alignment")
@@ -36,6 +39,7 @@ public class CodeCentricAlignmentController {
     private final CodeParameterAlignmentService codeParameterAlignmentService;
     private final CodeTestAlignmentService codeTestAlignmentService;
     private final RequirementCodeDriftService requirementCodeDriftService;
+    private final DoubtImpactService doubtImpactService;
     private final CodeCentricAlignmentStore alignmentStore;
 
     public CodeCentricAlignmentController(ProjectRegistry projectRegistry,
@@ -45,6 +49,7 @@ public class CodeCentricAlignmentController {
                                           CodeParameterAlignmentService codeParameterAlignmentService,
                                           CodeTestAlignmentService codeTestAlignmentService,
                                           RequirementCodeDriftService requirementCodeDriftService,
+                                          DoubtImpactService doubtImpactService,
                                           CodeCentricAlignmentStore alignmentStore) {
         this.projectRegistry = projectRegistry;
         this.accessGuard = accessGuard;
@@ -53,6 +58,7 @@ public class CodeCentricAlignmentController {
         this.codeParameterAlignmentService = codeParameterAlignmentService;
         this.codeTestAlignmentService = codeTestAlignmentService;
         this.requirementCodeDriftService = requirementCodeDriftService;
+        this.doubtImpactService = doubtImpactService;
         this.alignmentStore = alignmentStore;
     }
 
@@ -153,6 +159,43 @@ public class CodeCentricAlignmentController {
         projectRegistry.require(projectId);
         accessGuard.requireProjectAccess(httpRequest, projectId);
         return requirementCodeDriftService.report(projectId, version, environment);
+    }
+
+    /** 构建 OPEN 存疑影响分析（Phase 5）。 */
+    @RequiresPermission(Permission.WRITE)
+    @PostMapping("/doubt-impact/build")
+    public DoubtImpactBuildResult buildDoubtImpact(@RequestBody ScopeRequest request, HttpServletRequest httpRequest) {
+        projectRegistry.require(request.projectId());
+        accessGuard.requireProjectAccess(httpRequest, request.projectId());
+        return doubtImpactService.build(request.projectId(), request.version(), request.environment());
+    }
+
+    /** 查询指定环境下的存疑影响。 */
+    @RequiresPermission(Permission.PUBLIC_READ)
+    @GetMapping("/doubt-impact")
+    public List<DoubtImpact> doubtImpacts(@RequestParam String projectId, @RequestParam String version,
+                                          @RequestParam(required = false) String environment,
+                                          @RequestParam(required = false) String status,
+                                          HttpServletRequest httpRequest) {
+        projectRegistry.require(projectId);
+        accessGuard.requireProjectAccess(httpRequest, projectId);
+        return doubtImpactService.impacts(projectId, version, environment, status);
+    }
+
+    /** 人工关闭存疑：绑定人工结论与 Resolution Evidence，并关闭对应影响项。 */
+    @RequiresPermission(Permission.WRITE)
+    @PostMapping("/doubt-impact/resolve")
+    public List<DoubtImpact> resolveDoubtImpact(@RequestBody ResolveDoubtRequest request,
+                                                HttpServletRequest httpRequest) {
+        projectRegistry.require(request.projectId());
+        accessGuard.requireProjectAccess(httpRequest, request.projectId());
+        return doubtImpactService.resolve(request.projectId(), request.version(), request.environment(),
+                request.doubtId(), request.conclusion(), request.resolutionEvidenceId());
+    }
+
+    /** 存疑关闭请求。 */
+    public record ResolveDoubtRequest(String projectId, String version, String environment,
+                                      String doubtId, String conclusion, String resolutionEvidenceId) {
     }
 
     /** 对齐作用域请求。 */

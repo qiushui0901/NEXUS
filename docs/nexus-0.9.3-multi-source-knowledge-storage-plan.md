@@ -1,9 +1,27 @@
 # Nexus 0.9.3 多源需求知识数据库落库方案
 
-> **版本**：0.9.3  
-> **状态**：实施方案  
-> **基线提交**：`d269a35`（多源知识生产级 Review 整改）  
+> **版本**：0.9.3
+> **状态**：数据架构说明（已落地，待治理与压测）
+> **基线提交**：`d269a35`（多源知识生产级 Review 整改）
 > **适用范围**：需求文档、数值表、测试用例、测试结果、需求存疑、需求语义图与代码知识
+
+---
+
+## 0. 实施状态（截至 0.9.4）
+
+> 本文档最初是待实施路径；目前主体已落地，建议作为**数据架构说明**而非 Sprint 待办清单。
+
+| 能力 | 状态 | 说明 |
+| --- | --- | --- |
+| 统一资料目录 `knowledge_document` / `knowledge_document_version` / `knowledge_evidence` | [已实现] | `MultiSourceKnowledgeStore` 建表、写入与查询；Evidence ID 稳定生成。 |
+| 统一 Claim 主表 `knowledge_claim` + Claim–Evidence 多对多 | [已实现] | 四类来源分表可映射为统一 Claim，fact_key 稳定生成。 |
+| 统一关系 `knowledge_relation` + 抽取运行审计 `knowledge_extraction_run` | [已实现] | 离线关系生产 + 人工审核 + 抽取运行账本。 |
+| 发布目录 `knowledge_active_version` + Qdrant live alias | [已实现] | 发布/回滚/按业务版本隔离；大数据量行为待线上压测。 |
+| 数值表 / 测试用例 / 测试结果 / 存疑主数据映射 | [已实现] | 各加载器写入分表并 `syncClaims` 生成统一 Claim。 |
+| 旧快照数据全量回填、数据核验与历史版本治理 | [待办] | 兼容旧 `projectId+version` 快照路径仍并存。 |
+| 查询路径彻底只读统一主数据 | [待办] | 仍存在旧表投影兼容链路。 |
+| 所有导入器统一走 DocumentVersion → Evidence → Claim 单一入口 | [待办] | 当前各导入器已趋同，仍有历史兼容分支。 |
+| 线上压测、迁移回滚演练、指标门禁 | [待验证] | 需要真实项目数据与灰度数据证明。 |
 
 ---
 

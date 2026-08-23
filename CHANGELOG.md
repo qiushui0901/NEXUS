@@ -14,13 +14,18 @@
     - `CodeTestAlignmentService`：业务测试用例经 testMethod/testCaseId/title 映射到代码测试符号生成 `VERIFIES`；测试结果按 testCaseId 生成 `CONFIRMS`；FAILED 观测生成 `TEST_DRIFT`（含未映射代码时的降级结论）。
   - **Phase 4 需求—代码漂移检测**
     - `RequirementCodeDriftService`：每个需求映射到业务概念并绑定 VersionContext——无代码成员 → `UNMAPPED`；需求值与配置值不一致 → `DOCUMENT_DRIFT`（创建文档更新候选，不自动覆盖任一侧）；仅名称映射而无确定性实现关系 → `MAPPED_NO_IMPLEMENTATION_ASSERTION`（不宣称已实现）；只有存在 `READS_CONFIG / IMPLEMENTED_BY / ALIGNED_WITH` 确定性关系且无冲突才 → `ALIGNED`；输出 `DriftReport`（aligned/documentDrift/unmapped/mappedNoAssertion/reviewRequired 统计 + 明细清单）。
+  - **Phase 5 存疑影响分析与关闭闭环**
+    - 新增 `doubt_impact` 表与 `DoubtImpactService`：OPEN 存疑按 BusinessConcept 自动补全受影响的代码符号、参数、测试（`CODE / PARAMETER_TABLE / TEST_CASE`），影响项绑定 VersionContext。
+    - 新增 `POST /api/knowledge/alignment/doubt-impact/build`、`GET /doubt-impact`、`POST /doubt-impact/resolve`；关闭存疑时更新 `multi_source_doubt` 状态、绑定人工结论与 Resolution Evidence，并关闭对应影响项。
   - **对齐存储**
-    - 新增 `CodeCentricAlignmentStore`（与多源知识库共用同一 SQLite 文件）：`alignment_relation`（带 matchMethod/status/confidence/evidence、按 `version_context_id` 作用域隔离，NULL 安全的表达式唯一索引 + `insert or replace` 幂等）、`drift_item`（按 `version_context_id` + 概念 + 类型幂等）、`business_concept_member`（按 `business_version` 作用域隔离）。
+    - 新增 `CodeCentricAlignmentStore`（与多源知识库共用同一 SQLite 文件）：`alignment_relation`（带 matchMethod/status/confidence/evidence、按 `version_context_id` 作用域隔离，NULL 安全的表达式唯一索引 + `insert or replace` 幂等）、`drift_item`（按 `version_context_id` + 概念 + 类型幂等）、`business_concept_member`（按 `business_version` 作用域隔离）、`doubt_impact`（按 `version_context_id` 作用域隔离，含关闭结论与 Resolution Evidence）。
   - **API**
-    - 新增 `CodeCentricAlignmentController`（`/api/knowledge/alignment/*`）：版本上下文 resolve/list、概念 build/query、代码—参数 build/query、代码—测试 build/query、漂移 build/report；查询类接口按 environment 解析对应 VersionContext，只返回该上下文记录。
+    - 新增 `CodeCentricAlignmentController`（`/api/knowledge/alignment/*`）：版本上下文 resolve/list、概念 build/query、代码—参数 build/query、代码—测试 build/query、漂移 build/report、存疑影响 build/list/resolve；查询类接口按 environment 解析对应 VersionContext，只返回该上下文记录。
+  - **文档状态**
+    - `docs/nexus-0.9.3-multi-source-knowledge-storage-plan.md` 与 `docs/code-centric-cross-source-knowledge-graph-improvement-plan.md` 增加“实施状态（截至 0.9.4）”清单，按 [已实现]/[部分实现]/[待实施]/[待验证] 标注入当前真实状态。
   - **测试**
-    - 新增 `CodeCentricAlignmentStoreTest`、`BusinessConceptServiceTest`、`CodeParameterAlignmentServiceTest`、`CodeTestAlignmentServiceTest`、`RequirementCodeDriftServiceTest`、`CodeCentricAlignmentControllerTest`（18 个用例）。
-    - 全量测试：712 tests 通过。
+    - 新增 `CodeCentricAlignmentStoreTest`、`BusinessConceptServiceTest`、`CodeParameterAlignmentServiceTest`、`CodeTestAlignmentServiceTest`、`RequirementCodeDriftServiceTest`、`DoubtImpactServiceTest`、`CodeCentricAlignmentControllerTest`（22 个用例）。
+    - 全量测试：716 tests 通过。
 
 ### Fixed
 
