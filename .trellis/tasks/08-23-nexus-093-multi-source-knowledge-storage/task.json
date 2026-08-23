@@ -23,7 +23,8 @@
     "08-23-ms-093-phase-b-claim-master",
     "08-23-ms-093-phase-c-relation-audit",
     "08-23-ms-093-phase-d-publish-manifest",
-    "08-23-ms-093-immortal-loaders"
+    "08-23-ms-093-immortal-loaders",
+    "08-23-ms-093-cross-source-entity-graph"
   ],
   "parent": null,
   "relatedFiles": [],

@@ -37,6 +37,11 @@
   - 内容 hash 缓存：相同 (document, businessVersion, contentHash, parserVersion, extractionVersion) 直接跳过，重跑不再解析/写库（幂等增量）。
   - `MultiSourceKnowledgeStore.syncClaims` 支持按 claim 范围同步，避免多文件导入互相覆盖 catalog 关联；`insertClaim` 改为先按 claim_id 更新、不存在再 `INSERT OR IGNORE`，对完全重复事实静默去重。
   - 新增 `ImmortalImportIT`（`-Dimmortal.import=true` 显式开启）作为本地导入入口；已完成首次导入：参数 779,129、存疑 2,100、测试用例 26,168、需求 123、Evidence 807,520。
+- 跨源总实体关系图：
+  - 新增 `knowledge_entity` / `knowledge_entity_relation` 表与 `KnowledgeGraphModels`。
+  - 新增 `KnowledgeGraphBuildService`：聚合 PRD/DATA/QA/CASE 统一 Claim 为模块级实体，按规范化名称生成确定性关系（SUPPORTS / VERIFIES / RAISES_DOUBT / IMPLEMENTED_BY）；提供 `CodeEntitySource` 代码接入 SPI 与 `LlmGraphExtractor` LLM 语义边扩展点；构建前幂等清空重写。
+  - 新增 `GET /api/knowledge/graph` 与 `POST /api/knowledge/graph/build` API。
+  - 新增 `KnowledgeGraphBuildServiceTest` / `KnowledgeGraphControllerTest` / `KnowledgeGraphBuildIT`。
 
 ## 0.9.2 — 2026-08-20
 

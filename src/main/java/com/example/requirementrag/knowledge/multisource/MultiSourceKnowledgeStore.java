@@ -2,6 +2,8 @@ package com.example.requirementrag.knowledge.multisource;
 
 import com.example.requirementrag.conflict.KnowledgeConflictModels.Authority;
 import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
+import com.example.requirementrag.knowledge.multisource.KnowledgeGraphModels.KnowledgeEntity;
+import com.example.requirementrag.knowledge.multisource.KnowledgeGraphModels.KnowledgeEntityRelation;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.ExtractionRun;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeClaimEvidence;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeClaimRecord;
@@ -322,6 +324,40 @@ public class MultiSourceKnowledgeStore {
                       primary key(project_id, business_version)
                     )
                     """);
+            statement.executeUpdate("""
+                    create table if not exists knowledge_entity(
+                      entity_id text primary key,
+                      project_id text not null,
+                      version text not null,
+                      name text not null,
+                      normalized_name text not null,
+                      entity_type text not null,
+                      source_type text not null,
+                      summary text,
+                      evidence_id text,
+                      source_claim_ids text not null default '[]',
+                      created_at text not null,
+                      updated_at text not null
+                    )
+                    """);
+            statement.executeUpdate("""
+                    create table if not exists knowledge_entity_relation(
+                      relation_id text primary key,
+                      project_id text not null,
+                      version text not null,
+                      source_entity_id text not null,
+                      target_entity_id text not null,
+                      relation_type text not null,
+                      status text not null,
+                      confidence real,
+                      extraction_method text not null,
+                      evidence_ids text not null default '[]',
+                      created_at text not null,
+                      updated_at text not null
+                    )
+                    """);
+            statement.executeUpdate("create index if not exists idx_knowledge_entity_scope on knowledge_entity(project_id,version)");
+            statement.executeUpdate("create index if not exists idx_knowledge_entity_rel_scope on knowledge_entity_relation(project_id,version,relation_type)");
 
             // 现有业务表关联 catalog 的可空列
             addColumnIfMissing(statement, "multi_source_parameter", "document_version_id", "text");
@@ -1694,6 +1730,211 @@ public class MultiSourceKnowledgeStore {
             }
         } catch (SQLException exception) {
             throw new IllegalStateException("查询 active version 失败", exception);
+        }
+    }
+
+    // ===== 0.9.3 跨源总实体关系图 =====
+
+    public void saveEntity(KnowledgeEntity entity) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     insert into knowledge_entity(
+                       entity_id,project_id,version,name,normalized_name,entity_type,source_type,
+                       summary,evidence_id,source_claim_ids,created_at,updated_at)
+                     values(?,?,?,?,?,?,?,?,?,?,?,?)
+                     on conflict(entity_id) do update set
+                       name=excluded.name, normalized_name=excluded.normalized_name,
+                       entity_type=excluded.entity_type, source_type=excluded.source_type,
+                       summary=excluded.summary, evidence_id=excluded.evidence_id,
+                       source_claim_ids=excluded.source_claim_ids, updated_at=excluded.updated_at
+                     """)) {
+            statement.setString(1, entity.entityId());
+            statement.setString(2, entity.projectId());
+            statement.setString(3, entity.version());
+            statement.setString(4, entity.name());
+            statement.setString(5, entity.normalizedName());
+            statement.setString(6, entity.entityType());
+            statement.setString(7, entity.sourceType().name());
+            statement.setString(8, entity.summary());
+            statement.setString(9, entity.evidenceId());
+            statement.setString(10, json(entity.sourceClaimIds()));
+            statement.setString(11, entity.createdAt());
+            statement.setString(12, entity.updatedAt());
+            statement.executeUpdate();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("保存实体失败", exception);
+        }
+    }
+
+    public void saveEntityRelation(KnowledgeEntityRelation relation) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     insert into knowledge_entity_relation(
+                       relation_id,project_id,version,source_entity_id,target_entity_id,relation_type,
+                       status,confidence,extraction_method,evidence_ids,created_at,updated_at)
+                     values(?,?,?,?,?,?,?,?,?,?,?,?)
+                     on conflict(relation_id) do update set
+                       status=excluded.status, confidence=excluded.confidence,
+                       extraction_method=excluded.extraction_method, evidence_ids=excluded.evidence_ids,
+                       updated_at=excluded.updated_at
+                     """)) {
+            statement.setString(1, relation.relationId());
+            statement.setString(2, relation.projectId());
+            statement.setString(3, relation.version());
+            statement.setString(4, relation.sourceEntityId());
+            statement.setString(5, relation.targetEntityId());
+            statement.setString(6, relation.relationType());
+            statement.setString(7, relation.status());
+            statement.setObject(8, relation.confidence(), java.sql.Types.DOUBLE);
+            statement.setString(9, relation.extractionMethod());
+            statement.setString(10, json(relation.evidenceIds()));
+            statement.setString(11, relation.createdAt());
+            statement.setString(12, relation.updatedAt());
+            statement.executeUpdate();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("保存实体关系失败", exception);
+        }
+    }
+
+    public List<KnowledgeEntity> findEntities(String projectId, String version) {
+        List<KnowledgeEntity> result = new ArrayList<>();
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select entity_id,project_id,version,name,normalized_name,entity_type,source_type,
+                       summary,evidence_id,source_claim_ids,created_at,updated_at
+                     from knowledge_entity where project_id=? and version=? order by name
+                     """)) {
+            statement.setString(1, projectId);
+            statement.setString(2, version);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    result.add(entity(rows));
+                }
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询实体失败", exception);
+        }
+        return result;
+    }
+
+    public List<KnowledgeEntityRelation> findEntityRelations(String projectId, String version) {
+        List<KnowledgeEntityRelation> result = new ArrayList<>();
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select relation_id,project_id,version,source_entity_id,target_entity_id,relation_type,
+                       status,confidence,extraction_method,evidence_ids,created_at,updated_at
+                     from knowledge_entity_relation where project_id=? and version=? order by relation_type,source_entity_id
+                     """)) {
+            statement.setString(1, projectId);
+            statement.setString(2, version);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    result.add(entityRelation(rows));
+                }
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询实体关系失败", exception);
+        }
+        return result;
+    }
+
+    /** 清空项目/版本的总实体关系图（幂等重建用）。 */
+    public void deleteGraph(String projectId, String version) {
+        try (Connection connection = open();
+             PreparedStatement relations = connection.prepareStatement(
+                     "delete from knowledge_entity_relation where project_id=? and version=?");
+             PreparedStatement entities = connection.prepareStatement(
+                     "delete from knowledge_entity where project_id=? and version=?")) {
+            relations.setString(1, projectId);
+            relations.setString(2, version);
+            relations.executeUpdate();
+            entities.setString(1, projectId);
+            entities.setString(2, version);
+            entities.executeUpdate();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("清空实体关系图失败", exception);
+        }
+    }
+
+    /** 按项目/业务版本列出全部统一 Claim（用于图构建聚合）。 */
+    public List<KnowledgeClaimRecord> findClaimsByProjectVersion(String projectId, String version) {
+        List<KnowledgeClaimRecord> result = new ArrayList<>();
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select claim_id,project_id,document_version_id,source_type,authority,fact_key,
+                       subject,predicate,object_value,value_type,unit,status,confidence,
+                       effective_from,effective_to,extraction_method,extraction_run_id,created_at,updated_at
+                     from knowledge_claim where project_id=? order by source_type,subject
+                     """)) {
+            statement.setString(1, projectId);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    result.add(claim(rows));
+                }
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询统一 Claim 列表失败", exception);
+        }
+        return result;
+    }
+
+    private KnowledgeEntity entity(ResultSet rows) throws SQLException {
+        return new KnowledgeEntity(
+                rows.getString("entity_id"), rows.getString("project_id"), rows.getString("version"),
+                rows.getString("name"), rows.getString("normalized_name"), rows.getString("entity_type"),
+                SourceType.valueOf(rows.getString("source_type")), rows.getString("summary"),
+                rows.getString("evidence_id"), list(rows.getString("source_claim_ids")),
+                rows.getString("created_at"), rows.getString("updated_at"));
+    }
+
+    private KnowledgeEntityRelation entityRelation(ResultSet rows) throws SQLException {
+        Double confidence = rows.getObject("confidence") == null ? null : rows.getDouble("confidence");
+        return new KnowledgeEntityRelation(
+                rows.getString("relation_id"), rows.getString("project_id"), rows.getString("version"),
+                rows.getString("source_entity_id"), rows.getString("target_entity_id"),
+                rows.getString("relation_type"), rows.getString("status"), confidence,
+                rows.getString("extraction_method"), list(rows.getString("evidence_ids")),
+                rows.getString("created_at"), rows.getString("updated_at"));
+    }
+
+    /** 按资料版本 ID 查询。 */
+    public Optional<KnowledgeDocumentVersion> findDocumentVersionById(String documentVersionId) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select document_version_id,document_id,project_id,business_version,content_hash,
+                       parser_version,extraction_version,source_commit_sha,status,imported_at,published_at
+                     from knowledge_document_version where document_version_id=?
+                     """)) {
+            statement.setString(1, documentVersionId);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? Optional.of(documentVersion(rows)) : Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询资料版本失败", exception);
+        }
+    }
+
+    /** 按资料 ID 查询。 */
+    public Optional<KnowledgeCatalogModels.KnowledgeDocument> findDocumentById(String documentId) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select document_id,project_id,source_type,logical_name,original_name,storage_uri,authority,created_at
+                     from knowledge_document where document_id=?
+                     """)) {
+            statement.setString(1, documentId);
+            try (ResultSet rows = statement.executeQuery()) {
+                if (!rows.next()) {
+                    return Optional.empty();
+                }
+                return Optional.of(new KnowledgeCatalogModels.KnowledgeDocument(
+                        rows.getString("document_id"), rows.getString("project_id"),
+                        SourceType.valueOf(rows.getString("source_type")),
+                        rows.getString("logical_name"), rows.getString("original_name"),
+                        rows.getString("storage_uri"), Authority.valueOf(rows.getString("authority")),
+                        rows.getString("created_at")));
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询资料失败", exception);
         }
     }
 
