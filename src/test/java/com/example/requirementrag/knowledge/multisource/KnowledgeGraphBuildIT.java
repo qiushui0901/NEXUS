@@ -1,5 +1,6 @@
 package com.example.requirementrag.knowledge.multisource;
 
+import com.example.requirementrag.code.SQLiteSymbolGraphStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -7,7 +8,7 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 本地构建入口：对已导入的 immortal 数据生成跨源总实体关系图。
+ * 本地构建入口：对已导入的 immortal 数据生成跨源总实体关系图（含代码符号）。
  *
  * <p>只在显式开启系统属性时才运行：{@code -Dgraph.build=true}。
  */
@@ -19,7 +20,9 @@ class KnowledgeGraphBuildIT {
         ObjectMapper objectMapper = new ObjectMapper();
         MultiSourceKnowledgeStore store = new MultiSourceKnowledgeStore(
                 "data/multi-source-knowledge.db", objectMapper);
-        KnowledgeGraphBuildService service = new KnowledgeGraphBuildService(store);
+        KnowledgeGraphBuildService service = new KnowledgeGraphBuildService(store)
+                .withCodeEntitySource(new SymbolGraphCodeEntitySource(
+                        new SQLiteSymbolGraphStore("data/code-graph")));
 
         KnowledgeGraphBuildService.GraphBuildResult result = service.build("immortal", "5.1");
 

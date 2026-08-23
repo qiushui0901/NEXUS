@@ -42,6 +42,9 @@
   - 新增 `KnowledgeGraphBuildService`：聚合 PRD/DATA/QA/CASE 统一 Claim 为模块级实体，按规范化名称生成确定性关系（SUPPORTS / VERIFIES / RAISES_DOUBT / IMPLEMENTED_BY）；提供 `CodeEntitySource` 代码接入 SPI 与 `LlmGraphExtractor` LLM 语义边扩展点；构建前幂等清空重写。
   - 新增 `GET /api/knowledge/graph` 与 `POST /api/knowledge/graph/build` API。
   - 新增 `KnowledgeGraphBuildServiceTest` / `KnowledgeGraphControllerTest` / `KnowledgeGraphBuildIT`。
+  - 代码接入：`SQLiteSymbolGraphStore.allSymbols` 枚举符号，`SymbolGraphCodeEntitySource` 把 `immortal-game-service` 代码符号并入图（知识项目 immortal → 代码项目 immortal-game-service 映射），生成 `IMPLEMENTED_BY` 关系。
+  - LLM 语义边：新增 `LlmKnowledgeGraphExtractor`（默认用 `REQUIREMENT_GRAPH_EXTRACTION_MODEL`=deepseek-v4-flash，实体上限 500，失败降级空）；`app.rag.multi-source.graph-llm-enabled=true` 开启后合并语义边；`KnowledgeGraphBuildConfiguration` 完成 Spring 装配。
+  - 全量测试：693 tests 通过。
 
 ## 0.9.2 — 2026-08-20
 

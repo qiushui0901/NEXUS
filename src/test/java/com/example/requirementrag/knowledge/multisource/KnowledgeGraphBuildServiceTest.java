@@ -67,6 +67,24 @@ class KnowledgeGraphBuildServiceTest {
         assertThat(store.findEntityRelations("immortal", "5.1")).isNotEmpty();
     }
 
+    @Test
+    void mergesCodeEntitiesAndLlmSemanticEdges() {
+        KnowledgeGraphBuildService extended = new KnowledgeGraphBuildService(store)
+                .withCodeEntitySource((projectId, version) -> List.of(
+                        new KnowledgeGraphBuildService.CodeEntityInput("ImmortalHeroService", "CLASS", "file:1", "code:1")))
+                .withLlmGraphExtractor((projectId, version, entities) -> List.of(
+                        new KnowledgeGraphBuildService.SemanticEdge("英雄", "ImmortalHeroService", "IMPLEMENTED_BY", "代码实现")))
+                .withLlmEnabled(true);
+
+        extended.build("immortal", "5.1");
+
+        assertThat(store.findEntities("immortal", "5.1"))
+                .extracting(KnowledgeEntity::name)
+                .contains("ImmortalHeroService");
+        assertThat(store.findEntityRelations("immortal", "5.1"))
+                .anyMatch(relation -> relation.relationType().equals("IMPLEMENTED_BY"));
+    }
+
     private KnowledgeClaimRecord claim(String id, SourceType sourceType, Authority authority,
                                        String subject, String predicate, String object, String factKey) {
         return new KnowledgeClaimRecord(id, "immortal", "dv-1", sourceType, authority, factKey,

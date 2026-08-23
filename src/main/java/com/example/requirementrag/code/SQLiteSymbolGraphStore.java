@@ -97,6 +97,22 @@ public class SQLiteSymbolGraphStore {
         }
     }
 
+    /** 返回指定 commit 下的全部符号（用于实体图枚举）。 */
+    public List<CodeSymbol> allSymbols(String projectId, String commitSha, int limit) {
+        String sql = "select * from code_symbol where project_id=? and commit_sha=? order by qualified_name,start_line limit ?";
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, projectId);
+            statement.setString(2, commitSha);
+            statement.setInt(3, limit);
+            try (ResultSet result = statement.executeQuery()) {
+                return symbols(result);
+            }
+        }
+        catch (SQLException exception) {
+            throw new IllegalStateException("Unable to list graph symbols", exception);
+        }
+    }
+
     /** 返回指定 commit 下位于变更文件列表中的全部符号（commit 影响分析的起点）。 */
     public List<CodeSymbol> symbolsByFiles(String projectId, String commitSha, List<String> files, int limit) {
         if (files.isEmpty()) return List.of();

@@ -4,21 +4,22 @@ import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeClaimRecord;
 import com.example.requirementrag.knowledge.multisource.KnowledgeGraphModels.KnowledgeEntity;
 import com.example.requirementrag.knowledge.multisource.KnowledgeGraphModels.KnowledgeEntityRelation;
-import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
  * 跨源总实体关系图构建服务（规则 + 代码 + 可选 LLM）：
  * 聚合 PRD/DATA/QA/CASE 的统一 Claim 为模块级实体，并按规范化名称匹配生成确定性关系；
  * 代码来源通过 {@link CodeEntitySource} 并入；LLM 通过 {@link LlmGraphExtractor} 补充语义关系。
+ *
+ * <p>通过 {@code KnowledgeGraphBuildConfiguration} 注册为 Spring Bean（可选装配代码源与 LLM）。
  */
-@Service
 public class KnowledgeGraphBuildService {
 
     /** 代码实体来源：从代码知识库/符号图投影为实体输入。 */
@@ -225,10 +226,18 @@ public class KnowledgeGraphBuildService {
         return relations;
     }
 
+    /** 代码命名里常见的通用词，不做跨源关系匹配（避免包路径/参数类名噪声）。 */
+    private static final Set<String> CODE_STOPWORDS = Set.of(
+            "index", "param", "params", "request", "response", "req", "resp",
+            "config", "util", "utils", "helper", "constants", "enum", "exception",
+            "test", "tests", "info", "data", "model", "dto", "vo", "entity");
+
     private boolean namesRelated(String left, String right) {
         if (left.isBlank() || right.isBlank()) return false;
         if (left.equals(right)) return true;
-        return left.contains(right) || right.contains(left);
+        if (!(left.contains(right) || right.contains(left))) return false;
+        String shorter = left.length() <= right.length() ? left : right;
+        return !CODE_STOPWORDS.contains(shorter);
     }
 
     private KnowledgeEntity findByName(Map<String, KnowledgeEntity> entities, String name) {
