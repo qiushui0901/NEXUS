@@ -311,6 +311,17 @@ public class MultiSourceKnowledgeStore {
                     )
                     """);
             statement.executeUpdate("create index if not exists idx_knowledge_relation_scope on knowledge_relation(project_id,version)");
+            statement.executeUpdate("""
+                    create table if not exists knowledge_active_version(
+                      project_id text not null,
+                      business_version text not null,
+                      document_version_id text not null,
+                      status text not null,
+                      published_at text not null,
+                      updated_at text not null,
+                      primary key(project_id, business_version)
+                    )
+                    """);
 
             // 现有业务表关联 catalog 的可空列
             addColumnIfMissing(statement, "multi_source_parameter", "document_version_id", "text");
@@ -1578,6 +1589,72 @@ public class MultiSourceKnowledgeStore {
                 rows.getString("evidence_id"), rows.getString("extraction_method"),
                 rows.getString("confirmation_method"), rows.getString("confirmation_reason"),
                 rows.getString("created_at"), rows.getString("updated_at"));
+    }
+
+    // ===== 0.9.3 Phase D：发布目录（active document-version manifest）=====
+
+    /** 发布某业务版本的 active document-version：主库 manifest 更新为 PUBLISHED。 */
+    public void publishDocumentVersion(String projectId, String businessVersion, String documentVersionId) {
+        String now = Instant.now().toString();
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     insert into knowledge_active_version(project_id,business_version,document_version_id,status,published_at,updated_at)
+                     values(?,?,?,?,?,?)
+                     on conflict(project_id,business_version) do update set
+                       document_version_id=excluded.document_version_id,
+                       status=excluded.status, published_at=excluded.published_at, updated_at=excluded.updated_at
+                     """)) {
+            statement.setString(1, projectId);
+            statement.setString(2, businessVersion);
+            statement.setString(3, documentVersionId);
+            statement.setString(4, "PUBLISHED");
+            statement.setString(5, now);
+            statement.setString(6, now);
+            statement.executeUpdate();
+        } catch (SQLException exception) {
+            throw new IllegalStateException("发布文档版本失败", exception);
+        }
+    }
+
+    /** 回滚 active manifest 到目标版本。 */
+    public void rollbackActiveVersion(String projectId, String businessVersion, String documentVersionId) {
+        String now = Instant.now().toString();
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     update knowledge_active_version
+                     set document_version_id=?, status=?, updated_at=?
+                     where project_id=? and business_version=?
+                     """)) {
+            statement.setString(1, documentVersionId);
+            statement.setString(2, "ROLLED_BACK");
+            statement.setString(3, now);
+            statement.setString(4, projectId);
+            statement.setString(5, businessVersion);
+            int updated = statement.executeUpdate();
+            if (updated == 0) {
+                throw new IllegalArgumentException("未找到可回滚的 active version: "
+                        + projectId + "|" + businessVersion);
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("回滚文档版本失败", exception);
+        }
+    }
+
+    /** 查询某业务版本的 active document-version。 */
+    public Optional<String> activeDocumentVersion(String projectId, String businessVersion) {
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select document_version_id from knowledge_active_version
+                     where project_id=? and business_version=?
+                     """)) {
+            statement.setString(1, projectId);
+            statement.setString(2, businessVersion);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? Optional.of(rows.getString("document_version_id")) : Optional.empty();
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询 active version 失败", exception);
+        }
     }
 
     private KnowledgeDocumentVersion documentVersion(ResultSet rows) throws SQLException {

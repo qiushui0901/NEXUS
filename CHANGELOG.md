@@ -21,6 +21,11 @@
   - `MultiSourceSearchService` 查询改为**只读预生成关系**并按当前命中页裁剪一跳邻域（新表优先，旧 `multi_source_relation` 只读回退）。
   - 新增人工审核 API `POST /api/knowledge/review/relations/{relationId}`（确认/拒绝/标记过期，`KnowledgeReviewController` + `MultiSourceKnowledgeStore.reviewRelation`）。
   - 新增 `KnowledgeRelationBuildServiceTest`（规则产出/LLM 拒绝保留审计/LLM 确认升级状态）与 `KnowledgeReviewControllerTest`。
+- Phase D（发布目录与索引一致性）：
+  - 新增 `knowledge_active_version` 表与 `MultiSourceKnowledgeStore.publishDocumentVersion / rollbackActiveVersion / activeDocumentVersion`：project+businessVersion 的 active document-version manifest，支持发布/回滚/按业务版本隔离。
+  - `ChunkRecord` 扩展 `documentVersionId / authority / status / evidenceId / factKey`，`QdrantHybridStore` 写入/读取这些 payload 字段（旧构造器兼容）。
+  - `QdrantHybridStore.setPayload`：payload-only 批量更新（不重算向量），用于已有点字段回填，避免全量 re-embed。
+  - 新增 `MultiSourceKnowledgePublishTest` 与 `QdrantHybridStoreMultiSourceTest.setPayloadUpdatesPointsWithoutReembedding`。
 
 ## 0.9.2 — 2026-08-20
 

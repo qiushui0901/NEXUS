@@ -21,7 +21,8 @@
   "children": [
     "08-23-ms-093-phase-a-catalog-evidence",
     "08-23-ms-093-phase-b-claim-master",
-    "08-23-ms-093-phase-c-relation-audit"
+    "08-23-ms-093-phase-c-relation-audit",
+    "08-23-ms-093-phase-d-publish-manifest"
   ],
   "parent": null,
   "relatedFiles": [],

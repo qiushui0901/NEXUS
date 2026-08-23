@@ -11,6 +11,7 @@ import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import static org.hamcrest.Matchers.containsString;
@@ -63,7 +64,9 @@ class QdrantHybridStoreMultiSourceTest {
                           "documentId": "doc-a", "version": "1.0", "filename": "req.md",
                           "parentId": "p1", "parentText": "", "childText": "text",
                           "contentHash": "hash", "parentOrder": 0, "childOrder": 0,
-                          "sourceType": "REQUIREMENT"
+                          "sourceType": "REQUIREMENT",
+                          "documentVersionId": "dv-1", "authority": "PRIMARY",
+                          "status": "PUBLISHED", "evidenceId": "ev-1", "factKey": "fk-1"
                         }}]}}
                         """, MediaType.APPLICATION_JSON));
 
@@ -71,7 +74,40 @@ class QdrantHybridStoreMultiSourceTest {
                 "requirements-live", "查询", "doc-a", "1.0", Set.of("REQUIREMENT"));
 
         org.assertj.core.api.Assertions.assertThat(result).hasSize(1);
-        org.assertj.core.api.Assertions.assertThat(result.get(0).sourceType()).isEqualTo("REQUIREMENT");
+        ChunkRecord hit = result.get(0);
+        org.assertj.core.api.Assertions.assertThat(hit.sourceType()).isEqualTo("REQUIREMENT");
+        org.assertj.core.api.Assertions.assertThat(hit.documentVersionId()).isEqualTo("dv-1");
+        org.assertj.core.api.Assertions.assertThat(hit.authority()).isEqualTo("PRIMARY");
+        org.assertj.core.api.Assertions.assertThat(hit.status()).isEqualTo("PUBLISHED");
+        org.assertj.core.api.Assertions.assertThat(hit.evidenceId()).isEqualTo("ev-1");
+        org.assertj.core.api.Assertions.assertThat(hit.factKey()).isEqualTo("fk-1");
+        server.verify();
+    }
+
+    @Test
+    void setPayloadUpdatesPointsWithoutReembedding() throws Exception {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        RestClient client = builder.build();
+        RagProperties properties = retrievalProperties();
+        EmbeddingBatcher batcher = mock(EmbeddingBatcher.class);
+        QdrantHybridStore store = store(client, properties, batcher);
+
+        server.expect(requestTo(startsWith("/collections/requirements-live")))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess("{\"result\": {\"exists\": true}}", MediaType.APPLICATION_JSON));
+        server.expect(requestTo(containsString("/points/payload?wait=true")))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.points.length()").value(2))
+                .andExpect(jsonPath("$.points[0].payload.documentVersionId").value("dv-1"))
+                .andExpect(jsonPath("$.points[1].payload.factKey").value("fk-2"))
+                .andRespond(withSuccess());
+
+        java.util.LinkedHashMap<String, Map<String, Object>> payloadById = new java.util.LinkedHashMap<>();
+        payloadById.put("p1", Map.of("documentVersionId", "dv-1"));
+        payloadById.put("p2", Map.of("factKey", "fk-2"));
+        store.setPayload("requirements-live", payloadById);
+
         server.verify();
     }
 

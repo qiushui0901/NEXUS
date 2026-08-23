@@ -311,7 +311,12 @@ public class QdrantHybridStore {
                             Map.entry("requirementId", chunk.requirementId()),
                             Map.entry("module", chunk.module()),
                             Map.entry("acceptanceCriteria", chunk.acceptanceCriteria()),
-                            Map.entry("sourceType", chunk.sourceType() == null ? "REQUIREMENT" : chunk.sourceType()))));
+                            Map.entry("sourceType", chunk.sourceType() == null ? "REQUIREMENT" : chunk.sourceType()),
+                            Map.entry("documentVersionId", nullSafe(chunk.documentVersionId())),
+                            Map.entry("authority", nullSafe(chunk.authority())),
+                            Map.entry("status", nullSafe(chunk.status())),
+                            Map.entry("evidenceId", nullSafe(chunk.evidenceId())),
+                            Map.entry("factKey", nullSafe(chunk.factKey())))));
         }
         return points;
     }
@@ -517,6 +522,22 @@ public class QdrantHybridStore {
             offset = page.get("next_page_offset");
         } while (offset != null);
         return result;
+    }
+
+    /** payload-only 批量更新：只更新指定点 payload，不重算向量，用于发布目录/字段回填。 */
+    public void setPayload(String collection, Map<String, Map<String, Object>> payloadById) {
+        if (payloadById == null || payloadById.isEmpty()) {
+            return;
+        }
+        ensureCollection(collection);
+        List<Map<String, Object>> points = payloadById.entrySet().stream()
+                .map(entry -> Map.of("id", entry.getKey(),
+                        "payload", entry.getValue() == null ? Map.of() : entry.getValue()))
+                .toList();
+        client.post().uri("/collections/{collection}/points/payload?wait=true", collection)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(Map.of("points", points))
+                .retrieve().toBodilessEntity();
     }
 
     /**
@@ -789,13 +810,17 @@ public class QdrantHybridStore {
                 string(p, "requirementId"), string(p, "module"),
                 string(p, "acceptanceCriteria"),
                 p.containsKey("sourceType") && p.get("sourceType") != null
-                        ? String.valueOf(p.get("sourceType")) : "REQUIREMENT");
+                        ? String.valueOf(p.get("sourceType")) : "REQUIREMENT",
+                string(p, "documentVersionId"), string(p, "authority"), string(p, "status"),
+                string(p, "evidenceId"), string(p, "factKey"));
     }
 
     /** 获取配置的 collection 名称。 */
     private String collection() { return properties.qdrant().collection(); }
     /** 从 map 安全读取字符串字段。 */
     private String string(Map<String, Object> map, String key) { return String.valueOf(map.getOrDefault(key, "")); }
+    /** null 安全字符串：null 返回空串。 */
+    private String nullSafe(String value) { return value == null ? "" : value; }
     /** 从 map 安全读取整数字段。 */
     private int integer(Map<String, Object> map, String key) { return ((Number) map.getOrDefault(key, 0)).intValue(); }
     /** 安全转换为 Map，非 Map 时返回空 HashMap。 */
