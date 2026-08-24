@@ -48,6 +48,10 @@ class RequirementGraphGoldEvalIT {
 
         RequirementGraphGoldLoader loader = new RequirementGraphGoldLoader(objectMapper);
         List<GoldCase> cases = loader.load(dataset);
+        int limit = Integer.getInteger("gold.limit", 0);
+        if (limit > 0 && limit < cases.size()) {
+            cases = cases.subList(0, limit);
+        }
         RequirementGraphGoldPredictor predictor = llm
                 ? new LlmGoldPredictor(chatClient, graphProperties)
                 : new RuleGoldPredictor();
