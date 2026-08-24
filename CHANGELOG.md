@@ -43,9 +43,10 @@
     - 新增 `RequirementGraphGoldEvaluatorTest`。
     - 纳入金标数据集 `evaluation/requirement-graph-gold-v0.1` / `v0.2`（84 条，含 REAL_WINDOW_COMPOSITE/DOCUMENT_DRIFT_REVIEW/DOCUMENT_CONFLICT/负例/测试用例）作为可复现评测输入。
     - **首份 LLM 金标基线（v0.2，84 条，并行 8，deepseek-v4-flash）**：总体实体 F1=0.275、关系 F1=0.017、Claim F1≈0.064、负例错误率=0.400、存疑召回=0.308、代码事实召回=0.000；报告见 `docs/reports/requirement-graph-gold-eval-2026-08-24.md`。
+    - **评测器自检与预测契约修复**：新增 `OracleGoldPredictor`（自检，实体/关系/Claim F1=1.0、负例错误率=0、存疑/代码/漂移=1.0）与 `EmptyGoldPredictor`（空基线）并在报告中并列展示；`Prediction` 扩展 `PredictedCodeFact` / `DriftDecision` / `PublicationDecision` / `PredictionStatus` / `errorCode` / `latencyMs` / `retryCount`；`LlmGoldPredictor` 不再吞异常，返回 SUCCESS/EMPTY_RESULT/FAILURE + errorCode + latency；指标新增漂移准确率，`goldEvidenceTraceabilityRate` 改名 `goldEvidenceFieldCompletenessRate`；报告输出 predictionStatusCounts 与平均延迟。
   - **测试**
     - 新增/更新对齐与文档级用例（含窗口安全、结构抽取、文档级构建、关系审核、文档级控制器、金标评测器）。
-    - 全量测试：726 tests 通过。
+    - 全量测试：728 tests 通过。
 
 ### Fixed
 

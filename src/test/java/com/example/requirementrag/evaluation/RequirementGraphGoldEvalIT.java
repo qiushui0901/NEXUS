@@ -17,6 +17,7 @@ import java.nio.file.Path;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -56,9 +57,13 @@ class RequirementGraphGoldEvalIT {
         RequirementGraphGoldPredictor predictor = llm
                 ? new LlmGoldPredictor(chatClient, graphProperties)
                 : new RuleGoldPredictor();
-        GoldEvalReport report = new RequirementGraphGoldEvaluator().evaluateParallel(cases, predictor, parallelism);
+        RequirementGraphGoldEvaluator evaluator = new RequirementGraphGoldEvaluator();
+        GoldEvalReport report = evaluator.evaluateParallel(cases, predictor, parallelism);
+        // 评测器自检：Oracle 应接近 1.0；Empty 应全 0（用于对比 LLM 到底比空预测好多少）
+        GoldEvalReport oracleReport = evaluator.evaluate(cases, new OracleGoldPredictor());
+        GoldEvalReport emptyReport = evaluator.evaluate(cases, new EmptyGoldPredictor());
 
-        String markdown = render(report, llm);
+        String markdown = render(report, oracleReport, emptyReport, llm);
         Path reportPath = Path.of("target/requirement-graph-gold-eval-report.md").toAbsolutePath().normalize();
         Files.writeString(reportPath, markdown, StandardCharsets.UTF_8);
         Path docs = Path.of("docs/reports/requirement-graph-gold-eval-" + LocalDate.now() + ".md")
@@ -74,7 +79,8 @@ class RequirementGraphGoldEvalIT {
         assertThat(report.overall()).isNotNull();
     }
 
-    private String render(GoldEvalReport report, boolean llm) {
+    private String render(GoldEvalReport report, GoldEvalReport oracleReport, GoldEvalReport emptyReport,
+                          boolean llm) {
         StringBuilder out = new StringBuilder();
         out.append("# 需求语义图金标评测报告\n\n");
         out.append("- dataset: requirement-graph-gold (predictor=").append(llm ? "LLM" : "RULE").append(")\n");
@@ -82,46 +88,62 @@ class RequirementGraphGoldEvalIT {
         out.append("- extractionCases: ").append(report.extractionCases()).append("\n");
         out.append("- retrievalTestCases: ").append(report.retrievalCases())
                 .append("（不计入抽取 F1）\n");
-        out.append("- goldEvidenceTraceabilityRate: ")
-                .append(format(report.goldEvidenceTraceabilityRate())).append("\n\n");
+        out.append("- goldEvidenceFieldCompletenessRate: ")
+                .append(format(report.goldEvidenceFieldCompletenessRate())).append("\n");
+        out.append("- predictionStatusCounts: ")
+                .append(report.extras().getOrDefault("predictionStatusCounts", Map.of())).append("\n");
+        out.append("- averageLatencyMs: ")
+                .append(report.extras().getOrDefault("averageLatencyMs", 0)).append("\n\n");
 
         out.append("## 按场景\n\n");
-        out.append("| 场景 | 用例 | 实体P | 实体R | 实体F1 | 关系P | 关系R | 关系F1 | ClaimP | ClaimR | 负例错误率 | 存疑召回 | 代码事实召回 |\n");
-        out.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|\n");
+        out.append("| 场景 | 用例 | 实体F1 | 关系F1 | ClaimF1 | 负例错误率 | 存疑召回 | 代码事实召回 | 漂移准确率 |\n");
+        out.append("|---|---|---|---|---|---|---|---|---|\n");
         for (ScenarioMetrics metrics : report.scenarios()) {
             out.append('|').append(metrics.scenario())
                     .append('|').append(metrics.cases())
-                    .append('|').append(format(metrics.entityPrecision()))
-                    .append('|').append(format(metrics.entityRecall()))
                     .append('|').append(format(metrics.entityF1()))
-                    .append('|').append(format(metrics.relationPrecision()))
-                    .append('|').append(format(metrics.relationRecall()))
                     .append('|').append(format(metrics.relationF1()))
-                    .append('|').append(format(metrics.claimPrecision()))
-                    .append('|').append(format(metrics.claimRecall()))
+                    .append('|').append(format(metrics.claimF1()))
                     .append('|').append(format(metrics.negativeErrorRate()))
                     .append('|').append(format(metrics.uncertaintyRecall()))
                     .append('|').append(format(metrics.codeFactRecall()))
+                    .append('|').append(format(metrics.driftDecisionAccuracy()))
                     .append("|\n");
         }
         ScenarioMetrics overall = report.overall();
         out.append("| **OVERALL** |").append(report.extractionCases())
-                .append('|').append(format(overall.entityPrecision()))
-                .append('|').append(format(overall.entityRecall()))
                 .append('|').append(format(overall.entityF1()))
-                .append('|').append(format(overall.relationPrecision()))
-                .append('|').append(format(overall.relationRecall()))
                 .append('|').append(format(overall.relationF1()))
-                .append('|').append(format(overall.claimPrecision()))
-                .append('|').append(format(overall.claimRecall()))
+                .append('|').append(format(overall.claimF1()))
                 .append('|').append(format(overall.negativeErrorRate()))
                 .append('|').append(format(overall.uncertaintyRecall()))
                 .append('|').append(format(overall.codeFactRecall()))
+                .append('|').append(format(overall.driftDecisionAccuracy()))
                 .append("|\n\n");
 
-        out.append("> 统计口径：RETRIEVAL_TEST_CASE 不计入抽取 F1；REAL_WINDOW_COMPOSITE 需按 windowFamily 聚类后复核；"
+        out.append("## 评测器自检（Oracle / Empty）\n\n");
+        out.append("| 预测器 | 实体F1 | 关系F1 | ClaimF1 | 负例错误率 | 存疑召回 | 代码事实召回 | 漂移准确率 |\n");
+        out.append("|---|---|---|---|---|---|---|---|\n");
+        appendOverallRow(out, "Oracle", oracleReport);
+        appendOverallRow(out, "Empty", emptyReport);
+        out.append("\n> Oracle 应接近 1.0；若 Oracle 未达接近 1.0，说明评测器/匹配契约仍有问题，不能继续调模型。\n");
+
+        out.append("\n> 统计口径：RETRIEVAL_TEST_CASE 不计入抽取 F1；REAL_WINDOW_COMPOSITE 需按 windowFamily 聚类后复核；"
                 + "全部记录仍需人工复核为 GOLD_ACCEPTED 才能作为正式门禁。\n");
         return out.toString();
+    }
+
+    private void appendOverallRow(StringBuilder out, String label, GoldEvalReport report) {
+        ScenarioMetrics overall = report.overall();
+        out.append('|').append(label)
+                .append('|').append(format(overall.entityF1()))
+                .append('|').append(format(overall.relationF1()))
+                .append('|').append(format(overall.claimF1()))
+                .append('|').append(format(overall.negativeErrorRate()))
+                .append('|').append(format(overall.uncertaintyRecall()))
+                .append('|').append(format(overall.codeFactRecall()))
+                .append('|').append(format(overall.driftDecisionAccuracy()))
+                .append("|\n");
     }
 
     private String format(double value) {

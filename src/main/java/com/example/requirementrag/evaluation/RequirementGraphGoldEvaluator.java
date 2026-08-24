@@ -36,6 +36,8 @@ public class RequirementGraphGoldEvaluator {
     private static final String RETRIEVAL = "RETRIEVAL_TEST_CASE";
     private static final Set<String> NEGATIVE_SCENARIOS = Set.of(
             "DOUBT_NEGATIVE", "OPEN_DOUBT_NO_DRIFT", "DOCUMENT_CONFLICT");
+    private static final Set<String> DRIFT_SCENARIOS = Set.of(
+            "DOCUMENT_DRIFT_REVIEW", "DOCUMENT_CONFLICT", "OPEN_DOUBT_NO_DRIFT", "NO_DRIFT_CODE_BOUNDARY");
 
     private static final Prediction EMPTY_PREDICTION =
             new Prediction(Set.of(), List.of(), List.of(), List.of());
@@ -69,6 +71,18 @@ public class RequirementGraphGoldEvaluator {
     }
 
     private GoldEvalReport evaluateWith(List<GoldCase> cases, Function<GoldCase, Prediction> predictFn) {
+        Map<String, Prediction> predictions = new LinkedHashMap<>();
+        for (GoldCase goldCase : cases) {
+            predictions.put(goldCase.caseId(), predictFn.apply(goldCase));
+        }
+
+        Map<RequirementGraphGoldModels.PredictionStatus, Integer> statusCounts = new LinkedHashMap<>();
+        long totalLatencyMs = 0;
+        for (Prediction prediction : predictions.values()) {
+            statusCounts.merge(prediction.status(), 1, Integer::sum);
+            totalLatencyMs += prediction.latencyMs();
+        }
+
         Map<String, Accumulator> byScenario = new LinkedHashMap<>();
         int total = 0;
         int extraction = 0;
@@ -86,7 +100,7 @@ public class RequirementGraphGoldEvaluator {
             extraction++;
             Accumulator accumulator = byScenario.computeIfAbsent(goldCase.scenario(),
                     ignored -> new Accumulator(goldCase.scenario()));
-            accumulate(goldCase, predictFn.apply(goldCase), accumulator);
+            accumulate(goldCase, predictions.get(goldCase.caseId()), accumulator);
         }
 
         List<ScenarioMetrics> scenarios = new ArrayList<>();
@@ -96,13 +110,17 @@ public class RequirementGraphGoldEvaluator {
         Accumulator overall = new Accumulator("OVERALL");
         for (GoldCase goldCase : cases) {
             if (RETRIEVAL.equals(goldCase.scenario())) continue;
-            accumulate(goldCase, predictFn.apply(goldCase), overall);
+            accumulate(goldCase, predictions.get(goldCase.caseId()), overall);
         }
-        double traceability = totalEvidence == 0 ? 1.0 : (double) traceableEvidence / totalEvidence;
+        double completeness = totalEvidence == 0 ? 1.0 : (double) traceableEvidence / totalEvidence;
+        long averageLatencyMs = predictions.isEmpty() ? 0 : totalLatencyMs / predictions.size();
         return new GoldEvalReport(total, extraction, retrieval, List.copyOf(scenarios),
-                overall.metrics(), traceability, Map.of(
+                overall.metrics(), completeness, Map.of(
                         "negativeScenarios", NEGATIVE_SCENARIOS,
-                        "retrievalExcludedFromExtraction", true));
+                        "retrievalExcludedFromExtraction", true,
+                        "predictionStatusCounts", statusCounts,
+                        "totalLatencyMs", totalLatencyMs,
+                        "averageLatencyMs", averageLatencyMs));
     }
 
     private void accumulate(GoldCase goldCase, Prediction prediction, Accumulator accumulator) {
@@ -129,20 +147,13 @@ public class RequirementGraphGoldEvaluator {
         for (PredictedRelation predicted : predictedRelations) {
             if (matchesAnyRelation(predicted, goldRelations, idToName)) {
                 accumulator.relationTp++;
-                if ("IMPLEMENTED_BY".equalsIgnoreCase(normalize(predicted.predicate()))) {
-                    accumulator.codeTp++;
-                }
             } else {
                 accumulator.relationFp++;
             }
         }
         for (GoldRelation gold : goldRelations) {
-            String predicate = normalize(gold.predicate());
-            if (matchesAnyPredictedRelation(gold, predictedRelations, idToName)) {
-                if ("IMPLEMENTED_BY".equals(predicate)) accumulator.codeFnAddIfNotTp();
-            } else {
+            if (!matchesAnyPredictedRelation(gold, predictedRelations, idToName)) {
                 accumulator.relationFn++;
-                if ("IMPLEMENTED_BY".equals(predicate)) accumulator.codeFn++;
             }
         }
 
@@ -167,11 +178,70 @@ public class RequirementGraphGoldEvaluator {
 
         if (NEGATIVE_SCENARIOS.contains(goldCase.scenario())) {
             accumulator.negativeCases++;
-            if ((prediction.relations() != null && !prediction.relations().isEmpty())
-                    || (prediction.claims() != null && !prediction.claims().isEmpty())) {
+            boolean hasConfirmed = (prediction.relations() != null && !prediction.relations().isEmpty())
+                    || (prediction.claims() != null && !prediction.claims().isEmpty());
+            boolean published = prediction.publicationDecision() == RequirementGraphGoldModels.PublicationDecision.PUBLISH;
+            boolean error = switch (goldCase.scenario()) {
+                case "DOUBT_NEGATIVE" -> hasConfirmed;
+                case "OPEN_DOUBT_NO_DRIFT", "DOCUMENT_CONFLICT" -> published;
+                default -> false;
+            };
+            if (error) {
                 accumulator.negativeErrors++;
             }
         }
+
+        // 代码事实召回：直接比较 GoldCodeFact 与 PredictedCodeFact（含 repository/commit/factKey/value）
+        List<RequirementGraphGoldModels.GoldCodeFact> goldCodeFacts = goldCase.codeFacts() == null
+                ? List.of() : goldCase.codeFacts();
+        List<RequirementGraphGoldModels.PredictedCodeFact> predictedCodeFacts = prediction.codeFacts() == null
+                ? List.of() : prediction.codeFacts();
+        for (RequirementGraphGoldModels.GoldCodeFact goldFact : goldCodeFacts) {
+            boolean matched = predictedCodeFacts.stream()
+                    .anyMatch(predictedCodeFact -> matchesCodeFact(predictedCodeFact, goldFact));
+            if (matched) {
+                accumulator.codeTp++;
+            } else {
+                accumulator.codeFn++;
+            }
+        }
+
+        if (DRIFT_SCENARIOS.contains(goldCase.scenario())) {
+            accumulator.driftCases++;
+            if (isDriftCorrect(goldCase.scenario(), prediction)) {
+                accumulator.driftCorrect++;
+            }
+        }
+    }
+
+    private boolean isDriftCorrect(String scenario, Prediction prediction) {
+        String driftType = normalize(prediction.driftDecision() == null ? "" : prediction.driftDecision().type());
+        RequirementGraphGoldModels.PublicationDecision publication = prediction.publicationDecision();
+        return switch (scenario) {
+            case "DOCUMENT_DRIFT_REVIEW" -> publication == RequirementGraphGoldModels.PublicationDecision.REVIEW_REQUIRED
+                    || driftType.equals("DOCUMENT_DRIFT") || driftType.equals("REVIEW_REQUIRED");
+            case "DOCUMENT_CONFLICT" -> publication == RequirementGraphGoldModels.PublicationDecision.PRESERVE_CONFLICT
+                    || driftType.contains("CONFLICT");
+            case "OPEN_DOUBT_NO_DRIFT" -> driftType.equals("OPEN")
+                    || publication == RequirementGraphGoldModels.PublicationDecision.NOT_PUBLISHED;
+            case "NO_DRIFT_CODE_BOUNDARY" -> driftType.equals("NO_DRIFT")
+                    || (publication == RequirementGraphGoldModels.PublicationDecision.PUBLISH
+                        && !driftType.contains("DRIFT"));
+            default -> false;
+        };
+    }
+
+    private boolean matchesCodeFact(RequirementGraphGoldModels.PredictedCodeFact predicted,
+                                    RequirementGraphGoldModels.GoldCodeFact gold) {
+        boolean keyOk = predicted.factKey() != null && !predicted.factKey().isBlank()
+                && normalize(predicted.factKey()).equals(normalize(gold.factKey()));
+        boolean valueOk = predicted.value() != null && !predicted.value().isBlank()
+                && normalize(predicted.value()).equals(normalize(gold.value()));
+        boolean repoOk = gold.repositoryId() == null || gold.repositoryId().isBlank()
+                || normalize(predicted.repositoryId()).equals(normalize(gold.repositoryId()));
+        boolean commitOk = gold.commitSha() == null || gold.commitSha().isBlank()
+                || normalize(predicted.commitSha()).equals(normalize(gold.commitSha()));
+        return (keyOk || valueOk) && repoOk && commitOk;
     }
 
     private Map<String, String> entityIdToName(List<GoldEntity> entities) {
@@ -293,6 +363,8 @@ public class RequirementGraphGoldEvaluator {
         private int codeFn;
         private int negativeCases;
         private int negativeErrors;
+        private int driftCases;
+        private int driftCorrect;
         private int cases;
 
         Accumulator(String scenario) {
@@ -319,11 +391,12 @@ public class RequirementGraphGoldEvaluator {
             double uncertaintyRecall = ratio(uncertaintyTp, uncertaintyTp + uncertaintyFn);
             double codeFactRecall = ratio(codeTp, codeTp + codeFn);
             double negativeErrorRate = negativeCases == 0 ? Double.NaN : (double) negativeErrors / negativeCases;
+            double driftAccuracy = driftCases == 0 ? Double.NaN : (double) driftCorrect / driftCases;
             return new ScenarioMetrics(scenario, cases,
                     entityPrecision, entityRecall, f1(entityPrecision, entityRecall),
                     relationPrecision, relationRecall, f1(relationPrecision, relationRecall),
                     claimPrecision, claimRecall, f1(claimPrecision, claimRecall),
-                    negativeErrorRate, uncertaintyRecall, codeFactRecall);
+                    negativeErrorRate, uncertaintyRecall, codeFactRecall, driftAccuracy);
         }
 
         private double ratio(int numerator, int denominator) {

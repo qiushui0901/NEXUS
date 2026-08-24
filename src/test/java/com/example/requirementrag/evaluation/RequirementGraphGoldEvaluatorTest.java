@@ -66,4 +66,35 @@ class RequirementGraphGoldEvaluatorTest {
         GoldEvalReport wrongReport = evaluator.evaluate(List.of(doubt), wrong);
         assertThat(wrongReport.overall().negativeErrorRate()).isEqualTo(1.0);
     }
+
+    @Test
+    void oracleSelfCheckReachesPerfectMetrics() {
+        GoldCase gold = new GoldCase("c1", "SINGLE_UNIT", "成长基金奖励灵玉。",
+                List.of(new GoldEntity("growth-fund", "FEATURE", "成长基金", List.of()),
+                        new GoldEntity("lingyu", "RESOURCE", "灵玉", List.of())),
+                List.of(new GoldRelation("growth-fund", "REWARDS", "lingyu", List.of("ev-1"))),
+                List.of(new GoldClaim("growth_fund.reward_currency", "灵玉", "SUPPORTED", List.of("ev-1"))),
+                List.of(), List.of(), 0, 0);
+
+        GoldEvalReport report = evaluator.evaluate(List.of(gold), new OracleGoldPredictor());
+
+        assertThat(report.overall().entityF1()).isEqualTo(1.0);
+        assertThat(report.overall().relationF1()).isEqualTo(1.0);
+        assertThat(report.overall().claimF1()).isEqualTo(1.0);
+        assertThat(report.overall().uncertaintyRecall()).isEqualTo(0.0); // 本用例无 gold uncertainties
+    }
+
+    @Test
+    void emptyBaselineReturnsZeroMetrics() {
+        GoldCase gold = new GoldCase("c1", "SINGLE_UNIT", "成长基金奖励灵玉。",
+                List.of(new GoldEntity("growth-fund", "FEATURE", "成长基金", List.of())),
+                List.of(new GoldRelation("growth-fund", "REWARDS", "lingyu", List.of("ev-1"))),
+                List.of(), List.of(), List.of(), 0, 0);
+
+        GoldEvalReport report = evaluator.evaluate(List.of(gold), new EmptyGoldPredictor());
+
+        assertThat(report.overall().entityF1()).isEqualTo(0.0);
+        assertThat(report.overall().relationF1()).isEqualTo(0.0);
+        assertThat(report.overall().claimF1()).isEqualTo(0.0);
+    }
 }
