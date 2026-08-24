@@ -36,9 +36,15 @@
     - 新增 `RequirementGraphWindowPlannerSafetyTest`、`DocumentStructureExtractorTest`、`DocumentLevelBuildServiceTest`、`RequirementDocumentLevelControllerTest`。
   - **对齐关系人工审核生命周期（Phase 5）**
     - `CodeCentricAlignmentStore` 新增 `findAlignmentRelationById` / `reviewAlignmentRelation`（HUMAN_CONFIRMED / REJECTED / STALE），`CodeCentricAlignmentController` 新增 `POST /api/knowledge/alignment/alignment-relation/review`。
+  - **需求语义图金标评测器**
+    - 新增 `RequirementGraphGoldLoader` / `RequirementGraphGoldEvaluator` / `RequirementGraphGoldPredictor`（SPI）与 `RuleGoldPredictor`、`LlmGoldPredictor`（可插拔，LLM fail-open）。
+    - 支持按场景聚合：实体/关系/Claim Precision/Recall/F1、负例错误率、存疑召回、代码事实召回、金标证据可回查率；`RETRIEVAL_TEST_CASE` 不计入抽取 F1。
+    - 新增 `RequirementGraphGoldEvalIT`（`-Dgold.eval=true`，默认规则预测器，`-Dgold.llm=true` 启用 LLM），输出 `docs/reports/requirement-graph-gold-eval-YYYY-MM-DD.md`。
+    - 新增 `RequirementGraphGoldEvaluatorTest`。
+    - 纳入金标数据集 `evaluation/requirement-graph-gold-v0.1` / `v0.2`（84 条，含 REAL_WINDOW_COMPOSITE/DOCUMENT_DRIFT_REVIEW/DOCUMENT_CONFLICT/负例/测试用例）作为可复现评测输入。
   - **测试**
-    - 新增/更新对齐与文档级用例（含窗口安全、结构抽取、文档级构建、关系审核、文档级控制器）。
-    - 全量测试：724 tests 通过。
+    - 新增/更新对齐与文档级用例（含窗口安全、结构抽取、文档级构建、关系审核、文档级控制器、金标评测器）。
+    - 全量测试：726 tests 通过。
 
 ### Fixed
 

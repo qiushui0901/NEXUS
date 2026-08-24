@@ -1,0 +1,25 @@
+{
+  "datasetId": "requirement-graph-gold-v0.1",
+  "schemaVersion": "0.1",
+  "createdAt": "2026-08-24",
+  "status": "GOLD_REVIEW_REQUIRED",
+  "recordCount": 32,
+  "projectId": "immortal-game-service",
+  "requirementVersion": "5.1",
+  "sourceFiles": [
+    "data/requirement-snapshots/immortal-game-service/5.1.json",
+    "5.1存疑.xlsx",
+    "封神5.1存疑.xlsx",
+    "data/wiki-sources/immortal-game-service-v5.1.json"
+  ],
+  "purpose": "需求语义图实体、关系、证据、多源事实与开放存疑评测的第一版候选金标集。",
+  "important": "记录由结构化来源整理生成，尚未完成双人复核；只有 annotation.status=GOLD_ACCEPTED 才能进入最终评测。",
+  "counts": {
+    "total": 32,
+    "single_unit": 14,
+    "cross_window": 2,
+    "qa": 8,
+    "doubt_negative": 6,
+    "code": 2
+  }
+}

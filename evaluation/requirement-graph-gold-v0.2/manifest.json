@@ -1,0 +1,39 @@
+{
+  "datasetId": "requirement-graph-gold-v0.2",
+  "schemaVersion": "0.2",
+  "createdAt": "2026-08-24",
+  "status": "GOLD_REVIEW_REQUIRED",
+  "recordCount": 84,
+  "projectId": "immortal-game-service",
+  "requirementVersion": "5.1",
+  "sourceFiles": [
+    "data/requirement-snapshots/immortal-game-service/5.1.json",
+    "5.1存疑.xlsx",
+    "封神5.1存疑.xlsx",
+    "data/wiki-sources/immortal-game-service-v5.1.json",
+    "src/test/resources/evaluation/retrieval-eval-v1.jsonl",
+    "data/gitlab-repositories/bizgame-immortal-api/src/main/java/com/immomo/immortal/api/service/GrowFundApiService.java"
+  ],
+  "counts": {
+    "SINGLE_UNIT": 14,
+    "QA_CONFIRMED": 8,
+    "DOUBT_NEGATIVE": 6,
+    "CODE_VERIFIED": 1,
+    "CODE_BOUNDARY_NEGATIVE": 9,
+    "REAL_WINDOW_COMPOSITE": 23,
+    "RETRIEVAL_TEST_CASE": 15,
+    "DOCUMENT_DRIFT_REVIEW": 3,
+    "NO_DRIFT_CODE_BOUNDARY": 1,
+    "DOCUMENT_CONFLICT": 3,
+    "OPEN_DOUBT_NO_DRIFT": 1
+  },
+  "windowCases": 23,
+  "windowFamilies": [
+    "gf-parent-1000",
+    "gf-parent-1200",
+    "gf-parent-1600",
+    "gf-parent-800"
+  ],
+  "independenceWarning": "REAL_WINDOW_COMPOSITE 由同一真实父块在不同 planner 配置下产生；按 windowFamily 聚类统计，不能把 20 条当作 20 份独立文档。",
+  "qualityWarning": "全部记录尚未完成人工复核；只有 GOLD_ACCEPTED 进入正式 Precision/Recall。"
+}
