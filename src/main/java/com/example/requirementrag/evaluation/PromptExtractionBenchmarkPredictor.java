@@ -1,5 +1,6 @@
 package com.example.requirementrag.evaluation;
 
+import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.DriftDecision;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldCase;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldCodeFact;
@@ -32,7 +33,8 @@ import java.util.Set;
  *   <li>代码事实采用明确输入契约：仅当输入提供了 {@code codeFactInputs} 时模型才输出
  *       代码事实（忠实回写，而不是猜 repository/commit）；</li>
  *   <li>实现有限重试与异常分类（超时/限流/JSON失败/Schema无效/其他），retryCount 记录实际次数；</li>
- *   <li>非法 publicationDecision 返回 SCHEMA_INVALID，不再静默降级为 NOT_PUBLISHED。</li>
+ *   <li>非法 publicationDecision 返回 SCHEMA_INVALID，不再静默降级为 NOT_PUBLISHED；</li>
+ *   <li>模型名与生产抽取链路一致（用配置的 developmentPlanModel，而不是硬编码 deepseek-v4-flash）。</li>
  * </ul>
  */
 @Component
@@ -40,13 +42,16 @@ public class PromptExtractionBenchmarkPredictor implements RequirementGraphGoldP
 
     private final ChatClient chatClient;
     private final RequirementGraphProperties graphProperties;
+    private final RagProperties ragProperties;
 
     /** 最多执行 1 + MAX_RETRIES 次请求（首试 + 重试）。 */
     private static final int MAX_RETRIES = 2;
 
-    public PromptExtractionBenchmarkPredictor(ChatClient chatClient, RequirementGraphProperties graphProperties) {
+    public PromptExtractionBenchmarkPredictor(ChatClient chatClient, RequirementGraphProperties graphProperties,
+                                              RagProperties ragProperties) {
         this.chatClient = chatClient;
         this.graphProperties = graphProperties;
+        this.ragProperties = ragProperties;
     }
 
     @Override
@@ -86,10 +91,12 @@ public class PromptExtractionBenchmarkPredictor implements RequirementGraphGoldP
         if (result == null) {
             return schemaFailure();
         }
-        Set<String> entities = new LinkedHashSet<>();
+        Set<RequirementGraphGoldModels.PredictedEntity> entities = new LinkedHashSet<>();
         if (result.entities() != null) {
             for (String entity : result.entities()) {
-                if (entity != null && !entity.isBlank()) entities.add(entity.trim());
+                if (entity != null && !entity.isBlank()) {
+                    entities.add(RequirementGraphGoldModels.PredictedEntity.untyped(entity.trim()));
+                }
             }
         }
         List<PredictedRelation> relations = new ArrayList<>();
@@ -242,8 +249,14 @@ public class PromptExtractionBenchmarkPredictor implements RequirementGraphGoldP
     }
 
     private String resolveModel() {
-        return graphProperties.extractionModel() == null || graphProperties.extractionModel().isBlank()
-                ? "deepseek-v4-flash" : graphProperties.extractionModel();
+        if (graphProperties.extractionModel() != null && !graphProperties.extractionModel().isBlank()) {
+            return graphProperties.extractionModel();
+        }
+        if (ragProperties.llm() != null) {
+            String model = ragProperties.llm().resolvedDevelopmentPlanModel();
+            if (model != null && !model.isBlank()) return model;
+        }
+        return "deepseek-v4-flash";
     }
 
     private record LlmResult(List<String> entities, List<LlmRelation> relations, List<LlmClaim> claims,

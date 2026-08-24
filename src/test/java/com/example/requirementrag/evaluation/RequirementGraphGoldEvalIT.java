@@ -92,7 +92,7 @@ class RequirementGraphGoldEvalIT {
             predictor = new ProductionGraphPredictor(
                     new RequirementGraphExtractionService(chatClient, ragProperties, graphProperties));
         } else if (llm) {
-            predictor = new PromptExtractionBenchmarkPredictor(chatClient, graphProperties);
+            predictor = new PromptExtractionBenchmarkPredictor(chatClient, graphProperties, ragProperties);
         } else {
             predictor = new RuleGoldPredictor();
         }

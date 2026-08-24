@@ -79,9 +79,12 @@
   - **撤销语义不安全的本体映射**：`RelationOntologyMapper` 移除 `REWARDS→USES / CONSUMES→USES / SETS_STATE→CHANGES_STATE` 等近似映射，`ontologyAlignedRelationF1` 只统计生产 `RelationType` 精确匹配（当前仅 REQUIRES），非本体/边界约束单独计数。
   - **加载器测试**：新增 `RequirementGraphGoldLoaderTest`（FORMAL 拒绝未审核、漂移 decision 要求、evidenceId 引用、caseId 重复）。
   - **报告维度边界**：PRODUCTION/PRODUCTION_BUILD 报告明确标注只覆盖 Entity/Relation/Uncertainty/Evidence/BuildStatus，Claim/CodeFact/Drift/Publication 由跨源对齐链路评测；BuildService 链路保留真实窗口 parentId/order/hash，并注明 offset 由规划器重建的已知局限。
+  - **新契约 LLM 全量重跑（v0.2，84 条）**：`-Dgold.predictor=llm` 下 SUCCESS=32 / MODEL_TIMEOUT=1 / FAILURE=51，successRate=0.381；strict 口径 实体F1=0.210 / 关系F1=0.000 / ClaimF1=0.012 / 代码事实F1=0.182；successfulOnly 口径 实体F1=0.268 / 代码事实F1=0.667（CODE_VERIFIED 用例经 input.codeFacts 契约后代码事实召回=1.0）；报告见 `docs/reports/requirement-graph-gold-eval-2026-08-24.md`。
 
 ### Fixed
 
+- **Prompt 基准模型解析与生产链路一致**：`PromptExtractionBenchmarkPredictor` 不再硬编码 `deepseek-v4-flash`，改为优先用 `requirement-graph.extraction-model`、回退 `rag.llm.developmentPlanModel`，避免评测全部以 `PREDICTION_EXCEPTION` 失败。
+- **Prediction 构造器类型擦除冲突**：移除 11 参 `Set<String>` 实体构造器（与 `Set<PredictedEntity>` 规范构造器擦除后同签名），Prompt 基准改为输出未携带类型的 `PredictedEntity`；修复因增量编译残留导致运行时 `Unresolved compilation problem` 的问题。
 - **Excel 证据真实回查**：`RequirementGraphGoldEvaluator.readSource` 对 `.xlsx/.xls` 使用 Apache POI 提取全部 sheet 文本，`goldEvidenceSourceMatchRate` 不再因二进制读取失败而低估（全量从 0.770 提升到 0.802）。
 - **Build 快照仓库并发安全**：`ProductionBuildGraphPredictor.MapRequirementSnapshotRepository` 改用 `ConcurrentHashMap`，避免并行调用时快照读写竞争（IT 仍以串行方式运行 BuildService 链路）。
 - **金标 IT 门禁支持切片运行**：Oracle/Empty 断言改为按数据集切片判定——只有切片包含代码事实/漂移/负例时才断言对应 Oracle 维度 = 1.0，避免 `-Dgold.limit` 只取到无样本切片时因 0/0=0 误报失败；完整数据集门禁仍由 `RequirementGraphGoldDatasetSelfCheckTest` 无条件覆盖。

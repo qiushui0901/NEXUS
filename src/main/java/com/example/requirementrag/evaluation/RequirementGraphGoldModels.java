@@ -196,16 +196,6 @@ public final class RequirementGraphGoldModels {
                     PredictionStatus.SUCCESS, "", 0, 0);
         }
 
-        /** 兼容旧实体字符串构造（完整字段版本）。 */
-        public Prediction(Set<String> entities, List<PredictedRelation> relations,
-                          List<PredictedClaim> claims, List<String> uncertainties,
-                          List<PredictedCodeFact> codeFacts,
-                          DriftDecision driftDecision, PublicationDecision publicationDecision,
-                          PredictionStatus status, String errorCode, long latencyMs, int retryCount) {
-            this(wrapEntities(entities), relations, claims, uncertainties, codeFacts,
-                    driftDecision, publicationDecision, status, errorCode, latencyMs, retryCount);
-        }
-
         private static Set<PredictedEntity> wrapEntities(Set<String> entities) {
             if (entities == null) return Set.of();
             Set<PredictedEntity> result = new java.util.LinkedHashSet<>();
