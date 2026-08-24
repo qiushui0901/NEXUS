@@ -3,9 +3,12 @@ package com.example.requirementrag.evaluation;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldCase;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldClaim;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldCodeFact;
+import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldDecision;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldEntity;
+import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldEvidenceItem;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldRelation;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldUncertainty;
+import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldWindow;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
@@ -45,28 +48,26 @@ public final class RequirementGraphGoldLoader {
         String scenario = node.path("scenario").asText();
         JsonNode input = node.path("input");
         String inputText = resolveInputText(input);
+        List<GoldWindow> windows = windows(input.path("windows"));
+        List<GoldCodeFact> codeFactInputs = codeFacts(input.path("codeFacts"));
         JsonNode gold = node.path("gold");
-        int totalEvidenceItems = 0;
-        int traceableEvidenceItems = 0;
-        for (JsonNode evidence : gold.path("evidence")) {
-            for (JsonNode item : evidence.path("items")) {
-                totalEvidenceItems++;
-                String sourceFile = item.path("sourceFile").asText();
-                String quote = item.path("quote").asText();
-                if (!sourceFile.isBlank() && !quote.isBlank()) traceableEvidenceItems++;
-            }
-        }
+        EvidenceStats evidenceStats = evidenceStats(gold.path("evidence"));
+        GoldDecision decision = resolveDecision(gold.path("decision"), scenario);
         return new GoldCase(
                 caseId,
                 scenario,
                 inputText,
+                windows,
                 entities(gold.path("entities")),
                 relations(gold.path("relations")),
                 claims(gold.path("claims")),
                 uncertainties(gold.path("uncertainties")),
                 codeFacts(gold.path("codeFacts")),
-                totalEvidenceItems,
-                traceableEvidenceItems);
+                decision,
+                codeFactInputs,
+                evidenceStats.items(),
+                evidenceStats.total(),
+                evidenceStats.traceable());
     }
 
     private String resolveInputText(JsonNode input) {
@@ -74,6 +75,7 @@ public final class RequirementGraphGoldLoader {
         if (text.isTextual() && !text.asText().isBlank()) return text.asText();
         JsonNode windows = input.path("windows");
         if (windows.isArray() && windows.size() > 0) {
+            // 保留逐窗口语义：仅当调用方需要“单文本”形态时拼装；跨窗口评测应使用 windows()。
             StringBuilder builder = new StringBuilder();
             for (JsonNode window : windows) {
                 if (builder.length() > 0) builder.append("\n--- WINDOW ---\n");
@@ -84,6 +86,78 @@ public final class RequirementGraphGoldLoader {
         JsonNode query = input.path("query");
         if (query.isTextual()) return query.asText();
         return "";
+    }
+
+    private List<GoldWindow> windows(JsonNode array) {
+        if (array == null || !array.isArray()) return List.of();
+        List<GoldWindow> result = new ArrayList<>();
+        for (JsonNode item : array) {
+            result.add(new GoldWindow(
+                    item.path("windowId").asText(),
+                    item.path("index").asInt(0),
+                    item.path("parentId").asText(),
+                    item.path("parentOrder").asInt(0),
+                    item.path("filename").asText(),
+                    item.path("startOffset").asInt(0),
+                    item.path("endOffset").asInt(0),
+                    item.path("contentHash").asText(),
+                    item.path("text").asText("")));
+        }
+        return List.copyOf(result);
+    }
+
+    private GoldDecision resolveDecision(JsonNode decision, String scenario) {
+        if (decision != null && !decision.isMissingNode() && !decision.isNull()) {
+            List<String> evidenceIds = new ArrayList<>();
+            for (JsonNode evidence : decision.path("evidenceIds")) evidenceIds.add(evidence.asText());
+            return new GoldDecision(
+                    decision.path("type").asText(),
+                    decision.path("status").asText(),
+                    decision.path("publication").asText(),
+                    evidenceIds);
+        }
+        // 兼容旧数据：金标没有显式 decision 时，从场景推导评测期望（新数据集应写入显式 decision）。
+        return switch (scenario) {
+            case "DOCUMENT_DRIFT_REVIEW" -> new GoldDecision("DOCUMENT_DRIFT", "REVIEW_REQUIRED", "REVIEW_REQUIRED", List.of());
+            case "DOCUMENT_CONFLICT" -> new GoldDecision("DOCUMENT_CONFLICT", "CONFLICT", "PRESERVE_CONFLICT", List.of());
+            case "OPEN_DOUBT_NO_DRIFT" -> new GoldDecision("OPEN", "OPEN", "NOT_PUBLISHED", List.of());
+            case "NO_DRIFT_CODE_BOUNDARY" -> new GoldDecision("NO_DRIFT", "ALIGNED", "PUBLISH", List.of());
+            default -> new GoldDecision("", "", "", List.of());
+        };
+    }
+
+    private EvidenceStats evidenceStats(JsonNode evidenceArray) {
+        int total = 0;
+        int traceable = 0;
+        List<GoldEvidenceItem> items = new ArrayList<>();
+        for (JsonNode evidence : evidenceArray) {
+            String evidenceId = evidence.path("evidenceId").asText();
+            for (JsonNode item : evidence.path("items")) {
+                total++;
+                String sourceFile = item.path("sourceFile").asText();
+                String quote = item.path("quote").asText();
+                boolean hasOffset = item.hasNonNull("startOffset") || item.hasNonNull("offset");
+                int start = item.path("startOffset").asInt(item.path("offset").asInt(-1));
+                int end = item.path("endOffset").asInt(-1);
+                boolean hasWindowId = item.hasNonNull("windowId");
+                boolean hasContentHash = item.hasNonNull("contentHash");
+                items.add(new GoldEvidenceItem(
+                        evidenceId,
+                        item.path("sourceType").asText(),
+                        sourceFile,
+                        quote,
+                        hasOffset,
+                        start,
+                        end,
+                        hasWindowId,
+                        item.path("windowId").asText(),
+                        hasContentHash,
+                        item.path("contentHash").asText(),
+                        item.path("expected").asText()));
+                if (!sourceFile.isBlank() && !quote.isBlank()) traceable++;
+            }
+        }
+        return new EvidenceStats(List.copyOf(items), total, traceable);
     }
 
     private List<GoldEntity> entities(JsonNode array) {
@@ -132,9 +206,14 @@ public final class RequirementGraphGoldLoader {
     private List<GoldCodeFact> codeFacts(JsonNode array) {
         List<GoldCodeFact> result = new ArrayList<>();
         for (JsonNode item : array) {
+            List<String> symbols = new ArrayList<>();
+            for (JsonNode symbol : item.path("symbolNames")) symbols.add(symbol.asText());
             result.add(new GoldCodeFact(item.path("repositoryId").asText(), item.path("commitSha").asText(),
-                    item.path("factKey").asText(), item.path("value").asText()));
+                    item.path("factKey").asText(), item.path("value").asText(), symbols));
         }
         return List.copyOf(result);
+    }
+
+    private record EvidenceStats(List<GoldEvidenceItem> items, int total, int traceable) {
     }
 }

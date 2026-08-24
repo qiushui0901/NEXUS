@@ -1,8 +1,10 @@
 package com.example.requirementrag.evaluation;
 
+import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldEvalReport;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldCase;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.ScenarioMetrics;
+import com.example.requirementrag.requirement.graph.RequirementGraphExtractionService;
 import com.example.requirementrag.requirement.graph.RequirementGraphProperties;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
@@ -27,6 +29,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * <p>只在显式开启时运行：{@code -Dgold.eval=true}。
  * 默认使用规则预测器；{@code -Dgold.llm=true} 时使用 LLM 预测器。
  * 数据集路径可用 {@code -Dgold.dataset=...} 覆盖，默认 evaluation/requirement-graph-gold-v0.2/dataset.jsonl。
+ *
+ * <p>本入口同时作为评测器质量门禁：Oracle 必须接近 1.0、Empty 必须全 0，
+ * 否则说明匹配/期望契约被改坏，直接失败。
  */
 @SpringBootTest(properties = {
         "logging.structured.format.console=",
@@ -39,6 +44,7 @@ class RequirementGraphGoldEvalIT {
 
     @Autowired private ObjectMapper objectMapper;
     @Autowired private ChatClient chatClient;
+    @Autowired private RagProperties ragProperties;
     @Autowired private RequirementGraphProperties graphProperties;
 
     @Test
@@ -54,16 +60,25 @@ class RequirementGraphGoldEvalIT {
             cases = cases.subList(0, limit);
         }
         int parallelism = Integer.getInteger("gold.parallelism", 8);
-        RequirementGraphGoldPredictor predictor = llm
-                ? new LlmGoldPredictor(chatClient, graphProperties)
-                : new RuleGoldPredictor();
+        boolean production = Boolean.parseBoolean(System.getProperty("gold.production", "false"));
+        RequirementGraphGoldPredictor predictor;
+        if (production) {
+            // 生产抽取链路：走真实 RequirementGraphExtractionService（schema/证据/本体校验 + 跨窗口合并）
+            predictor = new ProductionGraphPredictor(
+                    new RequirementGraphExtractionService(chatClient, ragProperties, graphProperties));
+        } else {
+            predictor = llm
+                    ? new PromptExtractionBenchmarkPredictor(chatClient, graphProperties)
+                    : new RuleGoldPredictor();
+        }
         RequirementGraphGoldEvaluator evaluator = new RequirementGraphGoldEvaluator();
         GoldEvalReport report = evaluator.evaluateParallel(cases, predictor, parallelism);
         // 评测器自检：Oracle 应接近 1.0；Empty 应全 0（用于对比 LLM 到底比空预测好多少）
         GoldEvalReport oracleReport = evaluator.evaluate(cases, new OracleGoldPredictor());
         GoldEvalReport emptyReport = evaluator.evaluate(cases, new EmptyGoldPredictor());
 
-        String markdown = render(report, oracleReport, emptyReport, llm);
+        String predictorLabel = production ? "PRODUCTION" : llm ? "LLM" : "RULE";
+        String markdown = render(report, oracleReport, emptyReport, predictorLabel);
         Path reportPath = Path.of("target/requirement-graph-gold-eval-report.md").toAbsolutePath().normalize();
         Files.writeString(reportPath, markdown, StandardCharsets.UTF_8);
         Path docs = Path.of("docs/reports/requirement-graph-gold-eval-" + LocalDate.now() + ".md")
@@ -77,27 +92,59 @@ class RequirementGraphGoldEvalIT {
 
         assertThat(report.totalCases()).isEqualTo(cases.size());
         assertThat(report.overall()).isNotNull();
+        // —— 评测器质量门禁：Oracle 必须全 1.0，Empty 必须全 0 ——
+        assertOracleGate(oracleReport);
+        assertEmptyGate(emptyReport);
+    }
+
+    private void assertOracleGate(GoldEvalReport oracleReport) {
+        ScenarioMetrics overall = oracleReport.overall();
+        assertThat(overall.entityF1()).as("Oracle 实体F1 自检").isEqualTo(1.0);
+        assertThat(overall.relationF1()).as("Oracle 关系F1 自检").isEqualTo(1.0);
+        assertThat(overall.claimF1()).as("Oracle ClaimF1 自检").isEqualTo(1.0);
+        assertThat(overall.codeFactRecall()).as("Oracle 代码事实召回 自检").isEqualTo(1.0);
+        assertThat(overall.codeFactPrecision()).as("Oracle 代码事实精度 自检").isEqualTo(1.0);
+        assertThat(overall.driftDecisionAccuracy()).as("Oracle 漂移决策准确率 自检").isEqualTo(1.0);
+        assertThat(overall.negativeErrorRate()).as("Oracle 负例错误率 自检").isEqualTo(0.0);
+    }
+
+    private void assertEmptyGate(GoldEvalReport emptyReport) {
+        ScenarioMetrics overall = emptyReport.overall();
+        assertThat(overall.entityF1()).as("Empty 实体F1 基线").isEqualTo(0.0);
+        assertThat(overall.relationF1()).as("Empty 关系F1 基线").isEqualTo(0.0);
+        assertThat(overall.claimF1()).as("Empty ClaimF1 基线").isEqualTo(0.0);
+        assertThat(overall.codeFactRecall()).as("Empty 代码事实召回 基线").isEqualTo(0.0);
     }
 
     private String render(GoldEvalReport report, GoldEvalReport oracleReport, GoldEvalReport emptyReport,
-                          boolean llm) {
+                          String predictorLabel) {
         StringBuilder out = new StringBuilder();
         out.append("# 需求语义图金标评测报告\n\n");
-        out.append("- dataset: requirement-graph-gold (predictor=").append(llm ? "LLM" : "RULE").append(")\n");
+        out.append("- dataset: requirement-graph-gold (predictor=").append(predictorLabel).append(")\n");
         out.append("- totalCases: ").append(report.totalCases()).append("\n");
         out.append("- extractionCases: ").append(report.extractionCases()).append("\n");
         out.append("- retrievalTestCases: ").append(report.retrievalCases())
                 .append("（不计入抽取 F1）\n");
+        out.append("- 匹配口径：一对一匹配 / Claim=factKey AND value / 代码事实=repo+commit+key+value\n");
         out.append("- goldEvidenceFieldCompletenessRate: ")
                 .append(format(report.goldEvidenceFieldCompletenessRate())).append("\n");
+        out.append("- goldEvidenceSourceMatchRate: ")
+                .append(format((Double) report.extras().getOrDefault("goldEvidenceSourceMatchRate", Double.NaN)))
+                .append("\n");
+        out.append("- goldEvidenceOffsetValidityRate: ")
+                .append(format((Double) report.extras().getOrDefault("goldEvidenceOffsetValidityRate", Double.NaN)))
+                .append("\n");
+        out.append("- goldEvidenceClaimSupportRate: ")
+                .append(format((Double) report.extras().getOrDefault("goldEvidenceClaimSupportRate", Double.NaN)))
+                .append("\n");
         out.append("- predictionStatusCounts: ")
                 .append(report.extras().getOrDefault("predictionStatusCounts", Map.of())).append("\n");
         out.append("- averageLatencyMs: ")
                 .append(report.extras().getOrDefault("averageLatencyMs", 0)).append("\n\n");
 
         out.append("## 按场景\n\n");
-        out.append("| 场景 | 用例 | 实体F1 | 关系F1 | ClaimF1 | 负例错误率 | 存疑召回 | 代码事实召回 | 漂移准确率 |\n");
-        out.append("|---|---|---|---|---|---|---|---|---|\n");
+        out.append("| 场景 | 用例 | 实体F1 | 关系F1 | ClaimF1 | 负例错误率 | 存疑召回 | 代码事实召回 | 代码事实F1 | 漂移准确率 |\n");
+        out.append("|---|---|---|---|---|---|---|---|---|---|\n");
         for (ScenarioMetrics metrics : report.scenarios()) {
             out.append('|').append(metrics.scenario())
                     .append('|').append(metrics.cases())
@@ -107,6 +154,7 @@ class RequirementGraphGoldEvalIT {
                     .append('|').append(format(metrics.negativeErrorRate()))
                     .append('|').append(format(metrics.uncertaintyRecall()))
                     .append('|').append(format(metrics.codeFactRecall()))
+                    .append('|').append(format(metrics.codeFactF1()))
                     .append('|').append(format(metrics.driftDecisionAccuracy()))
                     .append("|\n");
         }
@@ -118,15 +166,17 @@ class RequirementGraphGoldEvalIT {
                 .append('|').append(format(overall.negativeErrorRate()))
                 .append('|').append(format(overall.uncertaintyRecall()))
                 .append('|').append(format(overall.codeFactRecall()))
+                .append('|').append(format(overall.codeFactF1()))
                 .append('|').append(format(overall.driftDecisionAccuracy()))
                 .append("|\n\n");
 
         out.append("## 评测器自检（Oracle / Empty）\n\n");
-        out.append("| 预测器 | 实体F1 | 关系F1 | ClaimF1 | 负例错误率 | 存疑召回 | 代码事实召回 | 漂移准确率 |\n");
-        out.append("|---|---|---|---|---|---|---|---|\n");
+        out.append("| 预测器 | 实体F1 | 关系F1 | ClaimF1 | 负例错误率 | 存疑召回 | 代码事实召回 | 代码事实F1 | 漂移准确率 |\n");
+        out.append("|---|---|---|---|---|---|---|---|---|\n");
         appendOverallRow(out, "Oracle", oracleReport);
         appendOverallRow(out, "Empty", emptyReport);
-        out.append("\n> Oracle 应接近 1.0；若 Oracle 未达接近 1.0，说明评测器/匹配契约仍有问题，不能继续调模型。\n");
+        out.append("\n> Oracle 必须接近 1.0、Empty 必须接近 0（本入口已作为 CI 门禁断言）；"
+                + "若 Oracle 未达标，说明评测器/匹配契约有问题，不能继续调模型。\n");
 
         out.append("\n> 统计口径：RETRIEVAL_TEST_CASE 不计入抽取 F1；REAL_WINDOW_COMPOSITE 需按 windowFamily 聚类后复核；"
                 + "全部记录仍需人工复核为 GOLD_ACCEPTED 才能作为正式门禁。\n");
@@ -142,6 +192,7 @@ class RequirementGraphGoldEvalIT {
                 .append('|').append(format(overall.negativeErrorRate()))
                 .append('|').append(format(overall.uncertaintyRecall()))
                 .append('|').append(format(overall.codeFactRecall()))
+                .append('|').append(format(overall.codeFactF1()))
                 .append('|').append(format(overall.driftDecisionAccuracy()))
                 .append("|\n");
     }

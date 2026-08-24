@@ -46,7 +46,20 @@
     - **评测器自检与预测契约修复**：新增 `OracleGoldPredictor`（自检，实体/关系/Claim F1=1.0、负例错误率=0、存疑/代码/漂移=1.0）与 `EmptyGoldPredictor`（空基线）并在报告中并列展示；`Prediction` 扩展 `PredictedCodeFact` / `DriftDecision` / `PublicationDecision` / `PredictionStatus` / `errorCode` / `latencyMs` / `retryCount`；`LlmGoldPredictor` 不再吞异常，返回 SUCCESS/EMPTY_RESULT/FAILURE + errorCode + latency；指标新增漂移准确率，`goldEvidenceTraceabilityRate` 改名 `goldEvidenceFieldCompletenessRate`；报告输出 predictionStatusCounts 与平均延迟。
   - **测试**
     - 新增/更新对齐与文档级用例（含窗口安全、结构抽取、文档级构建、关系审核、文档级控制器、金标评测器）。
-    - 全量测试：728 tests 通过。
+    - 全量测试：730 tests 通过。
+
+### Changed
+
+- **金标评测器 Review 修复（评测结果可信性）**：
+  - **一对一匹配**：实体/关系/Claim/代码事实改为最大二分匹配（Kuhn 算法），每条 Gold 与每条 Prediction 最多匹配一次，杜绝重复预测虚高 Precision；关系/实体不再使用包含式模糊匹配。
+  - **Claim 严格匹配**：`factKey && value` 双字段精确匹配（值先做归一化：秒/s、分钟/min、小时/h、天/d），不再 `keyMatch || valueMatch`。
+  - **代码事实严格匹配**：要求 repository/commit/factKey/value 全匹配，新增 `codeFactPrecision` / `codeFactF1` 指标。
+  - **Gold 显式 decision**：金标增加 `decision{type,status,publication,evidenceIds}`，评测与 Oracle 都逐字段精确比较期望决策，不再从 scenario 硬编码；数据集 8 条漂移场景已补写显式 decision。
+  - **证据实际回查**：新增 `goldEvidenceSourceMatchRate`（quote 是否真实存在于 sourceFile）、`goldEvidenceOffsetValidityRate`（offset 是否指向 quote）、`goldEvidenceClaimSupportRate`（claim 是否有可回查证据），替代仅字段完整率。
+  - **CI 质量门禁**：新增 `RequirementGraphGoldDatasetSelfCheckTest`（无需 LLM、默认跑），断言真实数据集上 Oracle 实体/关系/Claim/代码事实/漂移全 1.0、Empty 全 0；`RequirementGraphGoldEvalIT` 同步增加 Oracle/Empty 强断言。
+  - **生产链路评测**：新增 `ProductionGraphPredictor`，把金标用例路由到真实 `RequirementGraphExtractionService.extract`（生产 Prompt + Schema/证据/本体校验），多窗口逐窗口抽取并按生产合并语义跨窗口整合；`LlmGoldPredictor` 更名为 `PromptExtractionBenchmarkPredictor`，明确定位为“单次 Prompt 抽取基准”，避免被误认为生产链路评测器。
+  - **LLM 提示基准修复**：模型输入不再泄漏内部场景标签；代码事实采用明确输入契约（`input.codeFacts` 提供时才回写，CODE_VERIFIED 用例已补输入）；实现真实有限重试与异常分类（超时/限流/JSON/Schema/其他），`retryCount` 记录实际次数；非法 `publicationDecision` 返回 `SCHEMA_INVALID`，不再静默降级为 `NOT_PUBLISHED`。
+  - **并行评测加固**：拆分 `InterruptedException` / `ExecutionException`，不再误设中断标记；单条预测超时（120s）取消该任务，避免一个卡死请求拖住整个评测。
 
 ### Fixed
 

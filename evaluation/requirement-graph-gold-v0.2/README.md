@@ -14,6 +14,8 @@
 6. 将 8 条 QA 的谓词拆分为购买货币、有效期、隐藏、读配置、购买流程、记录聚合、实时性、作用范围等不同类型。
 7. 接入 `src/test/resources/evaluation/retrieval-eval-v1.jsonl`，单独标记为 `RETRIEVAL_TEST_CASE`，不把测试问题误当成需求事实。
 8. `CODE_BOUNDARY_NEGATIVE` 增加到 9 条，覆盖实体、别名、版本、证据和声明误合并。
+9. 漂移/冲突/存疑/无漂移场景（`DOCUMENT_DRIFT_REVIEW` / `DOCUMENT_CONFLICT` / `OPEN_DOUBT_NO_DRIFT` / `NO_DRIFT_CODE_BOUNDARY`）的 `gold` 增加显式 `decision{type,status,publication,evidenceIds}`，评测逐字段比较，不再从 scenario 推导期望。
+10. `CODE_VERIFIED` 用例在 `input.codeFacts` 提供代码事实输入契约（评测“忠实回写给定代码事实”，而不是让模型猜 repository/commit）。
 
 ## 统计原则
 

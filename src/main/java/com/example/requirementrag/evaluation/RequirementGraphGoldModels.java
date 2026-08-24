@@ -8,6 +8,14 @@ import java.util.Set;
  * 需求语义图金标评测领域模型（v0.2）。
  *
  * <p>支持实体/关系/Claim/存疑/代码事实五类 gold 与预测，按场景聚合 Precision/Recall/F1。
+ *
+ * <p>从 v0.2 修订：
+ * <ul>
+ *   <li>Gold 增加显式 {@code decision}（type/status/publication/evidenceIds），评测不再从 scenario 硬编码期望；</li>
+ *   <li>保留窗口级输入 {@code windows}，跨窗口评测走“逐窗口抽取 + 合并 + 整合”，而不是拼接一段文本；</li>
+ *   <li>增加 {@code codeFactInputs} 明确代码事实输入契约（评测“给定代码事实能否忠实回写”，而非让 LLM 猜）；</li>
+ *   <li>{@code evidenceItems} 支持 evidence 实际回查与 offset/claim 支持校验。</li>
+ * </ul>
  */
 public final class RequirementGraphGoldModels {
     private RequirementGraphGoldModels() {
@@ -17,20 +25,73 @@ public final class RequirementGraphGoldModels {
             String caseId,
             String scenario,
             String inputText,
+            List<GoldWindow> windows,
             List<GoldEntity> entities,
             List<GoldRelation> relations,
             List<GoldClaim> claims,
             List<GoldUncertainty> uncertainties,
             List<GoldCodeFact> codeFacts,
+            GoldDecision decision,
+            List<GoldCodeFact> codeFactInputs,
+            List<GoldEvidenceItem> evidenceItems,
             int totalEvidenceItems,
             int traceableEvidenceItems
     ) {
         public GoldCase {
+            windows = windows == null ? List.of() : List.copyOf(windows);
             entities = entities == null ? List.of() : List.copyOf(entities);
             relations = relations == null ? List.of() : List.copyOf(relations);
             claims = claims == null ? List.of() : List.copyOf(claims);
             uncertainties = uncertainties == null ? List.of() : List.copyOf(uncertainties);
             codeFacts = codeFacts == null ? List.of() : List.copyOf(codeFacts);
+            codeFactInputs = codeFactInputs == null ? List.of() : List.copyOf(codeFactInputs);
+            evidenceItems = evidenceItems == null ? List.of() : List.copyOf(evidenceItems);
+        }
+
+        /** 兼容旧十参数构造：无窗口、无显式 decision、无代码事实输入、无证据明细。 */
+        public GoldCase(String caseId, String scenario, String inputText,
+                        List<GoldEntity> entities, List<GoldRelation> relations, List<GoldClaim> claims,
+                        List<GoldUncertainty> uncertainties, List<GoldCodeFact> codeFacts,
+                        int totalEvidenceItems, int traceableEvidenceItems) {
+            this(caseId, scenario, inputText, List.of(), entities, relations, claims, uncertainties,
+                    codeFacts, null, List.of(), List.of(), totalEvidenceItems, traceableEvidenceItems);
+        }
+    }
+
+    /** 评测期望决策：不再从 scenario 推导，逐字段精确比较。 */
+    public record GoldDecision(String type, String status, String publication, List<String> evidenceIds) {
+        public GoldDecision {
+            evidenceIds = evidenceIds == null ? List.of() : List.copyOf(evidenceIds);
+            type = type == null ? "" : type;
+            status = status == null ? "" : status;
+            publication = publication == null ? "" : publication;
+        }
+    }
+
+    /** 单窗口输入：保留窗口独立抽取所必需的元数据。 */
+    public record GoldWindow(String windowId, int index, String parentId, int parentOrder, String filename,
+                             int startOffset, int endOffset, String contentHash, String text) {
+    }
+
+    /** 金标证据明细：供 field completeness / source match / offset validity / claim support 校验。 */
+    public record GoldEvidenceItem(
+            String evidenceId,
+            String sourceType,
+            String sourceFile,
+            String quote,
+            boolean hasOffset,
+            int startOffset,
+            int endOffset,
+            boolean hasWindowId,
+            String windowId,
+            boolean hasContentHash,
+            String contentHash,
+            String expected
+    ) {
+        public GoldEvidenceItem {
+            quote = quote == null ? "" : quote;
+            sourceFile = sourceFile == null ? "" : sourceFile;
+            sourceType = sourceType == null ? "" : sourceType;
         }
     }
 
@@ -55,7 +116,11 @@ public final class RequirementGraphGoldModels {
     public record GoldUncertainty(String id, String status, String type, String question) {
     }
 
-    public record GoldCodeFact(String repositoryId, String commitSha, String factKey, String value) {
+    public record GoldCodeFact(String repositoryId, String commitSha, String factKey, String value,
+                               List<String> symbolNames) {
+        public GoldCodeFact {
+            symbolNames = symbolNames == null ? List.of() : List.copyOf(symbolNames);
+        }
     }
 
     public record Prediction(
@@ -95,6 +160,18 @@ public final class RequirementGraphGoldModels {
             return new Prediction(Set.of(), List.of(), List.of(), List.of(), List.of(),
                     new DriftDecision("", "", "", List.of()), PublicationDecision.NOT_PUBLISHED,
                     PredictionStatus.EMPTY_RESULT, "", 0, 0);
+        }
+
+        /** 保留其余字段，只替换实际重试次数（重试统计不得伪造）。 */
+        public Prediction withRetryCount(int newRetryCount) {
+            return new Prediction(entities, relations, claims, uncertainties, codeFacts,
+                    driftDecision, publicationDecision, status, errorCode, latencyMs, newRetryCount);
+        }
+
+        /** 保留其余字段，只替换耗时（用于外层重试循环统一记录成功/失败耗时）。 */
+        public Prediction withLatency(long newLatencyMs) {
+            return new Prediction(entities, relations, claims, uncertainties, codeFacts,
+                    driftDecision, publicationDecision, status, errorCode, newLatencyMs, retryCount);
         }
     }
 
@@ -155,6 +232,8 @@ public final class RequirementGraphGoldModels {
             double negativeErrorRate,
             double uncertaintyRecall,
             double codeFactRecall,
+            double codeFactPrecision,
+            double codeFactF1,
             double driftDecisionAccuracy
     ) {
     }
