@@ -93,19 +93,36 @@ class RequirementGraphGoldEvalIT {
         assertThat(report.totalCases()).isEqualTo(cases.size());
         assertThat(report.overall()).isNotNull();
         // —— 评测器质量门禁：Oracle 必须全 1.0，Empty 必须全 0 ——
-        assertOracleGate(oracleReport);
+        assertOracleGate(oracleReport, cases);
         assertEmptyGate(emptyReport);
     }
 
-    private void assertOracleGate(GoldEvalReport oracleReport) {
+    private void assertOracleGate(GoldEvalReport oracleReport, List<GoldCase> cases) {
         ScenarioMetrics overall = oracleReport.overall();
-        assertThat(overall.entityF1()).as("Oracle 实体F1 自检").isEqualTo(1.0);
-        assertThat(overall.relationF1()).as("Oracle 关系F1 自检").isEqualTo(1.0);
-        assertThat(overall.claimF1()).as("Oracle ClaimF1 自检").isEqualTo(1.0);
-        assertThat(overall.codeFactRecall()).as("Oracle 代码事实召回 自检").isEqualTo(1.0);
-        assertThat(overall.codeFactPrecision()).as("Oracle 代码事实精度 自检").isEqualTo(1.0);
-        assertThat(overall.driftDecisionAccuracy()).as("Oracle 漂移决策准确率 自检").isEqualTo(1.0);
-        assertThat(overall.negativeErrorRate()).as("Oracle 负例错误率 自检").isEqualTo(0.0);
+        // 变量维度在切片中可能存在“无样本”情况（如 gold.limit 只取到无代码事实的用例），
+        // 此时 0/0 返回 0.0，不能要求 1.0；完整数据集门禁由 DatasetSelfCheckTest 无条件覆盖。
+        if (oracleReport.extractionCases() > 0) {
+            assertThat(overall.entityF1()).as("Oracle 实体F1 自检").isEqualTo(1.0);
+            assertThat(overall.relationF1()).as("Oracle 关系F1 自检").isEqualTo(1.0);
+            assertThat(overall.claimF1()).as("Oracle ClaimF1 自检").isEqualTo(1.0);
+        }
+        if (cases.stream().anyMatch(caseItem -> caseItem.codeFacts() != null && !caseItem.codeFacts().isEmpty())) {
+            assertThat(overall.codeFactRecall()).as("Oracle 代码事实召回 自检").isEqualTo(1.0);
+            assertThat(overall.codeFactPrecision()).as("Oracle 代码事实精度 自检").isEqualTo(1.0);
+        }
+        if (cases.stream().anyMatch(caseItem ->
+                caseItem.decision() != null && !caseItem.decision().type().isBlank())) {
+            assertThat(overall.driftDecisionAccuracy()).as("Oracle 漂移决策准确率 自检").isEqualTo(1.0);
+        }
+        if (cases.stream().anyMatch(caseItem -> isNegativeScenario(caseItem.scenario()))) {
+            assertThat(overall.negativeErrorRate()).as("Oracle 负例错误率 自检").isEqualTo(0.0);
+        }
+    }
+
+    private boolean isNegativeScenario(String scenario) {
+        return "DOUBT_NEGATIVE".equals(scenario)
+                || "OPEN_DOUBT_NO_DRIFT".equals(scenario)
+                || "DOCUMENT_CONFLICT".equals(scenario);
     }
 
     private void assertEmptyGate(GoldEvalReport emptyReport) {
