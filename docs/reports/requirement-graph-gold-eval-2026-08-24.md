@@ -1,6 +1,10 @@
 # 需求语义图金标评测报告
 
 - dataset: requirement-graph-gold (predictor=RULE)
+- sourceContext: immortal-game-service/fengshen/5.1（来源 84 条）
+- evaluatedCases: 84
+- acceptedCases: 0
+- formalEvaluation: false
 - totalCases: 84
 - extractionCases: 69
 - retrievalTestCases: 15（不计入抽取 F1）
@@ -12,7 +16,10 @@
 - predictionStatusCounts: {SUCCESS=84}
 - predictionErrorCodeCounts: {}
 - averageLatencyMs: 0
-- 关系本体约束：ontologyAlignedRelationF1=0.000（gold 本体关系 7 条 / 非本体 53 条 / 边界约束 9 条）
+- predictionSuccessRate: 1.000（failedCaseCount=0，partialFailureRate=0.000，failedCaseEntityRecall=N/A）
+- 严格口径 strict：实体F1=0.016 关系F1=0.000 ClaimF1=0.000 代码事实F1=0.000
+- 仅成功样本 successfulOnly：实体F1=0.016 关系F1=0.000 ClaimF1=0.000 代码事实F1=0.000
+- 关系本体约束：ontologyAlignedRelationF1=0.000（gold 本体关系 2 条 / 非本体 58 条 / 边界约束 9 条）
 
 ## 按场景
 

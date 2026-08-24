@@ -46,7 +46,9 @@ class ProductionGraphPredictorTest {
                 List.of(), List.of(), List.of(), 0, 0);
         Prediction prediction = predictor.predict(gold);
 
-        assertThat(prediction.entities()).containsExactlyInAnyOrder("成长基金", "灵玉");
+        assertThat(prediction.entities().stream()
+                .map(RequirementGraphGoldModels.PredictedEntity::name))
+                .containsExactlyInAnyOrder("成长基金", "灵玉");
         assertThat(prediction.relations()).containsExactly(
                 new RequirementGraphGoldModels.PredictedRelation("成长基金", "灵玉", "REWARDS"));
         assertThat(prediction.uncertainties()).isEmpty();
@@ -87,12 +89,13 @@ class ProductionGraphPredictorTest {
                         new RequirementGraphGoldModels.GoldWindow("w1", 0, "p1", 1, "f.html", 0, 10, "h1", "成长基金"),
                         new RequirementGraphGoldModels.GoldWindow("w2", 1, "p1", 1, "f.html", 10, 20, "h2", "奖励灵玉")),
                 List.of(new GoldEntity("growth-fund", "FEATURE", "成长基金", List.of())),
-                List.of(), List.of(), List.of(), List.of(),
-                null, List.of(), List.of(), 0, 0);
+                List.of(), List.of(), List.of(), List.of(), 0, 0);
         Prediction prediction = predictor.predict(gold);
 
         assertThat(prediction.status()).isEqualTo(RequirementGraphGoldModels.PredictionStatus.FAILURE);
         assertThat(prediction.errorCode()).isEqualTo("GRAPH_MODEL_UNAVAILABLE");
-        assertThat(prediction.entities()).containsExactly("成长基金");
+        assertThat(prediction.entities().stream()
+                .map(RequirementGraphGoldModels.PredictedEntity::name))
+                .containsExactly("成长基金");
     }
 }

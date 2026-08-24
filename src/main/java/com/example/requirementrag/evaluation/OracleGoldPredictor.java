@@ -8,6 +8,7 @@ import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldRela
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldUncertainty;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.PredictedClaim;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.PredictedCodeFact;
+import com.example.requirementrag.evaluation.RequirementGraphGoldModels.PredictedEntity;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.PredictedRelation;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.Prediction;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.PredictionStatus;
@@ -34,10 +35,10 @@ public class OracleGoldPredictor implements RequirementGraphGoldPredictor {
 
     @Override
     public Prediction predict(GoldCase goldCase) {
-        Set<String> entities = new LinkedHashSet<>();
+        Set<PredictedEntity> entities = new LinkedHashSet<>();
         for (GoldEntity entity : goldCase.entities()) {
             if (entity.canonicalName() != null && !entity.canonicalName().isBlank()) {
-                entities.add(entity.canonicalName());
+                entities.add(new PredictedEntity(entity.type(), entity.canonicalName(), entity.aliases()));
             }
         }
         Map<String, String> idToName = new LinkedHashMap<>();

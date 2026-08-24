@@ -46,7 +46,7 @@
     - **评测器自检与预测契约修复**：新增 `OracleGoldPredictor`（自检，实体/关系/Claim F1=1.0、负例错误率=0、存疑/代码/漂移=1.0）与 `EmptyGoldPredictor`（空基线）并在报告中并列展示；`Prediction` 扩展 `PredictedCodeFact` / `DriftDecision` / `PublicationDecision` / `PredictionStatus` / `errorCode` / `latencyMs` / `retryCount`；`LlmGoldPredictor` 不再吞异常，返回 SUCCESS/EMPTY_RESULT/FAILURE + errorCode + latency；指标新增漂移准确率，`goldEvidenceTraceabilityRate` 改名 `goldEvidenceFieldCompletenessRate`；报告输出 predictionStatusCounts 与平均延迟。
   - **测试**
     - 新增/更新对齐与文档级用例（含窗口安全、结构抽取、文档级构建、关系审核、文档级控制器、金标评测器）。
-    - 全量测试：735 tests 通过。
+    - 全量测试：739 tests 通过。
 
 ### Changed
 
@@ -62,8 +62,22 @@
   - **并行评测加固**：拆分 `InterruptedException` / `ExecutionException`，不再误设中断标记；单条预测超时（120s）取消该任务，避免一个卡死请求拖住整个评测。
   - **生产链路单元测试**：新增 `ProductionGraphPredictorTest`（Mockito 桩 `RequirementGraphExtractionService`），覆盖单窗口合并、链路异常上报、部分窗口失败保留成功结果。
   - **完整 BuildService 构建链路评测入口**：新增 `ProductionBuildGraphPredictor`，把金标用例合成到进程内 `RequirementSnapshotRepository` 后走真实 `RequirementGraphBuildService.build`（窗口规划 → 真实抽取 → BuildAccumulator 跨窗口合并 → Evidence → SQLite 持久化 → 快照状态流转）；IT 通过 `-Dgold.build=true` 启用（串行、单条超时放宽到 900s，临时 DB），并新增 `ProductionBuildGraphPredictorTest` 单元测试。
-  - **正式关系本体进入评测约束**：新增 `RelationOntologyMapper`（REWARDS/REWARDS_ONLY/USES_CURRENCY/CONSUMES→USES、SETS_STATE→CHANGES_STATE）与 `ontologyAlignedRelationF1` 指标；金标非本体谓词（业务属性/边界约束）单独计数，报告输出 `nonOntologyGoldRelationCount` / `boundaryConstraintGoldRelationCount`。
+  - **正式关系本体进入评测约束**：新增 `RelationOntologyMapper` 与 `ontologyAlignedRelationF1`；只统计生产 `RelationType` 精确匹配，金标非本体谓词（业务属性/边界约束）单独计数，报告输出 `nonOntologyGoldRelationCount` / `boundaryConstraintGoldRelationCount`。
   - **报告可诊断性**：新增 `predictionErrorCodeCounts`（按 errorCode 计数），单条并行超时可配置（`evaluateParallel` 重载，BuildService 链路单条放宽）。
+
+- **金标评测入口可信性（Review 第二阶段）**：
+  - **禁止默认 RuleGoldPredictor**：`RequirementGraphGoldEvalIT` 必须显式 `-Dgold.predictor=rule|llm|production|build`，未指定直接失败，报告不再被误读为生产链路能力。
+  - **Formal / Exploratory 双模式**：`RequirementGraphGoldLoader.GoldLoadMode.FORMAL` 只允许 `GOLD_ACCEPTED` 且漂移用例必须显式 `decision`（禁止从 scenario 推导）；`EXPLORATORY` 允许未审核记录并兼容推导（调试用）。报告输出 `evaluatedCases / acceptedCases / formalEvaluation / sourceContext`。
+  - **结构完整性校验**：caseId 非空且唯一、scenario 非空、entity id 唯一、claim/relation/decision 引用的 evidenceId 必须存在、annotation.status 非空。
+  - **GoldCase 携带项目上下文**：新增 `projectId / documentId / requirementVersion / annotationStatus`；`ProductionBuildGraphPredictor` 用真实 project/version 发起 BuildRequest（documentId 用合成 `gold-<caseId>` 保证用例隔离），并在报告中展示来源上下文。
+  - **真实窗口元数据保留**：Build 预测器用真实 `parentId` 作为合成快照 entryId，BuildService 转 ChunkRecord 后 `parentId/parentOrder/contentHash/filename` 得以保留（offset 仍由规划器重建，注明为已知局限）。
+- **生产链路评测口径（Review 第三阶段）**：
+  - **去除 ProductionGraphPredictor 金标泄漏**：不再用 Gold 实体把模型输出修正回 canonical，Gold alias/类型只参与 evaluator 匹配，不参与模型结果构造。
+  - **预测实体携带类型**：新增 `PredictedEntity{type, canonicalName, aliases}`；生产链路预测器输出真实 EntityType，评测要求“类型非空时类型+名称”匹配（类型为空视为未提供、放行），可识别同名不同类型误合并。
+  - **严格 vs 仅成功口径**：报告新增 `strictOverall*F1`（失败/部分失败按实际内容计）与 `successfulOnlyOverall*F1`（只统计 SUCCESS），并输出 `predictionSuccessRate / partialFailureRate / failedCaseEntityRecall`。
+  - **单条超时不再中断评测**：`evaluateParallel` 超时转换为该用例 `MODEL_TIMEOUT` 并继续完成其余用例；任务异常记录为 `PREDICTION_EXCEPTION`。
+  - **撤销语义不安全的本体映射**：`RelationOntologyMapper` 移除 `REWARDS→USES / CONSUMES→USES / SETS_STATE→CHANGES_STATE` 等近似映射，`ontologyAlignedRelationF1` 只统计生产 `RelationType` 精确匹配（当前仅 REQUIRES），非本体/边界约束单独计数。
+  - **加载器测试**：新增 `RequirementGraphGoldLoaderTest`（FORMAL 拒绝未审核、漂移 decision 要求、evidenceId 引用、caseId 重复）。
 
 ### Fixed
 

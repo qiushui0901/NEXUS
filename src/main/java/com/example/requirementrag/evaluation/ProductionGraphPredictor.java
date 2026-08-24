@@ -2,7 +2,6 @@ package com.example.requirementrag.evaluation;
 
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.DriftDecision;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldCase;
-import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldEntity;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldWindow;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.PredictedRelation;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.Prediction;
@@ -74,7 +73,7 @@ public class ProductionGraphPredictor implements RequirementGraphGoldPredictor {
                     PredictionStatus.FAILURE, firstErrorCode.isBlank() ? "GRAPH_WINDOW_FAILED" : firstErrorCode,
                     latencyMs, 0);
         }
-        MergedGraph merged = merge(results, goldCase.entities());
+        MergedGraph merged = merge(results);
         PredictionStatus status = failedWindows > 0 ? PredictionStatus.FAILURE : PredictionStatus.SUCCESS;
         return new Prediction(merged.entities(), merged.relations(), List.of(), merged.uncertainties(), List.of(),
                 new DriftDecision("", "", "", List.of()), PublicationDecision.NOT_PUBLISHED,
@@ -96,15 +95,15 @@ public class ProductionGraphPredictor implements RequirementGraphGoldPredictor {
         return inputs;
     }
 
-    /** 合并：type+规范名为主键，别名跨窗口融合；关系端点解析为全局规范名。 */
-    private MergedGraph merge(List<ExtractionResult> results, List<GoldEntity> goldEntities) {
+    /** 合并：type+规范名为主键，别名跨窗口融合；关系端点解析为抽取得到的全局规范名。 */
+    private MergedGraph merge(List<ExtractionResult> results) {
         Map<String, String> typeAndNameKeyToName = new LinkedHashMap<>();
         Map<String, String> typeAndNameKeyToCanonical = new LinkedHashMap<>();
+        Map<String, String> typeAndNameKeyToType = new LinkedHashMap<>();
         Map<String, Set<String>> typeAndNameKeyToAliases = new LinkedHashMap<>();
         Map<String, String> localIdToName = new LinkedHashMap<>();
         Map<String, String> localIdToKey = new LinkedHashMap<>();
         List<String> uncertainties = new ArrayList<>();
-        Set<String> entityNames = new LinkedHashSet<>();
 
         for (ExtractionResult result : results) {
             uncertainties.addAll(result.uncertainties());
@@ -116,31 +115,28 @@ public class ProductionGraphPredictor implements RequirementGraphGoldPredictor {
                         typeAndNameKeyToCanonical, typeAndNameKeyToAliases);
                 typeAndNameKeyToCanonical.putIfAbsent(key, name);
                 typeAndNameKeyToName.putIfAbsent(key, name);
+                typeAndNameKeyToType.putIfAbsent(key, type);
                 typeAndNameKeyToAliases.computeIfAbsent(key, ignored -> new LinkedHashSet<>())
                         .addAll(extracted.aliases());
-                entityNames.add(name);
                 localIdToName.put(extracted.localId(), name);
                 localIdToKey.put(extracted.localId(), key);
             }
         }
 
-        // 金标实体作为“期望名称”索引，方便关系端点解析回 gold canonical（若抽取名称一致）。
-        Map<String, String> goldNameKeyToCanonical = new LinkedHashMap<>();
-        for (GoldEntity entity : goldEntities) {
-            goldNameKeyToCanonical.putIfAbsent(canonical(entity.canonicalName()), entity.canonicalName());
-            for (String alias : entity.aliases()) {
-                goldNameKeyToCanonical.putIfAbsent(canonical(alias), entity.canonicalName());
-            }
+        Set<RequirementGraphGoldModels.PredictedEntity> entitySet = new LinkedHashSet<>();
+        for (String key : typeAndNameKeyToName.keySet()) {
+            String name = typeAndNameKeyToName.get(key);
+            String type = typeAndNameKeyToType.getOrDefault(key, "");
+            Set<String> aliases = typeAndNameKeyToAliases.getOrDefault(key, Set.of());
+            entitySet.add(new RequirementGraphGoldModels.PredictedEntity(type, name, List.copyOf(aliases)));
         }
 
         List<PredictedRelation> relations = new ArrayList<>();
         Set<String> seenRelations = new LinkedHashSet<>();
         for (ExtractionResult result : results) {
             for (ExtractedRelation extracted : result.relations()) {
-                String source = resolveGlobal(localIdToName.get(extracted.sourceLocalId()),
-                        goldNameKeyToCanonical);
-                String target = resolveGlobal(localIdToName.get(extracted.targetLocalId()),
-                        goldNameKeyToCanonical);
+                String source = clean(localIdToName.get(extracted.sourceLocalId()));
+                String target = clean(localIdToName.get(extracted.targetLocalId()));
                 if (source.isBlank() || target.isBlank() || source.equals(target)) continue;
                 String predicate = extracted.type();
                 String relationKey = source + "|" + predicate + "|" + target;
@@ -149,7 +145,7 @@ public class ProductionGraphPredictor implements RequirementGraphGoldPredictor {
                 }
             }
         }
-        return new MergedGraph(entityNames, relations, uncertainties);
+        return new MergedGraph(entitySet, relations, uncertainties);
     }
 
     /** 与生产 BuildAccumulator 语义一致：先按 (type, 规范名) 找已有 key，再按别名融合。 */
@@ -165,13 +161,6 @@ public class ProductionGraphPredictor implements RequirementGraphGoldPredictor {
             }
         }
         return exactKey;
-    }
-
-    private String resolveGlobal(String name, Map<String, String> goldNameKeyToCanonical) {
-        if (name == null || name.isBlank()) return "";
-        String key = canonical(name);
-        String goldCanonical = goldNameKeyToCanonical.get(key);
-        return goldCanonical == null ? name : goldCanonical;
     }
 
     private String canonical(String value) {
@@ -192,6 +181,7 @@ public class ProductionGraphPredictor implements RequirementGraphGoldPredictor {
         return "GRAPH_WINDOW_FAILED";
     }
 
-    private record MergedGraph(Set<String> entities, List<PredictedRelation> relations, List<String> uncertainties) {
+    private record MergedGraph(Set<RequirementGraphGoldModels.PredictedEntity> entities,
+                               List<PredictedRelation> relations, List<String> uncertainties) {
     }
 }

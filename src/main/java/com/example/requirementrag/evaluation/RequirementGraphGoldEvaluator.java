@@ -79,22 +79,25 @@ public class RequirementGraphGoldEvaluator {
                                            int parallelism, long perCallTimeoutMs) {
         int poolSize = Math.max(1, Math.min(parallelism, cases.size()));
         ExecutorService executor = Executors.newFixedThreadPool(poolSize);
+        List<Future<CasePrediction>> futures = new ArrayList<>();
         try {
-            Map<String, Prediction> predictions = new ConcurrentHashMap<>();
-            List<Future<?>> futures = new ArrayList<>();
             for (GoldCase goldCase : cases) {
-                futures.add(executor.submit(() ->
-                        predictions.put(goldCase.caseId(), predictor.predict(goldCase))));
+                futures.add(executor.submit(() -> new CasePrediction(goldCase.caseId(), predictor.predict(goldCase))));
             }
-            for (Future<?> future : futures) {
+            Map<String, Prediction> predictions = new ConcurrentHashMap<>();
+            for (int index = 0; index < futures.size(); index++) {
+                Future<CasePrediction> future = futures.get(index);
+                String caseId = cases.get(index).caseId();
                 try {
-                    future.get(perCallTimeoutMs, TimeUnit.MILLISECONDS);
+                    CasePrediction completed = future.get(perCallTimeoutMs, TimeUnit.MILLISECONDS);
+                    predictions.put(completed.caseId(), completed.prediction());
                 } catch (TimeoutException exception) {
                     future.cancel(true);
-                    throw new IllegalStateException("单条金标预测超时（" + perCallTimeoutMs + "ms），已取消该任务", exception);
+                    // 单条超时只影响该用例：记录为 MODEL_TIMEOUT，继续完成其余用例。
+                    predictions.put(caseId, timeoutPrediction(perCallTimeoutMs));
                 } catch (ExecutionException exception) {
-                    // ExecutionException 只是包装任务异常，不设置中断标记。
-                    throw new IllegalStateException("金标预测任务失败", exception.getCause());
+                    // ExecutionException 只是包装任务异常，不设置中断标记；该用例记录失败并继续。
+                    predictions.put(caseId, failedPrediction(exception.getCause()));
                 }
             }
             return evaluateWith(cases, goldCase -> predictions.getOrDefault(goldCase.caseId(), EMPTY_PREDICTION));
@@ -104,6 +107,23 @@ public class RequirementGraphGoldEvaluator {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    private Prediction timeoutPrediction(long timeoutMs) {
+        return new Prediction(Set.of(), List.of(), List.of(), List.of(), List.of(),
+                new RequirementGraphGoldModels.DriftDecision("", "", "", List.of()),
+                RequirementGraphGoldModels.PublicationDecision.NOT_PUBLISHED,
+                RequirementGraphGoldModels.PredictionStatus.MODEL_TIMEOUT, "MODEL_TIMEOUT", timeoutMs, 0);
+    }
+
+    private Prediction failedPrediction(Throwable cause) {
+        return new Prediction(Set.of(), List.of(), List.of(), List.of(), List.of(),
+                new RequirementGraphGoldModels.DriftDecision("", "", "", List.of()),
+                RequirementGraphGoldModels.PublicationDecision.NOT_PUBLISHED,
+                RequirementGraphGoldModels.PredictionStatus.FAILURE, "PREDICTION_EXCEPTION", 0, 0);
+    }
+
+    private record CasePrediction(String caseId, Prediction prediction) {
     }
 
     private GoldEvalReport evaluateWith(List<GoldCase> cases, Function<GoldCase, Prediction> predictFn) {
@@ -144,9 +164,19 @@ public class RequirementGraphGoldEvaluator {
             scenarios.add(accumulator.metrics());
         }
         Accumulator overall = new Accumulator("OVERALL");
+        Accumulator overallSuccessOnly = new Accumulator("OVERALL_SUCCESS_ONLY");
+        FailedCaseStats failed = new FailedCaseStats();
         for (GoldCase goldCase : cases) {
             if (RETRIEVAL.equals(goldCase.scenario())) continue;
-            accumulate(goldCase, predictions.get(goldCase.caseId()), overall);
+            Prediction prediction = predictions.get(goldCase.caseId());
+            accumulate(goldCase, prediction, overall);
+            if (prediction != null && prediction.status() == RequirementGraphGoldModels.PredictionStatus.SUCCESS) {
+                accumulate(goldCase, prediction, overallSuccessOnly);
+            } else if (prediction != null) {
+                failed.cases++;
+                failed.goldEntityTotal += goldCase.entities().size();
+                failed.goldEntityMatched += countGoldEntityMatches(goldCase, prediction);
+            }
         }
         EvidenceMetrics evidence = computeEvidenceMetrics(cases);
         double completeness = evidence.totalItems() == 0 ? 1.0
@@ -185,17 +215,39 @@ public class RequirementGraphGoldEvaluator {
         extras.put("ontologyAlignedRelationPrecision", ontology.precision());
         extras.put("ontologyAlignedRelationRecall", ontology.recall());
         extras.put("ontologyAlignedRelationF1", ontology.f1());
+        // —— 严格口径 vs 仅成功样本口径 + 失败率/失败召回损失 ——
+        ScenarioMetrics strictOverall = overall.metrics();
+        ScenarioMetrics successOnly = overallSuccessOnly.metrics();
+        extras.put("strictOverallEntityF1", strictOverall.entityF1());
+        extras.put("strictOverallRelationF1", strictOverall.relationF1());
+        extras.put("strictOverallClaimF1", strictOverall.claimF1());
+        extras.put("strictOverallCodeFactF1", strictOverall.codeFactF1());
+        extras.put("successfulOnlyOverallEntityF1", successOnly.entityF1());
+        extras.put("successfulOnlyOverallRelationF1", successOnly.relationF1());
+        extras.put("successfulOnlyOverallClaimF1", successOnly.claimF1());
+        extras.put("successfulOnlyOverallCodeFactF1", successOnly.codeFactF1());
+        int successCount = statusCounts.getOrDefault(RequirementGraphGoldModels.PredictionStatus.SUCCESS, 0);
+        int totalPredictions = predictions.size();
+        extras.put("predictionSuccessRate",
+                totalPredictions == 0 ? Double.NaN : (double) successCount / totalPredictions);
+        extras.put("failedCaseCount", failed.cases);
+        extras.put("partialFailureRate",
+                totalPredictions == 0 ? Double.NaN : (double) failed.cases / totalPredictions);
+        extras.put("failedCaseEntityRecall",
+                failed.goldEntityTotal == 0 ? Double.NaN
+                        : (double) failed.goldEntityMatched / failed.goldEntityTotal);
         return new GoldEvalReport(total, extraction, retrieval, List.copyOf(scenarios),
-                overall.metrics(), completeness, extras);
+                strictOverall, completeness, extras);
     }
 
     private void accumulate(GoldCase goldCase, Prediction prediction, Accumulator accumulator) {
         accumulator.cases++;
-        Set<String> predictedNames = prediction.entities() == null ? Set.of() : prediction.entities();
+        Set<RequirementGraphGoldModels.PredictedEntity> predictedEntities =
+                prediction.entities() == null ? Set.of() : prediction.entities();
         List<GoldEntity> goldEntities = goldCase.entities() == null ? List.of() : goldCase.entities();
-        int entityMatches = matchEntities(predictedNames, goldEntities);
+        int entityMatches = matchEntities(predictedEntities, goldEntities);
         accumulator.entityTp += entityMatches;
-        accumulator.entityFp += Math.max(0, predictedNames.size() - entityMatches);
+        accumulator.entityFp += Math.max(0, predictedEntities.size() - entityMatches);
         accumulator.entityFn += Math.max(0, goldEntities.size() - entityMatches);
 
         List<PredictedRelation> predictedRelations = prediction.relations() == null ? List.of() : prediction.relations();
@@ -278,20 +330,31 @@ public class RequirementGraphGoldEvaluator {
         return typeOk && statusOk && publicationOk && evidenceOk;
     }
 
-    private int matchEntities(Set<String> predicted, List<GoldEntity> gold) {
-        List<String> preds = predicted == null ? List.of() : predicted.stream().filter(this::nonBlank).toList();
+    private int matchEntities(Set<RequirementGraphGoldModels.PredictedEntity> predicted, List<GoldEntity> gold) {
+        List<RequirementGraphGoldModels.PredictedEntity> preds = predicted == null ? List.of()
+                : predicted.stream().filter(entity -> nonBlank(entity.canonicalName())).toList();
         return maxBipartiteMatches(gold.size(), preds.size(), (gIdx, pIdx) ->
-                entityNameMatches(preds.get(pIdx), gold.get(gIdx)));
+                entityMatches(preds.get(pIdx), gold.get(gIdx)));
     }
 
-    private boolean entityNameMatches(String predicted, GoldEntity gold) {
-        String norm = normalize(predicted);
-        if (norm.isBlank()) return false;
-        if (norm.equals(normalize(gold.canonicalName()))) return true;
+    /** 实体匹配：名称/别名一致，且预测类型非空时必须与 Gold 类型一致（预测类型为空则视为未提供类型，不做类型校验）。 */
+    private boolean entityMatches(RequirementGraphGoldModels.PredictedEntity predicted, GoldEntity gold) {
+        if (blank(predicted.canonicalName())) return false;
+        String norm = normalize(predicted.canonicalName());
+        if (norm.equals(normalize(gold.canonicalName()))) {
+            return typeMatches(predicted.type(), gold.type());
+        }
         for (String alias : gold.aliases()) {
-            if (norm.equals(normalize(alias))) return true;
+            if (norm.equals(normalize(alias))) {
+                return typeMatches(predicted.type(), gold.type());
+            }
         }
         return false;
+    }
+
+    private boolean typeMatches(String predictedType, String goldType) {
+        if (blank(predictedType)) return true; // 未携带类型：无法验证，放行（由带类型的生产链路评测覆盖类型维度）
+        return normalize(predictedType).equals(normalize(goldType));
     }
 
     private int matchRelations(List<PredictedRelation> predicted, List<GoldRelation> gold,
@@ -367,6 +430,12 @@ public class RequirementGraphGoldEvaluator {
             }
         }
         return false;
+    }
+
+    private int countGoldEntityMatches(GoldCase goldCase, Prediction prediction) {
+        Set<RequirementGraphGoldModels.PredictedEntity> predicted =
+                prediction.entities() == null ? Set.of() : prediction.entities();
+        return matchEntities(predicted, goldCase.entities());
     }
 
     private boolean matchesAnyUncertainty(String goldQuestion, List<String> predictedUncertainties) {
@@ -574,6 +643,13 @@ public class RequirementGraphGoldEvaluator {
 
     private record OntologyRelationMetrics(int ontologyGoldCount, int nonOntologyGoldCount, int boundaryGoldCount,
                                            double precision, double recall, double f1) {
+    }
+
+    /** 失败/部分失败用例的 Gold 覆盖统计（用于 failedCaseEntityRecall）。 */
+    private static final class FailedCaseStats {
+        private int cases;
+        private int goldEntityTotal;
+        private int goldEntityMatched;
     }
 
     /** 按场景聚合计数器。 */

@@ -3,31 +3,23 @@ package com.example.requirementrag.evaluation;
 import com.example.requirementrag.requirement.graph.RequirementGraphModels.RelationType;
 
 import java.util.Locale;
-import java.util.Map;
 
 /**
- * 领域金标谓词 → 生产关系本体（{@link RelationType}）映射。
+ * 生产关系本体（{@link RelationType}）谓词归一化。
  *
- * <p>用途：评测「本体对齐关系 F1」时，把语义等价的领域谓词归一为生产关系类型，
- * 避免金标用 REWARDS/HAS_FLOW 等非生产谓词导致生产链路关系 F1 恒为 0，从而无法衡量真实能力。
+ * <p>只把金标/预测谓词按字符串规范化为生产 `RelationType` 名称；<b>不做语义猜测映射</b>。
+ * 例如 REWARDS→USES / CONSUMES→USES 这类“为了让 F1 不为 0”的近似映射已被移除，
+ * 因为它们的方向与业务语义并不等价，会造成不符合业务语义的正匹配。
  *
- * <p>当前只映射语义明确的一对一关系；其余谓词视为非本体（业务属性/边界约束/实现状态），
- * 不计入本体对齐 F1，但单独计数暴露在报告中。
+ * <p>非本体谓词（REWARDS/HAS_FLOW/MUST_NOT_* 等）应通过评测报告单独计数，
+ * 而不是被强制纳入本体对齐关系 F1。
  */
 public final class RelationOntologyMapper {
-
-    private static final Map<String, String> MAPPING = Map.of(
-            "REWARDS", "USES",
-            "REWARDS_ONLY", "USES",
-            "USES_CURRENCY", "USES",
-            "CONSUMES", "USES",
-            "SETS_STATE", "CHANGES_STATE"
-    );
 
     private RelationOntologyMapper() {
     }
 
-    /** 返回生产关系类型名；无法映射或不属于生产本体时返回 null。 */
+    /** 返回生产关系类型名；不属于生产本体时返回 null。 */
     public static String toProductionType(String predicate) {
         if (predicate == null || predicate.isBlank()) return null;
         String normalized = predicate.trim().toUpperCase(Locale.ROOT)
@@ -35,6 +27,6 @@ public final class RelationOntologyMapper {
         for (RelationType type : RelationType.values()) {
             if (type.name().equals(normalized)) return type.name();
         }
-        return MAPPING.get(normalized);
+        return null;
     }
 }

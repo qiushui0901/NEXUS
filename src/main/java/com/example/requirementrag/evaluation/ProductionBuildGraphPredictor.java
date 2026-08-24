@@ -100,16 +100,18 @@ public class ProductionBuildGraphPredictor implements RequirementGraphGoldPredic
     @Override
     public Prediction predict(GoldCase goldCase) {
         long startNanos = System.nanoTime();
+        String projectId = blank(goldCase.projectId()) ? PROJECT_ID : goldCase.projectId();
         String documentId = "gold-" + goldCase.caseId();
+        String version = blank(goldCase.requirementVersion()) ? VERSION : goldCase.requirementVersion();
         List<Entry> entries = toEntries(goldCase);
         if (entries.isEmpty()) {
             return Prediction.empty();
         }
-        Snapshot snapshot = new Snapshot(1, PROJECT_ID, documentId, VERSION, null, List.of(),
+        Snapshot snapshot = new Snapshot(1, projectId, documentId, version, null, List.of(),
                 Instant.now().toString(), List.of(), entries);
-        snapshots.putSnapshot(PROJECT_ID, documentId, VERSION, snapshot);
+        snapshots.putSnapshot(projectId, documentId, version, snapshot);
         try {
-            GraphSnapshot built = buildService.build(new BuildRequest(PROJECT_ID, documentId, VERSION, COLLECTION));
+            GraphSnapshot built = buildService.build(new BuildRequest(projectId, documentId, version, COLLECTION));
             String snapshotId = built.id();
             List<Entity> entities = store.allEntities(snapshotId, 10_000);
             List<Relation> relations = store.allRelations(snapshotId, 10_000);
@@ -119,11 +121,13 @@ public class ProductionBuildGraphPredictor implements RequirementGraphGoldPredic
             }
             long latencyMs = (System.nanoTime() - startNanos) / 1_000_000;
             Map<String, String> idToName = new LinkedHashMap<>();
-            Set<String> entityNames = new LinkedHashSet<>();
+            Set<RequirementGraphGoldModels.PredictedEntity> entitySet = new LinkedHashSet<>();
             for (Entity entity : entities) {
-                idToName.putIfAbsent(entity.id(), entity.displayName() == null || entity.displayName().isBlank()
-                        ? entity.canonicalName() : entity.displayName());
-                entityNames.add(idToName.get(entity.id()));
+                String name = entity.displayName() == null || entity.displayName().isBlank()
+                        ? entity.canonicalName() : entity.displayName();
+                idToName.putIfAbsent(entity.id(), name);
+                entitySet.add(new RequirementGraphGoldModels.PredictedEntity(
+                        entity.type() == null ? "" : entity.type().name(), name, entity.aliases()));
             }
             List<PredictedRelation> predictedRelations = new ArrayList<>();
             for (Relation relation : relations) {
@@ -131,10 +135,10 @@ public class ProductionBuildGraphPredictor implements RequirementGraphGoldPredic
                 String target = idToName.getOrDefault(relation.targetEntityId(), relation.targetEntityId());
                 predictedRelations.add(new PredictedRelation(source, target, relation.type().name()));
             }
-            boolean empty = entityNames.isEmpty() && predictedRelations.isEmpty();
+            boolean empty = entitySet.isEmpty() && predictedRelations.isEmpty();
             PredictionStatus status = built.status() == SnapshotStatus.PARTIAL_FAILED
                     ? PredictionStatus.FAILURE : empty ? PredictionStatus.EMPTY_RESULT : PredictionStatus.SUCCESS;
-            return new Prediction(entityNames, predictedRelations, List.of(), uncertainties, List.of(),
+            return new Prediction(entitySet, predictedRelations, List.of(), uncertainties, List.of(),
                     new DriftDecision("", "", "", List.of()), PublicationDecision.NOT_PUBLISHED,
                     status, "", latencyMs, 0);
         } catch (RequirementGraphException exception) {
@@ -151,7 +155,10 @@ public class ProductionBuildGraphPredictor implements RequirementGraphGoldPredic
         if (goldCase.windows() != null && !goldCase.windows().isEmpty()) {
             int order = 1;
             for (GoldWindow window : goldCase.windows()) {
-                entries.add(new Entry("window:" + window.windowId(), window.filename(),
+                // 用真实父块 id 作为 entryId，BuildService 转 ChunkRecord 后 parentId 得以保留；
+                // parentOrder / contentHash / filename 也来自真实窗口。
+                String parentId = blank(window.parentId()) ? "window:" + window.windowId() : window.parentId();
+                entries.add(new Entry(parentId, window.filename(),
                         window.parentOrder() == 0 ? order : window.parentOrder(), window.text(), window.contentHash()));
                 order++;
             }
@@ -159,6 +166,10 @@ public class ProductionBuildGraphPredictor implements RequirementGraphGoldPredic
             entries.add(new Entry("gold-case", "gold-case", 1, goldCase.inputText(), "gold-content"));
         }
         return entries;
+    }
+
+    private static boolean blank(String value) {
+        return value == null || value.isBlank();
     }
 
     private Prediction failure(String errorCode, long latencyMs) {

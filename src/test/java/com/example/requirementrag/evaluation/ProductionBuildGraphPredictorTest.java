@@ -62,7 +62,9 @@ class ProductionBuildGraphPredictorTest {
         Prediction prediction = predictor.predict(gold);
 
         assertThat(prediction.status()).isEqualTo(RequirementGraphGoldModels.PredictionStatus.SUCCESS);
-        assertThat(prediction.entities()).containsExactlyInAnyOrder("成长基金", "库存");
+        assertThat(prediction.entities().stream()
+                .map(RequirementGraphGoldModels.PredictedEntity::name))
+                .containsExactlyInAnyOrder("成长基金", "库存");
         assertThat(prediction.relations()).containsExactly(
                 new RequirementGraphGoldModels.PredictedRelation("成长基金", "库存", "AFFECTS_MODULE"));
     }

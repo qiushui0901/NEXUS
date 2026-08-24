@@ -56,16 +56,31 @@ class RequirementGraphGoldEvalIT {
     void evaluatesGoldDataset() throws Exception {
         Path dataset = Path.of(System.getProperty("gold.dataset",
                 "evaluation/requirement-graph-gold-v0.2/dataset.jsonl")).toAbsolutePath().normalize();
-        boolean llm = Boolean.parseBoolean(System.getProperty("gold.llm", "false"));
+        // 评测入口必须显式选择预测器，禁止默默使用规则基线，避免报告被误读为生产链路能力。
+        String predictorName = System.getProperty("gold.predictor");
+        if (predictorName == null || predictorName.isBlank()) {
+            throw new IllegalStateException(
+                    "请显式指定 -Dgold.predictor=rule|llm|production|build，评测入口不再默认使用 RuleGoldPredictor");
+        }
+        String normalizedPredictor = predictorName.trim().toLowerCase(Locale.ROOT);
+        boolean llm = "llm".equals(normalizedPredictor);
+        boolean production = "production".equals(normalizedPredictor);
+        boolean build = "build".equals(normalizedPredictor);
+        boolean rule = "rule".equals(normalizedPredictor);
+        if (!llm && !production && !build && !rule) {
+            throw new IllegalStateException("未知 gold.predictor=" + predictorName + "，可选 rule|llm|production|build");
+        }
 
         RequirementGraphGoldLoader loader = new RequirementGraphGoldLoader(objectMapper);
-        List<GoldCase> cases = loader.load(dataset);
+        boolean formal = Boolean.parseBoolean(System.getProperty("gold.formal", "false"));
+        RequirementGraphGoldLoader.GoldLoadMode loadMode = formal
+                ? RequirementGraphGoldLoader.GoldLoadMode.FORMAL
+                : RequirementGraphGoldLoader.GoldLoadMode.EXPLORATORY;
+        List<GoldCase> cases = loader.load(dataset, loadMode);
         int limit = Integer.getInteger("gold.limit", 0);
         if (limit > 0 && limit < cases.size()) {
             cases = cases.subList(0, limit);
         }
-        boolean production = Boolean.parseBoolean(System.getProperty("gold.production", "false"));
-        boolean build = Boolean.parseBoolean(System.getProperty("gold.build", "false"));
         // 真实 BuildService 链路共享 SQLite store，只能串行构建，避免 SQLite 写锁竞争。
         int parallelism = build ? 1 : Integer.getInteger("gold.parallelism", 8);
         RequirementGraphGoldPredictor predictor;
@@ -76,10 +91,10 @@ class RequirementGraphGoldEvalIT {
             // 生产抽取链路：走真实 RequirementGraphExtractionService（schema/证据/本体校验 + 跨窗口合并）
             predictor = new ProductionGraphPredictor(
                     new RequirementGraphExtractionService(chatClient, ragProperties, graphProperties));
+        } else if (llm) {
+            predictor = new PromptExtractionBenchmarkPredictor(chatClient, graphProperties);
         } else {
-            predictor = llm
-                    ? new PromptExtractionBenchmarkPredictor(chatClient, graphProperties)
-                    : new RuleGoldPredictor();
+            predictor = new RuleGoldPredictor();
         }
         RequirementGraphGoldEvaluator evaluator = new RequirementGraphGoldEvaluator();
         // 完整 BuildService 链路单条可能执行多次模型调用 + SQLite 写入，放宽单条超时。
@@ -90,7 +105,13 @@ class RequirementGraphGoldEvalIT {
         GoldEvalReport emptyReport = evaluator.evaluate(cases, new EmptyGoldPredictor());
 
         String predictorLabel = build ? "PRODUCTION_BUILD" : production ? "PRODUCTION" : llm ? "LLM" : "RULE";
-        String markdown = render(report, oracleReport, emptyReport, predictorLabel);
+        int acceptedCases = (int) cases.stream()
+                .filter(caseItem -> "GOLD_ACCEPTED".equals(caseItem.annotationStatus())).count();
+        String sourceContext = cases.stream().findFirst()
+                .map(caseItem -> caseItem.projectId() + "/" + caseItem.documentId() + "/" + caseItem.requirementVersion())
+                .orElse("-");
+        String markdown = render(report, oracleReport, emptyReport, predictorLabel, formal, acceptedCases,
+                sourceContext, cases.size());
         Path reportPath = Path.of("target/requirement-graph-gold-eval-report.md").toAbsolutePath().normalize();
         Files.writeString(reportPath, markdown, StandardCharsets.UTF_8);
         Path docs = Path.of("docs/reports/requirement-graph-gold-eval-" + LocalDate.now() + ".md")
@@ -166,10 +187,15 @@ class RequirementGraphGoldEvalIT {
     }
 
     private String render(GoldEvalReport report, GoldEvalReport oracleReport, GoldEvalReport emptyReport,
-                          String predictorLabel) {
+                          String predictorLabel, boolean formal, int acceptedCases,
+                          String sourceContext, int loadedCaseCount) {
         StringBuilder out = new StringBuilder();
         out.append("# 需求语义图金标评测报告\n\n");
         out.append("- dataset: requirement-graph-gold (predictor=").append(predictorLabel).append(")\n");
+        out.append("- sourceContext: ").append(sourceContext).append("（来源 ").append(loadedCaseCount).append(" 条）\n");
+        out.append("- evaluatedCases: ").append(report.totalCases()).append("\n");
+        out.append("- acceptedCases: ").append(acceptedCases).append("\n");
+        out.append("- formalEvaluation: ").append(formal).append("\n");
         out.append("- totalCases: ").append(report.totalCases()).append("\n");
         out.append("- extractionCases: ").append(report.extractionCases()).append("\n");
         out.append("- retrievalTestCases: ").append(report.retrievalCases())
@@ -192,6 +218,26 @@ class RequirementGraphGoldEvalIT {
                 .append(report.extras().getOrDefault("predictionErrorCodeCounts", Map.of())).append("\n");
         out.append("- averageLatencyMs: ")
                 .append(report.extras().getOrDefault("averageLatencyMs", 0)).append("\n");
+        out.append("- predictionSuccessRate: ")
+                .append(format((Double) report.extras().getOrDefault("predictionSuccessRate", Double.NaN)))
+                .append("（failedCaseCount=").append(report.extras().getOrDefault("failedCaseCount", 0))
+                .append("，partialFailureRate=")
+                .append(format((Double) report.extras().getOrDefault("partialFailureRate", Double.NaN)))
+                .append("，failedCaseEntityRecall=")
+                .append(format((Double) report.extras().getOrDefault("failedCaseEntityRecall", Double.NaN)))
+                .append("）\n");
+        out.append("- 严格口径 strict：实体F1=")
+                .append(format((Double) report.extras().getOrDefault("strictOverallEntityF1", Double.NaN)))
+                .append(" 关系F1=").append(format((Double) report.extras().getOrDefault("strictOverallRelationF1", Double.NaN)))
+                .append(" ClaimF1=").append(format((Double) report.extras().getOrDefault("strictOverallClaimF1", Double.NaN)))
+                .append(" 代码事实F1=").append(format((Double) report.extras().getOrDefault("strictOverallCodeFactF1", Double.NaN)))
+                .append("\n");
+        out.append("- 仅成功样本 successfulOnly：实体F1=")
+                .append(format((Double) report.extras().getOrDefault("successfulOnlyOverallEntityF1", Double.NaN)))
+                .append(" 关系F1=").append(format((Double) report.extras().getOrDefault("successfulOnlyOverallRelationF1", Double.NaN)))
+                .append(" ClaimF1=").append(format((Double) report.extras().getOrDefault("successfulOnlyOverallClaimF1", Double.NaN)))
+                .append(" 代码事实F1=").append(format((Double) report.extras().getOrDefault("successfulOnlyOverallCodeFactF1", Double.NaN)))
+                .append("\n");
         out.append("- 关系本体约束：ontologyAlignedRelationF1=")
                 .append(format((Double) report.extras().getOrDefault("ontologyAlignedRelationF1", Double.NaN)))
                 .append("（gold 本体关系 ").append(report.extras().getOrDefault("ontologyAlignedRelationCount", 0))

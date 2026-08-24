@@ -35,7 +35,11 @@ public final class RequirementGraphGoldModels {
             List<GoldCodeFact> codeFactInputs,
             List<GoldEvidenceItem> evidenceItems,
             int totalEvidenceItems,
-            int traceableEvidenceItems
+            int traceableEvidenceItems,
+            String projectId,
+            String documentId,
+            String requirementVersion,
+            String annotationStatus
     ) {
         public GoldCase {
             windows = windows == null ? List.of() : List.copyOf(windows);
@@ -46,15 +50,30 @@ public final class RequirementGraphGoldModels {
             codeFacts = codeFacts == null ? List.of() : List.copyOf(codeFacts);
             codeFactInputs = codeFactInputs == null ? List.of() : List.copyOf(codeFactInputs);
             evidenceItems = evidenceItems == null ? List.of() : List.copyOf(evidenceItems);
+            projectId = projectId == null ? "" : projectId;
+            documentId = documentId == null ? "" : documentId;
+            requirementVersion = requirementVersion == null ? "" : requirementVersion;
+            annotationStatus = annotationStatus == null ? "" : annotationStatus;
         }
 
-        /** 兼容旧十参数构造：无窗口、无显式 decision、无代码事实输入、无证据明细。 */
+        /** 兼容旧十参数构造：无窗口、无显式 decision、无代码事实输入、无证据明细、无项目上下文。 */
         public GoldCase(String caseId, String scenario, String inputText,
                         List<GoldEntity> entities, List<GoldRelation> relations, List<GoldClaim> claims,
                         List<GoldUncertainty> uncertainties, List<GoldCodeFact> codeFacts,
                         int totalEvidenceItems, int traceableEvidenceItems) {
             this(caseId, scenario, inputText, List.of(), entities, relations, claims, uncertainties,
-                    codeFacts, null, List.of(), List.of(), totalEvidenceItems, traceableEvidenceItems);
+                    codeFacts, null, List.of(), List.of(), totalEvidenceItems, traceableEvidenceItems,
+                    "", "", "", "");
+        }
+
+        /** 兼容旧窗口构造（无 decision/代码事实输入/证据明细/项目上下文）。 */
+        public GoldCase(String caseId, String scenario, String inputText, List<GoldWindow> windows,
+                        List<GoldEntity> entities, List<GoldRelation> relations, List<GoldClaim> claims,
+                        List<GoldUncertainty> uncertainties, List<GoldCodeFact> codeFacts,
+                        int totalEvidenceItems, int traceableEvidenceItems) {
+            this(caseId, scenario, inputText, windows, entities, relations, claims, uncertainties,
+                    codeFacts, null, List.of(), List.of(), totalEvidenceItems, traceableEvidenceItems,
+                    "", "", "", "");
         }
     }
 
@@ -123,8 +142,29 @@ public final class RequirementGraphGoldModels {
         }
     }
 
+    /** 预测实体：携带类型，评测才能区分同名的不同类型实体。 */
+    public record PredictedEntity(String type, String canonicalName, List<String> aliases) {
+        public PredictedEntity {
+            type = type == null ? "" : type;
+            canonicalName = canonicalName == null ? "" : canonicalName;
+            aliases = aliases == null ? List.of() : List.copyOf(aliases);
+        }
+
+        public PredictedEntity(String type, String canonicalName) {
+            this(type, canonicalName, List.of());
+        }
+
+        public static PredictedEntity untyped(String canonicalName) {
+            return new PredictedEntity("", canonicalName, List.of());
+        }
+
+        public String name() {
+            return canonicalName;
+        }
+    }
+
     public record Prediction(
-            Set<String> entities,
+            Set<PredictedEntity> entities,
             List<PredictedRelation> relations,
             List<PredictedClaim> claims,
             List<String> uncertainties,
@@ -148,12 +188,31 @@ public final class RequirementGraphGoldModels {
             errorCode = errorCode == null ? "" : errorCode;
         }
 
-        /** 兼容旧四参数构造：默认空代码事实、无漂移/发布、SUCCESS。 */
+        /** 兼容旧实体字符串构造：包装为未携带类型的 {@link PredictedEntity}。 */
         public Prediction(Set<String> entities, List<PredictedRelation> relations,
                           List<PredictedClaim> claims, List<String> uncertainties) {
-            this(entities, relations, claims, uncertainties, List.of(),
+            this(wrapEntities(entities), relations, claims, uncertainties, List.of(),
                     new DriftDecision("", "", "", List.of()), PublicationDecision.NOT_PUBLISHED,
                     PredictionStatus.SUCCESS, "", 0, 0);
+        }
+
+        /** 兼容旧实体字符串构造（完整字段版本）。 */
+        public Prediction(Set<String> entities, List<PredictedRelation> relations,
+                          List<PredictedClaim> claims, List<String> uncertainties,
+                          List<PredictedCodeFact> codeFacts,
+                          DriftDecision driftDecision, PublicationDecision publicationDecision,
+                          PredictionStatus status, String errorCode, long latencyMs, int retryCount) {
+            this(wrapEntities(entities), relations, claims, uncertainties, codeFacts,
+                    driftDecision, publicationDecision, status, errorCode, latencyMs, retryCount);
+        }
+
+        private static Set<PredictedEntity> wrapEntities(Set<String> entities) {
+            if (entities == null) return Set.of();
+            Set<PredictedEntity> result = new java.util.LinkedHashSet<>();
+            for (String entity : entities) {
+                if (entity != null && !entity.isBlank()) result.add(PredictedEntity.untyped(entity.trim()));
+            }
+            return Set.copyOf(result);
         }
 
         public static Prediction empty() {

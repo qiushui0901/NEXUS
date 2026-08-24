@@ -17,10 +17,36 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
-/** 加载 requirement-graph-gold JSONL 数据集并规范化为评测用例。 */
+/**
+ * 加载 requirement-graph-gold JSONL 数据集并规范化为评测用例。
+ *
+ * <p>支持两种加载模式：
+ * <ul>
+ *   <li>{@link GoldLoadMode#EXPLORATORY}：允许 {@code HUMAN_REVIEW_REQUIRED} 记录，漂移用例缺少显式
+ *       {@code decision} 时从 scenario 兼容推导——用于快速调试；</li>
+ *   <li>{@link GoldLoadMode#FORMAL}：只允许 {@code GOLD_ACCEPTED}，且漂移用例必须携带显式
+ *       {@code decision}，禁止隐式推导——用于 CI / 模型对比 / 上线门禁。</li>
+ * </ul>
+ *
+ * <p>两种模式都执行结构完整性校验：caseId 非空且唯一、scenario 非空、entity id 唯一、
+ * claim/relation/decision 引用的 evidenceId 必须存在、annotation.status 非空。
+ */
 public final class RequirementGraphGoldLoader {
+
+    /** 金标加载模式。 */
+    public enum GoldLoadMode {
+        /** 允许未审核记录，decision 可兼容推导（调试用）。 */
+        EXPLORATORY,
+        /** 只允许 GOLD_ACCEPTED，禁止 decision 隐式推导（正式门禁）。 */
+        FORMAL
+    }
+
+    private static final Set<String> DRIFT_SCENARIOS = Set.of(
+            "DOCUMENT_DRIFT_REVIEW", "DOCUMENT_CONFLICT", "OPEN_DOUBT_NO_DRIFT", "NO_DRIFT_CODE_BOUNDARY");
 
     private final ObjectMapper objectMapper;
 
@@ -28,14 +54,21 @@ public final class RequirementGraphGoldLoader {
         this.objectMapper = objectMapper;
     }
 
+    /** 兼容旧调用：默认探索模式。 */
     public List<GoldCase> load(Path path) {
+        return load(path, GoldLoadMode.EXPLORATORY);
+    }
+
+    public List<GoldCase> load(Path path, GoldLoadMode mode) {
         List<GoldCase> cases = new ArrayList<>();
+        Set<String> seenCaseIds = new HashSet<>();
         try {
             List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
             for (String line : lines) {
                 if (line == null || line.isBlank()) continue;
                 JsonNode node = objectMapper.readTree(line);
-                cases.add(parse(node));
+                validate(node, seenCaseIds, mode);
+                cases.add(parse(node, mode));
             }
             return List.copyOf(cases);
         } catch (IOException exception) {
@@ -43,16 +76,90 @@ public final class RequirementGraphGoldLoader {
         }
     }
 
-    private GoldCase parse(JsonNode node) {
+    private void validate(JsonNode node, Set<String> seenCaseIds, GoldLoadMode mode) {
+        String caseId = node.path("caseId").asText();
+        if (caseId.isBlank()) {
+            throw new IllegalStateException("金标记录缺少 caseId");
+        }
+        if (!seenCaseIds.add(caseId)) {
+            throw new IllegalStateException("金标 caseId 重复: " + caseId);
+        }
+        String scenario = node.path("scenario").asText();
+        if (scenario.isBlank()) {
+            throw new IllegalStateException("金标记录缺少 scenario: " + caseId);
+        }
+        JsonNode gold = node.path("gold");
+        String annotationStatus = node.path("annotation").path("status").asText("");
+        if (annotationStatus.isBlank()) {
+            throw new IllegalStateException("金标 annotation.status 为空: " + caseId);
+        }
+        if (mode == GoldLoadMode.FORMAL && !"GOLD_ACCEPTED".equals(annotationStatus)) {
+            throw new IllegalStateException("正式评测只允许 GOLD_ACCEPTED，但 " + caseId + " 是 " + annotationStatus);
+        }
+        // entity id 唯一
+        Set<String> entityIds = new HashSet<>();
+        for (JsonNode entity : gold.path("entities")) {
+            String id = entity.path("id").asText();
+            if (id.isBlank()) throw new IllegalStateException("金标实体缺少 id: " + caseId);
+            if (!entityIds.add(id)) throw new IllegalStateException("金标实体 id 重复: " + caseId + " / " + id);
+        }
+        // evidenceId 索引
+        Set<String> evidenceIds = new HashSet<>();
+        for (JsonNode evidence : gold.path("evidence")) {
+            String evidenceId = evidence.path("evidenceId").asText();
+            if (evidenceId.isBlank()) throw new IllegalStateException("金标 evidence 缺少 evidenceId: " + caseId);
+            evidenceIds.add(evidenceId);
+        }
+        // claim / relation / decision 引用的 evidence 必须存在
+        for (JsonNode relation : gold.path("relations")) {
+            requireEvidence(relation, caseId, evidenceIds);
+            if (relation.path("subject").asText("").isBlank() || relation.path("object").asText("").isBlank()) {
+                throw new IllegalStateException("金标关系端点为空: " + caseId);
+            }
+        }
+        for (JsonNode claim : gold.path("claims")) {
+            requireEvidence(claim, caseId, evidenceIds);
+        }
+        if (gold.has("decision") && !gold.path("decision").isNull()) {
+            JsonNode decision = gold.path("decision");
+            if (!decision.isMissingNode() && !decision.isNull()) {
+                requireEvidence(decision, caseId, evidenceIds);
+            }
+        }
+        // FORMAL：漂移用例必须显式 decision，禁止从 scenario 推导
+        if (mode == GoldLoadMode.FORMAL && DRIFT_SCENARIOS.contains(scenario)) {
+            JsonNode decision = gold.path("decision");
+            if (decision.isMissingNode() || decision.isNull()
+                    || decision.path("type").asText("").isBlank()
+                    || decision.path("publication").asText("").isBlank()) {
+                throw new IllegalStateException("正式评测要求漂移用例显式 decision{type,publication}: " + caseId);
+            }
+        }
+    }
+
+    private void requireEvidence(JsonNode node, String caseId, Set<String> evidenceIds) {
+        for (JsonNode evidenceId : node.path("evidenceIds")) {
+            String id = evidenceId.asText();
+            if (id.isBlank() || !evidenceIds.contains(id)) {
+                throw new IllegalStateException("金标引用不存在的 evidenceId(" + id + "): " + caseId);
+            }
+        }
+    }
+
+    private GoldCase parse(JsonNode node, GoldLoadMode mode) {
         String caseId = node.path("caseId").asText();
         String scenario = node.path("scenario").asText();
+        String projectId = node.path("projectId").asText();
+        String documentId = node.path("documentId").asText();
+        String requirementVersion = node.path("requirementVersion").asText();
+        String annotationStatus = node.path("annotation").path("status").asText("");
         JsonNode input = node.path("input");
         String inputText = resolveInputText(input);
         List<GoldWindow> windows = windows(input.path("windows"));
         List<GoldCodeFact> codeFactInputs = codeFacts(input.path("codeFacts"));
         JsonNode gold = node.path("gold");
         EvidenceStats evidenceStats = evidenceStats(gold.path("evidence"));
-        GoldDecision decision = resolveDecision(gold.path("decision"), scenario);
+        GoldDecision decision = resolveDecision(gold.path("decision"), scenario, mode, caseId);
         return new GoldCase(
                 caseId,
                 scenario,
@@ -67,7 +174,11 @@ public final class RequirementGraphGoldLoader {
                 codeFactInputs,
                 evidenceStats.items(),
                 evidenceStats.total(),
-                evidenceStats.traceable());
+                evidenceStats.traceable(),
+                projectId,
+                documentId,
+                requirementVersion,
+                annotationStatus);
     }
 
     private String resolveInputText(JsonNode input) {
@@ -106,7 +217,7 @@ public final class RequirementGraphGoldLoader {
         return List.copyOf(result);
     }
 
-    private GoldDecision resolveDecision(JsonNode decision, String scenario) {
+    private GoldDecision resolveDecision(JsonNode decision, String scenario, GoldLoadMode mode, String caseId) {
         if (decision != null && !decision.isMissingNode() && !decision.isNull()) {
             List<String> evidenceIds = new ArrayList<>();
             for (JsonNode evidence : decision.path("evidenceIds")) evidenceIds.add(evidence.asText());
@@ -116,7 +227,10 @@ public final class RequirementGraphGoldLoader {
                     decision.path("publication").asText(),
                     evidenceIds);
         }
-        // 兼容旧数据：金标没有显式 decision 时，从场景推导评测期望（新数据集应写入显式 decision）。
+        if (mode == GoldLoadMode.FORMAL) {
+            throw new IllegalStateException("正式评测要求漂移用例显式 decision: " + caseId);
+        }
+        // 探索模式兼容旧数据：从场景推导评测期望（新数据集应写入显式 decision）。
         return switch (scenario) {
             case "DOCUMENT_DRIFT_REVIEW" -> new GoldDecision("DOCUMENT_DRIFT", "REVIEW_REQUIRED", "REVIEW_REQUIRED", List.of());
             case "DOCUMENT_CONFLICT" -> new GoldDecision("DOCUMENT_CONFLICT", "CONFLICT", "PRESERVE_CONFLICT", List.of());
