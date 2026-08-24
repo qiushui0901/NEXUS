@@ -82,6 +82,7 @@
 
 ### Fixed
 
+- **Build 快照仓库并发安全**：`ProductionBuildGraphPredictor.MapRequirementSnapshotRepository` 改用 `ConcurrentHashMap`，避免并行调用时快照读写竞争（IT 仍以串行方式运行 BuildService 链路）。
 - **金标 IT 门禁支持切片运行**：Oracle/Empty 断言改为按数据集切片判定——只有切片包含代码事实/漂移/负例时才断言对应 Oracle 维度 = 1.0，避免 `-Dgold.limit` 只取到无样本切片时因 0/0=0 误报失败；完整数据集门禁仍由 `RequirementGraphGoldDatasetSelfCheckTest` 无条件覆盖。
 - **真实数据构建性能**：`BusinessConceptService` / `CodeParameterAlignmentService` / `CodeTestAlignmentService` / `DoubtImpactService` 改为批量写入（成员、关系、漂移、存疑影响各单事务 batch），并给包含匹配加索引规模阈值（超过 2000 只用精确匹配），避免 779k 参数 × 8.5k 代码符号的全量扫描导致真实数据无法构建。
 - **旧 schema 自动重建**：`CodeCentricAlignmentStore` 启动时检测对齐层派生表的旧唯一约束（缺少 `business_version` / `version_context_id`），直接重建为当前 schema，避免旧约束阻止新作用域隔离（对齐层数据可从源数据重建）。

@@ -76,7 +76,7 @@ public class ProductionBuildGraphPredictor implements RequirementGraphGoldPredic
     /** 进程内 Map 版快照仓库：不依赖 Spring 文件布局，供评测/测试注入合成快照。 */
     public static class MapRequirementSnapshotRepository extends RequirementSnapshotRepository
             implements SnapshotSource {
-        private final Map<String, Snapshot> snapshots = new LinkedHashMap<>();
+        private final Map<String, Snapshot> snapshots = new java.util.concurrent.ConcurrentHashMap<>();
 
         public MapRequirementSnapshotRepository(Path tempDirectory) {
             super(new ObjectMapper(), new VersioningProperties(tempDirectory.toString()));
