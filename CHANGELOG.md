@@ -42,6 +42,7 @@
     - 新增 `RequirementGraphGoldEvalIT`（`-Dgold.eval=true`，默认规则预测器，`-Dgold.llm=true` 启用 LLM，`-Dgold.limit=N` 可先跑子集验证连通性，`-Dgold.parallelism=N` 并行预测），输出 `docs/reports/requirement-graph-gold-eval-YYYY-MM-DD.md`。
     - 新增 `RequirementGraphGoldEvaluatorTest`。
     - 纳入金标数据集 `evaluation/requirement-graph-gold-v0.1` / `v0.2`（84 条，含 REAL_WINDOW_COMPOSITE/DOCUMENT_DRIFT_REVIEW/DOCUMENT_CONFLICT/负例/测试用例）作为可复现评测输入。
+    - **首份 LLM 金标基线（v0.2，84 条，并行 8，deepseek-v4-flash）**：总体实体 F1=0.275、关系 F1=0.017、Claim F1≈0.064、负例错误率=0.400、存疑召回=0.308、代码事实召回=0.000；报告见 `docs/reports/requirement-graph-gold-eval-2026-08-24.md`。
   - **测试**
     - 新增/更新对齐与文档级用例（含窗口安全、结构抽取、文档级构建、关系审核、文档级控制器、金标评测器）。
     - 全量测试：726 tests 通过。
