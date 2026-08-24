@@ -31,8 +31,14 @@ public class CrossWindowIntegrator {
     private static final Pattern REQ_ID = Pattern.compile("REQ-\\d+", Pattern.CASE_INSENSITIVE);
 
     private final EvidenceComposer evidenceComposer = new EvidenceComposer();
+    private final CrossWindowVerifier defaultVerifier = new RuleCrossWindowVerifier();
 
     public IntegrationResult integrate(List<LogicalUnit> units, List<SourceAnchor> anchors) {
+        return integrate(units, anchors, defaultVerifier);
+    }
+
+    public IntegrationResult integrate(List<LogicalUnit> units, List<SourceAnchor> anchors,
+                                       CrossWindowVerifier verifier) {
         Map<String, SourceAnchor> anchorsById = new LinkedHashMap<>();
         for (SourceAnchor anchor : anchors) anchorsById.put(anchor.id(), anchor);
 
@@ -68,19 +74,30 @@ public class CrossWindowIntegrator {
                 }
                 String bundleId = "eb:" + sha256(relationId).substring(0, 24);
                 EvidenceBundle bundle;
+                String status;
                 if (targetAnchor == null) {
                     // 引用目标不存在：不得作为已证实事实，直接降级 UNAVAILABLE
                     bundle = new EvidenceBundle(bundleId, SupportMode.UNAVAILABLE, List.of());
+                    status = "UNRESOLVED";
                 } else {
-                    bundle = evidenceComposer.compose(bundleId, items);
+                    CrossWindowVerifier.Verification verification = verifier.verify(
+                            own, reference, "REFERENCES",
+                            sourceAnchor == null ? "" : sourceAnchor.originalText(),
+                            targetAnchor.originalText());
+                    if (verification.confirmed()) {
+                        bundle = evidenceComposer.compose(bundleId, items);
+                        status = "RULE_CONFIRMED";
+                    } else {
+                        bundle = new EvidenceBundle(bundleId, SupportMode.INFERRED, items);
+                        status = "CANDIDATE";
+                    }
                 }
                 bundles.add(bundle);
                 if (bundle.supportMode() == SupportMode.UNAVAILABLE) {
                     unavailable++;
                 }
                 relations.add(new CrossWindowRelation(relationId, own, reference, "REFERENCES",
-                        bundle.supportMode().name(), List.of(bundle.id()),
-                        bundle.supportMode() == SupportMode.UNAVAILABLE ? "UNRESOLVED" : "RULE_CONFIRMED"));
+                        bundle.supportMode().name(), List.of(bundle.id()), status));
             }
         }
         return new IntegrationResult(List.copyOf(relations), List.copyOf(bundles), unavailable);

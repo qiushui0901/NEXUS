@@ -169,6 +169,31 @@ public final class DocumentLevelModels {
         }
     }
 
+    /** 局部实体提及：由局部抽取（规则或 LLM）产出，绑定来源锚点与逻辑单元。 */
+    public record EntityMention(String name, String entityType, String sourceAnchorId, String sourceUnitId) {
+        public EntityMention {
+            if (name == null || name.isBlank()) throw new IllegalArgumentException("name 不能为空");
+            entityType = entityType == null || entityType.isBlank() ? "ENTITY" : entityType;
+        }
+    }
+
+    /** 局部关系：仅在单个逻辑单元内，绑定两端证据锚点。 */
+    public record LocalRelation(String relationId, String source, String target, String relationType,
+                                String sourceAnchorId, String targetAnchorId) {
+        public LocalRelation {
+            if (relationId == null || relationId.isBlank()) throw new IllegalArgumentException("relationId 不能为空");
+            relationType = relationType == null || relationType.isBlank() ? "RELATED_TO" : relationType;
+        }
+    }
+
+    /** 局部抽取结果：实体 + 局部关系。 */
+    public record LocalExtraction(List<EntityMention> entities, List<LocalRelation> relations) {
+        public LocalExtraction {
+            entities = entities == null ? List.of() : List.copyOf(entities);
+            relations = relations == null ? List.of() : List.copyOf(relations);
+        }
+    }
+
     public record BuildMetrics(
             int parentCount,
             int windowCount,
@@ -191,6 +216,8 @@ public final class DocumentLevelModels {
             List<DocumentStructureNode> structure,
             List<SourceAnchor> anchors,
             List<LogicalUnit> logicalUnits,
+            List<EntityMention> entities,
+            List<LocalRelation> localRelations,
             List<EvidenceBundle> evidenceBundles,
             List<CrossWindowRelation> relations
     ) {
@@ -198,6 +225,8 @@ public final class DocumentLevelModels {
             structure = structure == null ? List.of() : List.copyOf(structure);
             anchors = anchors == null ? List.of() : List.copyOf(anchors);
             logicalUnits = logicalUnits == null ? List.of() : List.copyOf(logicalUnits);
+            entities = entities == null ? List.of() : List.copyOf(entities);
+            localRelations = localRelations == null ? List.of() : List.copyOf(localRelations);
             evidenceBundles = evidenceBundles == null ? List.of() : List.copyOf(evidenceBundles);
             relations = relations == null ? List.of() : List.copyOf(relations);
         }

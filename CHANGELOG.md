@@ -32,6 +32,7 @@
     - Phase 2：新增 `DocumentStructureExtractor`（标题/编号需求/表格行/列表 → 结构树 + 不可变 `SourceAnchor`）与 `LogicalUnitPlanner`（REQUIREMENT/TABLE/LIST 逻辑单元不拆散）。
     - Phase 3+4：新增 `CrossWindowIntegrator`（REQ 编号引用 → 跨窗口候选，缺目标端降级 `UNAVAILABLE`，绝不当作已证实）、`EvidenceComposer`（DIRECT/COMPOSITE_SUPPORTED/INFERRED/UNAVAILABLE 证据包）、`BuildFingerprintFactory` 与 `RequirementDocumentStructureStore`（结构/锚点/单元/证据包/指纹持久化）。
     - 新增 `DocumentLevelBuildService` 与 `RequirementDocumentLevelController`（`/api/requirement-graphs/document-level/*`：build/structure/units/bundles）。
+    - **LLM 局部实体抽取与跨窗二次验证接入**：新增 `LocalEntityExtractor` / `CrossWindowVerifier` SPI，默认 `Rule*` 实现；`LlmLocalEntityExtractor` / `LlmCrossWindowVerifier` 通过 `app.rag.document-level.llm-enabled=true` 启用（默认关，`@ConditionalOnProperty` 保证单实现注入，任何 LLM 失败 fail-open）。LLM 只确认/拒绝候选，只发送两端证据片段，不能创建新实体或伪造证据；未确认候选降级 `INFERRED + CANDIDATE`，不进入已证实集。
     - 新增 `RequirementGraphWindowPlannerSafetyTest`、`DocumentStructureExtractorTest`、`DocumentLevelBuildServiceTest`、`RequirementDocumentLevelControllerTest`。
   - **对齐关系人工审核生命周期（Phase 5）**
     - `CodeCentricAlignmentStore` 新增 `findAlignmentRelationById` / `reviewAlignmentRelation`（HUMAN_CONFIRMED / REJECTED / STALE），`CodeCentricAlignmentController` 新增 `POST /api/knowledge/alignment/alignment-relation/review`。

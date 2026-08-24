@@ -48,7 +48,7 @@ class RequirementDocumentLevelControllerTest {
         BuildFingerprint fingerprint = new BuildFingerprint("rev-1", "v1", "v1", "v1", "v2", "v1", "RULE", "v1");
         DocumentLevelBuildResult result = new DocumentLevelBuildResult("doc-1", "5.1", fingerprint,
                 new BuildMetrics(1, 2, 50, 500, 2, 4, 4, 1, 0, 0),
-                List.of(), List.of(), List.of(), List.of(), List.of());
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of());
         when(buildService.build(eq("doc-1"), eq("5.1"), eq("rev-1"), any(String.class))).thenReturn(result);
 
         mvc.perform(post("/api/requirement-graphs/document-level/build")
