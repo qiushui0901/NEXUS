@@ -10,7 +10,9 @@
 - goldEvidenceOffsetValidityRate: 0.000
 - goldEvidenceClaimSupportRate: 0.705
 - predictionStatusCounts: {SUCCESS=84}
+- predictionErrorCodeCounts: {}
 - averageLatencyMs: 0
+- 关系本体约束：ontologyAlignedRelationF1=0.000（gold 本体关系 7 条 / 非本体 53 条 / 边界约束 9 条）
 
 ## 按场景
 

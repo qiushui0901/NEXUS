@@ -4,8 +4,10 @@ import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldEvalReport;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldCase;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.ScenarioMetrics;
+import com.example.requirementrag.requirement.graph.RequirementGraphBuildService;
 import com.example.requirementrag.requirement.graph.RequirementGraphExtractionService;
 import com.example.requirementrag.requirement.graph.RequirementGraphProperties;
+import com.example.requirementrag.requirement.graph.SQLiteRequirementGraphStore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -22,6 +24,9 @@ import java.util.Locale;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * 需求语义图金标评测入口。
@@ -59,10 +64,15 @@ class RequirementGraphGoldEvalIT {
         if (limit > 0 && limit < cases.size()) {
             cases = cases.subList(0, limit);
         }
-        int parallelism = Integer.getInteger("gold.parallelism", 8);
         boolean production = Boolean.parseBoolean(System.getProperty("gold.production", "false"));
+        boolean build = Boolean.parseBoolean(System.getProperty("gold.build", "false"));
+        // 真实 BuildService 链路共享 SQLite store，只能串行构建，避免 SQLite 写锁竞争。
+        int parallelism = build ? 1 : Integer.getInteger("gold.parallelism", 8);
         RequirementGraphGoldPredictor predictor;
-        if (production) {
+        if (build) {
+            // 完整生产构建链路：RequirementGraphWindowPlanner + ExtractionService + BuildAccumulator + Evidence + SQLite store
+            predictor = buildPredictor();
+        } else if (production) {
             // 生产抽取链路：走真实 RequirementGraphExtractionService（schema/证据/本体校验 + 跨窗口合并）
             predictor = new ProductionGraphPredictor(
                     new RequirementGraphExtractionService(chatClient, ragProperties, graphProperties));
@@ -72,12 +82,14 @@ class RequirementGraphGoldEvalIT {
                     : new RuleGoldPredictor();
         }
         RequirementGraphGoldEvaluator evaluator = new RequirementGraphGoldEvaluator();
-        GoldEvalReport report = evaluator.evaluateParallel(cases, predictor, parallelism);
+        // 完整 BuildService 链路单条可能执行多次模型调用 + SQLite 写入，放宽单条超时。
+        long perCallTimeoutMs = build ? 900_000L : 120_000L;
+        GoldEvalReport report = evaluator.evaluateParallel(cases, predictor, parallelism, perCallTimeoutMs);
         // 评测器自检：Oracle 应接近 1.0；Empty 应全 0（用于对比 LLM 到底比空预测好多少）
         GoldEvalReport oracleReport = evaluator.evaluate(cases, new OracleGoldPredictor());
         GoldEvalReport emptyReport = evaluator.evaluate(cases, new EmptyGoldPredictor());
 
-        String predictorLabel = production ? "PRODUCTION" : llm ? "LLM" : "RULE";
+        String predictorLabel = build ? "PRODUCTION_BUILD" : production ? "PRODUCTION" : llm ? "LLM" : "RULE";
         String markdown = render(report, oracleReport, emptyReport, predictorLabel);
         Path reportPath = Path.of("target/requirement-graph-gold-eval-report.md").toAbsolutePath().normalize();
         Files.writeString(reportPath, markdown, StandardCharsets.UTF_8);
@@ -95,6 +107,26 @@ class RequirementGraphGoldEvalIT {
         // —— 评测器质量门禁：Oracle 必须全 1.0，Empty 必须全 0 ——
         assertOracleGate(oracleReport, cases);
         assertEmptyGate(emptyReport);
+    }
+
+    private RequirementGraphGoldPredictor buildPredictor() throws Exception {
+        Path temp = Files.createTempDirectory("gold-build-eval");
+        Path db = temp.resolve("graph.db");
+        RequirementGraphProperties localProperties = ProductionBuildGraphPredictor.withDatabasePath(graphProperties, db.toString());
+        SQLiteRequirementGraphStore store = new SQLiteRequirementGraphStore(objectMapper, localProperties);
+        ProductionBuildGraphPredictor.MapRequirementSnapshotRepository snapshots =
+                new ProductionBuildGraphPredictor.MapRequirementSnapshotRepository(temp);
+        com.example.requirementrag.config.ProjectRegistry registry =
+                mock(com.example.requirementrag.config.ProjectRegistry.class);
+        when(registry.resolveRequirementCollection(anyString())).thenReturn("requirements_gold");
+        RequirementGraphBuildService buildService = new RequirementGraphBuildService(
+                store,
+                new RequirementGraphExtractionService(chatClient, ragProperties, graphProperties),
+                snapshots,
+                mock(com.example.requirementrag.retrieval.QdrantHybridStore.class),
+                registry,
+                localProperties);
+        return new ProductionBuildGraphPredictor(buildService, store, snapshots);
     }
 
     private void assertOracleGate(GoldEvalReport oracleReport, List<GoldCase> cases) {
@@ -156,8 +188,16 @@ class RequirementGraphGoldEvalIT {
                 .append("\n");
         out.append("- predictionStatusCounts: ")
                 .append(report.extras().getOrDefault("predictionStatusCounts", Map.of())).append("\n");
+        out.append("- predictionErrorCodeCounts: ")
+                .append(report.extras().getOrDefault("predictionErrorCodeCounts", Map.of())).append("\n");
         out.append("- averageLatencyMs: ")
-                .append(report.extras().getOrDefault("averageLatencyMs", 0)).append("\n\n");
+                .append(report.extras().getOrDefault("averageLatencyMs", 0)).append("\n");
+        out.append("- 关系本体约束：ontologyAlignedRelationF1=")
+                .append(format((Double) report.extras().getOrDefault("ontologyAlignedRelationF1", Double.NaN)))
+                .append("（gold 本体关系 ").append(report.extras().getOrDefault("ontologyAlignedRelationCount", 0))
+                .append(" 条 / 非本体 ").append(report.extras().getOrDefault("nonOntologyGoldRelationCount", 0))
+                .append(" 条 / 边界约束 ").append(report.extras().getOrDefault("boundaryConstraintGoldRelationCount", 0))
+                .append(" 条）\n\n");
 
         out.append("## 按场景\n\n");
         out.append("| 场景 | 用例 | 实体F1 | 关系F1 | ClaimF1 | 负例错误率 | 存疑召回 | 代码事实召回 | 代码事实F1 | 漂移准确率 |\n");

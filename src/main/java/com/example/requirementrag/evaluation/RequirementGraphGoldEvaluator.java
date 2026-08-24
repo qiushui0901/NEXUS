@@ -71,6 +71,12 @@ public class RequirementGraphGoldEvaluator {
     /** 并行预测（LLM 场景显著提速）：固定线程池逐条预测后聚合指标。 */
     public GoldEvalReport evaluateParallel(List<GoldCase> cases, RequirementGraphGoldPredictor predictor,
                                            int parallelism) {
+        return evaluateParallel(cases, predictor, parallelism, PER_CALL_TIMEOUT_MS);
+    }
+
+    /** 并行预测；{@code perCallTimeoutMs} 允许按预测器成本调整（完整 BuildService 链路单条可能超过 120s）。 */
+    public GoldEvalReport evaluateParallel(List<GoldCase> cases, RequirementGraphGoldPredictor predictor,
+                                           int parallelism, long perCallTimeoutMs) {
         int poolSize = Math.max(1, Math.min(parallelism, cases.size()));
         ExecutorService executor = Executors.newFixedThreadPool(poolSize);
         try {
@@ -82,10 +88,10 @@ public class RequirementGraphGoldEvaluator {
             }
             for (Future<?> future : futures) {
                 try {
-                    future.get(PER_CALL_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                    future.get(perCallTimeoutMs, TimeUnit.MILLISECONDS);
                 } catch (TimeoutException exception) {
                     future.cancel(true);
-                    throw new IllegalStateException("单条金标预测超时（" + PER_CALL_TIMEOUT_MS + "ms），已取消该任务", exception);
+                    throw new IllegalStateException("单条金标预测超时（" + perCallTimeoutMs + "ms），已取消该任务", exception);
                 } catch (ExecutionException exception) {
                     // ExecutionException 只是包装任务异常，不设置中断标记。
                     throw new IllegalStateException("金标预测任务失败", exception.getCause());
@@ -107,9 +113,13 @@ public class RequirementGraphGoldEvaluator {
         }
 
         Map<RequirementGraphGoldModels.PredictionStatus, Integer> statusCounts = new LinkedHashMap<>();
+        Map<String, Integer> errorCodeCounts = new LinkedHashMap<>();
         long totalLatencyMs = 0;
         for (Prediction prediction : predictions.values()) {
             statusCounts.merge(prediction.status(), 1, Integer::sum);
+            if (prediction.errorCode() != null && !prediction.errorCode().isBlank()) {
+                errorCodeCounts.merge(prediction.errorCode(), 1, Integer::sum);
+            }
             totalLatencyMs += prediction.latencyMs();
         }
 
@@ -146,6 +156,7 @@ public class RequirementGraphGoldEvaluator {
         extras.put("negativeScenarios", NEGATIVE_SCENARIOS);
         extras.put("retrievalExcludedFromExtraction", true);
         extras.put("predictionStatusCounts", statusCounts);
+        extras.put("predictionErrorCodeCounts", errorCodeCounts);
         extras.put("totalLatencyMs", totalLatencyMs);
         extras.put("averageLatencyMs", averageLatencyMs);
         extras.put("matchingMode", "ONE_TO_ONE");
@@ -165,6 +176,15 @@ public class RequirementGraphGoldEvaluator {
                 "offsetValidOk", evidence.offsetValidOk(),
                 "totalClaims", evidence.totalClaims(),
                 "claimSupported", evidence.claimSupported()));
+        // —— 正式关系本体约束：只有谓词属于生产 RelationType 的关系进入“本体对齐关系 F1”，
+        // 非本体谓词（业务属性/边界约束/实现状态）单独计数，避免把领域谓词误当成生产图谱能力。
+        OntologyRelationMetrics ontology = computeOntologyRelationMetrics(cases, predictions);
+        extras.put("ontologyAlignedRelationCount", ontology.ontologyGoldCount());
+        extras.put("nonOntologyGoldRelationCount", ontology.nonOntologyGoldCount());
+        extras.put("boundaryConstraintGoldRelationCount", ontology.boundaryGoldCount());
+        extras.put("ontologyAlignedRelationPrecision", ontology.precision());
+        extras.put("ontologyAlignedRelationRecall", ontology.recall());
+        extras.put("ontologyAlignedRelationF1", ontology.f1());
         return new GoldEvalReport(total, extraction, retrieval, List.copyOf(scenarios),
                 overall.metrics(), completeness, extras);
     }
@@ -487,6 +507,73 @@ public class RequirementGraphGoldEvaluator {
 
     private record EvidenceMetrics(int totalItems, int fieldComplete, int sourceMatched,
                                    int offsetValidTotal, int offsetValidOk, int totalClaims, int claimSupported) {
+    }
+
+    private OntologyRelationMetrics computeOntologyRelationMetrics(List<GoldCase> cases,
+                                                                   Map<String, Prediction> predictions) {
+        int ontologyGold = 0;
+        int nonOntologyGold = 0;
+        int boundaryGold = 0;
+        int tp = 0;
+        int fp = 0;
+        int fn = 0;
+        for (GoldCase goldCase : cases) {
+            if (RETRIEVAL.equals(goldCase.scenario())) continue;
+            List<GoldRelation> goldRelations = goldCase.relations() == null ? List.of() : goldCase.relations();
+            Prediction prediction = predictions.get(goldCase.caseId());
+            List<PredictedRelation> predictedRelations = prediction == null || prediction.relations() == null
+                    ? List.of() : prediction.relations();
+            List<GoldRelation> goldOntology = new ArrayList<>();
+            List<PredictedRelation> predOntology = new ArrayList<>();
+            for (GoldRelation relation : goldRelations) {
+                if (RelationOntologyMapper.toProductionType(relation.predicate()) != null) {
+                    goldOntology.add(relation);
+                    ontologyGold++;
+                } else {
+                    nonOntologyGold++;
+                    String predicate = relation.predicate() == null ? "" : relation.predicate().toUpperCase(Locale.ROOT);
+                    if (predicate.startsWith("MUST_NOT_")) boundaryGold++;
+                }
+            }
+            for (PredictedRelation relation : predictedRelations) {
+                if (RelationOntologyMapper.toProductionType(relation.predicate()) != null) predOntology.add(relation);
+            }
+            Map<String, String> idToName = entityIdToName(goldCase.entities());
+            int matches = matchOntologyRelations(predOntology, goldOntology, idToName);
+            tp += matches;
+            fp += Math.max(0, predOntology.size() - matches);
+            fn += Math.max(0, goldOntology.size() - matches);
+        }
+        double precision = ratio(tp, tp + fp);
+        double recall = ratio(tp, tp + fn);
+        return new OntologyRelationMetrics(ontologyGold, nonOntologyGold, boundaryGold,
+                precision, recall, f1(precision, recall));
+    }
+
+    /** 本体对齐关系匹配：两端谓词都映射到生产 RelationType，且映射后类型一致。 */
+    private int matchOntologyRelations(List<PredictedRelation> predicted, List<GoldRelation> gold,
+                                       Map<String, String> idToName) {
+        return maxBipartiteMatches(gold.size(), predicted.size(), (gIdx, pIdx) -> {
+            String goldType = RelationOntologyMapper.toProductionType(gold.get(gIdx).predicate());
+            String predType = RelationOntologyMapper.toProductionType(predicted.get(pIdx).predicate());
+            if (goldType == null || predType == null || !goldType.equals(predType)) return false;
+            String goldSource = resolveName(gold.get(gIdx).subject(), idToName);
+            String goldTarget = resolveName(gold.get(gIdx).object(), idToName);
+            return normalize(predicted.get(pIdx).source()).equals(normalize(goldSource))
+                    && normalize(predicted.get(pIdx).target()).equals(normalize(goldTarget));
+        });
+    }
+
+    private static double ratio(int numerator, int denominator) {
+        return denominator == 0 ? 0.0 : (double) numerator / denominator;
+    }
+
+    private static double f1(double precision, double recall) {
+        return precision + recall == 0 ? 0.0 : 2 * precision * recall / (precision + recall);
+    }
+
+    private record OntologyRelationMetrics(int ontologyGoldCount, int nonOntologyGoldCount, int boundaryGoldCount,
+                                           double precision, double recall, double f1) {
     }
 
     /** 按场景聚合计数器。 */

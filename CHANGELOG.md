@@ -46,7 +46,7 @@
     - **评测器自检与预测契约修复**：新增 `OracleGoldPredictor`（自检，实体/关系/Claim F1=1.0、负例错误率=0、存疑/代码/漂移=1.0）与 `EmptyGoldPredictor`（空基线）并在报告中并列展示；`Prediction` 扩展 `PredictedCodeFact` / `DriftDecision` / `PublicationDecision` / `PredictionStatus` / `errorCode` / `latencyMs` / `retryCount`；`LlmGoldPredictor` 不再吞异常，返回 SUCCESS/EMPTY_RESULT/FAILURE + errorCode + latency；指标新增漂移准确率，`goldEvidenceTraceabilityRate` 改名 `goldEvidenceFieldCompletenessRate`；报告输出 predictionStatusCounts 与平均延迟。
   - **测试**
     - 新增/更新对齐与文档级用例（含窗口安全、结构抽取、文档级构建、关系审核、文档级控制器、金标评测器）。
-    - 全量测试：733 tests 通过。
+    - 全量测试：735 tests 通过。
 
 ### Changed
 
@@ -61,6 +61,9 @@
   - **LLM 提示基准修复**：模型输入不再泄漏内部场景标签；代码事实采用明确输入契约（`input.codeFacts` 提供时才回写，CODE_VERIFIED 用例已补输入）；实现真实有限重试与异常分类（超时/限流/JSON/Schema/其他），`retryCount` 记录实际次数；非法 `publicationDecision` 返回 `SCHEMA_INVALID`，不再静默降级为 `NOT_PUBLISHED`。
   - **并行评测加固**：拆分 `InterruptedException` / `ExecutionException`，不再误设中断标记；单条预测超时（120s）取消该任务，避免一个卡死请求拖住整个评测。
   - **生产链路单元测试**：新增 `ProductionGraphPredictorTest`（Mockito 桩 `RequirementGraphExtractionService`），覆盖单窗口合并、链路异常上报、部分窗口失败保留成功结果。
+  - **完整 BuildService 构建链路评测入口**：新增 `ProductionBuildGraphPredictor`，把金标用例合成到进程内 `RequirementSnapshotRepository` 后走真实 `RequirementGraphBuildService.build`（窗口规划 → 真实抽取 → BuildAccumulator 跨窗口合并 → Evidence → SQLite 持久化 → 快照状态流转）；IT 通过 `-Dgold.build=true` 启用（串行、单条超时放宽到 900s，临时 DB），并新增 `ProductionBuildGraphPredictorTest` 单元测试。
+  - **正式关系本体进入评测约束**：新增 `RelationOntologyMapper`（REWARDS/REWARDS_ONLY/USES_CURRENCY/CONSUMES→USES、SETS_STATE→CHANGES_STATE）与 `ontologyAlignedRelationF1` 指标；金标非本体谓词（业务属性/边界约束）单独计数，报告输出 `nonOntologyGoldRelationCount` / `boundaryConstraintGoldRelationCount`。
+  - **报告可诊断性**：新增 `predictionErrorCodeCounts`（按 errorCode 计数），单条并行超时可配置（`evaluateParallel` 重载，BuildService 链路单条放宽）。
 
 ### Fixed
 
