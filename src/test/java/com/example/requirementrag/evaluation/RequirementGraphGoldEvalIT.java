@@ -52,10 +52,11 @@ class RequirementGraphGoldEvalIT {
         if (limit > 0 && limit < cases.size()) {
             cases = cases.subList(0, limit);
         }
+        int parallelism = Integer.getInteger("gold.parallelism", 8);
         RequirementGraphGoldPredictor predictor = llm
                 ? new LlmGoldPredictor(chatClient, graphProperties)
                 : new RuleGoldPredictor();
-        GoldEvalReport report = new RequirementGraphGoldEvaluator().evaluate(cases, predictor);
+        GoldEvalReport report = new RequirementGraphGoldEvaluator().evaluateParallel(cases, predictor, parallelism);
 
         String markdown = render(report, llm);
         Path reportPath = Path.of("target/requirement-graph-gold-eval-report.md").toAbsolutePath().normalize();

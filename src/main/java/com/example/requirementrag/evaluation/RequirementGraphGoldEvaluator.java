@@ -13,11 +13,16 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.function.Function;
 
 /**
  * 需求语义图金标评测器：按场景聚合实体/关系/Claim/存疑/代码事实指标。
@@ -32,7 +37,38 @@ public class RequirementGraphGoldEvaluator {
     private static final Set<String> NEGATIVE_SCENARIOS = Set.of(
             "DOUBT_NEGATIVE", "OPEN_DOUBT_NO_DRIFT", "DOCUMENT_CONFLICT");
 
+    private static final Prediction EMPTY_PREDICTION =
+            new Prediction(Set.of(), List.of(), List.of(), List.of());
+
     public GoldEvalReport evaluate(List<GoldCase> cases, RequirementGraphGoldPredictor predictor) {
+        return evaluateWith(cases, predictor::predict);
+    }
+
+    /** 并行预测（LLM 场景显著提速）：固定线程池逐条预测后聚合指标。 */
+    public GoldEvalReport evaluateParallel(List<GoldCase> cases, RequirementGraphGoldPredictor predictor,
+                                           int parallelism) {
+        int poolSize = Math.max(1, Math.min(parallelism, cases.size()));
+        ExecutorService executor = Executors.newFixedThreadPool(poolSize);
+        try {
+            Map<String, Prediction> predictions = new ConcurrentHashMap<>();
+            List<Future<?>> futures = new ArrayList<>();
+            for (GoldCase goldCase : cases) {
+                futures.add(executor.submit(() ->
+                        predictions.put(goldCase.caseId(), predictor.predict(goldCase))));
+            }
+            for (Future<?> future : futures) {
+                future.get();
+            }
+            return evaluateWith(cases, goldCase -> predictions.getOrDefault(goldCase.caseId(), EMPTY_PREDICTION));
+        } catch (InterruptedException | ExecutionException exception) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("并行金标预测失败", exception);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private GoldEvalReport evaluateWith(List<GoldCase> cases, Function<GoldCase, Prediction> predictFn) {
         Map<String, Accumulator> byScenario = new LinkedHashMap<>();
         int total = 0;
         int extraction = 0;
@@ -50,7 +86,7 @@ public class RequirementGraphGoldEvaluator {
             extraction++;
             Accumulator accumulator = byScenario.computeIfAbsent(goldCase.scenario(),
                     ignored -> new Accumulator(goldCase.scenario()));
-            accumulate(goldCase, predictor.predict(goldCase), accumulator);
+            accumulate(goldCase, predictFn.apply(goldCase), accumulator);
         }
 
         List<ScenarioMetrics> scenarios = new ArrayList<>();
@@ -60,7 +96,7 @@ public class RequirementGraphGoldEvaluator {
         Accumulator overall = new Accumulator("OVERALL");
         for (GoldCase goldCase : cases) {
             if (RETRIEVAL.equals(goldCase.scenario())) continue;
-            accumulate(goldCase, predictor.predict(goldCase), overall);
+            accumulate(goldCase, predictFn.apply(goldCase), overall);
         }
         double traceability = totalEvidence == 0 ? 1.0 : (double) traceableEvidence / totalEvidence;
         return new GoldEvalReport(total, extraction, retrieval, List.copyOf(scenarios),

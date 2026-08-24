@@ -39,7 +39,7 @@
   - **需求语义图金标评测器**
     - 新增 `RequirementGraphGoldLoader` / `RequirementGraphGoldEvaluator` / `RequirementGraphGoldPredictor`（SPI）与 `RuleGoldPredictor`、`LlmGoldPredictor`（可插拔，LLM fail-open）。
     - 支持按场景聚合：实体/关系/Claim Precision/Recall/F1、负例错误率、存疑召回、代码事实召回、金标证据可回查率；`RETRIEVAL_TEST_CASE` 不计入抽取 F1。
-    - 新增 `RequirementGraphGoldEvalIT`（`-Dgold.eval=true`，默认规则预测器，`-Dgold.llm=true` 启用 LLM，`-Dgold.limit=N` 可先跑子集验证连通性），输出 `docs/reports/requirement-graph-gold-eval-YYYY-MM-DD.md`。
+    - 新增 `RequirementGraphGoldEvalIT`（`-Dgold.eval=true`，默认规则预测器，`-Dgold.llm=true` 启用 LLM，`-Dgold.limit=N` 可先跑子集验证连通性，`-Dgold.parallelism=N` 并行预测），输出 `docs/reports/requirement-graph-gold-eval-YYYY-MM-DD.md`。
     - 新增 `RequirementGraphGoldEvaluatorTest`。
     - 纳入金标数据集 `evaluation/requirement-graph-gold-v0.1` / `v0.2`（84 条，含 REAL_WINDOW_COMPOSITE/DOCUMENT_DRIFT_REVIEW/DOCUMENT_CONFLICT/负例/测试用例）作为可复现评测输入。
   - **测试**

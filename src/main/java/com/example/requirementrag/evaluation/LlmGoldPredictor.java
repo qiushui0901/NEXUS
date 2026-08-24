@@ -90,7 +90,7 @@ public class LlmGoldPredictor implements RequirementGraphGoldPredictor {
     }
 
     private String truncate(String text) {
-        return text.length() > 6000 ? text.substring(0, 6000) : text;
+        return text.length() > 3000 ? text.substring(0, 3000) : text;
     }
 
     private String resolveModel() {
