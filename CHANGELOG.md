@@ -78,6 +78,7 @@
   - **单条超时不再中断评测**：`evaluateParallel` 超时转换为该用例 `MODEL_TIMEOUT` 并继续完成其余用例；任务异常记录为 `PREDICTION_EXCEPTION`。
   - **撤销语义不安全的本体映射**：`RelationOntologyMapper` 移除 `REWARDS→USES / CONSUMES→USES / SETS_STATE→CHANGES_STATE` 等近似映射，`ontologyAlignedRelationF1` 只统计生产 `RelationType` 精确匹配（当前仅 REQUIRES），非本体/边界约束单独计数。
   - **加载器测试**：新增 `RequirementGraphGoldLoaderTest`（FORMAL 拒绝未审核、漂移 decision 要求、evidenceId 引用、caseId 重复）。
+  - **报告维度边界**：PRODUCTION/PRODUCTION_BUILD 报告明确标注只覆盖 Entity/Relation/Uncertainty/Evidence/BuildStatus，Claim/CodeFact/Drift/Publication 由跨源对齐链路评测；BuildService 链路保留真实窗口 parentId/order/hash，并注明 offset 由规划器重建的已知局限。
 
 ### Fixed
 

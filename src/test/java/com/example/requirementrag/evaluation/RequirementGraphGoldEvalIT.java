@@ -283,6 +283,14 @@ class RequirementGraphGoldEvalIT {
 
         out.append("\n> 统计口径：RETRIEVAL_TEST_CASE 不计入抽取 F1；REAL_WINDOW_COMPOSITE 需按 windowFamily 聚类后复核；"
                 + "全部记录仍需人工复核为 GOLD_ACCEPTED 才能作为正式门禁。\n");
+        if ("PRODUCTION".equals(predictorLabel) || "PRODUCTION_BUILD".equals(predictorLabel)) {
+            out.append("\n> 维度边界：PRODUCTION/PRODUCTION_BUILD 预测器只覆盖 Entity/Relation/Uncertainty/Evidence/BuildStatus；"
+                    + "Claim/CodeFact/DriftDecision/PublicationDecision 由跨源对齐链路评测，本报告中这些维度为空不代表模型能力为 0。\n");
+        }
+        if ("PRODUCTION_BUILD".equals(predictorLabel)) {
+            out.append("> BuildService 链路保留真实窗口 parentId/parentOrder/contentHash/filename；"
+                    + "窗口 offset 由规划器按输入重建（已知局限：不校验原始窗口 offset/二次切窗）。\n");
+        }
         return out.toString();
     }
 
