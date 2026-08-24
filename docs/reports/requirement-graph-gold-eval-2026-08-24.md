@@ -10,7 +10,7 @@
 - retrievalTestCases: 15（不计入抽取 F1）
 - 匹配口径：一对一匹配 / Claim=factKey AND value / 代码事实=repo+commit+key+value
 - goldEvidenceFieldCompletenessRate: 1.000
-- goldEvidenceSourceMatchRate: 0.770
+- goldEvidenceSourceMatchRate: 0.802
 - goldEvidenceOffsetValidityRate: 0.000
 - goldEvidenceClaimSupportRate: 0.705
 - predictionStatusCounts: {SUCCESS=84}

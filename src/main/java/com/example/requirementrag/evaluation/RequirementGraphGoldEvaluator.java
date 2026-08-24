@@ -12,6 +12,12 @@ import com.example.requirementrag.evaluation.RequirementGraphGoldModels.GoldEval
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.PredictedRelation;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.Prediction;
 import com.example.requirementrag.evaluation.RequirementGraphGoldModels.ScenarioMetrics;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -530,23 +536,51 @@ public class RequirementGraphGoldEvaluator {
         if (missingSources.contains(sourceFile)) return null;
         return sourceCache.computeIfAbsent(sourceFile, file -> {
             try {
-                Path path = Path.of(file);
-                if (Files.exists(path)) {
-                    return Files.readString(path, StandardCharsets.UTF_8);
-                }
-                // 兼容“带 sheet 的 xlsx 引用”，按 `#` 前的路径解析。
+                String basePath = file;
                 int hash = file.indexOf('#');
-                if (hash > 0) {
-                    Path base = Path.of(file.substring(0, hash));
-                    if (Files.exists(base)) return Files.readString(base, StandardCharsets.UTF_8);
+                if (hash > 0) basePath = file.substring(0, hash);
+                Path path = Path.of(basePath);
+                if (!Files.exists(path)) {
+                    missingSources.add(file);
+                    return null;
                 }
-                missingSources.add(file);
-                return null;
-            } catch (IOException exception) {
+                String lower = basePath.toLowerCase(Locale.ROOT);
+                if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+                    return readSpreadsheet(path);
+                }
+                return Files.readString(path, StandardCharsets.UTF_8);
+            } catch (IOException | RuntimeException exception) {
                 missingSources.add(file);
                 return null;
             }
         });
+    }
+
+    /** 用 POI 提取 .xlsx/.xls 全部 sheet 的文本，使 quote 回查对 Excel 来源真实有效。 */
+    private String readSpreadsheet(Path path) {
+        try (Workbook workbook = WorkbookFactory.create(path.toFile())) {
+            StringBuilder builder = new StringBuilder();
+            for (int sheetIndex = 0; sheetIndex < workbook.getNumberOfSheets(); sheetIndex++) {
+                Sheet sheet = workbook.getSheetAt(sheetIndex);
+                builder.append("\n[sheet:").append(workbook.getSheetName(sheetIndex)).append("]\n");
+                for (Row row : sheet) {
+                    for (Cell cell : row) {
+                        if (cell == null) continue;
+                        switch (cell.getCellType()) {
+                            case STRING -> builder.append(cell.getStringCellValue()).append('\n');
+                            case NUMERIC -> builder.append(cell.getNumericCellValue()).append('\n');
+                            case BOOLEAN -> builder.append(cell.getBooleanCellValue()).append('\n');
+                            case FORMULA -> builder.append(cell.getCellFormula()).append('\n');
+                            default -> {
+                            }
+                        }
+                    }
+                }
+            }
+            return builder.toString();
+        } catch (IOException exception) {
+            throw new IllegalStateException("无法读取 Excel 来源: " + path, exception);
+        }
     }
 
     private boolean blank(String value) {
