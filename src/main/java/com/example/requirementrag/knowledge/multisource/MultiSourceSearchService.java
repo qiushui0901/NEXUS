@@ -136,7 +136,8 @@ public class MultiSourceSearchService {
             }
         }
         Set<SourceType> allowedSources = sourceFilter.allowedSources(intent);
-        List<UnifiedKnowledgeClaim> candidates = loadCandidates(projectId, version, allowedSources, query, intent)
+        List<String> warnings = new ArrayList<>();
+        List<UnifiedKnowledgeClaim> candidates = loadCandidates(projectId, version, allowedSources, query, intent, warnings)
                 .stream()
                 .filter(claim -> gate.isRetrievable(claim.status()))
                 .toList();
@@ -177,7 +178,6 @@ public class MultiSourceSearchService {
                 .filter(location -> location != null && !location.isBlank())
                 .distinct().toList();
         List<String> explanations = explanations(claims, intent);
-        List<String> warnings = new ArrayList<>();
         if (intent == KnowledgeQueryIntent.NORMATIVE && !doubts.isEmpty()) {
             warnings.add("普通规范查询默认不返回 OPEN 存疑");
         }
@@ -274,7 +274,8 @@ public class MultiSourceSearchService {
     }
 
     private List<UnifiedKnowledgeClaim> loadCandidates(String projectId, String version, Set<SourceType> allowed,
-                                                       String query, KnowledgeQueryIntent intent) {
+                                                       String query, KnowledgeQueryIntent intent,
+                                                       List<String> warnings) {
         Set<UnifiedKnowledgeClaim> result = new LinkedHashSet<>();
         if (allowed.contains(SourceType.PARAMETER_TABLE)) {
             store.findParameters(projectId, version).forEach(claim -> result.add(toUnified(claim)));
@@ -287,7 +288,13 @@ public class MultiSourceSearchService {
         }
         for (MultiSourceCandidateAdapter adapter : adapters) {
             if (allowed.contains(adapter.sourceType())) {
-                adapter.load(projectId, version, query, intent).forEach(result::add);
+                try {
+                    adapter.load(projectId, version, query, intent).forEach(result::add);
+                } catch (RuntimeException exception) {
+                    // 单一来源失败不能静默成“无结果”：记录警告并继续其他来源。
+                    warnings.add("来源 " + adapter.sourceType() + " 候选加载失败: "
+                            + (exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage()));
+                }
             }
         }
         return List.copyOf(result);

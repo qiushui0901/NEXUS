@@ -53,6 +53,13 @@
 - 测试：更新语义 Store/Build/候选检索测试以覆盖构建输入过滤（已删除 Chunk 不可见、复用 Chunk 仍可见、FAILED 构建不激活）、窗口策略 revision、Controller 空请求。
 - 全量测试：815 tests 通过。
 
+### Fixed（0.9.5 — Review 第五批：候选治理补强）
+
+- **P1 语义存储异常不再伪装成空结果**：`RequirementSemanticCandidateAdapter` 对存储/查询失败抛出稳定 `SEMANTIC_CANDIDATE_LOAD_FAILED`；`MultiSourceSearchService` 逐适配器捕获并写入 `RagWarning`，单来源故障不阻断其他来源，但不再静默“无语义结果”。
+- **P1 候选加载按 query 过滤**：新增 `SQLiteRequirementSemanticStore.listActiveByProjectVersion(projectId, version, limit, query)`，对 `semantic_summary / semantic_text / result_json` 做词项 LIKE 过滤；适配器把 query 传入并提高上限到 5000，缓解固定截断导致后段相关候选不可见的问题。
+- **P2 同来源多值冲突**：`MultiSourceConflictAnalyzer` 不再只取每组第一条，对同一事实同来源多个不同值生成 `VERSION_INTERNAL` 内部冲突；`conflictGroups` 同步纳入内部冲突分组；新增 `MultiSourceConflictAnalyzerTest`。
+- 全量测试：817 tests 通过。
+
 ## 0.9.4 — 2026-08-23
 
 ### Added

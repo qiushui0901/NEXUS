@@ -6,6 +6,7 @@ import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeMode
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeStatus;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.UnifiedKnowledgeClaim;
 import com.example.requirementrag.requirement.semantic.RequirementSemanticModels.SemanticAnnotationRecord;
+import com.example.requirementrag.requirement.semantic.RequirementSemanticException;
 import com.example.requirementrag.requirement.semantic.RequirementSemanticModels.SemanticClaimCandidate;
 import com.example.requirementrag.requirement.semantic.RequirementSemanticModels.SemanticCondition;
 import com.example.requirementrag.requirement.semantic.RequirementSemanticModels.SemanticEntity;
@@ -45,7 +46,7 @@ import java.util.Map;
 public class RequirementSemanticCandidateAdapter implements MultiSourceCandidateAdapter {
     private static final Logger log = LoggerFactory.getLogger(RequirementSemanticCandidateAdapter.class);
     /** 单次加载的标注上限：与语义图适配器的实体/关系上限同量级，防止超大项目拖垮查询。 */
-    private static final int MAX_ANNOTATIONS = 1_000;
+    private static final int MAX_ANNOTATIONS = 5_000;
 
     private final SQLiteRequirementSemanticStore store;
     private final RequirementSemanticProperties properties;
@@ -76,7 +77,7 @@ public class RequirementSemanticCandidateAdapter implements MultiSourceCandidate
         }
         try {
             List<SemanticAnnotationRecord> annotations =
-                    store.listActiveByProjectVersion(projectId, version, MAX_ANNOTATIONS);
+                    store.listActiveByProjectVersion(projectId, version, MAX_ANNOTATIONS, query);
             // 重叠窗口会产生相同事实：按（主体|谓词|值|单位|值类型）折叠，保留最早窗口的首个声明。
             Map<String, UnifiedKnowledgeClaim> unique = new LinkedHashMap<>();
             for (SemanticAnnotationRecord annotation : annotations) {
@@ -85,10 +86,9 @@ public class RequirementSemanticCandidateAdapter implements MultiSourceCandidate
             }
             return List.copyOf(unique.values());
         } catch (RuntimeException exception) {
-            // 语义存储不可用时降级为空候选，不把故障伪装成事实，也不阻断多源检索。
-            log.warn("Requirement semantic candidate load failed project={} version={}: {}",
-                    safe(projectId), safe(version), exception.getClass().getSimpleName());
-            return List.of();
+            // 存储故障不能伪装成“没有语义结果”：抛稳定异常，由 MultiSourceSearchService 转成检索警告。
+            throw new RequirementSemanticException("SEMANTIC_CANDIDATE_LOAD_FAILED",
+                    "语义候选加载失败 project=" + safe(projectId) + " version=" + safe(version), exception);
         }
     }
 

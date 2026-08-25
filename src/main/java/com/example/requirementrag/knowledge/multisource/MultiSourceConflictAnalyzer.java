@@ -39,6 +39,8 @@ public class MultiSourceConflictAnalyzer {
             UnifiedKnowledgeClaim parameter = firstType(group, SourceType.PARAMETER_TABLE);
             UnifiedKnowledgeClaim testCase = firstType(group, SourceType.TEST_CASE);
             UnifiedKnowledgeClaim testResult = firstType(group, SourceType.TEST_RESULT);
+            // 同来源多个不同值（跨窗口/重复抽取）→ 内部冲突，不能只取第一条掩盖不一致。
+            addInternalValueConflicts(group, entry.getKey(), conflicts);
             if (requirement != null && parameter != null && !sameValue(requirement.value(), parameter.value())) {
                 conflicts.add(MultiSourceConflictType.REQUIREMENT_PARAMETER + ":factKey=" + entry.getKey()
                         + " 需求(" + requirement.value() + ") 与参数表(" + parameter.value() + ")不一致");
@@ -61,6 +63,23 @@ public class MultiSourceConflictAnalyzer {
         return List.copyOf(conflicts);
     }
 
+    /** 同来源同一事实存在多个不同值（跨窗口/重复抽取）时生成内部冲突，避免“只取第一条”。 */
+    private void addInternalValueConflicts(List<UnifiedKnowledgeClaim> group, String factKey,
+                                           List<String> conflicts) {
+        Map<SourceType, Set<String>> distinctValuesBySource = new LinkedHashMap<>();
+        for (UnifiedKnowledgeClaim claim : group) {
+            if (claim == null || claim.value() == null || claim.value().isBlank()) continue;
+            distinctValuesBySource.computeIfAbsent(claim.sourceType(), ignored -> new LinkedHashSet<>())
+                    .add(claim.value().trim());
+        }
+        for (Map.Entry<SourceType, Set<String>> sourceEntry : distinctValuesBySource.entrySet()) {
+            if (sourceEntry.getValue().size() < 2) continue;
+            String values = String.join(" vs ", sourceEntry.getValue());
+            conflicts.add(MultiSourceConflictType.VERSION_INTERNAL + ":factKey=" + factKey
+                    + " 同来源(" + sourceEntry.getKey() + ")内部不一致: " + values);
+        }
+    }
+
     /** 返回冲突事实分组键集合（用于排序惩罚，避免解析展示字符串）。 */
     public Set<String> conflictGroups(List<UnifiedKnowledgeClaim> claims) {
         Set<String> groups = new LinkedHashSet<>();
@@ -78,7 +97,8 @@ public class MultiSourceConflictAnalyzer {
             UnifiedKnowledgeClaim parameter = firstType(group, SourceType.PARAMETER_TABLE);
             UnifiedKnowledgeClaim testCase = firstType(group, SourceType.TEST_CASE);
             UnifiedKnowledgeClaim testResult = firstType(group, SourceType.TEST_RESULT);
-            if ((requirement != null && parameter != null && !sameValue(requirement.value(), parameter.value()))
+            if (hasInternalValueConflict(group)
+                    || (requirement != null && parameter != null && !sameValue(requirement.value(), parameter.value()))
                     || (semantic != null && parameter != null && !sameValue(semantic.value(), parameter.value()))
                     || (parameter != null && testCase != null && !sameValue(parameter.value(), testCase.value()))
                     || (testResult != null && "FAILED".equalsIgnoreCase(testResult.value()))) {
@@ -86,6 +106,16 @@ public class MultiSourceConflictAnalyzer {
             }
         }
         return Set.copyOf(groups);
+    }
+
+    private boolean hasInternalValueConflict(List<UnifiedKnowledgeClaim> group) {
+        Map<SourceType, Set<String>> distinctValuesBySource = new LinkedHashMap<>();
+        for (UnifiedKnowledgeClaim claim : group) {
+            if (claim == null || claim.value() == null || claim.value().isBlank()) continue;
+            distinctValuesBySource.computeIfAbsent(claim.sourceType(), ignored -> new LinkedHashSet<>())
+                    .add(claim.value().trim());
+        }
+        return distinctValuesBySource.values().stream().anyMatch(values -> values.size() >= 2);
     }
 
     /** 分组键：优先 subject|predicate（跨来源事实对齐），缺失时回退 factKey。 */

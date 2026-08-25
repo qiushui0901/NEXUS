@@ -363,9 +363,24 @@ public class SQLiteRequirementSemanticStore {
      * 并且必须关联当前构建的输入集合（source_chunk_id + content_hash + window_id），
      * 防止已删除/过期窗口的旧记录在 revision 未变化时被重新暴露。
      */
+    /** 兼容旧签名：不按 query 过滤。 */
     public List<SemanticAnnotationRecord> listActiveByProjectVersion(String projectId,
                                                                      String requirementVersion, int limit) {
-        String sql = """
+        return listActiveByProjectVersion(projectId, requirementVersion, limit, "");
+    }
+
+    /**
+     * 列出项目+版本下所有 active 构建的成功标注（跨文档），供多源检索适配器消费。
+     * 与构建代际表按（项目、文档、版本、source_revision、模型、Prompt、Schema）对齐连接，
+     * 并且必须关联当前构建的输入集合（source_chunk_id + content_hash + window_id），
+     * 防止已删除/过期窗口的旧记录在 revision 未变化时被重新暴露。
+     * query 非空时按语义字段（summary/text/result_json）做词项 LIKE 过滤，避免固定截断漏掉后段相关候选。
+     */
+    public List<SemanticAnnotationRecord> listActiveByProjectVersion(String projectId,
+                                                                     String requirementVersion, int limit,
+                                                                     String query) {
+        List<String> terms = likeTerms(query);
+        StringBuilder sql = new StringBuilder("""
                 select a.* from requirement_semantic_annotation a
                 join requirement_semantic_build b
                   on a.project_id=b.project_id and a.document_id=b.document_id
@@ -379,23 +394,46 @@ public class SQLiteRequirementSemanticStore {
                 where a.project_id=? and a.requirement_version=? and b.active=1
                   and b.build_status='SUCCESS'
                   and a.extraction_status='SUCCEEDED'
-                order by a.source_file, a.parent_order, a.window_index, a.start_offset, a.source_chunk_id
-                limit ?
-                """;
-        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
-            statement.setString(1, safe(projectId));
-            statement.setString(2, safe(requirementVersion));
-            statement.setInt(3, Math.max(1, limit));
+                """);
+        List<String> params = new ArrayList<>(List.of(safe(projectId), safe(requirementVersion)));
+        if (!terms.isEmpty()) {
+            sql.append(" and (");
+            for (int index = 0; index < terms.size(); index++) {
+                if (index > 0) sql.append(" and ");
+                sql.append("(a.semantic_summary like ? or a.semantic_text like ? or a.result_json like ?)");
+                String like = "%" + terms.get(index) + "%";
+                params.add(like);
+                params.add(like);
+                params.add(like);
+            }
+            sql.append(')');
+        }
+        sql.append(" order by a.source_file, a.parent_order, a.window_index, a.start_offset, a.source_chunk_id limit ?");
+        params.add(Integer.toString(Math.max(1, limit)));
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+            for (int index = 0; index < params.size(); index++) {
+                statement.setString(index + 1, params.get(index));
+            }
             try (ResultSet rows = statement.executeQuery()) {
                 List<SemanticAnnotationRecord> records = new ArrayList<>();
                 while (rows.next()) records.add(record(rows));
-                for (SemanticAnnotationRecord r : records) {
-                }
                 return List.copyOf(records);
             }
         } catch (SQLException exception) {
             throw new IllegalStateException("Unable to list active requirement semantic annotations", exception);
         }
+    }
+
+    /** 查询分词：按空白/标点切分，保留长度 >= 2 的词项，用于语义字段 LIKE 过滤。 */
+    private List<String> likeTerms(String query) {
+        if (query == null || query.isBlank()) return List.of();
+        java.util.LinkedHashSet<String> terms = new java.util.LinkedHashSet<>();
+        for (String term : query.toLowerCase(java.util.Locale.ROOT)
+                .split("[\\s,，。；;？?！!：:、/()（）]+")) {
+            if (term.length() >= 2) terms.add(term);
+        }
+        return List.copyOf(terms);
     }
 
     /** 最近一次构建记录（任意状态），供构建状态查询。 */
