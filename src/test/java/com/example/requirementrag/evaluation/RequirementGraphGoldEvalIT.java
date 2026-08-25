@@ -97,6 +97,7 @@ class RequirementGraphGoldEvalIT {
             predictor = new RuleGoldPredictor();
         }
         RequirementGraphGoldEvaluator evaluator = new RequirementGraphGoldEvaluator();
+        evaluator.setBaseDirectory(dataset.getParent());
         // 完整 BuildService 链路单条可能执行多次模型调用 + SQLite 写入，放宽单条超时。
         long perCallTimeoutMs = build ? 900_000L : 120_000L;
         GoldEvalReport report = evaluator.evaluateParallel(cases, predictor, parallelism, perCallTimeoutMs);
@@ -226,7 +227,13 @@ class RequirementGraphGoldEvalIT {
                 .append("，failedCaseEntityRecall=")
                 .append(format((Double) report.extras().getOrDefault("failedCaseEntityRecall", Double.NaN)))
                 .append("）\n");
-        out.append("- 严格口径 strict：实体F1=")
+        out.append("- 所有输出口径 allOutput：实体F1=")
+                .append(format((Double) report.extras().getOrDefault("allOutputOverallEntityF1", Double.NaN)))
+                .append(" 关系F1=").append(format((Double) report.extras().getOrDefault("allOutputOverallRelationF1", Double.NaN)))
+                .append(" ClaimF1=").append(format((Double) report.extras().getOrDefault("allOutputOverallClaimF1", Double.NaN)))
+                .append(" 代码事实F1=").append(format((Double) report.extras().getOrDefault("allOutputOverallCodeFactF1", Double.NaN)))
+                .append("\n");
+        out.append("- 严格口径 strict（非 SUCCESS 按空结果）：实体F1=")
                 .append(format((Double) report.extras().getOrDefault("strictOverallEntityF1", Double.NaN)))
                 .append(" 关系F1=").append(format((Double) report.extras().getOrDefault("strictOverallRelationF1", Double.NaN)))
                 .append(" ClaimF1=").append(format((Double) report.extras().getOrDefault("strictOverallClaimF1", Double.NaN)))
@@ -237,6 +244,22 @@ class RequirementGraphGoldEvalIT {
                 .append(" 关系F1=").append(format((Double) report.extras().getOrDefault("successfulOnlyOverallRelationF1", Double.NaN)))
                 .append(" ClaimF1=").append(format((Double) report.extras().getOrDefault("successfulOnlyOverallClaimF1", Double.NaN)))
                 .append(" 代码事实F1=").append(format((Double) report.extras().getOrDefault("successfulOnlyOverallCodeFactF1", Double.NaN)))
+                .append("\n");
+        out.append("- 实体类型：typedEntityRate=")
+                .append(format((Double) report.extras().getOrDefault("typedEntityRate", Double.NaN)))
+                .append(" entityTypedF1=").append(format((Double) report.extras().getOrDefault("entityTypedF1", Double.NaN)))
+                .append(" entityTypeAccuracy=").append(format((Double) report.extras().getOrDefault("entityTypeAccuracy", Double.NaN)))
+                .append("\n");
+        out.append("- 存疑：recall=")
+                .append(format((Double) report.extras().getOrDefault("uncertaintyRecall", Double.NaN)))
+                .append(" precision=").append(format((Double) report.extras().getOrDefault("uncertaintyPrecision", Double.NaN)))
+                .append("\n");
+        out.append("- 证据回查：quoteSourceMatchRate=")
+                .append(format((Double) report.extras().getOrDefault("quoteSourceMatchRate", Double.NaN)))
+                .append(" windowOffsetValidityRate=")
+                .append(format((Double) report.extras().getOrDefault("windowOffsetValidityRate", Double.NaN)))
+                .append(" sourceFileOffsetValidityRate=")
+                .append(format((Double) report.extras().getOrDefault("sourceFileOffsetValidityRate", Double.NaN)))
                 .append("\n");
         out.append("- 关系本体约束：ontologyAlignedRelationF1=")
                 .append(format((Double) report.extras().getOrDefault("ontologyAlignedRelationF1", Double.NaN)))
@@ -291,6 +314,8 @@ class RequirementGraphGoldEvalIT {
             out.append("> BuildService 链路保留真实窗口 parentId/parentOrder/contentHash/filename；"
                     + "窗口 offset 由规划器按输入重建（已知局限：不校验原始窗口 offset/二次切窗）。\n");
         }
+        out.append("\n> 指标口径说明：代码事实指标（codeFactF1）衡量 input.codeFacts 的**回写能力（echo）**，"
+                + "不代表代码事实自主抽取能力；多窗口样本（REAL_WINDOW_COMPOSITE）按逐窗口独立抽取+合并评测，不再拼接后截断。\n");
         return out.toString();
     }
 

@@ -80,6 +80,17 @@
   - **加载器测试**：新增 `RequirementGraphGoldLoaderTest`（FORMAL 拒绝未审核、漂移 decision 要求、evidenceId 引用、caseId 重复）。
   - **报告维度边界**：PRODUCTION/PRODUCTION_BUILD 报告明确标注只覆盖 Entity/Relation/Uncertainty/Evidence/BuildStatus，Claim/CodeFact/Drift/Publication 由跨源对齐链路评测；BuildService 链路保留真实窗口 parentId/order/hash，并注明 offset 由规划器重建的已知局限。
   - **新契约 LLM 全量重跑（v0.2，84 条）**：`-Dgold.predictor=llm` 下 SUCCESS=32 / MODEL_TIMEOUT=1 / FAILURE=51，successRate=0.381；strict 口径 实体F1=0.210 / 关系F1=0.000 / ClaimF1=0.012 / 代码事实F1=0.182；successfulOnly 口径 实体F1=0.268 / 代码事实F1=0.667（CODE_VERIFIED 用例经 input.codeFacts 契约后代码事实召回=1.0）；报告见 `docs/reports/requirement-graph-gold-eval-2026-08-24.md`。
+  - **评测口径再收紧（Review 第三轮）**：
+    - **strict 真正按空结果计失败**：`strictOverall*` 现在对非 SUCCESS 样本一律按空预测计分；另增 `allOutputOverall*`（所有输出含失败残留）与 `successfulOnlyOverall*`，三套口径在报告中并列。
+    - **Prompt 基准多窗口逐窗抽取**：`REAL_WINDOW_COMPOSITE` 不再“拼接后截断 3000 字”，改为每个 GoldWindow 独立调用模型后合并实体/关系/Claim/存疑/代码事实；单文本仍保留 3000 字上限。
+    - **Build 合成快照 entryId 唯一**：改用 `parentId|windowId`，避免同父块多窗口产生重复 Entry ID（满足正式快照 entryId 唯一约束）。
+    - **证据 offset 按窗口坐标系校验**：有 `windowId` 时在 `GoldWindow.text` 内校验 `startOffset`，否则回退源文件全文；新增 `windowOffsetValidityRate` / `sourceFileOffsetValidityRate` / `quoteSourceMatchRate`，`goldEvidenceOffsetValidityRate` 在 RULE 全量从 0.000 提升到 0.370。
+    - **关系端点支持 Gold alias**：关系匹配复用实体匹配语义，模型输出别名也可命中 gold canonical/alias。
+    - **实体类型指标**：新增 `typedEntityRate` / `entityTypedF1` / `entityTypeAccuracy`，与名称 F1 分开报告。
+    - **存疑匹配收紧**：过滤空/过短预测，新增 `uncertaintyPrecision`（RULE 全量 0.171）。
+    - **重试总耗时**：Prompt 基准的 `averageLatencyMs` 改为整次预测总耗时（含重试与退避），不再只记最后一次调用。
+    - **evidenceId 按 case 作用域**：`computeEvidenceMetrics` 使用 `caseId|evidenceId` 复合 key，避免跨用例同 id 覆盖。
+    - **sourceFile 按数据集根目录解析**：评测器支持 `setBaseDirectory`，相对路径不再依赖当前工作目录。
 
 ### Fixed
 

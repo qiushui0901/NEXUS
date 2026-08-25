@@ -155,10 +155,11 @@ public class ProductionBuildGraphPredictor implements RequirementGraphGoldPredic
         if (goldCase.windows() != null && !goldCase.windows().isEmpty()) {
             int order = 1;
             for (GoldWindow window : goldCase.windows()) {
-                // 用真实父块 id 作为 entryId，BuildService 转 ChunkRecord 后 parentId 得以保留；
-                // parentOrder / contentHash / filename 也来自真实窗口。
-                String parentId = blank(window.parentId()) ? "window:" + window.windowId() : window.parentId();
-                entries.add(new Entry(parentId, window.filename(),
+                // entryId 必须唯一：用 parentId + windowId 组合，避免同父块多个窗口重复 entryId
+                // （正式 RequirementSnapshotRepository 会校验 entryId 唯一）。
+                String baseParentId = blank(window.parentId()) ? "parent" : window.parentId();
+                String entryId = baseParentId + "|" + window.windowId();
+                entries.add(new Entry(entryId, window.filename(),
                         window.parentOrder() == 0 ? order : window.parentOrder(), window.text(), window.contentHash()));
                 order++;
             }

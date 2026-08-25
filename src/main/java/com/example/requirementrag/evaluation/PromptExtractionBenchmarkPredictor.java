@@ -56,24 +56,68 @@ public class PromptExtractionBenchmarkPredictor implements RequirementGraphGoldP
 
     @Override
     public Prediction predict(GoldCase goldCase) {
+        long totalStartNanos = System.nanoTime();
+        List<GoldCodeFact> codeFactInputs = goldCase.codeFactInputs();
+        // 多窗口样本不允许“拼接后截断”：逐窗口独立抽取再合并。
+        if (goldCase.windows() != null && !goldCase.windows().isEmpty()) {
+            return predictWindows(goldCase, codeFactInputs, totalStartNanos);
+        }
         String text = goldCase.inputText();
-        if ((text == null || text.isBlank()) && goldCase.windows().isEmpty()) {
+        if (text == null || text.isBlank()) {
             return Prediction.empty();
         }
-        List<GoldCodeFact> codeFactInputs = goldCase.codeFactInputs();
+        Prediction prediction = callWithRetry(goldCase, text, codeFactInputs);
+        long totalLatencyMs = (System.nanoTime() - totalStartNanos) / 1_000_000;
+        return prediction.withLatency(totalLatencyMs);
+    }
+
+    /** 多窗口模式：每个 GoldWindow 用真实窗口文本独立调用模型，最后合并实体/关系/Claim/存疑/代码事实。 */
+    private Prediction predictWindows(GoldCase goldCase, List<GoldCodeFact> codeFactInputs, long totalStartNanos) {
+        Set<RequirementGraphGoldModels.PredictedEntity> allEntities = new LinkedHashSet<>();
+        List<PredictedRelation> allRelations = new ArrayList<>();
+        List<PredictedClaim> allClaims = new ArrayList<>();
+        List<String> allUncertainties = new ArrayList<>();
+        List<PredictedCodeFact> allCodeFacts = new ArrayList<>();
+        int succeeded = 0;
+        int failed = 0;
+        String firstError = "";
+        for (RequirementGraphGoldModels.GoldWindow window : goldCase.windows()) {
+            if (blank(window.text())) continue;
+            Prediction windowPrediction = callWithRetry(goldCase, window.text(), codeFactInputs);
+            if (windowPrediction.status() == PredictionStatus.SUCCESS) {
+                succeeded++;
+            } else {
+                failed++;
+                if (firstError.isBlank()) firstError = windowPrediction.errorCode();
+            }
+            allEntities.addAll(windowPrediction.entities());
+            allRelations.addAll(windowPrediction.relations());
+            allClaims.addAll(windowPrediction.claims());
+            allUncertainties.addAll(windowPrediction.uncertainties());
+            allCodeFacts.addAll(windowPrediction.codeFacts());
+        }
+        long totalLatencyMs = (System.nanoTime() - totalStartNanos) / 1_000_000;
+        if (succeeded == 0 && failed > 0) {
+            return failure(firstError.isBlank() ? "GRAPH_WINDOW_FAILED" : firstError, totalLatencyMs, failed);
+        }
+        boolean empty = allEntities.isEmpty() && allRelations.isEmpty() && allClaims.isEmpty()
+                && allUncertainties.isEmpty() && allCodeFacts.isEmpty();
+        PredictionStatus status = failed > 0 ? PredictionStatus.FAILURE
+                : empty ? PredictionStatus.EMPTY_RESULT : PredictionStatus.SUCCESS;
+        return new Prediction(allEntities, allRelations, allClaims, allUncertainties, allCodeFacts,
+                new DriftDecision("", "", "", List.of()), PublicationDecision.NOT_PUBLISHED,
+                status, failed > 0 ? firstError : "", totalLatencyMs, failed);
+    }
+
+    /** 对单段文本执行 1 + MAX_RETRIES 次调用，返回最终 Prediction（失败时 retryCount 为实际重试次数）。 */
+    private Prediction callWithRetry(GoldCase goldCase, String text, List<GoldCodeFact> codeFactInputs) {
         for (int attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
-            long startNanos = System.nanoTime();
             try {
-                Prediction prediction = callOnce(goldCase, text, codeFactInputs);
-                long latencyMs = (System.nanoTime() - startNanos) / 1_000_000;
-                return prediction
-                        .withRetryCount(Math.max(0, attempt - 1))
-                        .withLatency(latencyMs);
+                return callOnce(goldCase, text, codeFactInputs);
             } catch (RuntimeException exception) {
-                long latencyMs = (System.nanoTime() - startNanos) / 1_000_000;
                 String code = classify(exception);
                 if (!retryable(code) || attempt > MAX_RETRIES) {
-                    return failure(code, latencyMs, Math.max(0, attempt - 1));
+                    return failure(code, 0, Math.max(0, attempt - 1));
                 }
                 sleepBackoff(attempt);
             }
