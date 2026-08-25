@@ -6,6 +6,7 @@ import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeProp
 import com.example.requirementrag.project.BusinessProjectCatalogProperties;
 import com.example.requirementrag.requirement.graph.RequirementGraphFusionProperties;
 import com.example.requirementrag.requirement.graph.RequirementGraphProperties;
+import com.example.requirementrag.requirement.semantic.RequirementSemanticProperties;
 import com.example.requirementrag.web.ProjectAuthInterceptor;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Configuration;
@@ -26,7 +27,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
         BusinessProjectCatalogProperties.class,
         RequirementGraphProperties.class,
         RequirementGraphFusionProperties.class,
-        MultiSourceKnowledgeProperties.class
+        MultiSourceKnowledgeProperties.class,
+        RequirementSemanticProperties.class
 })
 public class WebMvcConfig implements WebMvcConfigurer {
 

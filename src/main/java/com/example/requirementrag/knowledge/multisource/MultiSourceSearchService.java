@@ -136,7 +136,8 @@ public class MultiSourceSearchService {
             }
         }
         Set<SourceType> allowedSources = sourceFilter.allowedSources(intent);
-        List<UnifiedKnowledgeClaim> candidates = loadCandidates(projectId, version, allowedSources, query).stream()
+        List<UnifiedKnowledgeClaim> candidates = loadCandidates(projectId, version, allowedSources, query, intent)
+                .stream()
                 .filter(claim -> gate.isRetrievable(claim.status()))
                 .toList();
         List<String> tokens = tokenize(query);
@@ -273,7 +274,7 @@ public class MultiSourceSearchService {
     }
 
     private List<UnifiedKnowledgeClaim> loadCandidates(String projectId, String version, Set<SourceType> allowed,
-                                                       String query) {
+                                                       String query, KnowledgeQueryIntent intent) {
         Set<UnifiedKnowledgeClaim> result = new LinkedHashSet<>();
         if (allowed.contains(SourceType.PARAMETER_TABLE)) {
             store.findParameters(projectId, version).forEach(claim -> result.add(toUnified(claim)));
@@ -286,7 +287,7 @@ public class MultiSourceSearchService {
         }
         for (MultiSourceCandidateAdapter adapter : adapters) {
             if (allowed.contains(adapter.sourceType())) {
-                adapter.load(projectId, version, query).forEach(result::add);
+                adapter.load(projectId, version, query, intent).forEach(result::add);
             }
         }
         return List.copyOf(result);

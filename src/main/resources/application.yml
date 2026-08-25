@@ -270,6 +270,31 @@ app:
         path-weight: ${REQUIREMENT_GRAPH_FUSION_PATH_WEIGHT:0.15}
         evidence-weight: ${REQUIREMENT_GRAPH_FUSION_EVIDENCE_WEIGHT:0.15}
         freshness-weight: ${REQUIREMENT_GRAPH_FUSION_FRESHNESS_WEIGHT:0.05}
+    # 需求语义 Chunk 增强（0.9.5）：默认全关。开启 enabled 后可离线标注（POST /api/requirement-semantic/builds）；
+    # candidate-retrieval-enabled 控制语义候选进入多源检索，normative-retrieval-enabled 控制其进入规范事实意图。
+    requirement-semantic:
+      enabled: ${REQUIREMENT_SEMANTIC_ENABLED:false}
+      candidate-retrieval-enabled: ${REQUIREMENT_SEMANTIC_CANDIDATE_RETRIEVAL_ENABLED:false}
+      normative-retrieval-enabled: ${REQUIREMENT_SEMANTIC_NORMATIVE_RETRIEVAL_ENABLED:false}
+      # 预留：语义向量索引（semantic_text 写入 Qdrant）尚未实现，当前无消费方。
+      vector-index-enabled: ${REQUIREMENT_SEMANTIC_VECTOR_INDEX_ENABLED:false}
+      database-path: ${REQUIREMENT_SEMANTIC_DATABASE_PATH:data/requirement-semantic.db}
+      model: ${REQUIREMENT_SEMANTIC_MODEL:}
+      prompt-version: ${REQUIREMENT_SEMANTIC_PROMPT_VERSION:requirement-semantic-v1}
+      schema-version: ${REQUIREMENT_SEMANTIC_SCHEMA_VERSION:v1}
+      max-input-chars: ${REQUIREMENT_SEMANTIC_MAX_INPUT_CHARS:12000}
+      max-entities-per-chunk: ${REQUIREMENT_SEMANTIC_MAX_ENTITIES_PER_CHUNK:30}
+      max-conditions-per-chunk: ${REQUIREMENT_SEMANTIC_MAX_CONDITIONS_PER_CHUNK:30}
+      max-events-per-chunk: ${REQUIREMENT_SEMANTIC_MAX_EVENTS_PER_CHUNK:30}
+      max-numeric-facts-per-chunk: ${REQUIREMENT_SEMANTIC_MAX_NUMERIC_FACTS_PER_CHUNK:30}
+      max-questions-per-chunk: ${REQUIREMENT_SEMANTIC_MAX_QUESTIONS_PER_CHUNK:20}
+      max-claims-per-chunk: ${REQUIREMENT_SEMANTIC_MAX_CLAIMS_PER_CHUNK:30}
+      max-retries: ${REQUIREMENT_SEMANTIC_MAX_RETRIES:2}
+      max-model-calls: ${REQUIREMENT_SEMANTIC_MAX_MODEL_CALLS:1000}
+      max-wall-clock-seconds: ${REQUIREMENT_SEMANTIC_MAX_WALL_CLOCK_SECONDS:1800}
+      max-estimated-tokens: ${REQUIREMENT_SEMANTIC_MAX_ESTIMATED_TOKENS:1000000}
+      window-overlap-chars: ${REQUIREMENT_SEMANTIC_WINDOW_OVERLAP_CHARS:400}
+      allow-inferred-candidate: ${REQUIREMENT_SEMANTIC_ALLOW_INFERRED_CANDIDATE:false}
     wiki:
       root-path: ${WIKI_ROOT_PATH:data/wiki}
       source-path: ${WIKI_SOURCE_PATH:data/wiki-sources}

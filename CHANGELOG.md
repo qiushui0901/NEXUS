@@ -1,3 +1,58 @@
+## 0.9.5 — 2026-08-25
+
+### Added
+
+- **需求语义 Chunk 增强最小闭环（Phase 1 + Phase 2，方案：`docs/requirement-semantic-chunk-and-hybrid-retrieval-development-plan-0.9.5.md`）**，新增包 `requirement/semantic`，默认全部关闭（`app.rag.requirement-semantic.enabled=false`）：
+  - **语义契约（Phase 1）**：`RequirementSemanticModels` 定义受控枚举（certainty/operator/valueType/questionType/错误码）与 LLM JSON 契约（entities/conditions/events/numericFacts/claims/questionExpansions/uncertainties/missingContext）；枚举在 JSON 绑定层保持 String，由 Validator 归一化校验，未知枚举不会误判为解析失败。
+  - **Prompt 服务**：`RequirementSemanticPromptService` 版本化 Prompt（`requirement-semantic-v1`），系统 Prompt 内置十条抽取约束（不补造、证据子串回查、缺失入 missingContext、factKey 受控格式、只返回 JSON）。
+  - **服务端校验器**：`RequirementSemanticAnnotationValidator` 执行 §7.3 十项校验（数组上限、枚举、evidenceQuote 必须是原文连续子串、数值/操作符一致性（含 BETWEEN 区间）、factKey 格式、Claim 主体引用存在性、去重、missingContext 保留），失败抛稳定错误码（`SEMANTIC_SCHEMA_INVALID / EVIDENCE_UNAVAILABLE / NUMERIC_INVALID / FACT_KEY_INVALID`）。
+  - **语义文本生成器**：`RequirementSemanticTextComposer` 按 §9.2 固定字段顺序渲染稳定语义文本（[原文]/[主体]/[条件]/[事件]/[事实]/[可能的问题]/[缺失上下文]），同一事实不因字段顺序漂移；同时生成单行结构化摘要。
+  - **LLM 标注服务**：`RequirementSemanticAnnotationService` 有界重试（仅对超时/限流/不可用/JSON 解析失败重试，指数退避），错误分类为稳定错误码，token 粗估用于预算控制；非重试性 Schema/证据错误立即失败。
+  - **SQLite 幂等存储（Phase 2）**：`SQLiteRequirementSemanticStore` 新增 `requirement_semantic_annotation` + 5 张子表（entity/condition/event/numeric_fact/question，外键级联）；幂等键为（项目、文档、需求版本、稳定 chunkId、内容哈希、模型、Prompt、**Schema 版本**——修复了方案 §6.1 唯一键缺 schema_version 导致版本升级撞键的问题）；Prompt/Schema/内容变化生成新记录而非覆盖；失败记录可见、可重试且重试替换不重复；单事务保存。
+  - **构建编排**：`RequirementSemanticBuildService` 加载父块（Qdrant scrollVersion + 去重）→ 稳定 chunkId（filename|parentId|parentOrder，不依赖向量 point ID）→ 短块整块/长块复用 `RequirementGraphWindowPlanner` 结构感知切窗不丢尾部 → 幂等跳过未变化内容 → 预算控制（maxModelCalls/maxWallClockSeconds/maxEstimatedTokens，超限停呼并携带 `SEMANTIC_BUDGET_*` 警告）→ 部分失败语义（SUCCESS/PARTIAL_FAILURE/FAILED + 每块错误码）；`retryFailedOnly=true` 只重跑失败项；结构化运行日志只记录 ID/状态/预算，不落原文与模型输出；Micrometer 指标 `nexus.requirement.semantic.started/completed/failed/latency`。
+  - **配置**：`app.rag.requirement-semantic.*` 全套开关与预算（默认关闭，`REQUIREMENT_SEMANTIC_*` 环境变量），注册于 `WebMvcConfig`。
+  - **测试**：新增 Validator（12 例）、fixtures 回归（12 条固定 JSON：主体/条件/事件/数值/单位/否定/范围/时间/IN 列表/缺失上下文/空抽取）、Prompt、Composer、错误分类、Store 幂等/版本隔离/失败重试、Build 跳过未变/部分失败/预算停呼/长交本切窗共 40 例。
+
+### Fixed（0.9.5 — Review 修复批次）
+
+依据外部代码 Review（P0×1 / P1×5 / P2×2）修复语义模块正确性问题，模块继续保持默认关闭：
+
+- **P0 字符串 EQ/NE 误判为数值错误**：数值校验改为由 valueType（NUMBER/DURATION/RANGE）与严格比较操作符（GT/GTE/LT/LTE）驱动，`EQ + STRING/ENUM/BOOLEAN/DATE`（货币、渠道、状态、品质等事实）不再被 `SEMANTIC_NUMERIC_INVALID` 拒绝；fixtures 新增 `string-equality` 场景（EQ + STRING + ENUM）。
+- **P1 预算超限伪装成 SUCCESS**：构建状态改为 `预算中断 || 存在未处理输入 || failed>0` → PARTIAL_FAILURE/FAILED；Token 预算预检把下一窗口预估计入（不再只在事后累计）；`annotate(input, remainingModelCalls)` 把剩余预算传入标注服务，单窗口内重试不再突破 maxModelCalls。
+- **P1 数值归一化错误**：服务端 `parseNumber`（支持千分位逗号）成为归一化唯一权威，模型提供的 `normalizedValue` 与其不一致直接拒绝；修复 `normalizedUnit` 误用 `unit` 的 bug（现在优先保留模型归一化单位，缺失时回退原文单位）；`BETWEEN` 区间禁止进入 `numericFacts`（单值事实），必须用 conditions 表达，避免区间被压成单值。
+- **P1 空条件 NPE 与错误码误判**：Validator 对 conditions 空成员抛 `SEMANTIC_SCHEMA_INVALID`（纵深防御）；`classify` 把 NPE 归类为 `SCHEMA_INVALID` 而非 `MODEL_UNAVAILABLE`（JSON 契约 null 成员在绑定层被拒绝，且不会误导重试）。
+- **P1 sourceRevision 不稳定与无 active generation**：sourceRevision 输入先按稳定键（文件名→父块顺序→父块 ID→内容哈希）排序，对底层返回顺序不敏感；新增 `requirement_semant_build` 构建代际表——非 FAILED 构建把范围内 SUCCEEDED 记录的 `source_revision` 对齐到当前值并切换 active（旧构建保留但非 active），查询提供 `activeSourceRevision()` / `listActive()` 只暴露 active 构建下可消费的成功标注，多次增量构建不会混入旧 revision/旧 Prompt 结果。
+- **P1 窗口坐标未持久化**：`SemanticAnnotationInput/Record` 与存储表新增 `window_index/start_offset/end_offset`（旧库 addColumnIfMissing 自动补列），列表查询按 `source_file, parent_order, window_index, start_offset` 稳定排序，审核与跨窗口拼接可还原窗口顺序与坐标。
+- **P2 SQLite 并发与迁移**：连接统一开启 `PRAGMA journal_mode=WAL` + `busy_timeout=5000`（构建与查询并发不再 database is locked），与项目其他 SQLite store 一致；新增列全部走 `addColumnIfMissing` 幂等迁移。
+- 测试：语义模块新增 19 例（总 59 例）：字符串/枚举 EQ/NE、normalizedValue 不一致拒绝、normalizedUnit 保留与回退、BETWEEN 数值事实拒绝、NPE 分类、千分位解析、Token 预算预检、sourceRevision 顺序不敏感、active revision 对齐与隔离、FAILED 构建不激活、窗口坐标排序持久化、重试不突破剩余预算。
+- 说明：Review 第七条（语义结果未接入检索链路）属 Phase 3+ 范围，本批次不处理；模块仍仅作离线标注管线使用。
+
+### Added（0.9.5 — Review 第三批：语义候选接入多源检索）
+
+落地 Review 第三批核心链路（构建触发 → active 标注 → 候选适配 → 多源融合检索 → 冲突治理），模块仍默认全关，`candidate-retrieval-enabled` / `normative-retrieval-enabled` / `allow-inferred-candidate` 三个开关开始被真实消费：
+
+- **语义构建 HTTP API**：新增 `RequirementSemanticBuildController`（`app.rag.requirement-semantic.enabled=true` 时装配）——`POST /api/requirement-semantic/builds` 触发构建（`WRITE` 权限 + 项目访问控制，`retryFailedOnly` 只重跑失败项），`GET /builds/latest` 轮询最近构建状态；`ApiExceptionHandler` 把 `RequirementSemanticException` 映射为 400 + 稳定 `SEMANTIC_*` code。
+- **REQUIREMENT_SEMANTIC 来源类型**：`SourceType` 新增枚举值；`SourceFilterStrategy` 把语义候选加入 NORMATIVE/PARAMETER/VALIDATION/IMPACT/CONSISTENCY/GENERAL 意图（DOUBT 除外）；`MultiSourceCandidateAdapter` 新增意图感知 `load` 重载（默认实现保持旧契约）。
+- **语义候选适配器**：`RequirementSemanticCandidateAdapter` 把 active 构建下的成功标注（实体/条件/数值事实/Claim 候选）投影为统一 Claim 参与多源检索——新增 `SQLiteRequirementSemanticStore.listActiveByProjectVersion`（与构建代际表按 revision+模型+Prompt+Schema 对齐连接，非 active 构建标注不可见）；治理边界：状态固定 `EXTRACTED`（单独出现时结论只能是 SUPPORTED，不会推成 CONFIRMED）、EXPLICIT 权威最高 SECONDARY（原文 Chunk 才是 PRIMARY）、INFERRED/UNKNOWN 默认不进候选、NORMATIVE 意图需显式开启 `normative-retrieval-enabled`、重叠窗口重复事实按（主体|谓词|值|单位|值类型）折叠、存储故障降级为空候选不阻断检索；factKey/subject|predicate 与参数表等来源对齐。
+- **冲突治理**：`MultiSourceConflictAnalyzer` 新增需求语义候选与参数表的不一致检测（`REQUIREMENT_PARAMETER` 冲突，语义侧带候选标记），代码/参数表在来源稳定排序中天然优先于语义候选（CODE 与对齐层 > 语义候选）。
+- **修复**：标注失败 outcome 的 token 估算不再为 0（按输入 token × 实际调用次数计入预算，失败重试不再突破 Token 上限）。
+- **测试**：新增 16 例——适配器投影/门禁/INFERRED 过滤/active 隔离/窗口折叠/故障降级（7），端到端检索集成（语义候选进入结果、与参数表值冲突被报告且结论 CONFLICTED、NORMATIVE 默认不可见、语义单独出现只 SUPPORTED、CODE 同分优先，5），Controller 委托与访问控制（2），`enabled=true/false` 两种配置下整条语义 Bean 链装配/不装配（2）。
+- 未实现：`vector-index-enabled`（语义向量写入 Qdrant + 向量候选召回）仍为预留开关，当前无消费方；RetrievalPipeline 文档分支未接入语义候选（避免影响既有 Recall，待金标评测后灰度）。
+
+### Fixed（0.9.5 — Review 第四批：构建代际与候选治理）
+
+依据外部代码 Review（P0×2 / P1×4 / P2×2）修复语义模块构建代际与候选事实治理问题：
+
+- **P0 删除 alignSourceRevision 全范围批量更新**：新增 `requirement_semantic_build_input(build_id, source_chunk_id, window_id, content_hash)` 构建输入表；构建完成时保存当前输入集合，`listActive` / `listActiveByProjectVersion` 通过构建输入 join 严格限定 active 标注（source_chunk_id + content_hash + coalesce(window_id,'')），已删除/过期窗口的旧成功记录不再被重新激活；旧记录的 `source_revision` 不再被批量改写。
+- **P0 窗口策略纳入构建身份**：`sourceRevision` 现在包含 `maxInputChars` / `windowOverlapChars` / `WindowPlanner` 类名 / 结构感知标记，窗口策略变化会生成新 buildId 与新 active 代际，避免旧窗口结果与新窗口混合。
+- **P1 只有 SUCCESS 构建切换 active**：`PARTIAL_FAILURE` / `FAILED` 不再接管线上结果；active 查询额外要求 `b.build_status='SUCCESS'`。
+- **P1 使用 SemanticClaimCandidate.factKey**：候选适配器优先使用模型输出的领域 `factKey`（如 `growth_fund.unlock.min_level`），不再一律用 `project|version|subject|predicate` 丢弃模型输出；该 factKey 未经领域词汇表校验，后续由 `BusinessConceptService`/人工词汇表归一化。
+- **P1 allow-inferred-candidate 默认关闭**：`application.yml` 默认值改为 `false`，并新增 `RequirementSemanticPropertiesTest` 绑定默认值断言。
+- **P2 Controller 空请求体防护**：`RequirementSemanticBuildController.build` 对 `null` 请求返回稳定 `SEMANTIC_REQUEST_INVALID`，不再 NPE。
+- **P2 contentHash fallback**：`sourceRevision` 对缺失 contentHash 的 Chunk 回退到归一化父块正文 SHA-256，避免内容变化被忽略。
+- 测试：更新语义 Store/Build/候选检索测试以覆盖构建输入过滤（已删除 Chunk 不可见、复用 Chunk 仍可见、FAILED 构建不激活）、窗口策略 revision、Controller 空请求。
+- 全量测试：815 tests 通过。
+
 ## 0.9.4 — 2026-08-23
 
 ### Added

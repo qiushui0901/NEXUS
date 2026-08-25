@@ -20,6 +20,8 @@ public final class KnowledgeConflictModels {
         DOUBT,
         CODE,
         WIKI,
+        /** 需求文档 LLM 语义标注候选：未经人工审核，只能作为候选召回，不能作为确认事实。 */
+        REQUIREMENT_SEMANTIC,
         /** @deprecated 语义不明确，兼容读取时映射为 TEST_CASE；新数据禁止继续使用。 */
         @Deprecated
         TEST;

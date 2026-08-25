@@ -1,0 +1,277 @@
+[
+  {
+    "name": "growth-fund-unlock",
+    "rawText": "玩家达到30级后开放成长基金，可进入成长基金玩法。",
+    "result": {
+      "entities": [
+        {"name": "成长基金", "type": "FEATURE", "aliases": ["成长基金玩法"], "certainty": "EXPLICIT", "evidenceQuote": "成长基金"},
+        {"name": "玩家", "type": "ACTOR", "aliases": [], "certainty": "EXPLICIT", "evidenceQuote": "玩家"}
+      ],
+      "conditions": [
+        {"subject": "玩家", "field": "level", "operator": "GTE", "value": "30", "unit": "级", "valueType": "NUMBER", "logicalGroup": "unlock", "certainty": "EXPLICIT", "evidenceQuote": "达到30级后"}
+      ],
+      "events": [
+        {"subject": "成长基金", "event": "开放", "object": "", "result": "可进入成长基金", "condition": "玩家等级达到30级", "certainty": "EXPLICIT", "evidenceQuote": "开放成长基金"}
+      ],
+      "numericFacts": [
+        {"subject": "玩家", "field": "level", "value": "30", "normalizedValue": 30, "unit": "级", "normalizedUnit": "级", "operator": "GTE", "certainty": "EXPLICIT", "evidenceQuote": "达到30级"}
+      ],
+      "claims": [
+        {"factKey": "growth_fund.unlock.min_level", "subject": "成长基金", "predicate": "UNLOCK_MIN_LEVEL", "value": "30", "unit": "级", "certainty": "EXPLICIT", "evidenceQuote": "达到30级后开放成长基金"}
+      ],
+      "questionExpansions": [
+        {"text": "玩家多少级可以开启成长基金？", "type": "CONDITION"}
+      ],
+      "uncertainties": [],
+      "missingContext": [],
+      "selfContained": true
+    }
+  },
+  {
+    "name": "entity-only-declaration",
+    "rawText": "本模块包含背包系统和邮件系统。",
+    "result": {
+      "entities": [
+        {"name": "背包系统", "type": "MODULE", "aliases": ["背包"], "certainty": "EXPLICIT", "evidenceQuote": "背包系统"},
+        {"name": "邮件系统", "type": "MODULE", "aliases": ["邮件"], "certainty": "EXPLICIT", "evidenceQuote": "邮件系统"}
+      ],
+      "conditions": [],
+      "events": [],
+      "numericFacts": [],
+      "claims": [],
+      "questionExpansions": [],
+      "uncertainties": [],
+      "missingContext": ["背包容量上限未在本段说明"],
+      "selfContained": false
+    }
+  },
+  {
+    "name": "forbidden-condition",
+    "rawText": "封禁状态下禁止参与排位赛。",
+    "result": {
+      "entities": [
+        {"name": "排位赛", "type": "FEATURE", "aliases": [], "certainty": "EXPLICIT", "evidenceQuote": "排位赛"}
+      ],
+      "conditions": [
+        {"subject": "玩家", "field": "ban_status", "operator": "FORBIDS", "value": "排位赛", "unit": "", "valueType": "STRING", "logicalGroup": "", "certainty": "EXPLICIT", "evidenceQuote": "禁止参与排位赛"}
+      ],
+      "events": [],
+      "numericFacts": [],
+      "claims": [],
+      "questionExpansions": [
+        {"text": "封禁状态能不能打排位？", "type": "CONDITION"}
+      ],
+      "uncertainties": [],
+      "missingContext": [],
+      "selfContained": true
+    }
+  },
+  {
+    "name": "range-condition",
+    "rawText": "活动期间等级在30~50级之间的玩家可以领取等级礼包。",
+    "result": {
+      "entities": [
+        {"name": "等级礼包", "type": "FEATURE", "aliases": [], "certainty": "EXPLICIT", "evidenceQuote": "等级礼包"}
+      ],
+      "conditions": [
+        {"subject": "玩家", "field": "level", "operator": "BETWEEN", "value": "30~50", "unit": "级", "valueType": "NUMBER", "logicalGroup": "gift", "certainty": "EXPLICIT", "evidenceQuote": "等级在30~50级之间"}
+      ],
+      "events": [
+        {"subject": "玩家", "event": "领取", "object": "等级礼包", "result": "", "condition": "等级30~50级", "certainty": "EXPLICIT", "evidenceQuote": "可以领取等级礼包"}
+      ],
+      "numericFacts": [],
+      "claims": [],
+      "questionExpansions": [
+        {"text": "多少级能领等级礼包？", "type": "CONDITION"}
+      ],
+      "uncertainties": [],
+      "missingContext": [],
+      "selfContained": true
+    }
+  },
+  {
+    "name": "missing-context-only",
+    "rawText": "该项功能的具体数值以后续配置为准。",
+    "result": {
+      "entities": [],
+      "conditions": [],
+      "events": [],
+      "numericFacts": [],
+      "claims": [],
+      "questionExpansions": [],
+      "uncertainties": ["本段没有可确认的数值或规则"],
+      "missingContext": ["功能名称", "具体数值", "生效版本"],
+      "selfContained": false
+    }
+  },
+  {
+    "name": "unit-distinction",
+    "rawText": "冷却时间为30秒，持续时间为10分钟。",
+    "result": {
+      "entities": [],
+      "conditions": [],
+      "events": [],
+      "numericFacts": [
+        {"subject": "技能", "field": "cooldown", "value": "30", "normalizedValue": 30, "unit": "秒", "normalizedUnit": "秒", "operator": "EQ", "certainty": "EXPLICIT", "evidenceQuote": "冷却时间为30秒"},
+        {"subject": "技能", "field": "duration", "value": "10", "normalizedValue": 10, "unit": "分钟", "normalizedUnit": "分钟", "operator": "EQ", "certainty": "EXPLICIT", "evidenceQuote": "持续时间为10分钟"}
+      ],
+      "claims": [],
+      "questionExpansions": [
+        {"text": "冷却时间是多少秒？", "type": "UNIT"}
+      ],
+      "uncertainties": [],
+      "missingContext": ["技能名称未在本段出现"],
+      "selfContained": false
+    }
+  },
+  {
+    "name": "question-expansions",
+    "rawText": "管理员可以在后台配置抽奖概率。",
+    "result": {
+      "entities": [
+        {"name": "管理员", "type": "ACTOR", "aliases": [], "certainty": "EXPLICIT", "evidenceQuote": "管理员"},
+        {"name": "抽奖", "type": "FEATURE", "aliases": ["抽奖活动"], "certainty": "EXPLICIT", "evidenceQuote": "抽奖"}
+      ],
+      "conditions": [],
+      "events": [
+        {"subject": "管理员", "event": "配置", "object": "抽奖概率", "result": "", "condition": "", "certainty": "EXPLICIT", "evidenceQuote": "后台配置抽奖概率"}
+      ],
+      "numericFacts": [],
+      "claims": [],
+      "questionExpansions": [
+        {"text": "谁能配置抽奖概率？", "type": "WHO"},
+        {"text": "抽奖概率在哪里配置？", "type": "IMPLEMENTATION"}
+      ],
+      "uncertainties": [],
+      "missingContext": ["概率默认值未说明"],
+      "selfContained": false
+    }
+  },
+  {
+    "name": "time-condition",
+    "rawText": "赛季奖励在赛季结束7天后发放。",
+    "result": {
+      "entities": [
+        {"name": "赛季奖励", "type": "FEATURE", "aliases": [], "certainty": "EXPLICIT", "evidenceQuote": "赛季奖励"}
+      ],
+      "conditions": [
+        {"subject": "赛季", "field": "end_time", "operator": "AFTER", "value": "7天", "unit": "天", "valueType": "DURATION", "logicalGroup": "", "certainty": "EXPLICIT", "evidenceQuote": "赛季结束7天后"}
+      ],
+      "events": [
+        {"subject": "赛季奖励", "event": "发放", "object": "", "result": "", "condition": "赛季结束7天后", "certainty": "EXPLICIT", "evidenceQuote": "发放"}
+      ],
+      "numericFacts": [
+        {"subject": "赛季奖励", "field": "grant_delay_days", "value": "7", "normalizedValue": 7, "unit": "天", "normalizedUnit": "天", "operator": "EQ", "certainty": "EXPLICIT", "evidenceQuote": "7天"}
+      ],
+      "claims": [],
+      "questionExpansions": [],
+      "uncertainties": [],
+      "missingContext": [],
+      "selfContained": true
+    }
+  },
+  {
+    "name": "in-list-condition",
+    "rawText": "仅支持微信和支付宝两种支付方式。",
+    "result": {
+      "entities": [
+        {"name": "支付方式", "type": "CONFIGURATION", "aliases": [], "certainty": "EXPLICIT", "evidenceQuote": "支付方式"}
+      ],
+      "conditions": [
+        {"subject": "支付方式", "field": "channel", "operator": "IN", "value": "微信,支付宝", "unit": "", "valueType": "ENUM", "logicalGroup": "", "certainty": "EXPLICIT", "evidenceQuote": "仅支持微信和支付宝"}
+      ],
+      "events": [],
+      "numericFacts": [],
+      "claims": [],
+      "questionExpansions": [
+        {"text": "支持哪些支付方式？", "type": "VALUE"}
+      ],
+      "uncertainties": [],
+      "missingContext": [],
+      "selfContained": true
+    }
+  },
+  {
+    "name": "derived-certainty",
+    "rawText": "VIP3玩家购买月卡享受9折优惠。",
+    "result": {
+      "entities": [
+        {"name": "月卡", "type": "FEATURE", "aliases": [], "certainty": "EXPLICIT", "evidenceQuote": "月卡"},
+        {"name": "VIP3", "type": "VALUE_OR_PARAMETER", "aliases": [], "certainty": "EXPLICIT", "evidenceQuote": "VIP3"}
+      ],
+      "conditions": [
+        {"subject": "VIP3", "field": "vip_level", "operator": "EQ", "value": "3", "unit": "", "valueType": "NUMBER", "logicalGroup": "", "certainty": "EXPLICIT", "evidenceQuote": "VIP3玩家"}
+      ],
+      "events": [],
+      "numericFacts": [
+        {"subject": "月卡", "field": "discount", "value": "9折", "normalizedValue": 9, "unit": "折", "normalizedUnit": "折", "operator": "EQ", "certainty": "EXPLICIT", "evidenceQuote": "9折优惠"}
+      ],
+      "claims": [
+        {"factKey": "monthly_card.vip3.discount", "subject": "月卡", "predicate": "VIP3_DISCOUNT", "value": "9折", "unit": "折", "certainty": "DERIVED", "evidenceQuote": "VIP3玩家购买月卡享受9折优惠"}
+      ],
+      "questionExpansions": [],
+      "uncertainties": [],
+      "missingContext": [],
+      "selfContained": true
+    }
+  },
+  {
+    "name": "inferred-uncertainty",
+    "rawText": "新版抽奖奖池预计包含更稀有的道具。",
+    "result": {
+      "entities": [
+        {"name": "抽奖奖池", "type": "CONFIGURATION", "aliases": [], "certainty": "EXPLICIT", "evidenceQuote": "抽奖奖池"}
+      ],
+      "conditions": [],
+      "events": [],
+      "numericFacts": [],
+      "claims": [
+        {"factKey": "lottery.pool.rarity_upgrade", "subject": "抽奖奖池", "predicate": "RARITY_UPGRADE", "value": "更稀有", "unit": "", "certainty": "INFERRED", "evidenceQuote": "预计包含更稀有的道具"}
+      ],
+      "questionExpansions": [],
+      "uncertainties": ["奖池具体道具清单未公布", "稀有度数值未定义"],
+      "missingContext": ["道具清单"],
+      "selfContained": false
+    }
+  },
+  {
+    "name": "empty-extraction",
+    "rawText": "目录",
+    "result": {
+      "entities": [],
+      "conditions": [],
+      "events": [],
+      "numericFacts": [],
+      "claims": [],
+      "questionExpansions": [],
+      "uncertainties": [],
+      "missingContext": ["本段为目录标题，无可抽取事实"],
+      "selfContained": true
+    }
+  },
+  {
+    "name": "string-equality",
+    "rawText": "成长基金奖励为灵玉，支付方式为微信。",
+    "result": {
+      "entities": [
+        {"name": "成长基金", "type": "FEATURE", "aliases": [], "certainty": "EXPLICIT", "evidenceQuote": "成长基金"},
+        {"name": "支付方式", "type": "CONFIGURATION", "aliases": [], "certainty": "EXPLICIT", "evidenceQuote": "支付方式"}
+      ],
+      "conditions": [
+        {"subject": "成长基金", "field": "reward_currency", "operator": "EQ", "value": "灵玉", "unit": "", "valueType": "STRING", "logicalGroup": "", "certainty": "EXPLICIT", "evidenceQuote": "奖励为灵玉"},
+        {"subject": "支付方式", "field": "channel", "operator": "EQ", "value": "微信", "unit": "", "valueType": "ENUM", "logicalGroup": "", "certainty": "EXPLICIT", "evidenceQuote": "支付方式为微信"}
+      ],
+      "events": [],
+      "numericFacts": [],
+      "claims": [
+        {"factKey": "growth_fund.reward.currency", "subject": "成长基金", "predicate": "REWARD_CURRENCY", "value": "灵玉", "unit": "", "certainty": "EXPLICIT", "evidenceQuote": "奖励为灵玉"}
+      ],
+      "questionExpansions": [
+        {"text": "成长基金奖励什么货币？", "type": "VALUE"}
+      ],
+      "uncertainties": [],
+      "missingContext": [],
+      "selfContained": true
+    }
+  }
+]

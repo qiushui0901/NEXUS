@@ -5,6 +5,7 @@ import com.example.requirementrag.service.DocumentNotFoundException;
 import com.example.requirementrag.service.RagUnavailableException;
 import com.example.requirementrag.model.RagOutcomeStatus;
 import com.example.requirementrag.requirement.graph.RequirementGraphException;
+import com.example.requirementrag.requirement.semantic.RequirementSemanticException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -33,6 +34,14 @@ public class ApiExceptionHandler {
     /** 需求语义图错误返回稳定 code，不暴露 provider 异常原文。 */
     @ExceptionHandler(RequirementGraphException.class)
     ProblemDetail handleRequirementGraph(RequirementGraphException exception) {
+        ProblemDetail detail = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
+        detail.setProperty("code", exception.code());
+        return detail;
+    }
+
+    /** 需求语义构建/校验错误返回稳定 code（SEMANTIC_*），不暴露 provider 异常原文。 */
+    @ExceptionHandler(RequirementSemanticException.class)
+    ProblemDetail handleRequirementSemantic(RequirementSemanticException exception) {
         ProblemDetail detail = ProblemDetail.forStatusAndDetail(HttpStatus.BAD_REQUEST, exception.getMessage());
         detail.setProperty("code", exception.code());
         return detail;

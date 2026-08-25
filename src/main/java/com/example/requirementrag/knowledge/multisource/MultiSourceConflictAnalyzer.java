@@ -35,12 +35,19 @@ public class MultiSourceConflictAnalyzer {
         for (Map.Entry<String, List<UnifiedKnowledgeClaim>> entry : byFactKey.entrySet()) {
             List<UnifiedKnowledgeClaim> group = entry.getValue();
             UnifiedKnowledgeClaim requirement = firstType(group, SourceType.REQUIREMENT);
+            UnifiedKnowledgeClaim semantic = firstType(group, SourceType.REQUIREMENT_SEMANTIC);
             UnifiedKnowledgeClaim parameter = firstType(group, SourceType.PARAMETER_TABLE);
             UnifiedKnowledgeClaim testCase = firstType(group, SourceType.TEST_CASE);
             UnifiedKnowledgeClaim testResult = firstType(group, SourceType.TEST_RESULT);
             if (requirement != null && parameter != null && !sameValue(requirement.value(), parameter.value())) {
                 conflicts.add(MultiSourceConflictType.REQUIREMENT_PARAMETER + ":factKey=" + entry.getKey()
                         + " 需求(" + requirement.value() + ") 与参数表(" + parameter.value() + ")不一致");
+            }
+            // 需求语义候选与参数事实不一致：语义候选是需求文档派生的期望，冲突以参数表为准展示，
+            // 但语义侧值带候选标记，提示需要人工复核（语义候选不能覆盖参数事实）。
+            if (semantic != null && parameter != null && !sameValue(semantic.value(), parameter.value())) {
+                conflicts.add(MultiSourceConflictType.REQUIREMENT_PARAMETER + ":factKey=" + entry.getKey()
+                        + " 需求语义候选(" + semantic.value() + ") 与参数表(" + parameter.value() + ")不一致");
             }
             if (parameter != null && testCase != null && !sameValue(parameter.value(), testCase.value())) {
                 conflicts.add(MultiSourceConflictType.PARAMETER_TEST + ":factKey=" + entry.getKey()
@@ -67,10 +74,12 @@ public class MultiSourceConflictAnalyzer {
         for (Map.Entry<String, List<UnifiedKnowledgeClaim>> entry : byFactKey.entrySet()) {
             List<UnifiedKnowledgeClaim> group = entry.getValue();
             UnifiedKnowledgeClaim requirement = firstType(group, SourceType.REQUIREMENT);
+            UnifiedKnowledgeClaim semantic = firstType(group, SourceType.REQUIREMENT_SEMANTIC);
             UnifiedKnowledgeClaim parameter = firstType(group, SourceType.PARAMETER_TABLE);
             UnifiedKnowledgeClaim testCase = firstType(group, SourceType.TEST_CASE);
             UnifiedKnowledgeClaim testResult = firstType(group, SourceType.TEST_RESULT);
             if ((requirement != null && parameter != null && !sameValue(requirement.value(), parameter.value()))
+                    || (semantic != null && parameter != null && !sameValue(semantic.value(), parameter.value()))
                     || (parameter != null && testCase != null && !sameValue(parameter.value(), testCase.value()))
                     || (testResult != null && "FAILED".equalsIgnoreCase(testResult.value()))) {
                 groups.add(entry.getKey());
