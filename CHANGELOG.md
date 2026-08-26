@@ -1,3 +1,19 @@
+## 0.9.6 — 2026-08-26
+
+### Added
+
+- **Multi-source Claim vector retrieval development plan** (`docs/multi-source-claim-vector-retrieval-development-plan-0.9.6.md`): defines a dedicated Qdrant Claim projection with SQLite as the source of truth, deterministic typed embedding text, versioned generation manifests, verified alias publication and rollback, SQLite hit hydration, deterministic candidate fusion, fail-safe feature flags, shadow rollout, and approximately 201,000-Claim quality/scale gates.
+
+### Added（0.9.6 — Phase A：投影契约与代际 Manifest）
+
+实现 0.9.6 方案 Phase A（§10），新增包 `knowledge/multisource/vector`，所有开关默认关闭（`app.rag.multi-source.claim-vector.enabled=false`）：
+
+- **投影契约模型**（`KnowledgeClaimVectorModels`）：`KnowledgeClaimVectorPoint`（Qdrant payload 契约——一个点代表一个 Claim 而非一行 Evidence，治理字段在命中后从 SQLite 重新读取不依赖 payload）；`ClaimVectorGenerationManifest`（代际 manifest——generationId/projectId/businessVersion/inputFingerprint/schema/composer/model/dim/physicalCollection/status/pointCount/warnings/timestamps）；`ClaimVectorGenerationInput`（构建输入——generationId/claimId/documentVersionId/textHash/updatedAt，active 代际只暴露输入集合中记录的 claim，已删除窗口的旧成功记录不可被重新激活）；`GenerationStatus` 枚举（BUILDING/VERIFYING/SUCCESS/FAILED/ACTIVE/RETIRED）；`WarningCode` 稳定告警码（DISABLED/UNAVAILABLE/GENERATION_MISSING/STALE/TRUNCATED/HYDRATION_INCOMPLETE/SCOPE_MISMATCH/BUDGET_EXCEEDED/BUILD_FAILED/VERIFICATION_FAILED）；确定性 Qdrant point ID（SHA-256(projectId|businessVersion|claimId|schemaVersion)，schema 升级生成新 ID）；输入指纹（SHA-256(sorted(claimId|documentVersionId|updatedAt|textHash)+schema+composer+model+dim)，输入顺序无关，任何变化生成新指纹）。
+- **配置**（`KnowledgeClaimVectorProperties`）：`@ConfigurationProperties("app.rag.multi-source.claim-vector")`，所有开关默认 false（enabled/build-enabled/candidate-retrieval-enabled/shadow-query-enabled）；alias 默认 `knowledge_claims_live`；schema 版本 `knowledge-claim-vector-v1`；text composer 版本 `knowledge-claim-text-v1`；candidate-limit=200/over-fetch-factor=3/batch-size=32/representative-evidence-limit=3/retain-physical-collections=2；databasePath 默认 `data/multi-source-knowledge.db`（与 MultiSourceKnowledgeStore 共用同一数据库）；注册于 `WebMvcConfig`。
+- **确定性文本组合器**（`KnowledgeClaimVectorTextComposer`）：按 SourceType 选择固定字段顺序渲染嵌入文本——[Requirement] Subject/Predicate/Value/Module/Fact key；[Parameter] Name/Purpose/Value type/Unit/Value/Scope/Fact key（值-only 参数排除——有 Name 但无 Purpose/Value/Unit/ValueType 不建点）；[Test Case] Title/Preconditions/Expected result/Module/Fact key；[Doubt] Question/Answer/Module/Fact key；空字段跳过不渲染空行；Module 从 factKey 第一段提取；CODE/TEST_RESULT/REQUIREMENT_SEMANTIC/WIKI 不纳入投影。
+- **SQLite 代际存储**（`SQLiteKnowledgeClaimVectorStore`）：`knowledge_claim_vector_generation` + `knowledge_claim_vector_generation_input` 两张表（幂等迁移，FK 级联，WAL+busy_timeout=5000）；`recordBuildStart`（begin immediate 单事务插入 manifest+输入集合）；`updateStatus`（VERIFYING/SUCCESS/FAILED 状态转换+finished_at+warnings）；`markActive`（单事务退役旧 ACTIVE+激活新代际+返回被退役代际供物理集合清理）；`rollbackTo`（RETIRED→ACTIVE 回滚）；`findActiveGeneration`/`findGeneration`/`findLatestGeneration`/`listRetiredForRollback`/`findGenerationInputs`/`findReusableGeneration`（同一 fingerprint 的 SUCCESS/ACTIVE 代际可跳过重复构建）。
+- **测试**：新增 38 例——文本组合器 14 例（四种来源类型确定性快照、值-only 参数排除、空字段跳过、模块提取、来源排除）；模型 11 例（point ID 确定性+schema 变化、指纹排序无关+text/schema/composer/model/dim/updatedAt 变化检测、空输入）；存储 13 例（幂等初始化、代际 CRUD+输入集合、状态转换+失败警告、active/retired 切换+至多一个 ACTIVE、回滚、可复用代际跳过）。全量 915 tests 通过。
+
 ## 0.9.5 — 2026-08-25
 
 ### Added

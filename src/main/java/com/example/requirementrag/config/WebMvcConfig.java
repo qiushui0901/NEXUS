@@ -28,7 +28,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
         RequirementGraphProperties.class,
         RequirementGraphFusionProperties.class,
         MultiSourceKnowledgeProperties.class,
-        RequirementSemanticProperties.class
+        RequirementSemanticProperties.class,
+        com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVectorProperties.class
 })
 public class WebMvcConfig implements WebMvcConfigurer {
 
