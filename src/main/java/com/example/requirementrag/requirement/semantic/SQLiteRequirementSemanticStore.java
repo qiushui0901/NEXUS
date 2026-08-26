@@ -38,6 +38,18 @@ import java.util.Optional;
 @ConditionalOnProperty(prefix = "app.rag.requirement-semantic", name = "enabled",
         havingValue = "true", matchIfMissing = false)
 public class SQLiteRequirementSemanticStore {
+
+    /**
+     * active 标注 + 实际读取的构建代际 ids（单查询单快照）：检索层用它把"本次检索实际读取的
+     * 代际"回传给响应，评测上下文必须绑定实际读取的 build ids 而非另行查询的状态。
+     */
+    public record ActiveAnnotations(List<SemanticAnnotationRecord> annotations, List<String> buildIds) {
+        public ActiveAnnotations {
+            annotations = annotations == null ? List.of() : List.copyOf(annotations);
+            buildIds = buildIds == null ? List.of() : List.copyOf(buildIds);
+        }
+    }
+
     private final ObjectMapper objectMapper;
     private final String jdbcUrl;
 
@@ -320,13 +332,21 @@ public class SQLiteRequirementSemanticStore {
         if (record == null) throw new IllegalArgumentException("语义标注记录不能为空");
         Instant now = Instant.now();
         try (Connection connection = open()) {
-            connection.setAutoCommit(false);
+            // 先读后写事务必须用 BEGIN IMMEDIATE：deferred 事务在首次读时建立读快照、写时才升级
+            // 为写事务——两个不同作用域的构建并行时，另一连接恰在读写之间提交会让当前连接以
+            // SQLITE_BUSY_SNAPSHOT 失败，且 busy_timeout 对已失效的快照无效。IMMEDIATE 在事务
+            // 开始即获取写锁，让竞争构建排队等待而不是快照失效。
+            try (Statement transaction = connection.createStatement()) {
+                transaction.execute("begin immediate");
+            }
             try {
                 // 兜底（服务层已按项目/文档/版本串行化构建）：同一 annotationId 已有 SUCCEEDED 标注时，
                 // 禁止失败/部分记录覆盖它——否则并发下失败构建会把 active 成功代际引用的标注
                 // insert or replace 成 FAILED，导致代际行还在但 listActive() 返回空。
                 if (!isSuccessful(record.extractionStatus()) && existingStatusIsSuccessful(connection, record.annotationId())) {
-                    connection.rollback();
+                    try (Statement transaction = connection.createStatement()) {
+                        transaction.execute("rollback");
+                    }
                     return;
                 }
                 deleteChildren(connection, record.annotationId());
@@ -344,9 +364,13 @@ public class SQLiteRequirementSemanticStore {
                     statement.executeUpdate();
                 }
                 insertChildren(connection, record);
-                connection.commit();
+                try (Statement transaction = connection.createStatement()) {
+                    transaction.execute("commit");
+                }
             } catch (SQLException | RuntimeException exception) {
-                connection.rollback();
+                try (Statement transaction = connection.createStatement()) {
+                    transaction.execute("rollback");
+                }
                 throw exception;
             }
         } catch (SQLException exception) {
@@ -474,9 +498,21 @@ public class SQLiteRequirementSemanticStore {
     public List<SemanticAnnotationRecord> listActiveByProjectVersion(String projectId,
                                                                      String requirementVersion, int limit,
                                                                      String query) {
+        return listActiveByProjectVersionWithBuilds(projectId, requirementVersion, limit, query).annotations();
+    }
+
+    /**
+     * 高（Review）：检索响应必须返回“实际读取的构建代际”而非前端另行查询的状态——否则状态返回 b1、
+     * 检索执行前发布 b2 时，评测记录会绑定 b1 而检索读取 b2。
+     * 因此 active 标注查询在同一条 SQL 中带出每个标注所属的 build_id（单查询单快照，无二次查询窗口），
+     * 由适配器回传检索响应，前端评测上下文用响应内 build ids 而非独立状态请求的结果。
+     */
+    public ActiveAnnotations listActiveByProjectVersionWithBuilds(String projectId,
+                                                                  String requirementVersion, int limit,
+                                                                  String query) {
         List<String> terms = likeTerms(query);
         StringBuilder sql = new StringBuilder("""
-                select a.* from requirement_semantic_annotation a
+                select a.*, b.build_id as read_build_id from requirement_semantic_annotation a
                 join requirement_semantic_build b
                   on a.project_id=b.project_id and a.document_id=b.document_id
                  and a.requirement_version=b.requirement_version
@@ -514,8 +550,13 @@ public class SQLiteRequirementSemanticStore {
             }
             try (ResultSet rows = statement.executeQuery()) {
                 List<SemanticAnnotationRecord> records = new ArrayList<>();
-                while (rows.next()) records.add(record(rows));
-                return List.copyOf(records);
+                java.util.LinkedHashSet<String> buildIds = new java.util.LinkedHashSet<>();
+                while (rows.next()) {
+                    records.add(record(rows));
+                    String buildId = rows.getString("read_build_id");
+                    if (buildId != null && !buildId.isBlank()) buildIds.add(buildId);
+                }
+                return new ActiveAnnotations(List.copyOf(records), List.copyOf(buildIds));
             }
         } catch (SQLException exception) {
             throw new IllegalStateException("Unable to list active requirement semantic annotations", exception);

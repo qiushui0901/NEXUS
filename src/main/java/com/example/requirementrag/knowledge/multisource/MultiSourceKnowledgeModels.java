@@ -274,7 +274,8 @@ public final class MultiSourceKnowledgeModels {
             int page,
             int limit,
             boolean hasMore,
-            boolean hasConflictsOutsidePage
+            boolean hasConflictsOutsidePage,
+            List<String> semanticBuildIds
     ) {
         public MultiSourceSearchResponse {
             claims = claims == null ? List.of() : List.copyOf(claims);
@@ -284,6 +285,7 @@ public final class MultiSourceKnowledgeModels {
             explanations = explanations == null ? List.of() : List.copyOf(explanations);
             warnings = warnings == null ? List.of() : List.copyOf(warnings);
             relations = relations == null ? List.of() : List.copyOf(relations);
+            semanticBuildIds = semanticBuildIds == null ? List.of() : List.copyOf(semanticBuildIds);
         }
     }
 }

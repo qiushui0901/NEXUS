@@ -37,7 +37,7 @@
         stages:["DISCOVER","PARSE","CLEAN","CHUNK","DEDUPLICATE","EMBED","INDEX","VERIFY","PUBLISH"],
         statusOptions:["IDLE","RUNNING","READY","PARTIAL","FAILED","STALE","DISABLED","UNAVAILABLE"],
         entityStatusOptions:["PENDING","RUNNING","CHUNKED","EMBEDDING","INDEXING","READY","FAILED","EXCLUDED","INTERRUPTED"],
-        retrieval:{query:"",version:"",limit:10,loading:false,response:null,elapsedMs:null},
+        retrieval:{query:"",version:"",limit:10,loading:false,response:null,elapsedMs:null,requestId:0},
         retrievalMode:"legacy",
         semantic:{documentId:"",intent:"",page:0,requestId:0,buildRequestId:0,loading:false,response:null,elapsedMs:null,
           buildStatus:null,buildLoading:false,buildUnavailable:false,buildError:null,error:null,expandedClaimId:null},
@@ -164,12 +164,20 @@
         }
         return{tone:"warn",text:"语义构建尚未发布（无 active 代际），当前无法使用语义 Claim 检索；请先执行语义构建并确认构建成功。"};
       },
-      // #6（Review 中）：本次语义结果是否可作评测——构建级检索开关关闭、或当前响应携带
-      // 后端稳定"不可评测"warning（NORMATIVE 检索被关闭、候选被截断、语义来源加载失败）时拒绝写入，
-      // 避免把"配置/加载问题"误记为"召回问题"。评测资格必须绑定当前响应，而非只看构建开关。
+      // #6（Review 中）+ #5（Review 高）：本次语义结果是否可作评测——
+      // #5：评测资格必须要求已捕获 active 代际（hasActiveGeneration=true、非空 activeBuildIds），
+      // 且状态查询没有失败或不可用——否则聚合 200 null 时前端把缺失状态转 {}，只查开关与 warning
+      // 就会 fail-open，用户可保存空 build identity 的 MISS。
+      // #6：当前响应携带不可评测 warning（NORMATIVE 检索被关闭、候选被截断、语义来源加载失败）
+      // 时拒绝写入，避免把"配置/加载问题"误记为"召回问题"。评测资格必须绑定当前响应。
       semanticEvaluationUsable(){
         if(!this.semantic.response)return false;
+        // #5：状态查询失败/不可用 → 无代际身份可绑定，不可评测。
+        if(this.semantic.buildUnavailable||this.semantic.buildError)return false;
         const build=this.semantic.buildStatus||{};
+        if(!build.hasActiveGeneration)return false;
+        const buildIds=build.activeBuildIds||[];
+        if(!buildIds.length)return false;
         if(build.candidateRetrievalEnabled===false)return false;
         const warnings=this.semantic.response.warnings||[];
         if(warnings.some(function(w){
@@ -211,19 +219,30 @@
         try{const data=await api.chunks(this.selectedBase.id,this.selectedDocument.id,{status:this.filters.chunkStatus,query:this.filters.chunkQuery,page,size:this.chunkPage.size});this.chunks=data.items;this.chunkPage=data;this.schedulePoll();}
         catch(error){this.showError(error);}finally{this.loading=false;}
       },
-      async openBase(base){this.selectedBase=base;this.selectedDocument=null;this.view="documents";NexusShell.setContext({projectId:base.projectId,version:base.publishedRevision||""});this.pushPath(`/knowledge/${encodeURIComponent(base.id)}/documents`);await this.loadDocuments(0);},
-      async openDocument(doc){this.selectedDocument=doc;this.view="document";this.pushPath(`/knowledge/${encodeURIComponent(this.selectedBase.id)}/documents/${encodeURIComponent(doc.id)}`);await this.loadChunks(0);},
-      openRetrieval(){this.view="retrieval";this.retrieval.version=this.selectedBase.publishedRevision||this.selectedBase.targetRevision||this.selectedBase.latestRequirementVersion||"";this.retrievalMode="legacy";this.resetSemanticState();this.resetCompareState();this.semantic.buildStatus=null;this.semantic.buildUnavailable=false;this.semantic.buildError=null;NexusShell.setContext({projectId:this.selectedBase.projectId,version:this.retrieval.version});this.pushPath(`/knowledge/${encodeURIComponent(this.selectedBase.id)}/retrieval`);this.clearPoll();},
-      async backToBase(){if(!this.selectedBase)return this.goHome();this.view="documents";this.retrieval.response=null;this.resetSemanticState();this.resetCompareState();NexusShell.setContext({projectId:this.selectedBase.projectId,version:this.selectedBase.publishedRevision||""});this.pushPath(`/knowledge/${encodeURIComponent(this.selectedBase.id)}/documents`);await this.loadDocuments(this.documentPage.page);},
+      async openBase(base){this.selectedBase=base;this.selectedDocument=null;this.view="documents";this.revokeRetrievalRequests();NexusShell.setContext({projectId:base.projectId,version:base.publishedRevision||""});this.pushPath(`/knowledge/${encodeURIComponent(base.id)}/documents`);await this.loadDocuments(0);},
+      async openDocument(doc){this.selectedDocument=doc;this.view="document";this.revokeRetrievalRequests();this.pushPath(`/knowledge/${encodeURIComponent(this.selectedBase.id)}/documents/${encodeURIComponent(doc.id)}`);await this.loadChunks(0);},
+      openRetrieval(){this.view="retrieval";this.retrieval.version=this.selectedBase.publishedRevision||this.selectedBase.targetRevision||this.selectedBase.latestRequirementVersion||"";this.retrievalMode="legacy";this.revokeRetrievalRequests();this.semantic.buildStatus=null;this.semantic.buildUnavailable=false;this.semantic.buildError=null;NexusShell.setContext({projectId:this.selectedBase.projectId,version:this.retrieval.version});this.pushPath(`/knowledge/${encodeURIComponent(this.selectedBase.id)}/retrieval`);this.clearPoll();},
+      async backToBase(){if(!this.selectedBase)return this.goHome();this.view="documents";this.retrieval.response=null;this.revokeRetrievalRequests();NexusShell.setContext({projectId:this.selectedBase.projectId,version:this.selectedBase.publishedRevision||""});this.pushPath(`/knowledge/${encodeURIComponent(this.selectedBase.id)}/documents`);await this.loadDocuments(this.documentPage.page);},
       async openChunk(chunk){try{this.selectedChunk=await api.chunk(this.selectedBase.id,chunk.chunkId);}catch(error){this.showError(error);}},
       async copyText(value,message){if(!value)return;await navigator.clipboard.writeText(value);NexusNotice.show(message,"success");},
-      goHome(){this.view="bases";this.selectedBase=null;this.selectedDocument=null;this.selectedChunk=null;this.pushPath("/knowledge");this.loadBases(this.basePage.page);},
+      goHome(){this.view="bases";this.selectedBase=null;this.selectedDocument=null;this.selectedChunk=null;this.revokeRetrievalRequests();this.pushPath("/knowledge");this.loadBases(this.basePage.page);},
       async refresh(){if(this.view==="bases")return this.loadBases(this.basePage.page);if(this.view==="documents")return this.loadDocuments(this.documentPage.page);if(this.view==="document")return this.loadChunks(this.chunkPage.page);},
       async rebuildBase(){await this.action(()=>api.rebuild(this.selectedBase.id),"已提交知识库重建任务");},
       async retryDocument(doc){await this.action(()=>api.retryDocument(this.selectedBase.id,doc.id),"已提交文档重试任务");},
       async retryChunk(chunk){await this.action(()=>api.retryChunk(this.selectedBase.id,chunk.chunkId),"已按文档范围提交重试任务");this.selectedChunk=null;},
       async action(operation,message){this.actionBusy=true;try{await operation();NexusNotice.show(message,"success");await this.refresh();}catch(error){this.showError(error);}finally{this.actionBusy=false;}},
-      async runRetrieval(){if(!this.retrieval.query)return;this.retrieval.loading=true;this.retrieval.response=null;this.retrieval.elapsedMs=null;const started=performance.now();try{this.retrieval.response=await api.retrieval(this.selectedBase.id,{query:this.retrieval.query,version:this.retrieval.version||null,limit:this.retrieval.limit});}catch(error){this.showError(error);}finally{this.retrieval.elapsedMs=Math.max(0,Math.round(performance.now()-started));this.retrieval.loading=false;}},
+      // #3（Review 高）：页面导航统一吊销三种检索请求（legacy / semantic / compare）——
+      // 旧请求慢返回不得写回新页面，也不得让隐藏的 loading 继续禁用提交按钮。
+      // 传统检索与对比检索都在这里递增自己的 requestId 并释放 loading；语义由 resetSemanticState 处理。
+      revokeRetrievalRequests(){
+        this.retrieval.requestId=(this.retrieval.requestId||0)+1;
+        this.retrieval.loading=false;
+        this.compare.requestId=(this.compare.requestId||0)+1;
+        this.compare.loading=false;
+        this.resetCompareState();
+        this.resetSemanticState();
+      },
+      async runRetrieval(){if(!this.retrieval.query)return;const requestId=++this.retrieval.requestId;this.retrieval.loading=true;this.retrieval.response=null;this.retrieval.elapsedMs=null;const started=performance.now();try{const response=await api.retrieval(this.selectedBase.id,{query:this.retrieval.query,version:this.retrieval.version||null,limit:this.retrieval.limit});if(requestId!==this.retrieval.requestId)return;this.retrieval.response=response;}catch(error){if(requestId!==this.retrieval.requestId)return;this.showError(error);}finally{if(requestId===this.retrieval.requestId){this.retrieval.elapsedMs=Math.max(0,Math.round(performance.now()-started));this.retrieval.loading=false;}}},
       // ---------------- 检索模式切换（方案 §4.1） ----------------
       submitRetrieval(){
         if(this.retrievalMode==="semantic")return this.runSemanticSearch(0);
@@ -264,7 +283,7 @@
       // 不查单文档状态；P1-3：构建状态查询有自己的 requestId，并在赋值前核对上下文快照（项目/版本），
       // 避免慢返回的旧上下文状态覆盖新上下文。
       async loadSemanticBuild(){
-        const base=this.selectedBase;if(!base)return;
+        const base=this.selectedBase;if(!base)return null;
         const projectId=base.projectId;
         const version=this.requirementVersion();
         const requestId=++this.semantic.buildRequestId;
@@ -276,15 +295,23 @@
         this.semantic.buildLoading=true;this.semantic.buildUnavailable=false;this.semantic.buildError=null;
         try{
           const buildStatus=await api.semanticBuildAggregate({projectId,requirementVersion:version});
-          if(!stillCurrent())return;
-          this.semantic.buildStatus=buildStatus;
+          // 展示状态仅在“当前可编辑上下文仍适用”时更新；请求私有结果无条件返回给发起者——
+          // #2（Review 高）：编辑版本会让旧版本结果与错误代际混合——提交 v1、状态等待期间改成 v2 时，
+          // v1 状态不再被“丢弃后从旧的/空的全局 buildStatus 提取代际”，而是由发起者（runSemanticSearch）
+          // 直接使用这份私有结果构造评测上下文。
+          if(stillCurrent())this.semantic.buildStatus=buildStatus;
+          return {buildStatus, unavailable:false, error:null};
         }catch(error){
-          if(!stillCurrent())return;
-          this.semantic.buildStatus=null;
-          if(error&&error.status===404)this.semantic.buildUnavailable=true;
-          else this.semantic.buildError=error;
+          if(stillCurrent()){
+            this.semantic.buildStatus=null;
+            if(error&&error.status===404)this.semantic.buildUnavailable=true;
+            else this.semantic.buildError=error;
+          }
+          return {buildStatus:null, unavailable:Boolean(error&&error.status===404), error};
         }finally{
-          if(stillCurrent())this.semantic.buildLoading=false;
+          // loading 跟随请求生命周期（requestId 仍是最新一次请求），而非展示上下文是否适用——
+          // 否则版本变化导致旧状态被丢弃时 buildLoading 会永久卡住（#2）。
+          if(requestId===this.semantic.buildRequestId)this.semantic.buildLoading=false;
         }
       },
       // 需求文档 ID：业务项目需求库取后端明确返回的 requirementDocumentId，不用展示名称猜测。
@@ -311,15 +338,20 @@
           limit:this.retrieval.limit,
           page
         };
-        this.semantic.loading=true;this.semantic.error=null;this.semantic.page=page;
-        // #7（Review 中）：翻页请求期间保留已展示的 responseContext（旧页结果评测仍按旧页 rank
+        this.semantic.loading=true;this.semantic.error=null;
+        // #8（Review 中）：pending page 与已展示 page 分离——不在请求发起时提交 semantic.page，
+        // 只在响应成功时提交，避免第二页失败后再次点击从失败页往后跳页。
+        // #7（Review 中）：请求期间保留已展示的 responseContext（旧页结果评测仍按旧页 rank
         // 计算）；pending 上下文与已展示上下文分离，仅在请求成功且竞态通过后原子替换。
         if(page===0){this.semantic.response=null;this.semantic.elapsedMs=null;this.semantic.expandedClaimId=null;}
         const started=performance.now();
         const requestId=++this.semantic.requestId;
         try{
           // 先等待构建状态：避免结果已返回但状态条还短暂显示"不可用"。
-          await this.loadSemanticBuild();
+          // #2（Review 高）：loadSemanticBuild 返回请求私有结果（而非写入全局 buildStatus），
+          // 由本请求发起者使用——即使等待期间用户改了版本导致全局展示状态被丢弃，
+          // 本请求仍用自己读到的状态构建评测上下文，不再从旧的/空的全局 buildStatus 提取代际。
+          const state = await this.loadSemanticBuild();
           if(requestId!==this.semantic.requestId)return;
           const response=await api.semanticSearch({
             projectId:params.projectId,
@@ -331,9 +363,11 @@
           });
           // 竞态保护：旧请求的响应不覆盖新查询。
           if(requestId!==this.semantic.requestId)return;
-          // 状态刷新完成后原子生成结果上下文：activeBuildIds 来自刚刷新的构建状态
-          // （首次进入页面不再记录空 buildIds）；请求参数用捕获的快照而非可编辑表单。
-          const build=this.semantic.buildStatus||{};
+          // 高（Review #1）：评测上下文优先绑定检索响应实际读取的 build ids（response.semanticBuildIds），
+          // 而不是另行请求的构建状态——状态查询返回 b1、检索执行前发布 b2 时，评测必须绑定 b2。
+          // 响应未带 build ids（无语义候选/来源失败）时回退到状态快照，供构建可用性判定。
+          const build=(state&&state.buildStatus)||{};
+          const responseBuildIds=(response.semanticBuildIds&&response.semanticBuildIds.length)?response.semanticBuildIds:(build.activeBuildIds||[]);
           this.semantic.responseContext={
             projectId:params.projectId,
             version:params.version,
@@ -341,10 +375,12 @@
             intent:params.intent,
             limit:typeof response.limit==="number"?response.limit:params.limit,
             page:typeof response.page==="number"?response.page:params.page,
-            activeBuildIds:(build.activeBuildIds||[]).slice(),
+            activeBuildIds:responseBuildIds.slice(),
             activeDocumentCount:build.activeDocumentCount||0
           };
           this.semantic.response=response;
+          // #8：只在响应成功时提交当前页。
+          this.semantic.page=typeof response.page==="number"?response.page:params.page;
         }catch(error){
           if(requestId!==this.semantic.requestId)return;
           this.semantic.error=error;this.showError(error);
@@ -360,43 +396,61 @@
         if(!this.retrieval.query)return;
         const version=this.requirementVersion();
         if(!version){NexusNotice.show("缺少需求版本，无法执行对比检索","error");return;}
+        const base=this.selectedBase;
+        // #3（Review 高）：对比流程使用发起时的参数快照——请求等待构建状态期间用户切项目/
+        // 版本时，不得用新上下文去解引用旧的 selectedBase（null 解引用崩溃），也不得把项目 B 的
+        // ID 与项目 A 的版本混拼。所有请求一律使用快照值。
+        const params={
+          baseId:base?base.id:null,
+          projectId:base?base.projectId:null,
+          version,
+          query:this.retrieval.query,
+          limit:this.retrieval.limit,
+          intent:this.semantic.intent||null
+        };
         // P2：compare 有自己的 requestId——连续点击或切换检索模式时，旧请求不得覆盖新结果。
         const requestId=++this.compare.requestId;
         this.compare.loading=true;this.resetCompareState();
+        // 状态请求私有结果供本请求使用（#2），不依赖全局 buildStatus。
         await this.loadSemanticBuild();
         this.semantic.requestId=(this.semantic.requestId||0)+1;
-        const query=this.retrieval.query,limit=this.retrieval.limit;
         const stillCurrent=()=>requestId===this.compare.requestId;
-        // P2：每条链路自记耗时（错误请求也记），不再等 allSettled 后统一计算。
-        const legacyStarted=performance.now();
-        const legacy=api.retrieval(this.selectedBase.id,{query,version,limit})
-          .then(response=>{
-            const elapsed=Math.max(0,Math.round(performance.now()-legacyStarted));
-            if(!stillCurrent())return;
-            this.compare.legacyResponse=response;this.compare.legacyElapsedMs=elapsed;
-          })
-          .catch(error=>{
-            const elapsed=Math.max(0,Math.round(performance.now()-legacyStarted));
-            if(!stillCurrent())return;
-            this.compare.legacyError=error;this.compare.legacyElapsedMs=elapsed;
-          });
-        const semanticStarted=performance.now();
-        const semantic=api.semanticSearch({projectId:this.selectedBase.projectId,version,query,intent:this.semantic.intent||null,limit,page:0})
-          .then(response=>{
-            const elapsed=Math.max(0,Math.round(performance.now()-semanticStarted));
-            if(!stillCurrent())return;
-            this.compare.semanticResponse=response;this.compare.semanticElapsedMs=elapsed;
-          })
-          .catch(error=>{
-            const elapsed=Math.max(0,Math.round(performance.now()-semanticStarted));
-            if(!stillCurrent())return;
-            this.compare.semanticError=error;this.compare.semanticElapsedMs=elapsed;
-          });
-        await Promise.allSettled([legacy,semantic]);
-        if(!stillCurrent())return; // 已被更新的对比请求取代：loading 由新请求管理。
-        if(this.compare.legacyError)NexusNotice.show("传统 Chunk 检索失败，仅展示语义一侧","error");
-        if(this.compare.semanticError)NexusNotice.show("语义 Claim 检索失败，仅展示传统一侧","error");
-        this.compare.loading=false;
+        try{
+          // P2：每条链路自记耗时（错误请求也记），不再等 allSettled 后统一计算。
+          const legacyStarted=performance.now();
+          const legacy=api.retrieval(params.baseId,{query:params.query,version:params.version,limit:params.limit})
+            .then(response=>{
+              const elapsed=Math.max(0,Math.round(performance.now()-legacyStarted));
+              if(!stillCurrent())return;
+              this.compare.legacyResponse=response;this.compare.legacyElapsedMs=elapsed;
+            })
+            .catch(error=>{
+              const elapsed=Math.max(0,Math.round(performance.now()-legacyStarted));
+              if(!stillCurrent())return;
+              this.compare.legacyError=error;this.compare.legacyElapsedMs=elapsed;
+            });
+          const semanticStarted=performance.now();
+          const semantic=api.semanticSearch({projectId:params.projectId,version:params.version,query:params.query,intent:params.intent,limit:params.limit,page:0})
+            .then(response=>{
+              const elapsed=Math.max(0,Math.round(performance.now()-semanticStarted));
+              if(!stillCurrent())return;
+              this.compare.semanticResponse=response;this.compare.semanticElapsedMs=elapsed;
+            })
+            .catch(error=>{
+              const elapsed=Math.max(0,Math.round(performance.now()-semanticStarted));
+              if(!stillCurrent())return;
+              this.compare.semanticError=error;this.compare.semanticElapsedMs=elapsed;
+            });
+          await Promise.allSettled([legacy,semantic]);
+        }finally{
+          // #3：try/finally 保证 loading 一定释放；若已被新请求/导航吊销（requestId 不匹配），
+          // 由新请求或 revokeRetrievalRequests 管理 loading。
+          if(stillCurrent())this.compare.loading=false;
+        }
+        if(stillCurrent()){
+          if(this.compare.legacyError)NexusNotice.show("传统 Chunk 检索失败，仅展示语义一侧","error");
+          if(this.compare.semanticError)NexusNotice.show("语义 Claim 检索失败，仅展示传统一侧","error");
+        }
       },
       changeSemanticPage(delta){
         const next=this.semantic.page+delta;
@@ -404,8 +458,8 @@
         this.runSemanticSearch(next);
       },
       // ---------------- 人工评测标记（方案 §7，第一阶段 localStorage） ----------------
-      // 统一评测键：projectId/version/active 代际身份全部参与——不同版本或重建后代际的
-      // 相同 query/resultId 不共享判断，避免跨版本污染评测数据。
+      // 统一评测键：projectId/version/active 代际身份/query/intent 全部参与——不同版本、重建后代际或
+      // 不同查询意图（NORMATIVE 与 VALIDATION 对同一 query 排序可能不同）不共享判断，避免跨污染。
       // 代际身份用 active 代际的 buildId 集合（排序拼接）：重建并成功发布后集合变化 → 键变化；
       // 仅失败重跑不改变 active 集合 → 键不变（与"结果来自 active 代际"语义一致）。
       // P1-2：评测永远读取请求发起时保存的不可变快照（responseContext），而不是可编辑表单——
@@ -418,6 +472,7 @@
           ctx.version||"",
           generationIdentity,
           ctx.query||"",
+          ctx.intent||"",
           mode,
           resultId===null||resultId===undefined?"__MISS__":resultId
         ].join("|");
@@ -428,6 +483,7 @@
         return {
           key:this.evaluationKey(mode,undefined),
           query:ctx.query||"",
+          intent:ctx.intent||"",
           mode,
           projectId:ctx.projectId||"",
           version:ctx.version||"",

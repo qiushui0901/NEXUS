@@ -20,8 +20,10 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -70,6 +72,27 @@ class RequirementSemanticBuildControllerTest {
         verify(businessProjects).requireProject("p1");
         verify(accessGuard).requireProjectAccess(httpRequest, "p1");
         verify(buildService).build(any());
+    }
+
+    @Test
+    void buildRejectsNullOrBlankProjectIdBeforeDirectoryResolution() {
+        // 中（Review）：空 projectId 不得被目录解析静默改写为默认项目——BusinessProjectCatalogService
+        // 对 null/空会选第一个项目，若放行则缺失 projectId 的 POST 绕过 SEMANTIC_REQUEST_INVALID，
+        // 启动一个耗时且调用模型的默认项目构建。必须在目录解析前拒绝 null/空串/纯空白。
+        assertThatThrownBy(() -> controller.build(
+                new SemanticBuildRequest(null, "doc", "5.1", null), httpRequest))
+                .isInstanceOf(RequirementSemanticException.class)
+                .satisfies(throwable -> assertThat(((RequirementSemanticException) throwable).code()).isEqualTo("SEMANTIC_REQUEST_INVALID"))
+                .hasMessageContaining("项目 ID 不能为空");
+        assertThatThrownBy(() -> controller.build(
+                new SemanticBuildRequest("   ", "doc", "5.1", null), httpRequest))
+                .isInstanceOf(RequirementSemanticException.class)
+                .satisfies(throwable -> assertThat(((RequirementSemanticException) throwable).code()).isEqualTo("SEMANTIC_REQUEST_INVALID"));
+        // 空 projectId 不应触发目录解析或鉴权（不会启动任何构建）。
+        verify(businessProjects, never()).resolveProjectId(any());
+        verify(businessProjects, never()).requireProject(any());
+        verify(accessGuard, never()).requireProjectAccess(any(), any());
+        verify(buildService, never()).build(any());
     }
 
     @Test

@@ -123,12 +123,15 @@ public class MultiSourceSearchService {
                                             KnowledgeQueryIntent intentOverride, int limit, int page) {
         int effectiveLimit = Math.max(1, Math.min(limit <= 0 ? 20 : limit, 50));
         int effectivePage = Math.max(0, page);
+        // 高（Review）：检索响应回传本次实际读取的语义构建代际 ids（来自适配器单查询快照），
+        // 前端评测上下文绑定这些 ids 而非另行请求的构建状态——两者之间可能已发布新代际。
+        List<String> semanticBuildIds = new ArrayList<>();
         if (!properties.enabledFor(projectId)) {
             return new MultiSourceSearchResponse(query,
                     intentOverride != null ? intentOverride : KnowledgeQueryIntent.GENERAL,
                     AnswerStatus.NO_RESULT, List.of(), List.of(), List.of(), List.of(), List.of(),
                     List.of("MULTI_SOURCE_DISABLED"), List.of(),
-                    0, effectivePage, effectiveLimit, false, false);
+                    0, effectivePage, effectiveLimit, false, false, List.of());
         }
         KnowledgeQueryIntent intent = intentOverride != null ? intentOverride : classifier.classify(query);
         boolean llmUsed = false;
@@ -141,7 +144,7 @@ public class MultiSourceSearchService {
         }
         Set<SourceType> allowedSources = sourceFilter.allowedSources(intent);
         List<String> warnings = new ArrayList<>();
-        List<UnifiedKnowledgeClaim> candidates = loadCandidates(projectId, version, allowedSources, query, intent, warnings)
+        List<UnifiedKnowledgeClaim> candidates = loadCandidates(projectId, version, allowedSources, query, intent, warnings, semanticBuildIds)
                 .stream()
                 .filter(claim -> gate.isRetrievable(claim.status()))
                 .toList();
@@ -198,7 +201,7 @@ public class MultiSourceSearchService {
         boolean hasMore = (long) (effectivePage + 1) * effectiveLimit < scored.size();
         return new MultiSourceSearchResponse(query, intent, status, claims, evidence, conflicts, doubts,
                 explanations, warnings, relations, scored.size(), effectivePage, effectiveLimit, hasMore,
-                hasConflictsOutsidePage);
+                hasConflictsOutsidePage, List.copyOf(semanticBuildIds));
     }
 
     /** 读取当前命中页 Claim 的一跳预生成关系；无新关系时回退旧表只读。 */
@@ -288,7 +291,7 @@ public class MultiSourceSearchService {
 
     private List<UnifiedKnowledgeClaim> loadCandidates(String projectId, String version, Set<SourceType> allowed,
                                                        String query, KnowledgeQueryIntent intent,
-                                                       List<String> warnings) {
+                                                       List<String> warnings, List<String> semanticBuildIds) {
         Set<UnifiedKnowledgeClaim> result = new LinkedHashSet<>();
         if (allowed.contains(SourceType.PARAMETER_TABLE)) {
             store.findParameters(projectId, version).forEach(claim -> result.add(toUnified(claim)));
@@ -307,6 +310,8 @@ public class MultiSourceSearchService {
                     loaded.claims().forEach(result::add);
                     // 适配器级非致命警告（如候选截断）进入响应，保证调用方能感知结果不完整。
                     warnings.addAll(loaded.warnings());
+                    // 高（Review）：候选适配器在同一查询快照中读取的实际构建代际 ids 汇总进响应。
+                    semanticBuildIds.addAll(loaded.buildIds());
                 } catch (RuntimeException exception) {
                     // 单一来源失败不能静默成“无结果”：对外只暴露稳定码（不携带异常原文/路径等内部信息），
                     // 内部日志记录异常类型供排查。

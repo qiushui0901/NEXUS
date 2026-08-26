@@ -58,6 +58,12 @@ public class RequirementSemanticBuildController {
      * requireProject 本身回退 legacy 注册表，因此别名与静态 ID 都能通过校验。
      */
     private String normalizeProjectId(String projectId) {
+        // 中（Review）：目录解析前先拒绝空 ID——BusinessProjectCatalogService.resolveProjectId 对
+        // null/空值会静默选择第一个业务项目，若放行则缺少 projectId 的请求会绕过 SEMANTIC_REQUEST_INVALID
+        // 而启动一个耗时且调用模型的默认项目构建。
+        if (projectId == null || projectId.isBlank()) {
+            throw new RequirementSemanticException("SEMANTIC_REQUEST_INVALID", "语义项目 ID 不能为空");
+        }
         String resolved = businessProjects.resolveProjectId(projectId);
         businessProjects.requireProject(resolved);
         return resolved;

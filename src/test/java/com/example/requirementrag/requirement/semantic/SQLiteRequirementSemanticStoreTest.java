@@ -645,6 +645,42 @@ class SQLiteRequirementSemanticStoreTest {
     }
 
     @Test
+    void listActiveByProjectVersionWithBuildsReturnsBuildIdsReadInSameQuery() {
+        SQLiteRequirementSemanticStore store = store();
+        store.save(record("p1", "doc", "5.1", "file.md|p|0", "hash-1", "model-a", "v1", "v1",
+                ExtractionStatus.SUCCEEDED));
+        store.save(record("p1", "doc", "5.1", "file.md|p|1", "hash-2", "model-a", "v1", "v1",
+                ExtractionStatus.SUCCEEDED));
+        // 单一 active 代际包含两块输入：两块标注与同一个 build id 在同一条查询中被读出。
+        SemanticBuildRecord build = build("p1", "rev-1", true);
+        store.recordBuildRun(build, List.of(
+                new RequirementSemanticModels.SemanticBuildInput("file.md|p|0", null, "hash-1"),
+                new RequirementSemanticModels.SemanticBuildInput("file.md|p|1", null, "hash-2")));
+
+        SQLiteRequirementSemanticStore.ActiveAnnotations loaded =
+                store.listActiveByProjectVersionWithBuilds("p1", "5.1", 10, "");
+
+        assertThat(loaded.annotations()).hasSize(2);
+        // 与标注同一条查询读到的 build ids：评测上下文必须绑定实际读取的代际，而非另行查询的状态。
+        assertThat(loaded.buildIds()).containsExactly(build.buildId());
+        // 旧签名仍然可用且语义一致。
+        assertThat(store.listActiveByProjectVersion("p1", "5.1", 10, ""))
+                .hasSize(2);
+    }
+
+    @Test
+    void listActiveByProjectVersionWithBuildsEmptyWhenNoActiveGeneration() {
+        SQLiteRequirementSemanticStore store = store();
+        store.save(record("p1", "doc", "5.1", "file.md|p|0", "hash-1", "model-a", "v1", "v1",
+                ExtractionStatus.SUCCEEDED));
+        // 没有 active 构建：无标注可见，也无代际可绑定。
+        SQLiteRequirementSemanticStore.ActiveAnnotations loaded =
+                store.listActiveByProjectVersionWithBuilds("p1", "5.1", 10, "");
+        assertThat(loaded.annotations()).isEmpty();
+        assertThat(loaded.buildIds()).isEmpty();
+    }
+
+    @Test
     void listOrdersWindowsByWindowIndexAndOffset() {
         SQLiteRequirementSemanticStore store = store();
         store.save(windowRecord("file.md|p|0", "hash-1", "win-2", 2, 400, 800));

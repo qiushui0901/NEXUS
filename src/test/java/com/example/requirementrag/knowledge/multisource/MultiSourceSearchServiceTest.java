@@ -275,6 +275,55 @@ class MultiSourceSearchServiceTest {
         };
     }
 
+    @Test
+    void searchResponseCarriesActualSemanticBuildIdsReadDuringRetrieval() {
+        // 高（Review #1）：检索响应必须回传本次实际读取的语义构建代际 ids，而非前端另行查询的状态——
+        // 否则状态返回 b1、检索执行前发布 b2 时，评测记录绑定 b1 而检索读取 b2。
+        // 这里模拟语义适配器在同一查询快照中读到 build ids，验证响应携带它们。
+        MultiSourceCandidateAdapter semantic = new MultiSourceCandidateAdapter() {
+            @Override
+            public SourceType sourceType() {
+                return SourceType.REQUIREMENT;
+            }
+
+            @Override
+            public List<UnifiedKnowledgeClaim> load(String projectId, String version, String query) {
+                return List.of();
+            }
+
+            @Override
+            public MultiSourceCandidateAdapter.CandidateLoad loadDetailed(String projectId, String version,
+                                                                         String query, KnowledgeQueryIntent intent) {
+                UnifiedKnowledgeClaim claim = new UnifiedKnowledgeClaim("sem:1", "fengshen", "5.1",
+                        "fengshen|5.1|订单|订单-001", "订单-001", "允许取消", "允许", "TEXT", null,
+                        SourceType.REQUIREMENT, Authority.PRIMARY,
+                        MultiSourceKnowledgeModels.KnowledgeStatus.SUPPORTED,
+                        "5.1", null, "graph:s1#req:1", "订单");
+                return new MultiSourceCandidateAdapter.CandidateLoad(List.of(claim), List.of(),
+                        List.of("build-2"));
+            }
+        };
+        MultiSourceKnowledgeStore localStore = newStore();
+        MultiSourceSearchService withSemantic = new MultiSourceSearchService(localStore,
+                new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(),
+                List.of(semantic), new CrossSourceRelationExtractor());
+
+        MultiSourceSearchResponse response =
+                withSemantic.search("fengshen", "5.1", "订单", KnowledgeQueryIntent.VALIDATION);
+
+        // 检索实际读取的代际 ids 出现在响应中，供前端评测上下文绑定。
+        assertThat(response.semanticBuildIds()).containsExactly("build-2");
+    }
+
+    @Test
+    void searchResponseBuildIdsEmptyWhenNoSemanticCandidateSource() {
+        // 没有语义候选适配器时响应 build ids 为空——前端据此判定无代际可绑定（fail-closed）。
+        MultiSourceSearchResponse response = service.search("fengshen", "5.1", "订单",
+                KnowledgeQueryIntent.VALIDATION);
+        assertThat(response.semanticBuildIds()).isEmpty();
+    }
+
     private MultiSourceKnowledgeStore newStore() {
         ObjectMapper objectMapper = new ObjectMapper();
         return new MultiSourceKnowledgeStore(tempDir.resolve(System.nanoTime() + "-search.db").toString(), objectMapper);

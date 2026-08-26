@@ -187,6 +187,21 @@
 - **补充（低）：warnings_json 损坏行为统一**：聚合接口不再把损坏 `warnings_json` 静默转空列表，与单文档状态接口一致抛“需求语义构建 warnings JSON 损坏”。
 - **测试补强**（新增 8 例，全量 863→870）：Controller 业务别名解析委托规范 ID（1）+ 时间字段 JSON 契约扩展（1）；Store 失败写不覆盖成功标注、成功覆盖失败仍允许、非 SUCCESS active 行迁移停用、聚合单快照一致（4）；Build 并发串行幂等（1）+ 标题/章节变化强制重标注（1）。
 
+### Fixed（0.9.5 — Review 第十四批：检索代际一致性、并发写事务与评测资格 fail-close）
+
+依据外部代码 Review（高×5 / 中×3 / 低×1，审查范围 `7480b4c..1b2f6e3`）修复检索代际绑定、版本切换竞态、导航吊销、SQLite 写事务与评测资格 fail-open：
+
+- **高：检索结果可能绑定错误的构建代际**：`MultiSourceSearchResponse` 新增 `semanticBuildIds` 字段，由 `SQLiteRequirementSemanticStore.listActiveByProjectVersionWithBuilds`（新增 `ActiveAnnotations` record）在与标注同一条查询中读出实际 active 代际的 build ids，经 `RequirementSemanticCandidateAdapter.loadDetailed` → `MultiSourceSearchService` 透传到响应；前端 `responseContext.activeBuildIds` 优先取 `response.semanticBuildIds`（实际读取代际）而非另行请求的聚合状态——状态查询返回 b1 后、检索执行前发布 b2 时，评测不再错绑 b1。
+- **高：编辑版本可让旧版本结果与错误代际上下文混合**：`loadSemanticBuild` 改为返回请求私有结果 `{buildStatus, unavailable, error}`，由发起者使用；全局展示状态是否更新独立判断（仅在仍适用时写入）。`runSemanticSearch` 用私有结果构建 `responseContext`，不再从全局 `this.semantic.buildStatus` 提取代际；`finally` 里 loading 清理跟随请求生命周期（`requestId===buildRequestId`）而非 `stillCurrent`——提交 v1、等待期间改 v2 时，v1 状态被丢弃但 `buildLoading` 不再永久卡住，v1 检索仍用 v1 私有状态绑定代际。
+- **高：页面导航没有吊销在途对比请求**：新增 `revokeRetrievalRequests()`，统一递增 `retrieval.requestId`/`compare.requestId` + 释放 loading + resetCompareState + resetSemanticState；`openBase`/`openDocument`/`openRetrieval`/`backToBase`/`goHome` 全部调用。`runRetrieval` 加 requestId 竞态保护；`runCompareSearch` 开头捕获参数快照（baseId/projectId/version/query/limit/intent），所有 api 调用读快照不再读 `this.selectedBase`，并用 try/finally 保证 loading 释放——点击首页后 `selectedBase` 变 null 不再在请求恢复时解引用崩溃，切换项目 B 不再组合 B ID 与 A 版本。
+- **高：SQLite 先读后写事务让无关并发构建失败**：`SQLiteRequirementSemanticStore.save` 事务从 `setAutoCommit(false)`（deferred，读快照升级写时可能 `SQLITE_BUSY_SNAPSHOT`，`busy_timeout` 对失效快照无效）改为手动 `begin immediate` + `commit`/`rollback`——IMMEDIATE 在事务开始即获取写锁，竞争连接排队等待而非快照失效。
+- **高：没有 active 代际时评测资格 fail-open**：`semanticEvaluationUsable` 在构建开关、响应 warning 之外，新增对 `buildUnavailable`/`buildError`/`hasActiveGeneration`/非空 `activeBuildIds` 的检查——聚合接口返回 200 null 时前端不再把缺失状态转 `{}` 后 fail-open，用户不能保存空 build identity 的 MISS。
+- **中：空 projectId 被静默改写为任意默认项目**：`RequirementSemanticBuildController.normalizeProjectId` 在目录解析前拒绝 null/空串/纯空白，抛 `SEMANTIC_REQUEST_INVALID`——避免 `BusinessProjectCatalogService.resolveProjectId` 对 null/空选第一个项目而绕过校验、启动耗时且调用模型的默认项目构建。
+- **中：不同查询意图共享同一评测键**：`evaluationKey` 与 `evaluationContext` 加入 `intent`——同一 query 在 NORMATIVE 与 VALIDATION 下不再复用判断或互相覆盖。
+- **中：翻页失败后再次点击会跳过失败页**：`runSemanticSearch` 不再在请求前提交 `semantic.page`，改为响应成功后才提交 `response.page`；`changeSemanticPage` 基于已提交页 + delta 计算——第二页失败时再次点击重试第二页而非跳到第三页。
+- **低：构建锁注册表永久增长**：`RequirementSemanticBuildService.buildLocks` 从 `ConcurrentHashMap`（每 scope 永久保留对象）改为固定 64 条带的 `Object[]` striped locks（`Math.floorMod(key.hashCode(),64)`）——内存恒定，同 scope 仍互斥，不同 scope 撞同条带只是保守串行。
+- **测试补强**（新增 5 例，全量 870→875）：Store 与标注同查询读出 build ids（1）+ 无 active 代际时返回空（1）；Controller 空白 projectId 在目录解析前抛 SEMANTIC_REQUEST_INVALID（1，断言 `.code()` 字段）；MultiSourceSearchService 响应回传实际 semanticBuildIds（1）+ 无语义来源时 build ids 空（1）。
+
 ## 0.9.4 — 2026-08-23
 
 ### Added

@@ -54,8 +54,17 @@ public class RequirementSemanticBuildService {
     private final RequirementGraphWindowPlanner windowPlanner;
     private final RequirementSemanticTextComposer composer;
     private final MeterRegistry meterRegistry;
-    private final java.util.concurrent.ConcurrentHashMap<String, Object> buildLocks =
-            new java.util.concurrent.ConcurrentHashMap<>();
+    // 低（Review）：构建锁改为有界条带（64 条），避免 ConcurrentHashMap 为每个项目/文档/版本
+    // 永久保存锁对象导致无界增长。条带按 key 哈希取模，同 scope 并发仍互斥，不同 scope 撞
+    // 同一条带只是保守串行化（安全），内存占用恒定。
+    private static final int BUILD_LOCK_STRIPES = 64;
+    private final Object[] buildLocks = new Object[BUILD_LOCK_STRIPES];
+
+    {
+        for (int index = 0; index < BUILD_LOCK_STRIPES; index++) {
+            buildLocks[index] = new Object();
+        }
+    }
 
     @Autowired
     public RequirementSemanticBuildService(SQLiteRequirementSemanticStore store,
@@ -110,8 +119,9 @@ public class RequirementSemanticBuildService {
         // 并发构建保护：同项目/文档/版本的构建串行执行，避免两个相同 buildId 的构建同时读到
         // “无现有标注”后互相覆盖（一个成功发布 active 代际，另一个失败 insert or replace 覆盖同一
         // annotationId，导致 active 代际还在但 listActive() 因标注被覆盖成 FAILED 返回空）。
-        Object lock = buildLocks.computeIfAbsent(projectId + "\u0000" + request.documentId()
-                + "\u0000" + request.requirementVersion(), key -> new Object());
+        int stripe = Math.floorMod((projectId + "\u0000" + request.documentId()
+                + "\u0000" + request.requirementVersion()).hashCode(), BUILD_LOCK_STRIPES);
+        Object lock = buildLocks[stripe];
         synchronized (lock) {
             return doBuild(request, projectId);
         }

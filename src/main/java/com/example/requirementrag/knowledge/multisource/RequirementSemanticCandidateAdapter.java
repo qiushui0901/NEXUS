@@ -89,11 +89,13 @@ public class RequirementSemanticCandidateAdapter implements MultiSourceCandidate
             // limit + 1 探测截断：命中上限说明候选被按文档位置截断，后段相关候选不可见，
             // 必须作为非致命警告进入检索响应，而不是只写日志让上层把"截断"误读为"无召回能力"。
             int limit = properties.maxCandidateAnnotations();
-            List<SemanticAnnotationRecord> loaded =
-                    store.listActiveByProjectVersion(projectId, version, limit + 1, query);
-            boolean truncated = loaded.size() > limit;
+            // 高（Review）：同一查询同时返回实际读取的构建代际 ids（buildIds）——评测上下文
+            // 必须绑定本次检索实际读取的代际，而非前端另行请求的构建状态（两请求间可能已发布新代际）。
+            SQLiteRequirementSemanticStore.ActiveAnnotations loaded =
+                    store.listActiveByProjectVersionWithBuilds(projectId, version, limit + 1, query);
+            boolean truncated = loaded.annotations().size() > limit;
             List<SemanticAnnotationRecord> annotations =
-                    truncated ? List.copyOf(loaded.subList(0, limit)) : loaded;
+                    truncated ? List.copyOf(loaded.annotations().subList(0, limit)) : loaded.annotations();
             if (truncated) {
                 log.warn("SEMANTIC_CANDIDATE_TRUNCATED project={} version={} limit={}",
                         safe(projectId), safe(version), limit);
@@ -106,7 +108,8 @@ public class RequirementSemanticCandidateAdapter implements MultiSourceCandidate
                 project(annotation, unique);
             }
             return new CandidateLoad(List.copyOf(unique.values()),
-                    truncated ? List.of("SEMANTIC_CANDIDATE_TRUNCATED") : List.of());
+                    truncated ? List.of("SEMANTIC_CANDIDATE_TRUNCATED") : List.of(),
+                    loaded.buildIds());
         } catch (RuntimeException exception) {
             // 存储故障不能伪装成“没有语义结果”：抛稳定异常，由 MultiSourceSearchService 转成检索警告。
             throw new RequirementSemanticException("SEMANTIC_CANDIDATE_LOAD_FAILED",

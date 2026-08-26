@@ -36,10 +36,17 @@ public interface MultiSourceCandidateAdapter {
     }
 
     /** 候选加载结果：claims + 非致命警告（如截断、降级），警告使用稳定码。 */
-    record CandidateLoad(List<UnifiedKnowledgeClaim> claims, List<String> warnings) {
+    record CandidateLoad(List<UnifiedKnowledgeClaim> claims, List<String> warnings,
+                         List<String> buildIds) {
         public CandidateLoad {
             claims = claims == null ? List.of() : List.copyOf(claims);
             warnings = warnings == null ? List.of() : List.copyOf(warnings);
+            buildIds = buildIds == null ? List.of() : List.copyOf(buildIds);
+        }
+
+        /** 兼容便捷构造：无构建代际信息时为空列表。 */
+        CandidateLoad(List<UnifiedKnowledgeClaim> claims, List<String> warnings) {
+            this(claims, warnings, List.of());
         }
     }
 }
