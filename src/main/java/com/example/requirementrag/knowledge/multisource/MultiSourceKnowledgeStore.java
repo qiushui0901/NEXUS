@@ -1226,6 +1226,38 @@ public class MultiSourceKnowledgeStore {
         }
     }
 
+    /** 按 claimId 批量查询统一 Claim（向量命中水化用）。 */
+    public List<KnowledgeClaimRecord> findClaimsByIds(java.util.Collection<String> claimIds) {
+        if (claimIds == null || claimIds.isEmpty()) return List.of();
+        List<String> ids = claimIds.stream().filter(id -> id != null && !id.isBlank()).distinct().toList();
+        if (ids.isEmpty()) return List.of();
+        StringBuilder placeholders = new StringBuilder();
+        for (int i = 0; i < ids.size(); i++) {
+            if (i > 0) placeholders.append(',');
+            placeholders.append('?');
+        }
+        List<KnowledgeClaimRecord> result = new ArrayList<>();
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select claim_id,project_id,document_version_id,source_type,authority,fact_key,
+                       subject,predicate,object_value,value_type,unit,status,confidence,
+                       effective_from,effective_to,extraction_method,extraction_run_id,created_at,updated_at
+                     from knowledge_claim where claim_id in (PLACEHOLDERS)
+                     """.replace("PLACEHOLDERS", placeholders.toString()))) {
+            for (int i = 0; i < ids.size(); i++) {
+                statement.setString(i + 1, ids.get(i));
+            }
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    result.add(claim(rows));
+                }
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("批量查询 Claim 失败", exception);
+        }
+        return result;
+    }
+
     /** 按 claimId 查询统一 Claim。 */
     public Optional<KnowledgeClaimRecord> findClaimById(String claimId) {
         try (Connection connection = open();

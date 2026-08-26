@@ -1,0 +1,180 @@
+package com.example.requirementrag.knowledge.multisource.vector;
+
+import com.example.requirementrag.conflict.KnowledgeConflictModels.Authority;
+import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
+import com.example.requirementrag.knowledge.multisource.MultiSourceCandidateAdapter;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeQueryIntent;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeStatus;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.UnifiedKnowledgeClaim;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeStore;
+import com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVectorModels.ClaimVectorGenerationManifest;
+import com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVectorQdrantStore.ClaimVectorHit;
+import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeClaimRecord;
+import com.example.requirementrag.retrieval.EmbeddingBatcher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+/**
+ * Claim 向量候选适配器（§10 Phase C）：通过 Qdrant 向量检索召回 Claim，
+ * 再从 SQLite 权威存储重新读取治理字段（status/authority 等不依赖 Qdrant payload）。
+ * <p>
+ * 一个点代表一个 Claim；命中后用 claimId 回查 SQLite，过滤已删除窗口的 stale 记录。
+ * 返回的 {@link UnifiedKnowledgeClaim} 保留原始 sourceType（REQUIREMENT/PARAMETER_TABLE/TEST_CASE/DOUBT），
+ * 与直接加载的候选按 equals 自然去重——Claim 向量只补充直接加载未命中的 Claim。
+ */
+@Component
+@ConditionalOnProperty(prefix = "app.rag.multi-source.claim-vector",
+        name = "candidate-retrieval-enabled", matchIfMissing = false)
+public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(ClaimVectorCandidateAdapter.class);
+
+    private final MultiSourceKnowledgeStore knowledgeStore;
+    private final SQLiteKnowledgeClaimVectorStore vectorStore;
+    private final KnowledgeClaimVectorQdrantStore qdrantStore;
+    private final EmbeddingBatcher embeddingBatcher;
+    private final KnowledgeClaimVectorProperties properties;
+
+    public ClaimVectorCandidateAdapter(MultiSourceKnowledgeStore knowledgeStore,
+                                       SQLiteKnowledgeClaimVectorStore vectorStore,
+                                       KnowledgeClaimVectorQdrantStore qdrantStore,
+                                       EmbeddingBatcher embeddingBatcher,
+                                       KnowledgeClaimVectorProperties properties) {
+        this.knowledgeStore = knowledgeStore;
+        this.vectorStore = vectorStore;
+        this.qdrantStore = qdrantStore;
+        this.embeddingBatcher = embeddingBatcher;
+        this.properties = properties;
+    }
+
+    @Override
+    public SourceType sourceType() {
+        return SourceType.CLAIM_VECTOR;
+    }
+
+    @Override
+    public List<UnifiedKnowledgeClaim> load(String projectId, String version, String query) {
+        return loadDetailed(projectId, version, query, null).claims();
+    }
+
+    @Override
+    public CandidateLoad loadDetailed(String projectId, String version, String query,
+                                      KnowledgeQueryIntent intent) {
+        if (!properties.candidateRetrievalEnabled()) {
+            return new CandidateLoad(List.of(),
+                    List.of("CLAIM_VECTOR_CANDIDATE_RETRIEVAL_DISABLED:Claim 向量候选检索已关闭（candidate-retrieval-enabled=false），本次结果不含向量召回候选"),
+                    List.of());
+        }
+
+        Optional<ClaimVectorGenerationManifest> active =
+                vectorStore.findActiveGeneration(projectId, version);
+        if (active.isEmpty()) {
+            return new CandidateLoad(List.of(),
+                    List.of("CLAIM_VECTOR_NO_ACTIVE_GENERATION:项目 " + safe(projectId)
+                            + " 版本 " + safe(version) + " 无活跃 Claim 向量代际，跳过向量召回"),
+                    List.of());
+        }
+
+        if (query == null || query.isBlank()) {
+            return new CandidateLoad(List.of(), List.of(), List.of(active.get().generationId()));
+        }
+
+        try {
+            List<float[]> embeddings = embeddingBatcher.embedAll(List.of(query));
+            if (embeddings.isEmpty() || embeddings.get(0).length == 0) {
+                return new CandidateLoad(List.of(),
+                        List.of("CLAIM_VECTOR_EMBEDDING_EMPTY:查询嵌入为空，跳过向量召回"),
+                        List.of(active.get().generationId()));
+            }
+            float[] queryVector = embeddings.get(0);
+
+            int limit = properties.candidateLimit() * properties.overFetchFactor();
+            List<ClaimVectorHit> hits = qdrantStore.search(properties.alias(), queryVector, limit);
+            if (hits.isEmpty()) {
+                return new CandidateLoad(List.of(), List.of(),
+                        List.of(active.get().generationId()));
+            }
+
+            List<String> claimIds = hits.stream().map(ClaimVectorHit::claimId).toList();
+            Map<String, KnowledgeClaimRecord> records = knowledgeStore.findClaimsByIds(claimIds).stream()
+                    .collect(Collectors.toMap(KnowledgeClaimRecord::claimId, Function.identity(), (a, b) -> a));
+
+            List<UnifiedKnowledgeClaim> candidates = new ArrayList<>();
+            int staleCount = 0;
+            for (ClaimVectorHit hit : hits) {
+                KnowledgeClaimRecord record = records.get(hit.claimId());
+                if (record == null) {
+                    staleCount++;
+                    continue;
+                }
+                candidates.add(toUnified(record, version));
+            }
+            if (staleCount > 0) {
+                LOGGER.warn("CLAIM_VECTOR_STALE_HITS project={} version={} stale={}/{}",
+                        safe(projectId), safe(version), staleCount, hits.size());
+            }
+
+            return new CandidateLoad(List.copyOf(candidates), List.of(),
+                    List.of(active.get().generationId()));
+        } catch (RuntimeException exception) {
+            LOGGER.warn("CLAIM_VECTOR_SEARCH_FAILED project={} version={} error={}",
+                    safe(projectId), safe(version), exception.getClass().getSimpleName());
+            return new CandidateLoad(List.of(),
+                    List.of("CLAIM_VECTOR_SEARCH_FAILED:向量检索失败，跳过向量召回（"
+                            + exception.getClass().getSimpleName() + ")"),
+                    List.of(active.get().generationId()));
+        }
+    }
+
+    private UnifiedKnowledgeClaim toUnified(KnowledgeClaimRecord record, String version) {
+        return new UnifiedKnowledgeClaim(
+                record.claimId(),
+                record.projectId(),
+                version,
+                record.factKey(),
+                record.subject(),
+                record.predicate(),
+                record.objectValue(),
+                record.valueType(),
+                record.unit(),
+                record.sourceType(),
+                record.authority(),
+                parseStatus(record.status()),
+                record.effectiveFrom(),
+                record.effectiveTo(),
+                record.documentVersionId(),
+                extractModule(record.factKey()),
+                null);
+    }
+
+    private KnowledgeStatus parseStatus(String status) {
+        if (status == null || status.isBlank()) return KnowledgeStatus.SUPPORTED;
+        try {
+            return KnowledgeStatus.valueOf(status.toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException ignored) {
+            return KnowledgeStatus.SUPPORTED;
+        }
+    }
+
+    private String extractModule(String factKey) {
+        if (factKey == null || factKey.isBlank()) return "";
+        int hash = factKey.indexOf('#');
+        int pipe = factKey.indexOf('|');
+        int end = hash < 0 ? pipe : (pipe < 0 ? hash : Math.min(hash, pipe));
+        return end > 0 ? factKey.substring(0, end) : factKey;
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value.trim();
+    }
+}

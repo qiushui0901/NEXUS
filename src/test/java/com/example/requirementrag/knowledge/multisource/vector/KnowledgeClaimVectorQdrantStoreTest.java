@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Claim 向量 Qdrant 发布器测试：验证点结构（payload + 确定性 ID + dense-only vector）。
@@ -106,5 +107,42 @@ class KnowledgeClaimVectorQdrantStoreTest {
         assertThat(payload.get("sourceType")).isEqualTo("PARAMETER_TABLE");
         assertThat(payload.get("valueType")).isEqualTo("INTEGER");
         assertThat(payload.get("unit")).isEqualTo("秒");
+    }
+
+    // ── search 边界 ────────────────────────────────────────────────────
+
+    @Test
+    void searchWithBlankAliasThrows() {
+        assertThatThrownBy(() -> store.search("", new float[]{0.1f}, 10))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("alias must not be blank");
+    }
+
+    @Test
+    void searchWithEmptyVectorThrows() {
+        assertThatThrownBy(() -> store.search("knowledge_claims_live", new float[0], 10))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("queryVector must not be empty");
+    }
+
+    @Test
+    void searchWithNullVectorThrows() {
+        assertThatThrownBy(() -> store.search("knowledge_claims_live", null, 10))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("queryVector must not be empty");
+    }
+
+    @Test
+    void claimVectorHitRecordFieldsAccessible() {
+        KnowledgeClaimVectorPoint point = new KnowledgeClaimVectorPoint(
+                "proj-1", "v1", "c-1", "dv-1",
+                SourceType.REQUIREMENT, Authority.PRIMARY, "ACTIVE",
+                "fk", "subj", "pred", "TEXT", "",
+                List.of(), "gen", "schema-v1", "model", "hash");
+        KnowledgeClaimVectorQdrantStore.ClaimVectorHit hit =
+                new KnowledgeClaimVectorQdrantStore.ClaimVectorHit("c-1", 0.95, point);
+        assertThat(hit.claimId()).isEqualTo("c-1");
+        assertThat(hit.score()).isEqualTo(0.95);
+        assertThat(hit.point()).isSameAs(point);
     }
 }

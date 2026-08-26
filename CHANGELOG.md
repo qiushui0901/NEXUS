@@ -22,6 +22,16 @@
 - **Claim 向量构建服务**（`KnowledgeClaimVectorBuildService`）：`@Service`+`@ConditionalOnProperty("app.rag.multi-source.claim-vector.build-enabled")`。64 条带 striped locks 同 scope 串行化。构建流水线：加载 Claims→文本组合→输入指纹→可复用代际跳过→recordBuildStart(BUILDING)→EmbeddingBatcher.embedAll→写物理 collection→校验点数→updateStatus(VERIFYING→SUCCESS)→markActive(SQLite 权威提交)→switchAlias(Qdrant 跟随 SQLite)。失败保护：嵌入/写入失败时 updateStatus FAILED+warnings，alias 不变，旧 ACTIVE 保留。alias 切换失败时 SQLite 已 ACTIVE 不回滚，Qdrant reconciliation 修复。`rollback` 方法：listRetiredForRollback→rollbackTo(SQLite RETIRED→ACTIVE)→rollbackAlias(Qdrant 切回旧 collection)。修复 Phase A `rollbackTo` 返回旧状态对象的 bug（改为回滚后重新查询）。
 - **测试**：新增 14 例——Qdrant 发布器 3 例（确定性 ID+payload 字段、不同 schema 产生不同 ID、空可选字段渲染为空串）；构建服务 11 例（happy path ACTIVE+expectedPointCount+indexedPointCount、排除 CODE/TEST_RESULT、可复用代际跳过重建只嵌入一次、嵌入失败 FAILED+alias 不变、Qdrant 写入失败 FAILED+alias 不变、alias 切换失败 SQLite 不回滚、无 eligible Claim 抛异常、回滚恢复上一 RETIRED→ACTIVE+Qdrant 切回旧 collection、无 RETIRED 回滚返回空、findActive 正常/空）。全量 929 tests 通过。
 
+### Added（0.9.6 — Phase C：向量候选适配器与 SQLite 命中水化）
+
+实现 0.9.6 方案 Phase C（§10），新增 Claim 向量候选适配器、Qdrant 向量检索与 SQLite 批量水化：
+
+- **SourceType 新增 CLAIM_VECTOR**（`KnowledgeConflictModels`）：代表 Claim 向量投影检索来源，与 REQUIREMENT_SEMANTIC 平级，由 `allowed.contains()` 门禁。
+- **SQLite 批量水化**（`MultiSourceKnowledgeStore.findClaimsByIds`）：`IN (?, ?, ...)` 动态占位符批量查询，空集合安全返回空列表，用于 Qdrant 命中后回查权威治理字段。
+- **Qdrant 向量检索**（`KnowledgeClaimVectorQdrantStore.search`）：通过 alias 检索最近 Claim 点，返回 `ClaimVectorHit(claimId, score, point)` 列表；Qdrant 不可用时返回空列表 fail-safe 不影响其他来源检索；`with_payload=true` 返回 payload 供前端展示。
+- **Claim 向量候选适配器**（`ClaimVectorCandidateAdapter`）：`@Component`+`@ConditionalOnProperty("candidate-retrieval-enabled")`，实现 `MultiSourceCandidateAdapter`。流水线：findActiveGeneration→embedAll→qdrantStore.search→findClaimsByIds 水化→过滤 stale 命中（Qdrant 有但 SQLite 已删除的 Claim 被跳过）→转换 UnifiedKnowledgeClaim。返回 `CandidateLoad(claims, warnings, buildIds=[generationId])`。候选保留原始 sourceType（REQUIREMENT/PARAMETER_TABLE/TEST_CASE/DOUBT），不使用 CLAIM_VECTOR——与直接加载的候选按 equals 自然去重，向量只补充直接加载未命中的 Claim。失败模式：配置关闭返回稳定警告码；无活跃代际返回警告+空候选；嵌入失败返回警告+空候选+buildIds；Qdrant 故障返回警告不抛异常；零命中返回空候选+buildIds。
+- **测试**：新增 13 例——适配器 9 例（sourceType=CLAIM_VECTOR、happy path 水化+buildIds、stale 命中过滤、配置关闭警告+不调 Qdrant、无活跃代际警告、空 query 返回空+buildIds、Qdrant 故障不抛异常、零命中、保留原始 sourceType 不用 CLAIM_VECTOR）；Qdrant store 4 例（search 空 alias/空向量/null 向量抛异常、ClaimVectorHit record 字段可访问）。全量 942 tests 通过。
+
 ## 0.9.5 — 2026-08-25
 
 ### Added

@@ -132,6 +132,48 @@ public class KnowledgeClaimVectorQdrantStore {
         return null;
     }
 
+    /** 向量检索命中：claimId + 分数 + 原始 Qdrant payload（治理字段从 SQLite 重新读取）。 */
+    public record ClaimVectorHit(String claimId, double score, KnowledgeClaimVectorPoint point) {
+    }
+
+    /**
+     * 通过 alias 向量检索最近的 Claim 点。
+     * 返回按 score 降序排列的命中列表，payload 含 Qdrant 投影时的快照字段。
+     * Qdrant 不可用时返回空列表并写 warn——fail-safe 不影响其他来源检索。
+     */
+    public List<ClaimVectorHit> search(String alias, float[] queryVector, int limit) {
+        if (alias == null || alias.isBlank()) {
+            throw new IllegalArgumentException("alias must not be blank");
+        }
+        if (queryVector == null || queryVector.length == 0) {
+            throw new IllegalArgumentException("queryVector must not be empty");
+        }
+        try {
+            Map<String, Object> request = new java.util.LinkedHashMap<>();
+            request.put("vector", queryVector);
+            request.put("limit", Math.max(1, limit));
+            request.put("with_payload", true);
+            request.put("with_vector", false);
+            Map<String, Object> response = client.post()
+                    .uri("/collections/{collection}/points/search", alias)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(request)
+                    .retrieve()
+                    .body(new ParameterizedTypeReference<>() {});
+            List<ClaimVectorHit> hits = new ArrayList<>();
+            for (Object raw : list(response == null ? null : response.get("result"))) {
+                Map<String, Object> entry = map(raw);
+                KnowledgeClaimVectorPoint point = toPoint(raw);
+                double score = entry.get("score") instanceof Number n ? n.doubleValue() : 0.0;
+                hits.add(new ClaimVectorHit(point.claimId(), score, point));
+            }
+            return hits;
+        } catch (RuntimeException exception) {
+            LOGGER.warn("向量检索失败 alias={} error={}", alias, exception.getMessage());
+            return List.of();
+        }
+    }
+
     /** best-effort 点数查询；Qdrant 不可用时返回 -1。 */
     public long countPointsIfAvailable(String collection) {
         try {
