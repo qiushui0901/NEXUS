@@ -141,6 +141,15 @@
         if(build.candidateRetrievalEnabled===false){
           return{tone:"warn",text:"语义候选检索当前被配置关闭（candidate-retrieval-enabled=false）：构建已发布但候选不参与本次检索，本次结果不得作为语义召回评测数据。"};
         }
+        // #6：当前响应自身携带不可评测 warning（normative 开关拦截/候选截断/来源加载失败）时，
+        // 结果展示但不计入评测——与 semanticEvaluationUsable 的拒绝条件保持一致。
+        const warnings=(this.semantic.response&&this.semantic.response.warnings)||[];
+        const unusable=warnings.find(function(w){
+          return /^SEMANTIC_NORMATIVE_RETRIEVAL_DISABLED|^SEMANTIC_CANDIDATE_TRUNCATED|^SEMANTIC_CANDIDATE_LOAD_FAILED|^MULTI_SOURCE_CANDIDATE_LOAD_FAILED/.test(w||"");
+        });
+        if(unusable){
+          return{tone:"warn",text:"语义候选被开关/截断/加载失败拦截（"+unusable+"），本次结果不得作为语义召回评测数据。"};
+        }
         if(this.semanticBuildReady){
           if(build.latestRunStatus&&build.latestRunStatus!=="SUCCESS"){
             return{tone:"warn",text:`语义构建最新一次执行为 ${build.latestRunStatus}，但仍有已发布的成功代际在线；本次结果仅供调试，不建议作为正式评测结果。`};
@@ -155,11 +164,17 @@
         }
         return{tone:"warn",text:"语义构建尚未发布（无 active 代际），当前无法使用语义 Claim 检索；请先执行语义构建并确认构建成功。"};
       },
-      // P1-1：本次语义结果是否可作评测（构建级检索开关关闭 → 结果不可评测）。
+      // #6（Review 中）：本次语义结果是否可作评测——构建级检索开关关闭、或当前响应携带
+      // 后端稳定"不可评测"warning（NORMATIVE 检索被关闭、候选被截断、语义来源加载失败）时拒绝写入，
+      // 避免把"配置/加载问题"误记为"召回问题"。评测资格必须绑定当前响应，而非只看构建开关。
       semanticEvaluationUsable(){
         if(!this.semantic.response)return false;
         const build=this.semantic.buildStatus||{};
         if(build.candidateRetrievalEnabled===false)return false;
+        const warnings=this.semantic.response.warnings||[];
+        if(warnings.some(function(w){
+          return /^SEMANTIC_NORMATIVE_RETRIEVAL_DISABLED|^SEMANTIC_CANDIDATE_TRUNCATED|^SEMANTIC_CANDIDATE_LOAD_FAILED|^SEMANTIC_CANDIDATE_RETRIEVAL_DISABLED|^MULTI_SOURCE_CANDIDATE_LOAD_FAILED/.test(w||"");
+        }))return false;
         return true;
       },
       semanticScope(){
@@ -230,8 +245,15 @@
         if(mode!=="legacy"){this.retrieval.response=null;this.retrieval.elapsedMs=null;}
       },
       resetSemanticState(){
+        // #4（Review 高）：离开语义模式/切换项目/切换页面时吊销所有在飞语义请求——
+        // 递增 requestId 使旧请求的竞态检查失败（不写回新页面），并释放 loading
+        // 避免隐藏的 semantic.loading 继续禁用全局提交按钮。
+        this.semantic.requestId=(this.semantic.requestId||0)+1;
+        this.semantic.buildRequestId=(this.semantic.buildRequestId||0)+1;
+        this.semantic.loading=false;this.semantic.buildLoading=false;
         this.semantic.response=null;this.semantic.elapsedMs=null;this.semantic.error=null;
         this.semantic.page=0;this.semantic.expandedClaimId=null;
+        this.semantic.responseContext=null;
       },
       resetCompareState(){
         this.compare.legacyResponse=null;this.compare.legacyElapsedMs=null;this.compare.legacyError=null;
@@ -279,42 +301,49 @@
         if(!this.retrieval.query)return;
         const version=this.requirementVersion();
         if(!version){this.semantic.error={message:"缺少需求版本，无法执行语义检索"};NexusNotice.show("缺少需求版本，无法执行语义检索","error");return;}
-        // P1-2：请求发起时保存不可变快照（含查询/版本/分页/active 代际身份）。
-        // 后续结果展示、评测标记、分页 rank 都读取该快照，不读可编辑表单——
-        // 用户改了查询/版本但未重新检索时，旧结果的评测不会被误绑成新参数。
-        const build=this.semantic.buildStatus||{};
-        this.semantic.responseContext={
+        // #3（Review 高）：先捕获本次请求的不可变参数快照——用户等待状态刷新期间修改表单
+        // 不影响已发起的检索与评测绑定。state 查询、semanticSearch、responseContext 全部读快照。
+        const params={
           projectId:this.selectedBase.projectId,
           version,
           query:this.retrieval.query,
           intent:this.semantic.intent||null,
           limit:this.retrieval.limit,
-          page,
-          activeBuildIds:(build.activeBuildIds||[]).slice(),
-          activeDocumentCount:build.activeDocumentCount||0
+          page
         };
         this.semantic.loading=true;this.semantic.error=null;this.semantic.page=page;
+        // #7（Review 中）：翻页请求期间保留已展示的 responseContext（旧页结果评测仍按旧页 rank
+        // 计算）；pending 上下文与已展示上下文分离，仅在请求成功且竞态通过后原子替换。
         if(page===0){this.semantic.response=null;this.semantic.elapsedMs=null;this.semantic.expandedClaimId=null;}
         const started=performance.now();
         const requestId=++this.semantic.requestId;
         try{
-          // 先等待构建状态：避免结果已返回但状态条还短暂显示“不可用”。
+          // 先等待构建状态：避免结果已返回但状态条还短暂显示"不可用"。
           await this.loadSemanticBuild();
+          if(requestId!==this.semantic.requestId)return;
           const response=await api.semanticSearch({
-            projectId:this.selectedBase.projectId,
-            version,
-            query:this.retrieval.query,
-            intent:this.semantic.intent||null,
-            limit:this.retrieval.limit,
-            page
+            projectId:params.projectId,
+            version:params.version,
+            query:params.query,
+            intent:params.intent,
+            limit:params.limit,
+            page:params.page
           });
           // 竞态保护：旧请求的响应不覆盖新查询。
           if(requestId!==this.semantic.requestId)return;
-          // 把后端返回的分页元数据并入快照（评测 rank = index + 1 + page*limit 需要真实 page/limit）。
-          this.semantic.responseContext=Object.assign({},this.semantic.responseContext,{
-            page:typeof response.page==="number"?response.page:page,
-            limit:typeof response.limit==="number"?response.limit:this.retrieval.limit
-          });
+          // 状态刷新完成后原子生成结果上下文：activeBuildIds 来自刚刷新的构建状态
+          // （首次进入页面不再记录空 buildIds）；请求参数用捕获的快照而非可编辑表单。
+          const build=this.semantic.buildStatus||{};
+          this.semantic.responseContext={
+            projectId:params.projectId,
+            version:params.version,
+            query:params.query,
+            intent:params.intent,
+            limit:typeof response.limit==="number"?response.limit:params.limit,
+            page:typeof response.page==="number"?response.page:params.page,
+            activeBuildIds:(build.activeBuildIds||[]).slice(),
+            activeDocumentCount:build.activeDocumentCount||0
+          };
           this.semantic.response=response;
         }catch(error){
           if(requestId!==this.semantic.requestId)return;

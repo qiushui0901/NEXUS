@@ -1,7 +1,7 @@
 package com.example.requirementrag.web;
 
-import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.model.Permission;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
 import com.example.requirementrag.requirement.semantic.RequirementSemanticBuildService;
 import com.example.requirementrag.requirement.semantic.RequirementSemanticException;
 import com.example.requirementrag.requirement.semantic.RequirementSemanticModels.SemanticBuildAggregateView;
@@ -34,20 +34,33 @@ public class RequirementSemanticBuildController {
 
     private final RequirementSemanticBuildService buildService;
     private final SQLiteRequirementSemanticStore store;
-    private final ProjectRegistry projectRegistry;
     private final ProjectAccessGuard accessGuard;
+    private final BusinessProjectCatalogService businessProjects;
     private final RequirementSemanticProperties properties;
 
     public RequirementSemanticBuildController(RequirementSemanticBuildService buildService,
                                               SQLiteRequirementSemanticStore store,
-                                              ProjectRegistry projectRegistry,
                                               ProjectAccessGuard accessGuard,
+                                              BusinessProjectCatalogService businessProjects,
                                               RequirementSemanticProperties properties) {
         this.buildService = buildService;
         this.store = store;
-        this.projectRegistry = projectRegistry;
         this.accessGuard = accessGuard;
+        this.businessProjects = businessProjects;
         this.properties = properties;
+    }
+
+    /**
+     * 项目 ID 规范化：页面返回的是业务项目 ID（如 immortal），而 legacy 静态配置的 ID 是别名
+     * （如 immortal-game-service）。必须统一经业务项目目录解析为规范 ID 再鉴权/落库——
+     * 否则用旧 ID 构建会以规范 ID 落库、后续按旧 ID 查询却永远查不到状态；
+     * 用业务 ID 查询又会被 legacy ProjectRegistry 误拒（两个 ID 指向同一项目但存储键不一致）。
+     * requireProject 本身回退 legacy 注册表，因此别名与静态 ID 都能通过校验。
+     */
+    private String normalizeProjectId(String projectId) {
+        String resolved = businessProjects.resolveProjectId(projectId);
+        businessProjects.requireProject(resolved);
+        return resolved;
     }
 
     /** 触发一次语义标注构建；retryFailedOnly=true 时只重跑上次失败项。 */
@@ -58,9 +71,10 @@ public class RequirementSemanticBuildController {
         if (request == null) {
             throw new RequirementSemanticException("SEMANTIC_REQUEST_INVALID", "语义构建请求不能为空");
         }
-        projectRegistry.require(request.projectId());
-        accessGuard.requireProjectAccess(httpRequest, request.projectId());
-        return buildService.build(request);
+        // 入口统一规范化业务项目 ID：鉴权与落库使用同一规范 ID，避免别名/规范名混用产生孤儿数据。
+        String projectId = normalizeProjectId(request.projectId());
+        accessGuard.requireProjectAccess(httpRequest, projectId);
+        return buildService.build(request.withProjectId(projectId));
     }
 
     /**
@@ -73,9 +87,9 @@ public class RequirementSemanticBuildController {
                                                          @RequestParam("documentId") String documentId,
                                                          @RequestParam("requirementVersion") String requirementVersion,
                                                          HttpServletRequest httpRequest) {
-        projectRegistry.require(projectId);
-        accessGuard.requireProjectAccess(httpRequest, projectId);
-        return store.latestBuild(projectId, documentId, requirementVersion);
+        String normalized = normalizeProjectId(projectId);
+        accessGuard.requireProjectAccess(httpRequest, normalized);
+        return store.latestBuild(normalized, documentId, requirementVersion);
     }
 
     /**
@@ -88,9 +102,9 @@ public class RequirementSemanticBuildController {
     public Optional<SemanticBuildAggregateView> aggregateBuild(@RequestParam("projectId") String projectId,
                                                                @RequestParam("requirementVersion") String requirementVersion,
                                                                HttpServletRequest httpRequest) {
-        projectRegistry.require(projectId);
-        accessGuard.requireProjectAccess(httpRequest, projectId);
-        return store.aggregateBuildStatus(projectId, requirementVersion,
+        String normalized = normalizeProjectId(projectId);
+        accessGuard.requireProjectAccess(httpRequest, normalized);
+        return store.aggregateBuildStatus(normalized, requirementVersion,
                 properties.candidateRetrievalEnabled(), properties.normativeRetrievalEnabled());
     }
 }

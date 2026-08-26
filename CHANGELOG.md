@@ -170,6 +170,23 @@
 - **收口：测试补强**（新增 11 例）：Controller 聚合接口 JSON 字段（含 retrieval 开关）/ 空体（200 null）/ 访问控制拒绝不吞异常（3）；Store 聚合跨文档 active 计数、FAILED 不计入 active、顺序稳定可重入、无 run 空、项目/版本隔离（5）；语义适配器关闭警告码契约（2）；`searchText` 被 `@JsonIgnore` 排除在序列化 JSON 之外（1）。
 - 遗留：知识完整性（expectedDocumentCount/coverageStatus=COMPLETE/PARTIAL/EMPTY）需业务文档清单支撑，留待正式评测强调完整性时再引入；`latestRunWarnings` 已可携带截断/禁用等稳定码供前端消费。
 
+### Fixed（0.9.5 — Review 第十三批：业务项目 ID 解析、并发构建与评测上下文一致性）
+
+依据外部代码 Review（高×4 / 中×4，审查范围 `38de2fe..7480b4c`）与后端存储专项审查（中×2 / 低×1）修复业务项目迁移、并发构建覆盖、评测上下文一致性与时间字段兼容：
+
+- **高：业务项目迁移后语义构建状态接口无法使用**：`RequirementSemanticBuildController` 移除 legacy `ProjectRegistry` 校验，三个入口（build/latest/aggregate）统一经 `BusinessProjectCatalogService.resolveProjectId` 解析为规范业务 ID（页面返回的 `immortal` 与 legacy 别名 `immortal-game-service` 指向同一项目），再用规范 ID 完成鉴权与落库/查询——用旧 ID 构建不会再以规范 ID 落库、后续按旧 ID 查询却永远失配；`SemanticBuildRequest` 新增 `withProjectId` 重建请求。
+- **高：并发构建可把 active 成功代际的标注覆盖成失败记录**：`RequirementSemanticBuildService.build` 按 `projectId|documentId|requirementVersion` 串行化（并发构建幂等化，第二个构建看到首个成功标注全部跳过）；`SQLiteRequirementSemanticStore.save` 兜底——同一 `annotationId` 已有 SUCCEEDED 标注时禁止失败/部分记录 `insert or replace` 覆盖，重试成功覆盖失败仍允许。
+- **高：评测 responseContext 与实际请求参数不一致**：`runSemanticSearch` 请求发起时捕获不可变参数快照（projectId/version/query/intent/limit/page），状态查询、semanticSearch、responseContext 全部读快照——等待状态刷新期间用户改查询/意图/limit 不再导致“后端收到 B、评测绑定 A”；`responseContext` 改为状态刷新成功后原子生成（首次进入页面不再记录空 buildIds，active 代际身份来自刚刷新的构建状态）。
+- **高：离开语义模式/切换项目后旧请求仍可写回新页面**：`resetSemanticState` 递增 `semantic.requestId`/`buildRequestId` 并释放 loading——`setRetrievalMode` 离开语义模式、`openRetrieval`/`backToBase` 页面切换都会吊销在飞语义请求，慢返回旧请求不再写回新页面，隐藏的 `semantic.loading` 不再禁用全局提交按钮。
+- **中：章节上下文变化时复用旧语义标注**：`sectionPath`/`heading` 会进入 Prompt（`RequirementSemanticPromptService`），现一并纳入标注幂等键 contentHash——正文不变但标题/章节变化时 `findExisting` 不命中、强制重新标注，新代际不再暴露基于旧章节语境的结果（active 查询不绑定 sourceRevision）。
+- **中：后端标记“不可评测”的响应仍可写入评测数据**：`semanticEvaluationUsable` 在构建开关之外，增加对当前响应稳定 warning 码的检查（`SEMANTIC_NORMATIVE_RETRIEVAL_DISABLED` / `SEMANTIC_CANDIDATE_TRUNCATED` / `SEMANTIC_CANDIDATE_LOAD_FAILED` / `MULTI_SOURCE_CANDIDATE_LOAD_FAILED`），命中即拒绝写入；`semanticBuildNotice` 同步提示。
+- **中：翻页请求期间旧页结果记成新页排名**：`responseContext` 改为请求成功后原子替换，翻页 pending 期间保留已展示上下文——旧页结果的评测按钮仍按旧页 page/limit 计算 rank，不再误绑新页排名。
+- **中：/builds/latest 破坏已有时间字段兼容性**：`SemanticBuildStatusView` 新增 `@JsonProperty("startedAt")`/`@JsonProperty("finishedAt")` 兼容访问器（映射 `runStartedAt`/`runFinishedAt`），旧轮询客户端不再读到 undefined；JSON 契约测试覆盖四个字段。
+- **补充（后端存储审查）：聚合状态非一致性快照**：`aggregateBuildStatus` 两条查询（latestRun + active 代际）改为同一只读事务（显式 `begin`/`commit`），构建在两次查询之间提交时不会出现 latestRun 来自运行 A、activeBuildIds 来自运行 B 的自相矛盾。
+- **补充（后端存储审查）：升级迁移未清除非法 active 状态**：初始化迁移先停用所有 `active=1 且 build_status != 'SUCCESS'` 的历史脏行，再做重复 active 清理——FAILED/PARTIAL_FAILURE 的 active 行不再让 `activeSourceRevision` 认为代际有效而检索拒绝它。
+- **补充（低）：warnings_json 损坏行为统一**：聚合接口不再把损坏 `warnings_json` 静默转空列表，与单文档状态接口一致抛“需求语义构建 warnings JSON 损坏”。
+- **测试补强**（新增 8 例，全量 863→870）：Controller 业务别名解析委托规范 ID（1）+ 时间字段 JSON 契约扩展（1）；Store 失败写不覆盖成功标注、成功覆盖失败仍允许、非 SUCCESS active 行迁移停用、聚合单快照一致（4）；Build 并发串行幂等（1）+ 标题/章节变化强制重标注（1）。
+
 ## 0.9.4 — 2026-08-23
 
 ### Added

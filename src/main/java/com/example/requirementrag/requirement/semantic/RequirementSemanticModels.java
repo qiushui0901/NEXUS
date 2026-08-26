@@ -230,6 +230,12 @@ public final class RequirementSemanticModels {
         public SemanticBuildRequest(String projectId, String documentId, String requirementVersion, String collection) {
             this(projectId, documentId, requirementVersion, collection, null);
         }
+
+        /** 返回以指定规范 projectId 重建的请求（Controller 入口规范化业务项目 ID 用）。 */
+        public SemanticBuildRequest withProjectId(String normalizedProjectId) {
+            return new SemanticBuildRequest(normalizedProjectId, documentId, requirementVersion,
+                    collection, retryFailedOnly);
+        }
     }
 
     /** 构建整体状态：部分失败不能伪装成完整成功。 */
@@ -349,6 +355,23 @@ public final class RequirementSemanticModels {
         @com.fasterxml.jackson.annotation.JsonProperty("active")
         public boolean active() {
             return generationActive;
+        }
+
+        /**
+         * 兼容旧 {@code SemanticBuildRecord} 时间字段 startedAt：新 DTO 改名为 runStartedAt 后，
+         * 已有轮询客户端会直接读到 undefined——必须保留旧 JSON 字段名（Render 层旧脚本仍按 startedAt 消费）。
+         */
+        @Deprecated
+        @com.fasterxml.jackson.annotation.JsonProperty("startedAt")
+        public Instant startedAt() {
+            return runStartedAt;
+        }
+
+        /** 兼容旧 {@code SemanticBuildRecord} 时间字段 finishedAt（见 startedAt 说明）。 */
+        @Deprecated
+        @com.fasterxml.jackson.annotation.JsonProperty("finishedAt")
+        public Instant finishedAt() {
+            return runFinishedAt;
         }
     }
 

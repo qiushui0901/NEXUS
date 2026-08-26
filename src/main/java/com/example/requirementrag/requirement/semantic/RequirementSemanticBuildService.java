@@ -54,6 +54,8 @@ public class RequirementSemanticBuildService {
     private final RequirementGraphWindowPlanner windowPlanner;
     private final RequirementSemanticTextComposer composer;
     private final MeterRegistry meterRegistry;
+    private final java.util.concurrent.ConcurrentHashMap<String, Object> buildLocks =
+            new java.util.concurrent.ConcurrentHashMap<>();
 
     @Autowired
     public RequirementSemanticBuildService(SQLiteRequirementSemanticStore store,
@@ -105,6 +107,17 @@ public class RequirementSemanticBuildService {
     public SemanticBuildResult build(SemanticBuildRequest request) {
         validate(request);
         String projectId = resolveProjectId(request.projectId());
+        // 并发构建保护：同项目/文档/版本的构建串行执行，避免两个相同 buildId 的构建同时读到
+        // “无现有标注”后互相覆盖（一个成功发布 active 代际，另一个失败 insert or replace 覆盖同一
+        // annotationId，导致 active 代际还在但 listActive() 因标注被覆盖成 FAILED 返回空）。
+        Object lock = buildLocks.computeIfAbsent(projectId + "\u0000" + request.documentId()
+                + "\u0000" + request.requirementVersion(), key -> new Object());
+        synchronized (lock) {
+            return doBuild(request, projectId);
+        }
+    }
+
+    private SemanticBuildResult doBuild(SemanticBuildRequest request, String projectId) {
         count("nexus.requirement.semantic.started", projectId, "started");
         String collection = resolveCollection(projectId, request.collection());
         List<ChunkRecord> chunks = distinctParents(
@@ -264,6 +277,10 @@ public class RequirementSemanticBuildService {
     private SemanticAnnotationInput input(String projectId, ChunkRecord chunk, String sourceChunkId,
                                            String windowId, int windowIndex, int startOffset,
                                            int endOffset, String rawText) {
+        // #5（Review 中）：标注幂等键必须覆盖所有影响 Prompt 的上下文。sectionPath/heading 会进入
+        // Prompt（RequirementSemanticPromptService），因此它们必须参与 contentHash——否则正文不变、
+        // 标题/章节变化时构建会跳过重新标注，而 active 查询不绑定 sourceRevision，新代际仍会暴露
+        // 基于旧章节语境生成的结果。标题/章节变化 → contentHash 变化 → 幂等键不命中 → 重新标注。
         return new SemanticAnnotationInput(
                 projectId,
                 chunk.documentId(),
@@ -279,7 +296,8 @@ public class RequirementSemanticBuildService {
                 chunk.sectionPath(),
                 chunk.heading(),
                 rawText,
-                sha256(String.join("|", sourceChunkId, safe(windowId), rawText)));
+                sha256(String.join("|", sourceChunkId, safe(windowId),
+                        safe(chunk.sectionPath()), safe(chunk.heading()), rawText)));
     }
 
     private SemanticAnnotationRecord record(String projectId, String sourceRevision, String model,

@@ -3,6 +3,7 @@ package com.example.requirementrag.requirement.semantic;
 import com.example.requirementrag.config.ProjectRegistry;
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.knowledge.multisource.RequirementSemanticCandidateAdapter;
+import com.example.requirementrag.project.BusinessProjectCatalogService;
 import com.example.requirementrag.retrieval.QdrantHybridStore;
 import com.example.requirementrag.web.ProjectAccessGuard;
 import com.example.requirementrag.web.RequirementSemanticBuildController;
@@ -36,6 +37,7 @@ class RequirementSemanticAssemblyTest {
             .withBean(QdrantHybridStore.class, () -> mock(QdrantHybridStore.class))
             .withBean(ProjectRegistry.class, () -> mock(ProjectRegistry.class))
             .withBean(ProjectAccessGuard.class, () -> mock(ProjectAccessGuard.class))
+            .withBean(BusinessProjectCatalogService.class, () -> mock(BusinessProjectCatalogService.class))
             .withUserConfiguration(SemanticBeans.class);
 
     private RequirementSemanticProperties semanticProperties() {

@@ -72,6 +72,12 @@ class RequirementSemanticBuildServiceTest {
                 null, null, null);
     }
 
+    private ChunkRecord chunkWithHeading(String parentId, String text, String sectionPath, String heading) {
+        return new ChunkRecord("point-" + parentId, "doc", "5.1", "file.md", parentId,
+                text, "child-text", "hash-" + parentId, 0, 0, sectionPath, heading,
+                null, null, null);
+    }
+
     private SemanticAnnotationOutcome success() {
         return new SemanticAnnotationOutcome(SemanticAnnotationResult.empty(), null, 1, 1, 5, 10);
     }
@@ -94,6 +100,60 @@ class RequirementSemanticBuildServiceTest {
         assertThat(second.completedChunks()).isEqualTo(0);
         assertThat(second.status()).isEqualTo(SemanticBuildStatus.SUCCESS);
         verify(annotationService, times(1)).annotate(any(), anyInt());
+    }
+
+    @Test
+    void headingOrSectionChangeForcesReAnnotationEvenWhenBodyUnchanged() {
+        // #5（Review 中）：sectionPath/heading 会进入 Prompt，因此必须参与标注幂等键。
+        // 正文不变但标题变化 → contentHash 变化 → findExisting 不命中 → 重新标注；
+        // 否则新代际会暴露基于旧章节语境生成的结果（active 查询不绑定 sourceRevision）。
+        when(qdrantStore.scrollVersion("col-1", "doc", "5.1"))
+                .thenReturn(List.of(chunk("parent-1", "玩家达到30级后开放成长基金。")));
+        service.build(new SemanticBuildRequest("p1", "doc", "5.1", null));
+        verify(annotationService, times(1)).annotate(any(), anyInt());
+
+        // 正文相同，标题/章节变化：必须重新标注，不能在旧语境结果上跳过。
+        when(qdrantStore.scrollVersion("col-1", "doc", "5.1"))
+                .thenReturn(List.of(chunkWithHeading("parent-1", "玩家达到30级后开放成长基金。",
+                        "基金 / 活动", "基金活动")));
+        SemanticBuildResult rebuilt = service.build(new SemanticBuildRequest("p1", "doc", "5.1", null));
+
+        assertThat(rebuilt.status()).isEqualTo(SemanticBuildStatus.SUCCESS);
+        assertThat(rebuilt.skippedChunks()).isEqualTo(0);
+        assertThat(rebuilt.completedChunks()).isEqualTo(1);
+        verify(annotationService, times(2)).annotate(any(), anyInt());
+    }
+
+    @Test
+    void concurrentBuildsOfSameScopeAreSerializedAndIdempotent() throws Exception {
+        // #2（Review 高）：同项目/文档/版本的并发构建必须串行——否则两个相同 buildId 的构建同时读到
+        // “无现有标注”后，失败构建会 insert or replace 覆盖成功构建刚发布的 active 代际标注。
+        // 串行化后第二个构建看到首个的成功标注，全部跳过，不再重复调用模型。
+        when(qdrantStore.scrollVersion("col-1", "doc", "5.1"))
+                .thenReturn(List.of(chunk("parent-1", "玩家达到30级后开放成长基金。"),
+                        chunk("parent-2", "冷却时间为30秒。")));
+        int workers = 4;
+        java.util.concurrent.ExecutorService pool =
+                java.util.concurrent.Executors.newFixedThreadPool(workers);
+        java.util.concurrent.CyclicBarrier barrier = new java.util.concurrent.CyclicBarrier(workers);
+        List<java.util.concurrent.Future<SemanticBuildResult>> futures = new java.util.ArrayList<>();
+        try {
+            for (int index = 0; index < workers; index++) {
+                futures.add(pool.submit(() -> {
+                    barrier.await();
+                    return service.build(new SemanticBuildRequest("p1", "doc", "5.1", null));
+                }));
+            }
+            for (var future : futures) future.get(30, java.util.concurrent.TimeUnit.SECONDS);
+        } finally {
+            pool.shutdownNow();
+        }
+
+        // 只有一个 worker 实际标注（2 个 chunk 各一次）；其余全部因串行化看到成功标注而跳过——
+        // 并发下 annotate 总次数 = chunk 数，不会出现多个 worker 对同一 chunk 重复标注。
+        verify(annotationService, times(2)).annotate(any(), anyInt());
+        assertThat(store.countByStatus("p1", "doc", "5.1",
+                RequirementSemanticModels.ExtractionStatus.SUCCEEDED)).isEqualTo(2);
     }
 
     @Test

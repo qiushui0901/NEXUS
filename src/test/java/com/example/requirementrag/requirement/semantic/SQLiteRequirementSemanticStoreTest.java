@@ -105,6 +105,38 @@ class SQLiteRequirementSemanticStoreTest {
     }
 
     @Test
+    void failedSaveCannotOverwriteExistingSuccessfulAnnotation() {
+        // #2（Review 高）：并发构建下，成功构建先保存并发布 active 代际后，另一个失败构建不得
+        // insert or replace 覆盖同一 annotationId——否则代际行还在但 listActive() 因标注被覆盖成
+        // FAILED 返回空（active 代际引用的成功标注被失败记录破坏）。
+        SQLiteRequirementSemanticStore store = store();
+        store.save(record("p1", "doc", "5.1", "file.md|p|0", "hash-1", "model-a", "v1", "v1",
+                ExtractionStatus.SUCCEEDED));
+        store.save(record("p1", "doc", "5.1", "file.md|p|0", "hash-1", "model-a", "v1", "v1",
+                ExtractionStatus.FAILED));
+
+        // 成功标注保留，失败写被拒绝；幂等查询仍返回 SUCCEEDED。
+        assertThat(store.existsSuccessful("p1", "doc", "5.1", "file.md|p|0", "hash-1",
+                "model-a", "v1", "v1")).isTrue();
+        assertThat(store.countByStatus("p1", "doc", "5.1", ExtractionStatus.SUCCEEDED)).isEqualTo(1);
+        assertThat(store.countByStatus("p1", "doc", "5.1", ExtractionStatus.FAILED)).isEqualTo(0);
+    }
+
+    @Test
+    void successfulSaveStillOverwritesExistingFailedAnnotation() {
+        // 重试语义不能破坏：失败标注可被后续成功覆盖（这是 retryFailedOnly 的核心路径）。
+        SQLiteRequirementSemanticStore store = store();
+        store.save(record("p1", "doc", "5.1", "file.md|p|0", "hash-1", "model-a", "v1", "v1",
+                ExtractionStatus.FAILED));
+        store.save(record("p1", "doc", "5.1", "file.md|p|0", "hash-1", "model-a", "v1", "v1",
+                ExtractionStatus.SUCCEEDED));
+
+        assertThat(store.existsSuccessful("p1", "doc", "5.1", "file.md|p|0", "hash-1",
+                "model-a", "v1", "v1")).isTrue();
+        assertThat(store.countByStatus("p1", "doc", "5.1", ExtractionStatus.FAILED)).isEqualTo(0);
+    }
+
+    @Test
     void failedRecordIsVisibleAndRetryable() {
         SQLiteRequirementSemanticStore store = store();
         store.save(record("p1", "doc", "5.1", "file.md|p|0", "hash-1", "model-a", "v1", "v1",
@@ -410,6 +442,65 @@ class SQLiteRequirementSemanticStoreTest {
     }
 
     @Test
+    void migrationDeactivatesNonSuccessActiveRows() throws Exception {
+        // 补充（后端存储审查）：旧版本/异常路径可能留下 FAILED/PARTIAL_FAILURE 且 active=1 的脏行，
+        // 不清理会造成 activeSourceRevision() 认为代际有效、而 listActive/聚合检索拒绝它，状态自相矛盾。
+        Path db = tempDir.resolve("invalid-active.db");
+        try (java.sql.Connection connection = java.sql.DriverManager.getConnection("jdbc:sqlite:" + db);
+             java.sql.Statement statement = connection.createStatement()) {
+            statement.executeUpdate("""
+                    create table requirement_semantic_build(
+                      build_id text primary key,
+                      project_id text not null,
+                      document_id text not null,
+                      requirement_version text not null,
+                      source_revision text not null,
+                      model text not null,
+                      prompt_version text not null,
+                      schema_version text not null,
+                      build_status text not null,
+                      total_chunks integer not null default 0,
+                      skipped_chunks integer not null default 0,
+                      completed_chunks integer not null default 0,
+                      failed_chunks integer not null default 0,
+                      warnings_json text not null default '[]',
+                      started_at text,
+                      finished_at text,
+                      active integer not null default 0
+                    )
+                    """);
+            // 旧脏数据：FAILED/PARTIAL_FAILURE 却被标成 active=1。
+            statement.executeUpdate("insert into requirement_semantic_build(build_id, project_id, document_id,"
+                    + " requirement_version, source_revision, model, prompt_version, schema_version,"
+                    + " build_status, finished_at, active) values('build:failed-active', 'p1', 'doc', '5.1',"
+                    + " 'rev-failed', 'model-a', 'v1', 'v1', 'FAILED', '2026-06-01T00:00:00Z', 1)");
+            statement.executeUpdate("insert into requirement_semantic_build(build_id, project_id, document_id,"
+                    + " requirement_version, source_revision, model, prompt_version, schema_version,"
+                    + " build_status, finished_at, active) values('build:partial-active', 'p1', 'doc', '5.1',"
+                    + " 'rev-partial', 'model-a', 'v1', 'v1', 'PARTIAL_FAILURE', '2026-06-01T00:00:00Z', 1)");
+            // 正常 SUCCESS active 行不受影响。
+            statement.executeUpdate("insert into requirement_semantic_build(build_id, project_id, document_id,"
+                    + " requirement_version, source_revision, model, prompt_version, schema_version,"
+                    + " build_status, finished_at, active) values('build:success-active', 'p1', 'doc', '5.1',"
+                    + " 'rev-success', 'model-a', 'v1', 'v1', 'SUCCESS', '2026-06-02T00:00:00Z', 1)");
+        }
+
+        RequirementSemanticProperties properties = new RequirementSemanticProperties(true, false, false, false,
+                db.toString(), null, "requirement-semantic-v1", "v1", 12_000, 30, 30, 30, 30, 20, 30, 2,
+                1_000, 1_800, 1_000_000, 400, true, 5_000);
+        SQLiteRequirementSemanticStore store = new SQLiteRequirementSemanticStore(objectMapper, properties);
+
+        // FAILED/PARTIAL_FAILURE 的 active 行被停用，SUCCESS 的 active 行保留为唯一 active 代际。
+        assertThat(store.activeSourceRevision("p1", "doc", "5.1")).contains("rev-success");
+        assertThat(store.findBuild("build:failed-active")).isPresent().get()
+                .satisfies(record -> assertThat(record.active()).isFalse());
+        assertThat(store.findBuild("build:partial-active")).isPresent().get()
+                .satisfies(record -> assertThat(record.active()).isFalse());
+        assertThat(store.findBuild("build:success-active")).isPresent().get()
+                .satisfies(record -> assertThat(record.active()).isTrue());
+    }
+
+    @Test
     void failedNewGenerationDoesNotMaskOldActiveGenerationInStatusView() {
         // rev-1 SUCCESS active；rev-2（新输入）FAILED inactive：
         // latestBuild 必须报出最新 run FAILED，同时 activeGeneration* 指向仍在线的 rev-1 成功代际。
@@ -671,5 +762,33 @@ class SQLiteRequirementSemanticStoreTest {
         assertThat(aggregate.get().activeDocumentCount()).isEqualTo(1);
         assertThat(aggregate.get().activeDocumentIds()).containsExactly("doc-a");
         assertThat(aggregate.get().requirementVersion()).isEqualTo("5.1");
+    }
+
+    @Test
+    void aggregateReadsLatestRunAndActiveGenerationFromSingleSnapshot() {
+        // 补充（后端存储审查）：latestRun* 与 activeBuildIds 必须来自同一只读事务——否则构建恰好在
+        // 两次查询之间提交时，最新执行来自运行 A、active 集合来自运行 B，聚合状态自相矛盾
+        // （例如 latestRunStatus=FAILED 却列出最新成功代际，或反之）。
+        SQLiteRequirementSemanticStore store = store();
+        // run 1：构建失败且无 active（rev-fail 无成功代际）。
+        store.recordBuildRun(buildForDocument("p1", "doc-a", "rev-fail", false, SemanticBuildStatus.FAILED),
+                List.of());
+        // run 2：构建成功发布 active（rev-ok）。
+        store.recordBuildRun(buildForDocument("p1", "doc-a", "rev-ok", true, SemanticBuildStatus.SUCCESS),
+                List.of());
+
+        var aggregate = store.aggregateBuildStatus("p1", "5.1", true, true);
+
+        assertThat(aggregate).isPresent();
+        // latest run 与 active 代际来自同一次快照：最新执行已是 rev-ok 的 SUCCESS，active 集合必须非空；
+        // 若两次查询来自不同事务（先查 run 后查 active），状态就可能在 rev-fail 与 rev-ok 之间撕裂。
+        assertThat(aggregate.get().latestRunStatus()).isEqualTo(SemanticBuildStatus.SUCCESS);
+        assertThat(aggregate.get().latestRunBuildId()).isEqualTo(
+                SQLiteRequirementSemanticStore.buildId("p1", "doc-a", "5.1", "rev-ok",
+                        "model-a", "v1", "v1"));
+        assertThat(aggregate.get().hasActiveGeneration()).isTrue();
+        assertThat(aggregate.get().activeBuildIds()).containsExactly(
+                SQLiteRequirementSemanticStore.buildId("p1", "doc-a", "5.1", "rev-ok",
+                        "model-a", "v1", "v1"));
     }
 }

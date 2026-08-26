@@ -215,6 +215,13 @@ public class SQLiteRequirementSemanticStore {
                     """);
             statement.executeUpdate("create index if not exists idx_req_semantic_build_scope"
                     + " on requirement_semantic_build(project_id, document_id, requirement_version, active)");
+            // 补充（后端存储审查）：旧版本/异常路径可能把非 SUCCESS（FAILED/PARTIAL_FAILURE）行写成 active=1。
+            // 不清理会造成 activeSourceRevision() 认为代际有效，而 listActive/聚合检索拒绝它，状态自相矛盾。
+            // 必须先停用所有非 SUCCESS 的 active 行，再做重复 active 清理——否则旧脏数据会干扰唯一性选择。
+            statement.executeUpdate("""
+                    update requirement_semantic_build set active=0
+                    where active=1 and build_status != 'SUCCESS'
+                    """);
             // active 代际唯一性：先修复历史脏数据（并发/中断可能留下多条 active），再建 partial unique index。
             // 保留"每组最新"按时间优先：coalesce(finished_at, started_at) 的 epoch 降序、rowid 决胜——
             // rowid 只代表插入顺序，导入/人工修复/重写场景下较大 rowid 未必是较新的构建。
@@ -315,6 +322,13 @@ public class SQLiteRequirementSemanticStore {
         try (Connection connection = open()) {
             connection.setAutoCommit(false);
             try {
+                // 兜底（服务层已按项目/文档/版本串行化构建）：同一 annotationId 已有 SUCCEEDED 标注时，
+                // 禁止失败/部分记录覆盖它——否则并发下失败构建会把 active 成功代际引用的标注
+                // insert or replace 成 FAILED，导致代际行还在但 listActive() 返回空。
+                if (!isSuccessful(record.extractionStatus()) && existingStatusIsSuccessful(connection, record.annotationId())) {
+                    connection.rollback();
+                    return;
+                }
                 deleteChildren(connection, record.annotationId());
                 try (PreparedStatement statement = connection.prepareStatement("""
                         insert or replace into requirement_semantic_annotation(
@@ -338,6 +352,21 @@ public class SQLiteRequirementSemanticStore {
         } catch (SQLException exception) {
             throw new IllegalStateException("Unable to save requirement semantic annotation", exception);
         }
+    }
+
+    /** 事务内查询：同一 annotationId 是否已有 SUCCEEDED 抽取记录（防止失败写覆盖 active 代际标注）。 */
+    private boolean existingStatusIsSuccessful(Connection connection, String annotationId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "select extraction_status from requirement_semantic_annotation where annotation_id=?")) {
+            statement.setString(1, safe(annotationId));
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() && "SUCCEEDED".equals(rows.getString(1));
+            }
+        }
+    }
+
+    private static boolean isSuccessful(RequirementSemanticModels.ExtractionStatus status) {
+        return status == RequirementSemanticModels.ExtractionStatus.SUCCEEDED;
     }
 
     /** 查询同一幂等键下任意状态的既有记录（重试时用于累加 attempt）。 */
@@ -582,6 +611,11 @@ public class SQLiteRequirementSemanticStore {
                 order by coalesce(finished_at, started_at) desc, rowid desc
                 """;
         try (Connection connection = open()) {
+            // 补充（后端存储审查）：两条查询必须处于同一只读事务——否则构建恰好在两次查询之间提交时，
+            // latestRun* 可能来自运行 A 而 activeBuildIds 已来自运行 B，聚合状态自相矛盾。
+            try (Statement transaction = connection.createStatement()) {
+                transaction.execute("begin");
+            }
             String runId = null, buildId = null, status = null, warningsJson = null;
             int total = 0, completed = 0, failed = 0;
             try (PreparedStatement statement = connection.prepareStatement(latestRunSql)) {
@@ -600,14 +634,14 @@ public class SQLiteRequirementSemanticStore {
                 }
             }
             if (runId == null) return Optional.empty();
-            List<String> warnings = List.of();
-            if (warningsJson != null && !warningsJson.isBlank()) {
-                try {
-                    warnings = objectMapper.readValue(warningsJson, objectMapper.getTypeFactory()
-                            .constructCollectionType(List.class, String.class));
-                } catch (JsonProcessingException ignored) {
-                    warnings = List.of();
-                }
+            List<String> warnings;
+            try {
+                warnings = warningsJson == null || warningsJson.isBlank()
+                        ? List.of()
+                        : objectMapper.readValue(warningsJson, objectMapper.getTypeFactory()
+                                .constructCollectionType(List.class, String.class));
+            } catch (JsonProcessingException exception) {
+                throw new IllegalStateException("需求语义构建 warnings JSON 损坏", exception);
             }
             List<String> activeDocumentIds = new ArrayList<>();
             List<String> activeBuildIds = new ArrayList<>();
@@ -620,6 +654,9 @@ public class SQLiteRequirementSemanticStore {
                         activeBuildIds.add(rows.getString("build_id"));
                     }
                 }
+            }
+            try (Statement transaction = connection.createStatement()) {
+                transaction.execute("commit");
             }
             boolean hasActive = !activeDocumentIds.isEmpty();
             return Optional.of(new RequirementSemanticModels.SemanticBuildAggregateView(

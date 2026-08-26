@@ -62,3 +62,6 @@ data/evolution/
 
 # GitLab 本地镜像仓库（运行时数据）
 data/gitlab-repositories/
+
+# 个人文件（用户转正答辩材料）
+转正答辩.html
