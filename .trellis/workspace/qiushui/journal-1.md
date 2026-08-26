@@ -995,3 +995,38 @@ Phase 2-6 全部落地：341 测试 verify 全绿；状态契约注册表 + CONT
 ### Next Steps
 
 - None - task complete
+
+
+## Session 24: 业务项目多仓库与语义检索收口
+
+**Date**: 2026-08-26
+**Task**: 业务项目多仓库与语义检索收口
+**Branch**: `main`
+
+### Summary
+
+完成业务项目多仓库任务的最终代码审查与语义检索加固：修复业务项目 ID、并发构建写入、检索代际传播、响应快照评测资格和异步前端状态一致性；定向 Java 测试、JS 语法检查与 diff 检查通过；归档 08-18-business-project-multi-repository，未完成的扩展项保留在归档计划中供后续拆分。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `1b2f6e3` | (see git log) |
+| `3fbd070` | (see git log) |
+| `e1dc574` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
