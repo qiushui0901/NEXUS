@@ -43,6 +43,15 @@
 - **ClaimVectorCandidateAdapter 扩展**：新增 `loadScored()` 方法返回 `ScoredCandidateLoad`（候选 + Qdrant 原始分数映射），供融合组件使用。重构 `loadDetailed` 复用 `doSearch` 内部方法。
 - **测试**：新增 27 例——融合组件 13 例（空输入、向量归一化、去重、稳定排序、冲突惩罚、精确命中、权重配置、统计字段、ScoredCandidateLoad）；影子评估器 11 例（空结果、非空结果、scope 隔离、多查询聚合、publishIfReady 阈值、recentQueries 上限）；SourceFilterStrategy 3 例（CLAIM_VECTOR 在非 DOUBT 意图中、DOUBT 排除、REQUIREMENT_SEMANTIC 仍在）。全量 969 tests 通过。
 
+### Added（0.9.6 — Phase E：质量门与正式发布）
+
+实现 0.9.6 方案 Phase E（§10），新增质量门组件与运维发布文档：
+
+- **质量门**（`ClaimVectorQualityGate`）：`@Component`+`@ConditionalOnProperty("enabled")`。五项检查：活跃代际存在且 ACTIVE、indexedPointCount==expectedPointCount、Qdrant alias 指向活跃物理 collection、物理 collection 点数与 SQLite manifest 一致、影子评估器有足够数据（可选）。全部通过时 `readyToPublish=true`。`QualityGateReport(projectId, businessVersion, checks, readyToPublish)` + `QualityCheck(name, passed, detail)`。不修改任何状态只读取和报告。
+- **运维手册**（`docs/claim-vector-operator-runbook.md`）：架构概览、配置项表、构建流程（首次/增量/失败处理）、回滚流程（上一代际/指定代际/验证）、质量门检查项、影子模式监控、灾难恢复（Qdrant 丢失/SQLite 丢失）、监控指标与告警阈值。
+- **发布决策记录**（`docs/claim-vector-rollout-decision-record.md`）：发布范围与前置条件清单、灰度发布 6 阶段计划（关闭→构建→影子→候选→融合→正式）、回滚预案与触发条件、融合权重决策与风险评估、代码组件清单。
+- **测试**：新增 10 例——质量门 10 例（无活跃代际失败、全检查通过 readyToPublish、点数不匹配失败、alias 不匹配失败、物理点数不一致失败、Qdrant 不可用失败、影子数据不足失败、影子数据为 null 失败、影子关闭时跳过检查、报告汇总字段）。全量 979 tests 通过。
+
 ## 0.9.5 — 2026-08-25
 
 ### Added
