@@ -1,0 +1,110 @@
+package com.example.requirementrag.knowledge.multisource.vector;
+
+import com.example.requirementrag.conflict.KnowledgeConflictModels.Authority;
+import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
+import com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVectorModels.KnowledgeClaimVectorPoint;
+import org.junit.jupiter.api.Test;
+import org.springframework.web.client.RestClient;
+
+import java.util.List;
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+/**
+ * Claim 向量 Qdrant 发布器测试：验证点结构（payload + 确定性 ID + dense-only vector）。
+ * 不连接真实 Qdrant——只测试 {@link KnowledgeClaimVectorQdrantStore#buildPointMap}。
+ */
+class KnowledgeClaimVectorQdrantStoreTest {
+
+    private final KnowledgeClaimVectorProperties properties = new KnowledgeClaimVectorProperties(
+            true, true, true, true,
+            "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
+            200, 3, 32, 3, 2, null);
+    private final KnowledgeClaimVectorQdrantStore store =
+            new KnowledgeClaimVectorQdrantStore(RestClient.builder().build(), properties);
+
+    @Test
+    void buildPointMapProducesDeterministicIdAndCorrectPayload() {
+        KnowledgeClaimVectorPoint point = new KnowledgeClaimVectorPoint(
+                "proj-1", "v1.0", "claim-001", "doc-ver-1",
+                SourceType.REQUIREMENT, Authority.PRIMARY,
+                "ACTIVE", "authn#login#requirement",
+                "系统需要支持密码登录", "必须支持", null, null, List.of("ev-1", "ev-2"),
+                "cv-gen-1", "knowledge-claim-vector-v1",
+                "MockEmbeddingModel:1024", "abc123hash");
+
+        float[] vector = {0.1f, 0.2f, 0.3f};
+        Map<String, Object> pointMap = store.buildPointMap(point, vector);
+
+        // 确定性 ID
+        String expectedId = KnowledgeClaimVectorModels.deterministicPointId(
+                "proj-1", "v1.0", "claim-001", "knowledge-claim-vector-v1");
+        assertThat(pointMap.get("id")).isEqualTo(expectedId);
+
+        // dense-only vector（无 sparse）
+        @SuppressWarnings("unchecked")
+        Map<String, Object> vectorMap = (Map<String, Object>) pointMap.get("vector");
+        assertThat(vectorMap).containsOnlyKeys("dense");
+        assertThat(vectorMap.get("dense")).isSameAs(vector);
+
+        // payload 字段
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) pointMap.get("payload");
+        assertThat(payload.get("projectId")).isEqualTo("proj-1");
+        assertThat(payload.get("businessVersion")).isEqualTo("v1.0");
+        assertThat(payload.get("claimId")).isEqualTo("claim-001");
+        assertThat(payload.get("sourceType")).isEqualTo("REQUIREMENT");
+        assertThat(payload.get("authority")).isEqualTo("PRIMARY");
+        assertThat(payload.get("knowledgeStatus")).isEqualTo("ACTIVE");
+        assertThat(payload.get("factKey")).isEqualTo("authn#login#requirement");
+        assertThat(payload.get("subject")).isEqualTo("系统需要支持密码登录");
+        assertThat(payload.get("projectionGenerationId")).isEqualTo("cv-gen-1");
+        assertThat(payload.get("projectionSchemaVersion")).isEqualTo("knowledge-claim-vector-v1");
+        assertThat(payload.get("embeddingModel")).isEqualTo("MockEmbeddingModel:1024");
+        assertThat(payload.get("textHash")).isEqualTo("abc123hash");
+        @SuppressWarnings("unchecked")
+        List<String> evidenceIds = (List<String>) payload.get("evidenceIds");
+        assertThat(evidenceIds).containsExactly("ev-1", "ev-2");
+    }
+
+    @Test
+    void buildPointMapDifferentSchemaVersionProducesDifferentId() {
+        KnowledgeClaimVectorPoint point = new KnowledgeClaimVectorPoint(
+                "proj-1", "v1.0", "claim-001", "doc-ver-1",
+                SourceType.REQUIREMENT, Authority.PRIMARY,
+                "ACTIVE", "fk", "subj", "pred", null, null, List.of(),
+                "gen-1", "knowledge-claim-vector-v1",
+                "model:1024", "hash");
+
+        Map<String, Object> pointV1 = store.buildPointMap(point, new float[]{0.1f});
+        KnowledgeClaimVectorPoint pointV2 = new KnowledgeClaimVectorPoint(
+                "proj-1", "v1.0", "claim-001", "doc-ver-1",
+                SourceType.REQUIREMENT, Authority.PRIMARY,
+                "ACTIVE", "fk", "subj", "pred", null, null, List.of(),
+                "gen-1", "knowledge-claim-vector-v2",
+                "model:1024", "hash");
+        Map<String, Object> pointV2Map = store.buildPointMap(pointV2, new float[]{0.1f});
+
+        assertThat(pointV1.get("id")).isNotEqualTo(pointV2Map.get("id"));
+    }
+
+    @Test
+    void buildPointMapNullOptionalFieldsRenderedAsEmptyString() {
+        KnowledgeClaimVectorPoint point = new KnowledgeClaimVectorPoint(
+                "proj-2", "v2.0", "claim-002", "doc-ver-2",
+                SourceType.PARAMETER_TABLE, Authority.PRIMARY,
+                null, "param#timeout", "超时时间", null, "INTEGER", "秒", List.of(),
+                "gen-2", "knowledge-claim-vector-v1",
+                "model:1024", "hash2");
+
+        Map<String, Object> pointMap = store.buildPointMap(point, new float[]{0.5f});
+        @SuppressWarnings("unchecked")
+        Map<String, Object> payload = (Map<String, Object>) pointMap.get("payload");
+        assertThat(payload.get("knowledgeStatus")).isEqualTo("");
+        assertThat(payload.get("predicate")).isEqualTo("");
+        assertThat(payload.get("sourceType")).isEqualTo("PARAMETER_TABLE");
+        assertThat(payload.get("valueType")).isEqualTo("INTEGER");
+        assertThat(payload.get("unit")).isEqualTo("秒");
+    }
+}

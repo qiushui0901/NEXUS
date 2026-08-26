@@ -252,7 +252,7 @@ public class SQLiteKnowledgeClaimVectorStore {
             try (Statement commit = connection.createStatement()) {
                 commit.execute("commit");
             }
-            return Optional.of(target);
+            return Optional.ofNullable(findGeneration(connection, generationId));
         } catch (SQLException exception) {
             throw new IllegalStateException("回滚代际失败 generationId=" + generationId, exception);
         }

@@ -14,6 +14,14 @@
 - **SQLite 代际存储**（`SQLiteKnowledgeClaimVectorStore`）：`knowledge_claim_vector_generation` + `knowledge_claim_vector_generation_input` 两张表（幂等迁移，FK 级联，WAL+busy_timeout=5000）；`recordBuildStart`（begin immediate 单事务插入 manifest+输入集合）；`updateStatus`（VERIFYING/SUCCESS/FAILED 状态转换+finished_at+warnings）；`markActive`（单事务退役旧 ACTIVE+激活新代际+返回被退役代际供物理集合清理）；`rollbackTo`（RETIRED→ACTIVE 回滚）；`findActiveGeneration`/`findGeneration`/`findLatestGeneration`/`listRetiredForRollback`/`findGenerationInputs`/`findReusableGeneration`（同一 fingerprint 的 SUCCESS/ACTIVE 代际可跳过重复构建）。
 - **测试**：新增 38 例——文本组合器 14 例（四种来源类型确定性快照、值-only 参数排除、空字段跳过、模块提取、来源排除）；模型 11 例（point ID 确定性+schema 变化、指纹排序无关+text/schema/composer/model/dim/updatedAt 变化检测、空输入）；存储 13 例（幂等初始化、代际 CRUD+输入集合、状态转换+失败警告、active/retired 切换+至多一个 ACTIVE、回滚、可复用代际跳过）。全量 915 tests 通过。
 
+### Added（0.9.6 — Phase B：构建与原子发布）
+
+实现 0.9.6 方案 Phase B（§10），新增 Claim 向量构建服务与 Qdrant 发布器：
+
+- **Claim 向量 Qdrant 发布器**（`KnowledgeClaimVectorQdrantStore`）：`@Repository`，复用 alias 原语但 payload 使用 `KnowledgeClaimVectorPoint` 而非 ChunkRecord。dense-only（无 sparse），一个点代表一个 Claim。`publishPhysicalCollection`（ensureCollection+writePointBatches+verifyPhysicalCount，不切 alias）；`switchAlias`（原子 delete+create alias+retireOldCollections 保留 retain-physical-collections 个）；`rollbackAlias`；`aliasTarget`；`countPointsIfAvailable`（best-effort，不可用返回 -1）；`scrollPoints`（构建后样本校验）；`buildPointMap`（package-private，确定性 pointId+payload 构造）。
+- **Claim 向量构建服务**（`KnowledgeClaimVectorBuildService`）：`@Service`+`@ConditionalOnProperty("app.rag.multi-source.claim-vector.build-enabled")`。64 条带 striped locks 同 scope 串行化。构建流水线：加载 Claims→文本组合→输入指纹→可复用代际跳过→recordBuildStart(BUILDING)→EmbeddingBatcher.embedAll→写物理 collection→校验点数→updateStatus(VERIFYING→SUCCESS)→markActive(SQLite 权威提交)→switchAlias(Qdrant 跟随 SQLite)。失败保护：嵌入/写入失败时 updateStatus FAILED+warnings，alias 不变，旧 ACTIVE 保留。alias 切换失败时 SQLite 已 ACTIVE 不回滚，Qdrant reconciliation 修复。`rollback` 方法：listRetiredForRollback→rollbackTo(SQLite RETIRED→ACTIVE)→rollbackAlias(Qdrant 切回旧 collection)。修复 Phase A `rollbackTo` 返回旧状态对象的 bug（改为回滚后重新查询）。
+- **测试**：新增 14 例——Qdrant 发布器 3 例（确定性 ID+payload 字段、不同 schema 产生不同 ID、空可选字段渲染为空串）；构建服务 11 例（happy path ACTIVE+expectedPointCount+indexedPointCount、排除 CODE/TEST_RESULT、可复用代际跳过重建只嵌入一次、嵌入失败 FAILED+alias 不变、Qdrant 写入失败 FAILED+alias 不变、alias 切换失败 SQLite 不回滚、无 eligible Claim 抛异常、回滚恢复上一 RETIRED→ACTIVE+Qdrant 切回旧 collection、无 RETIRED 回滚返回空、findActive 正常/空）。全量 929 tests 通过。
+
 ## 0.9.5 — 2026-08-25
 
 ### Added
