@@ -35,8 +35,20 @@ public final class KnowledgeManagementModels {
             SourceType sourceType, SummaryStatus status, String publishedRevision,
             String targetRevision, long documentCount, long readyDocumentCount,
             long failedDocumentCount, long chunkCount, Instant lastPublishedAt,
-            Instant createdAt, Instant updatedAt
-    ) {}
+            Instant createdAt, Instant updatedAt,
+            String requirementDocumentId, String latestRequirementVersion
+    ) {
+        /** 兼容旧构造：非业务项目知识库没有需求文档标识。 */
+        public KnowledgeBaseView(String id, String projectId, String name, BaseType type, String collection,
+                                 SourceType sourceType, SummaryStatus status, String publishedRevision,
+                                 String targetRevision, long documentCount, long readyDocumentCount,
+                                 long failedDocumentCount, long chunkCount, Instant lastPublishedAt,
+                                 Instant createdAt, Instant updatedAt) {
+            this(id, projectId, name, type, collection, sourceType, status, publishedRevision, targetRevision,
+                    documentCount, readyDocumentCount, failedDocumentCount, chunkCount,
+                    lastPublishedAt, createdAt, updatedAt, null, null);
+        }
+    }
 
     public record RunView(
             String id, String knowledgeBaseId, TriggerType triggerType, EntityStatus status,

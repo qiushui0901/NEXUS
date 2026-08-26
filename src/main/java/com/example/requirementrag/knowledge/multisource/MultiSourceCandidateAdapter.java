@@ -25,4 +25,21 @@ public interface MultiSourceCandidateAdapter {
                                              KnowledgeQueryIntent intent) {
         return load(projectId, version, query);
     }
+
+    /**
+     * 带状态反馈的候选加载：返回候选 + 非致命警告（如候选截断），由检索层并入响应 warnings，
+     * 保证调用方能感知"结果不完整"。默认实现无额外警告，与旧契约保持一致。
+     */
+    default CandidateLoad loadDetailed(String projectId, String version, String query,
+                                       KnowledgeQueryIntent intent) {
+        return new CandidateLoad(load(projectId, version, query, intent), List.of());
+    }
+
+    /** 候选加载结果：claims + 非致命警告（如截断、降级），警告使用稳定码。 */
+    record CandidateLoad(List<UnifiedKnowledgeClaim> claims, List<String> warnings) {
+        public CandidateLoad {
+            claims = claims == null ? List.of() : List.copyOf(claims);
+            warnings = warnings == null ? List.of() : List.copyOf(warnings);
+        }
+    }
 }

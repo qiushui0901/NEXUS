@@ -63,7 +63,7 @@ class RequirementSemanticBuildServiceTest {
         return new RequirementSemanticProperties(true, false, false, false,
                 tempDir.resolve("semantic.db").toString(), "test-model",
                 "requirement-semantic-v1", "v1", maxInputChars, 30, 30, 30, 30, 20, 30, 0,
-                maxModelCalls, 1_800, maxEstimatedTokens, 400, true);
+                maxModelCalls, 1_800, maxEstimatedTokens, 400, true, 5_000);
     }
 
     private ChunkRecord chunk(String parentId, String text) {

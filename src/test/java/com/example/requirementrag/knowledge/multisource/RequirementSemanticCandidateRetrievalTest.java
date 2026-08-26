@@ -55,7 +55,7 @@ class RequirementSemanticCandidateRetrievalTest {
                 true, true, false, false,
                 tempDir.resolve("semantic.db").toString(), "test-model",
                 "requirement-semantic-v1", "v1", 12_000, 30, 30, 30, 30, 20, 30, 0,
-                1_000, 1_800, 1_000_000, 400, true);
+                1_000, 1_800, 1_000_000, 400, true, 5_000);
         SQLiteRequirementSemanticStore semanticStore = new SQLiteRequirementSemanticStore(objectMapper, properties);
         // 语义候选：与参数表同一 subject|predicate（权限撤销|传播时间），值不同（3分钟 vs 5分钟）。
         SemanticAnnotationRecord a1 = annotation("a-1", "rev-1", new SemanticAnnotationResult(
@@ -155,6 +155,95 @@ class RequirementSemanticCandidateRetrievalTest {
         }
     }
 
+    @Test
+    void candidateLoadFailureReturnsStableWarningWithoutExceptionDetails() {
+        // 适配器抛出的异常可能携带内部信息（路径/SQL/provider URL）：对外 warning 只允许稳定码。
+        MultiSourceKnowledgeStore store = new MultiSourceKnowledgeStore(
+                tempDir.resolve("warn.db").toString(), new ObjectMapper());
+        MultiSourceCandidateAdapter failing = new MultiSourceCandidateAdapter() {
+            @Override
+            public SourceType sourceType() {
+                return SourceType.REQUIREMENT_SEMANTIC;
+            }
+
+            @Override
+            public List<UnifiedKnowledgeClaim> load(String projectId, String version, String query) {
+                throw new IllegalStateException("jdbc:sqlite:/secret/path database is locked");
+            }
+        };
+        MultiSourceSearchService warnService = new MultiSourceSearchService(store,
+                new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(),
+                List.of(failing), new CrossSourceRelationExtractor());
+
+        var response = warnService.search("fengshen", "5.1", "权限撤销传播时间是多少");
+
+        assertThat(response.warnings())
+                .contains("MULTI_SOURCE_CANDIDATE_LOAD_FAILED:REQUIREMENT_SEMANTIC");
+        assertThat(String.join(";", response.warnings()))
+                .doesNotContain("/secret/path")
+                .doesNotContain("jdbc")
+                .doesNotContain("locked");
+    }
+
+    @Test
+    void truncationWarningFromAdapterEntersSearchResponse() {
+        // 适配器级非致命警告（候选截断）必须进入响应 warnings，调用方能感知结果不完整。
+        MultiSourceKnowledgeStore store = new MultiSourceKnowledgeStore(
+                tempDir.resolve("truncation.db").toString(), new ObjectMapper());
+        MultiSourceCandidateAdapter truncating = new MultiSourceCandidateAdapter() {
+            @Override
+            public SourceType sourceType() {
+                return SourceType.REQUIREMENT_SEMANTIC;
+            }
+
+            @Override
+            public List<UnifiedKnowledgeClaim> load(String projectId, String version, String query) {
+                return List.of();
+            }
+
+            @Override
+            public MultiSourceCandidateAdapter.CandidateLoad loadDetailed(String projectId, String version,
+                                                                           String query,
+                                                                           KnowledgeQueryIntent intent) {
+                return new MultiSourceCandidateAdapter.CandidateLoad(List.of(),
+                        List.of("SEMANTIC_CANDIDATE_TRUNCATED"));
+            }
+        };
+        MultiSourceSearchService truncationService = new MultiSourceSearchService(store,
+                new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(),
+                List.of(truncating), new CrossSourceRelationExtractor());
+
+        var response = truncationService.search("fengshen", "5.1", "权限撤销传播时间是多少");
+
+        assertThat(response.warnings()).contains("SEMANTIC_CANDIDATE_TRUNCATED");
+    }
+
+    @Test
+    void conflictStatusStableAcrossPagesWithOutsidePageFlag() {
+        // 冲突双方（参数表 5分钟 vs 语义 3分钟 + CODE 5分钟）分散在不同页：
+        // 状态按整个候选集计算——两页结论一致，翻页不改变事实结论；
+        // 单条 Claim 的页面没有冲突双方详情，conflicts 为空但 hasConflictsOutsidePage=true。
+        var page0 = service.search("fengshen", "5.1", "权限撤销 传播时间", null, 1, 0);
+        var page1 = service.search("fengshen", "5.1", "权限撤销 传播时间", null, 1, 1);
+
+        assertThat(page0.claims()).hasSize(1);
+        assertThat(page1.claims()).hasSize(1);
+        assertThat(page0.answerStatus()).isEqualTo(AnswerStatus.CONFLICTED);
+        assertThat(page1.answerStatus()).isEqualTo(AnswerStatus.CONFLICTED);
+        assertThat(page0.conflicts()).isEmpty();
+        assertThat(page0.hasConflictsOutsidePage()).isTrue();
+        assertThat(page1.conflicts()).isEmpty();
+        assertThat(page1.hasConflictsOutsidePage()).isTrue();
+
+        // 全量单页（limit 20）时冲突详情可见且无页外冲突。
+        var full = service.search("fengshen", "5.1", "权限撤销 传播时间", null, 20, 0);
+        assertThat(full.conflicts()).isNotEmpty();
+        assertThat(full.answerStatus()).isEqualTo(AnswerStatus.CONFLICTED);
+        assertThat(full.hasConflictsOutsidePage()).isFalse();
+    }
+
     // ---------------- fixtures ----------------
 
     private void saveActiveAnnotations(SQLiteRequirementSemanticStore store, String sourceRevision,
@@ -162,12 +251,11 @@ class RequirementSemanticCandidateRetrievalTest {
         for (SemanticAnnotationRecord record : records) store.save(record);
         String buildId = SQLiteRequirementSemanticStore.buildId("fengshen", "doc", "5.1", sourceRevision,
                 "test-model", "requirement-semantic-v1", "v1");
-        store.saveBuild(new SemanticBuildRecord(
+        store.recordBuildRun(new SemanticBuildRecord(
                 buildId,
                 "fengshen", "doc", "5.1", sourceRevision, "test-model", "requirement-semantic-v1", "v1",
                 SemanticBuildStatus.SUCCESS, records.size(), 0, records.size(), 0, List.of(),
-                Instant.now(), Instant.now(), true));
-        store.saveBuildInputs(buildId, records.stream()
+                Instant.now(), Instant.now(), true), records.stream()
                 .map(record -> new RequirementSemanticModels.SemanticBuildInput(
                         record.sourceChunkId(), record.windowId(), record.contentHash()))
                 .toList());

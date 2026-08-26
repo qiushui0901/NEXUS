@@ -12,6 +12,8 @@ import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeMode
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.DoubtClaim;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeQueryIntent;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -32,6 +34,8 @@ import java.util.Set;
  */
 @Service
 public class MultiSourceSearchService {
+    private static final Logger log = LoggerFactory.getLogger(MultiSourceSearchService.class);
+
     private final MultiSourceKnowledgeStore store;
     private final KnowledgeQueryIntentClassifier classifier;
     private final MultiSourceKnowledgeGate gate;
@@ -124,7 +128,7 @@ public class MultiSourceSearchService {
                     intentOverride != null ? intentOverride : KnowledgeQueryIntent.GENERAL,
                     AnswerStatus.NO_RESULT, List.of(), List.of(), List.of(), List.of(), List.of(),
                     List.of("MULTI_SOURCE_DISABLED"), List.of(),
-                    0, effectivePage, effectiveLimit, false);
+                    0, effectivePage, effectiveLimit, false, false);
         }
         KnowledgeQueryIntent intent = intentOverride != null ? intentOverride : classifier.classify(query);
         boolean llmUsed = false;
@@ -171,9 +175,16 @@ public class MultiSourceSearchService {
         // 不再在查询侧生成/持久化/调用 LLM。旧 multi_source_relation 作为迁移期只读回退。
         List<CrossSourceRelation> relations = loadPageRelations(projectId, version, claims);
 
-        // 冲突范围与分页一致：只对当前页 Claim 做冲突分析与结论状态。
+        // 冲突状态按整个候选集（本查询全部命中）计算，翻页不改变事实结论；
+        // conflicts 字段只返回当前页涉及的冲突详情，页外冲突由 hasConflictsOutsidePage 提示。
+        List<String> queryConflicts = conflictAnalyzer.analyze(scored.stream().map(ScoredClaim::claim).toList());
         List<String> conflicts = conflictAnalyzer.analyze(claims);
-        AnswerStatus status = conflictAnalyzer.resolveStatus(claims, conflicts);
+        AnswerStatus status = conflictAnalyzer.resolveStatus(
+                scored.stream().map(ScoredClaim::claim).toList(), queryConflicts);
+        // 集合差集而非数量比较：全量与分页冲突数量相同但内容不同时也能正确报告页外冲突。
+        Set<String> pageConflictSet = new LinkedHashSet<>(conflicts);
+        boolean hasConflictsOutsidePage = queryConflicts.stream()
+                .anyMatch(conflict -> !pageConflictSet.contains(conflict));
         List<String> evidence = claims.stream().map(UnifiedKnowledgeClaim::evidenceLocation)
                 .filter(location -> location != null && !location.isBlank())
                 .distinct().toList();
@@ -186,7 +197,8 @@ public class MultiSourceSearchService {
         }
         boolean hasMore = (long) (effectivePage + 1) * effectiveLimit < scored.size();
         return new MultiSourceSearchResponse(query, intent, status, claims, evidence, conflicts, doubts,
-                explanations, warnings, relations, scored.size(), effectivePage, effectiveLimit, hasMore);
+                explanations, warnings, relations, scored.size(), effectivePage, effectiveLimit, hasMore,
+                hasConflictsOutsidePage);
     }
 
     /** 读取当前命中页 Claim 的一跳预生成关系；无新关系时回退旧表只读。 */
@@ -215,7 +227,9 @@ public class MultiSourceSearchService {
                 relation.evidenceId(), relation.confirmationReason());
     }
 
-    /** 字段加权评分：factKey 命中权重最高，其次 subject/module/predicate/value/unit。 */
+    /** 字段加权评分：factKey 命中权重最高，其次 subject/module/predicate/value/unit；
+     *  searchText（语义摘要等自然语言文本）作低权重兜底——数据库预过滤命中摘要但结构化
+     *  字段未命中查询词时，候选不应被归零过滤。 */
     private double score(UnifiedKnowledgeClaim claim, String normalizedQuery, List<String> tokens) {
         if (normalizedQuery.isEmpty()) return 0.0;
         String factKey = safe(claim.factKey()).toLowerCase(Locale.ROOT);
@@ -224,8 +238,10 @@ public class MultiSourceSearchService {
         String predicate = safe(claim.predicate()).toLowerCase(Locale.ROOT);
         String value = safe(claim.value()).toLowerCase(Locale.ROOT);
         String unit = safe(claim.unit()).toLowerCase(Locale.ROOT);
+        String searchText = safe(claim.searchText()).toLowerCase(Locale.ROOT);
         String haystack = (module + " " + subject + " " + predicate + " " + value + " " + unit + " " + factKey);
         double score = haystack.contains(normalizedQuery) ? 3.0 : 0.0;
+        if (score == 0.0 && !searchText.isEmpty() && searchText.contains(normalizedQuery)) score += 1.5;
         for (String token : tokens) {
             if (token.length() < 2) continue;
             if (factKey.contains(token)) score += 2.0;
@@ -233,18 +249,15 @@ public class MultiSourceSearchService {
             else if (predicate.contains(token)) score += 1.0;
             else if (value.contains(token)) score += 1.0;
             else if (unit.contains(token)) score += 0.5;
+            else if (!searchText.isEmpty() && searchText.contains(token)) score += 0.75;
         }
         return score;
     }
 
-    /** 冲突惩罚：命中冲突事实组的 Claim 扣分。 */
+    /** 冲突惩罚：命中冲突事实组（内部 factKey 维度或跨来源 subject|predicate 维度）的 Claim 扣分。 */
     private double conflictPenalty(UnifiedKnowledgeClaim claim, Set<String> conflictGroups) {
         if (conflictGroups.isEmpty()) return 0.0;
-        String group = (safe(claim.subject()) + "|" + safe(claim.predicate())).toLowerCase(Locale.ROOT);
-        if ("|".equals(group)) {
-            group = safe(claim.factKey()).toLowerCase(Locale.ROOT);
-        }
-        return conflictGroups.contains(group) ? 0.2 : 0.0;
+        return conflictAnalyzer.groupKeys(claim).stream().anyMatch(conflictGroups::contains) ? 0.2 : 0.0;
     }
 
     /** CJK/英文分词：中文无空格查询按 2-gram 切分，避免整句匹配失败。 */
@@ -289,11 +302,17 @@ public class MultiSourceSearchService {
         for (MultiSourceCandidateAdapter adapter : adapters) {
             if (allowed.contains(adapter.sourceType())) {
                 try {
-                    adapter.load(projectId, version, query, intent).forEach(result::add);
+                    MultiSourceCandidateAdapter.CandidateLoad loaded =
+                            adapter.loadDetailed(projectId, version, query, intent);
+                    loaded.claims().forEach(result::add);
+                    // 适配器级非致命警告（如候选截断）进入响应，保证调用方能感知结果不完整。
+                    warnings.addAll(loaded.warnings());
                 } catch (RuntimeException exception) {
-                    // 单一来源失败不能静默成“无结果”：记录警告并继续其他来源。
-                    warnings.add("来源 " + adapter.sourceType() + " 候选加载失败: "
-                            + (exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage()));
+                    // 单一来源失败不能静默成“无结果”：对外只暴露稳定码（不携带异常原文/路径等内部信息），
+                    // 内部日志记录异常类型供排查。
+                    warnings.add("MULTI_SOURCE_CANDIDATE_LOAD_FAILED:" + adapter.sourceType().name());
+                    log.warn("Multi-source candidate adapter failed source={} error={}",
+                            adapter.sourceType(), exception.getClass().getSimpleName());
                 }
             }
         }

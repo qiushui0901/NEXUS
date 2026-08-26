@@ -215,6 +215,23 @@ public class SQLiteRequirementSemanticStore {
                     """);
             statement.executeUpdate("create index if not exists idx_req_semantic_build_scope"
                     + " on requirement_semantic_build(project_id, document_id, requirement_version, active)");
+            // active 代际唯一性：先修复历史脏数据（并发/中断可能留下多条 active），再建 partial unique index。
+            // 保留"每组最新"按时间优先：coalesce(finished_at, started_at) 的 epoch 降序、rowid 决胜——
+            // rowid 只代表插入顺序，导入/人工修复/重写场景下较大 rowid 未必是较新的构建。
+            statement.executeUpdate("""
+                    update requirement_semantic_build as b set active=0
+                    where b.active=1 and b.build_id != (
+                      select c.build_id from requirement_semantic_build c
+                      where c.project_id=b.project_id and c.document_id=b.document_id
+                        and c.requirement_version=b.requirement_version and c.active=1
+                      order by coalesce(cast(strftime('%s', c.finished_at) as integer),
+                                        cast(strftime('%s', c.started_at) as integer), 0) desc,
+                               c.rowid desc
+                      limit 1)
+                    """);
+            statement.executeUpdate("create unique index if not exists uq_req_semantic_active_generation"
+                    + " on requirement_semantic_build(project_id, document_id, requirement_version)"
+                    + " where active=1");
             statement.executeUpdate("""
                     create table if not exists requirement_semantic_build_input(
                       build_id text not null,
@@ -227,6 +244,55 @@ public class SQLiteRequirementSemanticStore {
                     """);
             statement.executeUpdate("create index if not exists idx_req_semantic_build_input_scope"
                     + " on requirement_semantic_build_input(build_id)");
+            // 构建执行记录与代际分离：buildId 是确定性代际 ID，同输入重跑得到同一 buildId；
+            // run 记录每次执行（含失败重跑），失败 run 不得覆盖已 active 的成功代际。
+            // created_at_epoch_ms 是排序权威：Instant.toString() 小数精度可变且迁移数据格式不同，
+            // 字符串排序不等价于时间排序（"Z" > "."）。
+            statement.executeUpdate("""
+                    create table if not exists requirement_semantic_build_run(
+                      run_id text primary key,
+                      build_id text not null,
+                      build_status text not null,
+                      total_chunks integer not null default 0,
+                      skipped_chunks integer not null default 0,
+                      completed_chunks integer not null default 0,
+                      failed_chunks integer not null default 0,
+                      warnings_json text not null default '[]',
+                      started_at text,
+                      finished_at text,
+                      created_at text not null,
+                      created_at_epoch_ms integer not null default 0,
+                      foreign key(build_id) references requirement_semantic_build(build_id) on delete cascade
+                    )
+                    """);
+            // 旧库迁移：run 表引入时没有 epoch 列（上一批创建的库），逐列补齐并按 created_at 回填 epoch。
+            addColumnIfMissing(statement, "requirement_semantic_build_run", "created_at_epoch_ms",
+                    "integer not null default 0");
+            statement.executeUpdate("""
+                    update requirement_semantic_build_run
+                    set created_at_epoch_ms = coalesce(
+                      cast(strftime('%s', created_at) as integer) * 1000, 0)
+                    where created_at_epoch_ms = 0
+                    """);
+            statement.executeUpdate("create index if not exists idx_req_semantic_build_run_scope"
+                    + " on requirement_semantic_build_run(build_id)");
+            // 旧库升级回填：run 表引入前已存在的构建补一条迁移 run 记录，
+            // 否则 latestBuild（只读 run 表）查不到升级前的构建状态。幂等：已有 run 的构建不重复回填。
+            statement.executeUpdate("""
+                    insert into requirement_semantic_build_run(
+                      run_id, build_id, build_status, total_chunks, skipped_chunks, completed_chunks,
+                      failed_chunks, warnings_json, started_at, finished_at, created_at, created_at_epoch_ms)
+                    select 'migration:' || b.build_id, b.build_id, b.build_status, b.total_chunks,
+                           b.skipped_chunks, b.completed_chunks, b.failed_chunks, b.warnings_json,
+                           b.started_at, b.finished_at,
+                           coalesce(b.finished_at, b.started_at, datetime('now')),
+                           coalesce(cast(strftime('%s',
+                             coalesce(b.finished_at, b.started_at, datetime('now'))) as integer) * 1000, 0)
+                    from requirement_semantic_build b
+                    where not exists (
+                      select 1 from requirement_semantic_build_run r where r.build_id = b.build_id
+                    )
+                    """);
         } catch (SQLException exception) {
             throw new IllegalStateException("Unable to initialize requirement semantic store", exception);
         }
@@ -334,7 +400,12 @@ public class SQLiteRequirementSemanticStore {
         }
     }
 
-    /** 列出 active 构建下可直接消费的成功标注（通过当前构建输入集合过滤，未完成构建的旧记录不可见）。 */
+    /**
+     * 列出 active 构建下可直接消费的成功标注：通过构建元数据（项目、文档、版本、模型、Prompt、Schema）
+     * 与当前构建输入集合（source_chunk_id + content_hash + window_id）校验可见性。
+     * 注意：join 不绑定 source_revision——revision 变化时内容未变的 Chunk 允许复用旧标注，
+     * 输入一致性由构建输入集合保证。
+     */
     public List<SemanticAnnotationRecord> listActive(String projectId, String documentId,
                                                       String requirementVersion, int limit, int offset) {
         String sql = """
@@ -357,12 +428,6 @@ public class SQLiteRequirementSemanticStore {
                 Math.max(1, limit), Math.max(0, offset));
     }
 
-    /**
-     * 列出项目+版本下所有 active 构建的成功标注（跨文档），供多源检索适配器消费。
-     * 与构建代际表按（项目、文档、版本、source_revision、模型、Prompt、Schema）对齐连接，
-     * 并且必须关联当前构建的输入集合（source_chunk_id + content_hash + window_id），
-     * 防止已删除/过期窗口的旧记录在 revision 未变化时被重新暴露。
-     */
     /** 兼容旧签名：不按 query 过滤。 */
     public List<SemanticAnnotationRecord> listActiveByProjectVersion(String projectId,
                                                                      String requirementVersion, int limit) {
@@ -371,10 +436,11 @@ public class SQLiteRequirementSemanticStore {
 
     /**
      * 列出项目+版本下所有 active 构建的成功标注（跨文档），供多源检索适配器消费。
-     * 与构建代际表按（项目、文档、版本、source_revision、模型、Prompt、Schema）对齐连接，
-     * 并且必须关联当前构建的输入集合（source_chunk_id + content_hash + window_id），
-     * 防止已删除/过期窗口的旧记录在 revision 未变化时被重新暴露。
-     * query 非空时按语义字段（summary/text/result_json）做词项 LIKE 过滤，避免固定截断漏掉后段相关候选。
+     * 通过构建元数据（项目、文档、版本、模型、Prompt、Schema）与当前构建输入集合
+     * （source_chunk_id + content_hash + window_id）校验可见性，防止已删除/过期窗口的旧记录被重新暴露。
+     * 注意：join 不绑定 source_revision——revision 变化时内容未变的 Chunk 允许复用旧标注。
+     * query 非空时按语义字段（summary/text/result_json）做词项 OR LIKE 宽召回预过滤，
+     * 最终相关性由检索层评分决定。
      */
     public List<SemanticAnnotationRecord> listActiveByProjectVersion(String projectId,
                                                                      String requirementVersion, int limit,
@@ -397,9 +463,11 @@ public class SQLiteRequirementSemanticStore {
                 """);
         List<String> params = new ArrayList<>(List.of(safe(projectId), safe(requirementVersion)));
         if (!terms.isEmpty()) {
+            // 数据库预过滤是宽召回：词项之间用 OR，最终相关性由 MultiSourceSearchService.score() 决定。
+            // 用 AND 会把"一个窗口有词 A、另一个窗口有词 B"的候选全部过滤掉。
             sql.append(" and (");
             for (int index = 0; index < terms.size(); index++) {
-                if (index > 0) sql.append(" and ");
+                if (index > 0) sql.append(" or ");
                 sql.append("(a.semantic_summary like ? or a.semantic_text like ? or a.result_json like ?)");
                 String like = "%" + terms.get(index) + "%";
                 params.add(like);
@@ -425,121 +493,350 @@ public class SQLiteRequirementSemanticStore {
         }
     }
 
-    /** 查询分词：按空白/标点切分，保留长度 >= 2 的词项，用于语义字段 LIKE 过滤。 */
+    /**
+     * 查询分词：与 {@code MultiSourceSearchService.tokenize()} 同策略——按空白/标点切分，
+     * 整词保留（英文词），CJK 连续段追加 2-gram；"成长基金冷却时间" 不再因整体匹配失败而漏召回。
+     */
     private List<String> likeTerms(String query) {
         if (query == null || query.isBlank()) return List.of();
         java.util.LinkedHashSet<String> terms = new java.util.LinkedHashSet<>();
         for (String term : query.toLowerCase(java.util.Locale.ROOT)
                 .split("[\\s,，。；;？?！!：:、/()（）]+")) {
+            if (term.isBlank()) continue;
             if (term.length() >= 2) terms.add(term);
+            for (int index = 0; index < term.length() - 1; index++) {
+                char first = term.charAt(index);
+                char second = term.charAt(index + 1);
+                if (isCjk(first) && isCjk(second)) terms.add(term.substring(index, index + 2));
+            }
         }
-        return List.copyOf(terms);
+        // 上限防御：超长查询产生过多 LIKE 词项会拖垮 SQL；超出部分截断（宽召回下影响有限）。
+        return terms.stream().limit(50).toList();
     }
 
-    /** 最近一次构建记录（任意状态），供构建状态查询。 */
-    public Optional<SemanticBuildRecord> latestBuild(String projectId, String documentId,
-                                                     String requirementVersion) {
+    private boolean isCjk(char value) {
+        return value >= 0x4E00 && value <= 0x9FFF;
+    }
+
+    /**
+     * 最近一次构建执行的状态视图（任意状态）：状态/统计/warnings 来自最新 run（按 epoch 毫秒排序），
+     * generationActive 表示最新 run 所属代际是否 active；activeGeneration* 三字段通过 LEFT JOIN
+     * 查询同范围内真正 active 的代际——"旧版本 SUCCESS active + 新版本 FAILED inactive" 时
+     * latestRunStatus=FAILED 但 activeGenerationStatus=SUCCESS，不产生误导。
+     */
+    public Optional<RequirementSemanticModels.SemanticBuildStatusView> latestBuild(String projectId,
+                                                                                   String documentId,
+                                                                                   String requirementVersion) {
         String sql = """
-                select * from requirement_semantic_build
-                where project_id=? and document_id=? and requirement_version=?
-                order by finished_at desc, started_at desc limit 1
+                select r.run_id as run_id, r.build_status as run_status, r.total_chunks as run_total,
+                       r.skipped_chunks as run_skipped, r.completed_chunks as run_completed,
+                       r.failed_chunks as run_failed, r.warnings_json as run_warnings,
+                       r.started_at as run_started, r.finished_at as run_finished,
+                       b.*,
+                       ab.build_id as active_gen_build_id,
+                       ab.source_revision as active_gen_revision,
+                       ab.build_status as active_gen_status
+                from requirement_semantic_build_run r
+                join requirement_semantic_build b on b.build_id = r.build_id
+                left join requirement_semantic_build ab
+                  on ab.project_id = b.project_id and ab.document_id = b.document_id
+                 and ab.requirement_version = b.requirement_version and ab.active = 1
+                where b.project_id=? and b.document_id=? and b.requirement_version=?
+                order by r.created_at_epoch_ms desc, r.rowid desc limit 1
                 """;
         try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, safe(projectId));
             statement.setString(2, safe(documentId));
             statement.setString(3, safe(requirementVersion));
             try (ResultSet rows = statement.executeQuery()) {
-                return rows.next() ? Optional.of(buildRecord(rows)) : Optional.empty();
+                return rows.next() ? Optional.of(statusView(rows)) : Optional.empty();
             }
         } catch (SQLException exception) {
             throw new IllegalStateException("Unable to query latest requirement semantic build", exception);
         }
     }
 
-    /** 保存构建记录；active 构建先取消同范围内其他 active 标记，同一事务内完成切换。 */
-    public void saveBuild(SemanticBuildRecord record) {
-        if (record == null) throw new IllegalArgumentException("语义构建记录不能为空");
+    /**
+     * 项目/版本级聚合构建状态：语义检索按 projectId+version 召回该版本全部 active 文档，
+     * 因此状态条必须以同样范围聚合，避免"文档 A 已构建"却混入文档 B 结果（或反之）的误导。
+     * 无任何 run 记录时返回 empty（调用方按 404/不可用处理）。
+     */
+    public Optional<RequirementSemanticModels.SemanticBuildAggregateView> aggregateBuildStatus(String projectId,
+                                                                                               String requirementVersion,
+                                                                                               boolean candidateRetrievalEnabled,
+                                                                                               boolean normativeRetrievalEnabled) {
+        // 1) 最新一次 run（跨文档，按时间）：决定“最新执行状态”提示。
+        String latestRunSql = """
+                select r.run_id as run_id, r.build_id as build_id, r.build_status as status,
+                       r.total_chunks as total, r.completed_chunks as completed, r.failed_chunks as failed,
+                       r.warnings_json as warnings
+                from requirement_semantic_build_run r
+                join requirement_semantic_build b on b.build_id = r.build_id
+                where b.project_id=? and b.requirement_version=?
+                order by r.created_at_epoch_ms desc, r.rowid desc limit 1
+                """;
+        // 2) 当前 active 代际（跨文档，仅 SUCCESS active）：决定“可用性”。
+        String activeSql = """
+                select document_id, build_id from requirement_semantic_build
+                where project_id=? and requirement_version=? and active=1 and build_status='SUCCESS'
+                order by coalesce(finished_at, started_at) desc, rowid desc
+                """;
+        try (Connection connection = open()) {
+            String runId = null, buildId = null, status = null, warningsJson = null;
+            int total = 0, completed = 0, failed = 0;
+            try (PreparedStatement statement = connection.prepareStatement(latestRunSql)) {
+                statement.setString(1, safe(projectId));
+                statement.setString(2, safe(requirementVersion));
+                try (ResultSet rows = statement.executeQuery()) {
+                    if (rows.next()) {
+                        runId = rows.getString("run_id");
+                        buildId = rows.getString("build_id");
+                        status = rows.getString("status");
+                        total = rows.getInt("total");
+                        completed = rows.getInt("completed");
+                        failed = rows.getInt("failed");
+                        warningsJson = rows.getString("warnings");
+                    }
+                }
+            }
+            if (runId == null) return Optional.empty();
+            List<String> warnings = List.of();
+            if (warningsJson != null && !warningsJson.isBlank()) {
+                try {
+                    warnings = objectMapper.readValue(warningsJson, objectMapper.getTypeFactory()
+                            .constructCollectionType(List.class, String.class));
+                } catch (JsonProcessingException ignored) {
+                    warnings = List.of();
+                }
+            }
+            List<String> activeDocumentIds = new ArrayList<>();
+            List<String> activeBuildIds = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement(activeSql)) {
+                statement.setString(1, safe(projectId));
+                statement.setString(2, safe(requirementVersion));
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) {
+                        activeDocumentIds.add(rows.getString("document_id"));
+                        activeBuildIds.add(rows.getString("build_id"));
+                    }
+                }
+            }
+            boolean hasActive = !activeDocumentIds.isEmpty();
+            return Optional.of(new RequirementSemanticModels.SemanticBuildAggregateView(
+                    projectId, requirementVersion, hasActive, activeDocumentIds.size(),
+                    activeDocumentIds, activeBuildIds, runId, buildId,
+                    RequirementSemanticModels.SemanticBuildStatus.valueOf(status),
+                    total, completed, failed, warnings,
+                    candidateRetrievalEnabled, normativeRetrievalEnabled));
+        } catch (SQLException exception) {
+            throw new IllegalStateException("Unable to query aggregate requirement semantic build status", exception);
+        }
+    }
+
+    /**
+     * 记录一次构建执行并维护代际，单事务内完成（无"active 构建缺输入"的查询窗口）：
+     * <ul>
+     *   <li>SUCCESS：更新/插入代际行并切换 active（先取消同范围其他 active），刷新输入集合；</li>
+     *   <li>非 SUCCESS 且同 buildId 已有 active 代际：保留原成功代际与输入，只记录本次 run——
+     *       失败重跑不得覆盖/取消既有线上结果；</li>
+     *   <li>非 SUCCESS 且无代际或代际非 active：写入代际行（active=0）与输入集合。</li>
+     * </ul>
+     * active 由构建状态推导（仅 SUCCESS 可 active），忽略调用方传入的 active 标记——
+     * 防止 FAILED/PARTIAL_FAILURE 记录被错误发布为线上代际。
+     */
+    public void recordBuildRun(SemanticBuildRecord run, List<RequirementSemanticModels.SemanticBuildInput> inputs) {
+        if (run == null) throw new IllegalArgumentException("语义构建记录不能为空");
+        // Store 层强制生命周期约束：非 SUCCESS 构建一律不 active，即使调用方误传 active=true。
+        boolean active = run.buildStatus() == SemanticBuildStatus.SUCCESS;
         Instant now = Instant.now();
         try (Connection connection = open()) {
             connection.setAutoCommit(false);
             try {
-                if (record.active()) {
-                    try (PreparedStatement statement = connection.prepareStatement("""
-                            update requirement_semantic_build set active=0
-                            where project_id=? and document_id=? and requirement_version=? and build_id != ?
-                            """)) {
-                        statement.setString(1, safe(record.projectId()));
-                        statement.setString(2, safe(record.documentId()));
-                        statement.setString(3, safe(record.requirementVersion()));
-                        statement.setString(4, safe(record.buildId()));
-                        statement.executeUpdate();
+                boolean keepExistingGeneration = !active && isGenerationActive(connection, run.buildId());
+                if (!keepExistingGeneration) {
+                    if (active) {
+                        deactivateOtherGenerations(connection, run);
                     }
+                    // 用 update-else-insert 而非 insert or replace：REPLACE 会级联清空输入与 run 历史。
+                    if (updateGenerationRow(connection, run, active) == 0) {
+                        insertGenerationRow(connection, run, active);
+                    }
+                    replaceBuildInputs(connection, run.buildId(), inputs);
                 }
-                try (PreparedStatement statement = connection.prepareStatement("""
-                        insert or replace into requirement_semantic_build(
-                          build_id, project_id, document_id, requirement_version, source_revision,
-                          model, prompt_version, schema_version, build_status, total_chunks,
-                          skipped_chunks, completed_chunks, failed_chunks, warnings_json,
-                          started_at, finished_at, active)
-                        values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                        """)) {
-                    statement.setString(1, record.buildId());
-                    statement.setString(2, record.projectId());
-                    statement.setString(3, record.documentId());
-                    statement.setString(4, record.requirementVersion());
-                    statement.setString(5, record.sourceRevision());
-                    statement.setString(6, record.model());
-                    statement.setString(7, record.promptVersion());
-                    statement.setString(8, record.schemaVersion());
-                    statement.setString(9, record.buildStatus().name());
-                    statement.setInt(10, record.totalChunks());
-                    statement.setInt(11, record.skippedChunks());
-                    statement.setInt(12, record.completedChunks());
-                    statement.setInt(13, record.failedChunks());
-                    statement.setString(14, json(record.warnings()));
-                    statement.setString(15, record.startedAt() == null ? null : record.startedAt().toString());
-                    statement.setString(16, record.finishedAt() == null ? null : record.finishedAt().toString());
-                    statement.setInt(17, record.active() ? 1 : 0);
-                    statement.executeUpdate();
-                }
+                insertRunRow(connection, run, now);
                 connection.commit();
             } catch (SQLException | RuntimeException exception) {
                 connection.rollback();
                 throw exception;
             }
         } catch (SQLException exception) {
-            throw new IllegalStateException("Unable to save requirement semantic build", exception);
+            throw new IllegalStateException("Unable to record requirement semantic build run", exception);
         }
     }
 
-    /** 保存当前构建的输入集合（多窗口/多 Chunk），供 active 查询严格限制可见标注。 */
-    public void saveBuildInputs(String buildId, List<RequirementSemanticModels.SemanticBuildInput> inputs) {
-        if (buildId == null || buildId.isBlank() || inputs == null || inputs.isEmpty()) return;
-        try (Connection connection = open()) {
-            connection.setAutoCommit(false);
-            try {
-                try (PreparedStatement statement = connection.prepareStatement("""
-                        insert or replace into requirement_semantic_build_input(
-                          build_id, source_chunk_id, window_id, content_hash)
-                        values(?,?,?,?)
-                        """)) {
-                    for (RequirementSemanticModels.SemanticBuildInput input : inputs) {
-                        statement.setString(1, buildId);
-                        statement.setString(2, safe(input.sourceChunkId()));
-                        statement.setString(3, safe(input.windowId()));
-                        statement.setString(4, safe(input.contentHash()));
-                        statement.addBatch();
-                    }
-                    statement.executeBatch();
-                }
-                connection.commit();
-            } catch (SQLException | RuntimeException exception) {
-                connection.rollback();
-                throw exception;
+    /** 同 buildId 的代际行当前是否 active（存在且 active=1）。 */
+    private boolean isGenerationActive(Connection connection, String buildId) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "select active from requirement_semantic_build where build_id=?")) {
+            statement.setString(1, safe(buildId));
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() && rows.getInt(1) == 1;
             }
-        } catch (SQLException exception) {
-            throw new IllegalStateException("Unable to save requirement semantic build inputs", exception);
         }
+    }
+
+    private void deactivateOtherGenerations(Connection connection, SemanticBuildRecord record) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                update requirement_semantic_build set active=0
+                where project_id=? and document_id=? and requirement_version=? and build_id != ?
+                """)) {
+            statement.setString(1, safe(record.projectId()));
+            statement.setString(2, safe(record.documentId()));
+            statement.setString(3, safe(record.requirementVersion()));
+            statement.setString(4, safe(record.buildId()));
+            statement.executeUpdate();
+        }
+    }
+
+    /** active 由 recordBuildRun 推导传入，不取 record.active()——非 SUCCESS 构建一律 active=0。 */
+    private int updateGenerationRow(Connection connection, SemanticBuildRecord record,
+                                    boolean active) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                update requirement_semantic_build set build_status=?, total_chunks=?, skipped_chunks=?,
+                  completed_chunks=?, failed_chunks=?, warnings_json=?, started_at=?, finished_at=?, active=?
+                where build_id=?
+                """)) {
+            statement.setString(1, record.buildStatus().name());
+            statement.setInt(2, record.totalChunks());
+            statement.setInt(3, record.skippedChunks());
+            statement.setInt(4, record.completedChunks());
+            statement.setInt(5, record.failedChunks());
+            statement.setString(6, json(record.warnings()));
+            statement.setString(7, record.startedAt() == null ? null : record.startedAt().toString());
+            statement.setString(8, record.finishedAt() == null ? null : record.finishedAt().toString());
+            statement.setInt(9, active ? 1 : 0);
+            statement.setString(10, safe(record.buildId()));
+            return statement.executeUpdate();
+        }
+    }
+
+    private void insertGenerationRow(Connection connection, SemanticBuildRecord record,
+                                     boolean active) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                insert into requirement_semantic_build(
+                  build_id, project_id, document_id, requirement_version, source_revision,
+                  model, prompt_version, schema_version, build_status, total_chunks,
+                  skipped_chunks, completed_chunks, failed_chunks, warnings_json,
+                  started_at, finished_at, active)
+                values(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """)) {
+            statement.setString(1, record.buildId());
+            statement.setString(2, record.projectId());
+            statement.setString(3, record.documentId());
+            statement.setString(4, record.requirementVersion());
+            statement.setString(5, record.sourceRevision());
+            statement.setString(6, record.model());
+            statement.setString(7, record.promptVersion());
+            statement.setString(8, record.schemaVersion());
+            statement.setString(9, record.buildStatus().name());
+            statement.setInt(10, record.totalChunks());
+            statement.setInt(11, record.skippedChunks());
+            statement.setInt(12, record.completedChunks());
+            statement.setInt(13, record.failedChunks());
+            statement.setString(14, json(record.warnings()));
+            statement.setString(15, record.startedAt() == null ? null : record.startedAt().toString());
+            statement.setString(16, record.finishedAt() == null ? null : record.finishedAt().toString());
+            statement.setInt(17, active ? 1 : 0);
+            statement.executeUpdate();
+        }
+    }
+
+    /** 同事务内重建构建输入集合：先删后插，保证与代际行一致（同 buildId 的输入集恒等，可安全重建）。 */
+    private void replaceBuildInputs(Connection connection, String buildId,
+                                    List<RequirementSemanticModels.SemanticBuildInput> inputs) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement(
+                "delete from requirement_semantic_build_input where build_id=?")) {
+            statement.setString(1, safe(buildId));
+            statement.executeUpdate();
+        }
+        if (inputs == null || inputs.isEmpty()) return;
+        try (PreparedStatement statement = connection.prepareStatement("""
+                insert into requirement_semantic_build_input(
+                  build_id, source_chunk_id, window_id, content_hash)
+                values(?,?,?,?)
+                """)) {
+            for (RequirementSemanticModels.SemanticBuildInput input : inputs) {
+                statement.setString(1, safe(buildId));
+                statement.setString(2, safe(input.sourceChunkId()));
+                statement.setString(3, safe(input.windowId()));
+                statement.setString(4, safe(input.contentHash()));
+                statement.addBatch();
+            }
+            statement.executeBatch();
+        }
+    }
+
+    private void insertRunRow(Connection connection, SemanticBuildRecord run, Instant now) throws SQLException {
+        try (PreparedStatement statement = connection.prepareStatement("""
+                insert into requirement_semantic_build_run(
+                  run_id, build_id, build_status, total_chunks, skipped_chunks, completed_chunks,
+                  failed_chunks, warnings_json, started_at, finished_at, created_at, created_at_epoch_ms)
+                values(?,?,?,?,?,?,?,?,?,?,?,?)
+                """)) {
+            statement.setString(1, "run:" + java.util.UUID.randomUUID());
+            statement.setString(2, safe(run.buildId()));
+            statement.setString(3, run.buildStatus().name());
+            statement.setInt(4, run.totalChunks());
+            statement.setInt(5, run.skippedChunks());
+            statement.setInt(6, run.completedChunks());
+            statement.setInt(7, run.failedChunks());
+            statement.setString(8, json(run.warnings()));
+            statement.setString(9, run.startedAt() == null ? null : run.startedAt().toString());
+            statement.setString(10, run.finishedAt() == null ? null : run.finishedAt().toString());
+            statement.setString(11, now.toString());
+            statement.setLong(12, now.toEpochMilli());
+            statement.executeUpdate();
+        }
+    }
+
+    /**
+     * latestBuild 行组装：状态与统计取最新 run，generationActive 取最新 run 所属代际行，
+     * activeGeneration* 三字段取 LEFT JOIN 的真正 active 代际（无 active 代际时为 null）。
+     */
+    private RequirementSemanticModels.SemanticBuildStatusView statusView(ResultSet row) throws SQLException {
+        String warningsJson = row.getString("run_warnings");
+        List<String> warnings;
+        try {
+            warnings = warningsJson == null || warningsJson.isBlank()
+                    ? List.of()
+                    : objectMapper.readValue(warningsJson,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, String.class));
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("需求语义构建 warnings JSON 损坏", exception);
+        }
+        String activeGenerationStatus = row.getString("active_gen_status");
+        return new RequirementSemanticModels.SemanticBuildStatusView(
+                row.getString("run_id"),
+                row.getString("build_id"),
+                row.getString("project_id"),
+                row.getString("document_id"),
+                row.getString("requirement_version"),
+                row.getString("source_revision"),
+                row.getString("model"),
+                row.getString("prompt_version"),
+                row.getString("schema_version"),
+                SemanticBuildStatus.valueOf(row.getString("run_status")),
+                row.getInt("run_total"),
+                row.getInt("run_skipped"),
+                row.getInt("run_completed"),
+                row.getInt("run_failed"),
+                warnings,
+                parseInstant(row.getString("run_started")),
+                parseInstant(row.getString("run_finished")),
+                row.getInt("active") == 1,
+                row.getString("active_gen_build_id"),
+                row.getString("active_gen_revision"),
+                activeGenerationStatus == null ? null : SemanticBuildStatus.valueOf(activeGenerationStatus));
     }
 
     public Optional<SemanticBuildRecord> findBuild(String buildId) {

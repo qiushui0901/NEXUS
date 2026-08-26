@@ -60,6 +60,116 @@
 - **P2 同来源多值冲突**：`MultiSourceConflictAnalyzer` 不再只取每组第一条，对同一事实同来源多个不同值生成 `VERSION_INTERNAL` 内部冲突；`conflictGroups` 同步纳入内部冲突分组；新增 `MultiSourceConflictAnalyzerTest`。
 - 全量测试：817 tests 通过。
 
+### Fixed（0.9.5 — Review 第六批：构建代际生命周期与召回修复）
+
+依据外部代码 Review（P0×1 / P1×4 / P2×2）修复构建生命周期与候选召回问题：
+
+- **P0 同 buildId 失败重跑不再覆盖 active 成功构建**：构建执行与代际从数据模型上分离——新增 `requirement_semantic_build_run` 表（run_id 每次执行唯一，含状态/统计/warnings/时间戳）；`saveBuild` + `saveBuildInputs` 合并为新的 `recordBuildRun(run, inputs)` 单事务方法：SUCCESS 才切换代际 active（先取消同范围其他 active）；非 SUCCESS 且同 buildId 已有 active 代际时只记录 run、不触碰代际行与输入集合；非 SUCCESS 且无代际/代际非 active 时写入 inactive 代际。旧实现 `insert or replace` 按主键覆盖会把 SUCCESS/active=1 行改成 PARTIAL_FAILURE/active=0，一次失败重跑即清空线上语义候选——已修复并有回归测试锁定。
+- **P1 构建发布原子化**：run 记录、代际行 upsert（update-else-insert，避免 `insert or replace` 的 ON DELETE CASCADE 清空输入与 run 历史）、active 切换、输入集合重建在同一 SQLite 事务内完成；消除"active 构建存在但输入未写入"的查询窗口与"输入保存失败导致 active 空构建"的风险。`latestBuild` 改为返回最新 run 的状态/统计（join 代际行取 active 与元数据），构建轮询能看到失败重跑的真实结果，同时 `active` 字段仍反映当前生效代际。
+- **P1 中文查询预过滤召回修复**：`likeTerms` 与 `MultiSourceSearchService.tokenize()` 同策略（整词 + CJK 2-gram，上限 50 词项防御超长查询）；SQL 词项间由 AND 改为 OR 宽召回——"成长基金冷却时间"（无空格、语义文本为"成长基金的冷却时间为30秒"）不再因整体匹配失败漏召回，"成长基金 冷却时间" 不再要求两词出现在同一条标注（不同窗口各含一词均可进入候选，最终相关性由内存评分决定）。
+- **P1 检索 warning 不再暴露异常原文**：适配器加载失败对外只返回稳定码 `MULTI_SOURCE_CANDIDATE_LOAD_FAILED:<SOURCE_TYPE>`，异常类型记入服务端日志；异常消息中的路径/SQL/provider URL 等内部信息不再进入 API 响应。
+- **P1 候选去重键纳入 factKey**：重叠窗口折叠键由（主体|谓词|值|单位|值类型）扩展为（factKey|主体|谓词|值|单位|值类型），不同领域事实（`growth_fund.reward_currency` 与 `lottery.reward_currency`）拥有相同字段值时不再被错误吞并。
+- **P2 内部冲突值归一化**：同来源多值冲突判定改用"数值（去尾零、千分位）+ 单位别名（秒/s、分钟/min、小时/h、天/d、%）"的规范化比较——"30秒"与"30.0秒"、"1,000"与"1000"不再误报冲突；单位不同（秒 vs 分钟）仍判冲突（不做跨单位换算，避免掩盖真实不一致）。
+- **P2 候选上限可配置化**：新增 `app.rag.requirement-semantic.max-candidate-annotations`（默认 5000，100~100000），命中上限输出 `SEMANTIC_CANDIDATE_TRUNCATED` 警告日志；分页加载/FTS5/语义向量召回留待后续批次。
+- 测试：新增 11 例——同 buildId 失败重跑保留 active 成功代际（输入集合不清空、latestBuild 显示最新 run）、SUCCESS 重跑刷新统计、首个 FAILED run 建 inactive 代际、中文无空格 2-gram 召回、多词 OR 宽召回、不同 factKey 不去重、warning 稳定码（不含异常原文）、数值等价/单位别名不产生内部冲突、单位不同仍冲突、max-candidate-annotations 默认值；另修复 2 个无效测试（mock 未命中 4 参重载的 vacuous 存储故障测试改为断言稳定异常；窗口折叠测试原先因 saveBuild 级联清空输入而"碰巧"通过，现改为同一构建输入集合下的真实去重）。
+- 全量测试：828 tests 通过。
+- 未实现（Review 第三批建议）：SQLite FTS5、semantic_text 向量索引、统一候选融合排序、active generation 并发集成测试。
+
+### Fixed（0.9.5 — Review 第七批：旧库迁移、截断可观测性与冲突一致性）
+
+依据外部代码 Review（P1×4 / P2×2）修复构建状态可查询性、候选截断可观测性与冲突判定一致性：
+
+- **P1 旧库升级后 latestBuild 查不到既有构建**：`initialize()` 在创建 `requirement_semantic_build_run` 后执行幂等回填——为没有 run 记录的既有构建补一条 `migration:<buildId>` run（created_at 取 coalesce(finished_at, started_at, now)，保证后续真实 run 排序在其后）；升级后的 `latestBuild` 可返回升级前最后一次构建的状态且 active 查询不受影响；新增真实升级场景测试（手工建旧版 build 表 → 新版 Store 初始化 → latestBuild 返回迁移记录，重启不重复回填）。
+- **P1 候选截断可观测性**：适配器改用 `limit + 1` 精确探测截断（替代 `size >= limit` 启发式），截断时除日志外返回 `SEMANTIC_CANDIDATE_TRUNCATED` 非致命警告；`MultiSourceCandidateAdapter` 新增 `loadDetailed` 默认方法与 `CandidateLoad(claims, warnings)` 结果类型，检索层把适配器警告并入 `MultiSourceSearchResponse.warnings`——上层不再把"候选被按文档位置截断"误读为"没有召回能力"（截断候选仍按文档序截断，FTS5/BM25 相关性排序留待后续）。
+- **P1 跨来源与内部值比较统一归一化**：删除仅剥离 `%/分钟/min/逗号` 的旧 `sameValue`+`decimal`，跨来源（需求-参数、语义-参数、参数-测试）与内部冲突共用"值 + claim 单位联合归一化"——`30秒` vs `30s`、`5分钟` vs `5min`、`2小时` vs `2h`、`1,000` vs `1000` 跨源不再误报冲突；语义数值事实的分离单位（value=`5`+unit=`分钟`）与参数表内嵌单位（`5分钟`）等价；单位不同（秒 vs 分钟）仍判冲突（不做跨单位换算）。
+- **P1 冲突分组与去重的 factKey 语义一致**：分组改为双维度——内部冲突（VERSION_INTERNAL）按 factKey 分组（不同领域事实如 `growth_fund.reward_currency` 与 `growth_fund.vip_reward_currency` 不再被 subject|predicate 误并组产生假冲突与假惩罚）；跨来源冲突维持 subject|predicate 对齐（参数表/测试用例/需求图的 factKey 口径尚不一致，统一词汇表对齐前不能只靠 factKey 跨源分组——`MultiSourceKnowledgeRoutingTest` 锁定的 PARAMETER_TEST 行为保持不变）；`conflictPenalty` 改用分析器公开的 `groupKeys`（内部 + 跨源两个维度取并集），不再复制一份分组逻辑。
+- **P2 latestBuild 返回模型拆分执行与代际状态**：新增 `SemanticBuildStatusView`（runId / latestRunStatus / generationActive / activeGenerationStatus + 最新 run 统计与代际元数据），`GET /api/requirement-semantic/builds/latest` 改返回该视图——"最新执行 PARTIAL_FAILURE 但成功代际仍在线"不再依赖单字段组合推断，同 buildId 多次重跑可从 runId 追踪具体执行。
+- **P2 注释与 SQL 实际行为对齐**：`listActive` / `listActiveByProjectVersion` javadoc 不再声称"绑定 source_revision"——实际 join 是构建元数据 + 输入集合，revision 变化时内容未变的 Chunk 允许复用旧标注（by design）。
+- 测试：新增 10 例（旧库迁移升级 + 重启幂等、limit+1 截断探测与未超限对照、截断警告进入检索响应、不同 factKey 同 subject|predicate 不冲突、factKey 分组惩罚隔离、跨源秒/分钟/小时单位别名等价、分离单位与内嵌单位等价、跨源不同值仍冲突、跨源 factKey 口径不一致仍按 subject|predicate 对齐）；适配器/Controller/Store 测试同步迁移到视图与 loadDetailed 契约。
+- 全量测试：839 tests 通过。
+- 未实现：SQLite FTS5/BM25 相关性排序（截断仍按文档位置）、跨源 factKey 统一词汇表对齐（BusinessConcept 映射）、金标样本与 Recall@K/误冲突率/截断率评测。
+
+### Fixed（0.9.5 — Review 第八批：状态语义、run 排序与跨页冲突）
+
+依据外部代码 Review（P1×4 / P2×2）修复构建状态语义、run 排序稳定性与冲突判定的分页/对齐问题：
+
+- **P1 activeGenerationStatus 不再误表达**：`SemanticBuildStatusView` 的 `activeGeneration*` 三字段（buildId / sourceRevision / status）改为通过 LEFT JOIN 查询同范围内**真正 active** 的代际，不再返回最新 run 所属代际的状态——"rev-1 SUCCESS active + rev-2 FAILED inactive" 时正确返回 `latestRunStatus=FAILED, generationActive=false, activeGenerationStatus=SUCCESS`（此前会误导性地返回 FAILED）；无 active 代际时三字段为 null。新增状态语义测试锁定。
+- **P1 run 排序改用 epoch 毫秒**：run 表新增 `created_at_epoch_ms integer not null default 0`（DDL + addColumnIfMissing 迁移 + 按 created_at 回填旧数据 + 迁移 run 一并写入 epoch），`latestBuild` 改按 `created_at_epoch_ms desc, rowid desc` 排序——`Instant.toString()` 小数精度可变（"Z" 字符排序高于"."）且迁移数据是 `datetime('now')` 格式，字符串排序不等价于时间排序，可能选错最新 run；同毫秒连写由 rowid 决胜保证返回最后插入的 run（有测试）。
+- **P1 跨源冲突区分确定与疑似对齐**：跨源配对（需求-参数 / 语义-参数 / 参数-测试）双方 factKey 一致 → 确定冲突（消息不变）；不一致 → 消息加 `POTENTIAL_CROSS_SOURCE_CONFLICT:` 前缀，明示配对只是 subject|predicate 推测而非确定对齐（如两个不同领域事实共享 subject|predicate、参数表实际对应其中一个时，不再直接认定为确定冲突）——待 BusinessConcept/统一词汇表对齐后升级。既有跨源冲突检测行为保持（Routing 回归通过）。
+- **P1 冲突状态不再随分页改变**：`AnswerStatus` 改为按本查询全部命中候选（scored 全集）计算，`conflicts` 仍只返回当前页涉及的冲突详情，新增响应字段 `hasConflictsOutsidePage` 提示页外存在冲突——"第 1 页 CONFLICTED、第 2 页才出现冲突"的翻页不一致消除（有跨页一致性测试：两页状态一致、单条页面 conflicts 为空但页外标志为 true、全量单页详情可见且标志为 false）。
+- **P2 /builds/latest 响应模型变更说明**：`SemanticBuildRecord` → `SemanticBuildStatusView` 属破坏性 JSON 契约变更，但该端点与语义模块同批引入、`enabled` 默认关闭且从未发布，无既有调用方依赖旧字段，不加兼容层。
+- **P2 召回截断仍按文档位置**：`SEMANTIC_CANDIDATE_TRUNCATED` 只解决可观测性；相关候选可能未进入评分阶段的问题需 FTS5/BM25 或按文件配额，留待后续批次。
+- 测试：新增 5 例（旧 active+新 failed 状态视图、同毫秒连写 latestBuild、factKey 未对齐 POTENTIAL×2、跨页冲突状态一致），更新既有断言（无 active 代际时 activeGeneration* 为 null、确定冲突用对齐 factKey 验证无 POTENTIAL 前缀）。
+- 全量测试：844 tests 通过。
+- 未实现：BusinessConcept 驱动的跨源 factKey 统一对齐（POTENTIAL 升级为确定）、FTS5/BM25、按文件配额的候选截断。
+
+### Fixed（0.9.5 — Review 第九批：冲突分级生效与集合比较）
+
+依据外部代码 Review（P1×3 / P2×3）让 POTENTIAL 冲突分级真正生效、跨源比较与输入顺序无关：
+
+- **P1 POTENTIAL 冲突不再影响最终状态与排序**：`resolveStatus` 区分确定冲突与 `POTENTIAL_CROSS_SOURCE_CONFLICT`——仅 POTENTIAL 时结论最多 `REVIEW_REQUIRED`，不再被推成 `CONFLICTED`（即使参数表等 PRIMARY 来源在场）；`conflictGroups` 只收录确定冲突分组（内部 factKey 冲突 + factKey 对齐且双方单值的跨源冲突），POTENTIAL 不再参与 conflictPenalty 扣分——上一批只加了消息前缀，状态与惩罚仍按确定冲突处理，与注释语义不符，本批对齐。
+- **P1 跨源比较改为按来源"值集合"，不再取每种来源第一条 Claim**：`firstType` 全部移除，配对（需求-参数、语义-参数、参数-测试）改为规范化值集合比较——集合相同→无冲突；集合不同且双方各自唯一且任一 Claim 对 factKey 相等→确定冲突；否则（factKey 未对齐，或任一来源存在多个不同值）→ POTENTIAL 并附"某来源存在多个值，需人工复核"。参数表存在 30秒/60秒 两值时不再因输入顺序得到"冲突/不冲突"两种结论；展示值按字典序排序，冲突消息内容与 Claim 输入顺序完全无关（有正反序对照测试）。
+- **P1 hasConflictsOutsidePage 改集合差集**：由数量比较（`queryConflicts.size() > conflicts.size()`）改为"全量冲突中存在不在当前页冲突集合中的条目"——数量相同但内容不同、多值消息文本变化等场景不再误判。
+- **P2 active 代际唯一性数据库约束**：初始化先修复历史脏数据（同 project/document/version 保留 rowid 最新一条 active，其余置 0），再创建 partial unique index `uq_req_semantic_active_generation`（where active=1）——并发构建/进程中断/手工修复产生的多条 active 会被修复并从数据库层杜绝；`latestBuild` 的 LEFT JOIN 不再因多行 active 随机取值。有"旧版无索引库两条 active → 初始化修复 → 再激活被拒"测试。
+- **P2 /builds/latest 兼容字段**：`SemanticBuildStatusView` 增加 `@Deprecated buildStatus()`（=latestRunStatus）与 `@Deprecated active()`（=generationActive）兼容访问器——依赖旧 `SemanticBuildRecord` JSON 字段（buildStatus/active）的调用方不失效，新字段语义更准确，逐步迁移。
+- 测试：新增 6 例（POTENTIAL 状态不越级、POTENTIAL 不惩罚+确定对照、跨源结论顺序无关、多值场景 POTENTIAL（factKey 对齐亦然）、旧库重复 active 修复+唯一索引拒绝）；跨页/检索集成断言同步更新。
+- 全量测试：849 tests 通过。
+- 未实现：BusinessConcept 驱动的跨源 factKey 统一对齐（POTENTIAL 升级为确定）、FTS5/BM25 相关性排序与按文件配额（候选仍按文档位置截断）。
+
+### Fixed（0.9.5 — Review 第十批：兼容字段序列化与生命周期硬约束）
+
+依据外部代码 Review（P1×2 / P2×2）修复兼容字段的 Jackson 序列化与 active 生命周期硬约束：
+
+- **P1 兼容字段真正出现在 JSON 中**：`SemanticBuildStatusView` 的 `buildStatus()` / `active()` 补 `@JsonProperty`——普通无 get 前缀方法 Jackson 默认不序列化，上一批只加 `@Deprecated` 访问器时旧字段实际不在 HTTP 响应里（review 实测确认）；新增 MockMvc JSON 测试断言 `$.buildStatus` / `$.active` 与新字段同时输出。
+- **P1 Store 层强制"只有 SUCCESS 才能 active"**：`recordBuildRun` 不再信任调用方传入的 `active` 标记，一律由 `buildStatus == SUCCESS` 推导（review 推荐方案：模型中不再存在可互相矛盾的 buildStatus/active 双字段）——FAILED/PARTIAL_FAILURE 即使误传 `active=true` 也不会取消既有成功代际或发布为线上代际；`updateGenerationRow` / `insertGenerationRow` 的 active 改为推导值传入。语义修正："SUCCESS 但不发布" 从合法状态变为矛盾状态（既有测试用该状态表达"不接管"，已改为 PARTIAL_FAILURE 真实场景）。
+- **P2 旧库 active 清理改时间优先**：重复 active 修复从 `max(rowid)` 改为按 `coalesce(finished_at, started_at)` epoch 降序 + rowid 决胜——rowid 只代表插入顺序，导入/人工修复/重写场景下较大 rowid 未必是较新构建；新增"rowid 大但 finished_at 旧 vs rowid 小但 finished_at 新"测试锁定保留时间更新者。
+- **P2 结构化 ConflictFinding**：维持挂起（review 亦定位为长期项）；当前字符串前缀分级已被 resolveStatus/conflictGroups 正确消费，后续重构时同步引入 conflictId 供 hasConflictsOutsidePage 使用。
+- 测试：新增 3 例（JSON 兼容字段、FAILED+active=true 不发布且保留既有 active、时间优先清理），修正 1 例语义过时测试；全量 852 tests，0 失败 0 错误（含 `McpHttpIntegrationTest`，该测试对环境端口绑定权限敏感，受限环境下会出现非业务断言的启动错误）。
+
+### Added（0.9.5 — 语义召回前端接入，方案 `docs/semantic-retrieval-frontend-integration-plan-0.9.5.md` 第一批）
+
+在知识库"检索测试"页面并行接入语义 Claim 检索（Phase 1-4 前端部分），传统 Chunk 检索链路与协议完全不变：
+
+- **三种检索模式**（`knowledge.html`）：新增"传统 Chunk / 语义 Claim / 对比检索"模式切换；传统模式保留原有表单、指标、阶段明细与结果展示不动；切换模式清空其它模式状态，避免结果串联残留（方案风险 5）。
+- **API 封装**（`knowledge-api.js`）：新增 `semanticSearch`（POST /api/knowledge/multi-source/search）、`semanticBuildStatus`（GET /api/requirement-semantic/builds/latest）、`buildSemantic`（POST /api/requirement-semantic/builds，超时 10 分钟），全部复用 `NexusApi.request`（API Key 注入/超时/错误结构一致）。
+- **语义构建状态提示**：语义/对比模式顶部常驻状态条，按 latestRunStatus/generationActive/activeGenerationStatus 分级展示——已发布（含构建 ID 与 sourceRevision）、未启用或未构建（404 区分）、部分失败（"仅供调试"）、失败（"不能伪装成无召回"）、成功代际在线但最新 run 失败（区分执行与代际）；无 active 代际时不再显示"无结果"假成功。
+- **Claim 结果展示**：来源类型彩色标签（需求/需求语义/参数表/测试用例/测试结果/存疑/代码/Wiki）、factKey、subject·predicate·value·unit、claimId/valueType/authority/version；点击展开证据详情，evidenceLocation 缺失时显式"证据不可回查"；结果摘要含 answerStatus（结论状态）、命中数/总数、耗时、冲突/存疑计数；分页（上一页/下一页）+ 页外冲突提示（hasConflictsOutsidePage）。
+- **冲突/存疑/关系/警告**：冲突区分"确定/疑似"（POTENTIAL_CROSS_SOURCE_CONFLICT 前缀翻译为"疑似"标签并去前缀展示）；OPEN/UNDER_DISCUSSION 存疑使用独立警示底色与状态标签，不与确认事实混排；跨源关系只读展示；warnings 稳定码翻译（截断/来源加载失败/未启用），不展示异常原文。
+- **对比检索**：同一查询并行调用旧 Chunk 与语义接口（相同 projectId/version/query/limit），双栏展示（移动端上下排列），各自独立耗时/状态/错误提示——一侧失败不覆盖另一侧。
+- **人工评测闭环（第一阶段 localStorage）**：每个 Claim 支持"相关/部分相关/不相关"标记（再次点击取消、切换替换），查询级"漏召回"标记；记录 query/mode/projectId/version/buildId/sourceRevision（绑定构建代际）；支持导出 JSON 与清空，页面刷新后标记不丢失。
+- **状态词条**（`status-contract.js`，纯新增）：多源 answerStatus/KnowledgeStatus 枚举的中文标签/字形/tone 映射。
+- 说明：按方案非目标，本批未实现 claimHits 评分/Recall 自动计算（Phase 5）、评测落库（第二阶段）、semantic_text 向量索引；生产默认开关不变（语义能力仍默认关闭，本地经 `REQUIREMENT_SEMANTIC_ENABLED=true` 等环境变量开启）。
+- 验证：改动仅前端静态资源（html/js/css）与共享状态词条，`node --check` 语法通过；后端接口测试回归通过（MultiSourceKnowledgeController/RequirementSemanticBuildController/MultiSourceSearchService，本次未修改 Java）。
+
+### Fixed（0.9.5 — Review 第十一批：语义检索前端默认链路与冲突状态修复）
+
+依据外部代码 Review（P1×5 / P2×3）修复语义检索前端的默认链路可用性与冲突状态正确性，默认流程不再出现“假性无结果”：
+
+- **P1 需求知识库默认版本为空导致语义请求 400**：`KnowledgeBaseView` 新增明确的 `requirementDocumentId` / `latestRequirementVersion` 字段（Controller 从 `BusinessProject` 透传，不让前端猜测 `publishedRevision` / `targetRevision` 语义）；前端版本回退链 `publishedRevision → targetRevision → latestRequirementVersion`，多源接口的 `@NotBlank version` 不再被空值触发校验失败。
+- **P1 语义构建状态查询用错 documentId**：前端不再把展示名称（如“Immortal 需求”）当文档 ID，改用后端返回的 `requirementDocumentId`（如 `fengshen`）——构建已成功时不再显示“尚未执行语义构建/语义模块不可用”。
+- **P1 文档 ID 输入框无实际过滤作用（采纳 Review 方案 A）**：移除该输入框，改为只读“语义范围”展示（项目 / 版本 / 全部文档或文档 ID）；构建状态内部使用后端返回的文档 ID，语义候选仍按 projectId+version 跨文档召回（后端 `MultiSourceSearchRequest` 未加 documentId，真正过滤待后续按需实现）。
+- **P1 语义 Claim 自然语言信息在评分阶段被丢掉**：`UnifiedKnowledgeClaim` 新增 `searchText` 字段（兼容旧构造器），语义适配器把 `semanticSummary`（回退 rawText）传入；评分阶段 searchText 作低权重兜底（整句命中 +1.5、token 命中 +0.75）——数据库预过滤命中摘要但结构化字段（subject/predicate/value）未含查询词时候选不再被归零过滤，查询“玩家达到指定等级后什么时候可以领取奖励”可命中摘要中完整表达的事实。
+- **P1 人工评测标记跨版本/代际污染**：评测键统一为 projectId|version|buildId|sourceRevision|query|mode|resultId，5.0 与 5.1 同 query 同 claimId 的判断互不串用，重建后旧标注不再显示在新结果上；评测上下文记录完整键字段供导出分析。
+- **P2 代码知识库隐藏语义/对比入口**：`semanticAvailable()`（type!==CODE）控制模式切换按钮显隐，进入检索页重置为传统模式——代码库不再出现无需求版本可填的语义表单。
+- **P2 冲突状态被无关失败测试污染（附本批发现的残留 bug）**：`resolveStatus` 的确定冲突分组判定不再解析冲突消息文本（原实现 `substring(index+"factKey=".length())` 会把分组键后的描述文本误当分组键，导致 factKey 对齐的确定冲突永远升不到 CONFLICTED，端到端语义-参数冲突测试实际已被此 bug 破坏）；改为复用 `conflictGroups` 同一套分组判据（内部 factKey 冲突 + factKey 对齐跨源冲突/失败测试），孤立失败测试结果（组内只有 TEST_RESULT）不因候选集其它位置有 PRIMARY 而越级 CONFLICTED。
+- **P2 构建状态查询未等待与请求竞态**：语义检索先 `await loadSemanticBuild()` 再发起搜索（状态条不再短暂误显“不可用”）；`requestId` 序列号丢弃旧响应，快速连点不再被旧结果覆盖；对比模式同样等待构建状态并使在飞语义请求失效。
+- 测试：新增 2 例（factKey 对齐确定冲突→CONFLICTED、孤立失败测试→REVIEW_REQUIRED）；修复后端到端检索集成 2 个被残留 bug 破坏的断言（语义-参数值冲突、跨页冲突状态一致）恢复通过；全量 854 tests，0 失败 0 错误；前端三个 JS `node --check` 语法通过。
+- 说明：结构化 `ConflictFinding`（conflictId/groupKey/claimIds/severity）仍为长期项，当前字符串前缀分级已被 resolveStatus/conflictGroups/前端“疑似”标签正确消费。
+
+### Fixed（0.9.5 — Review 第十二批：评测数据可信度与聚合状态补强）
+
+依据外部代码 Review（P1×3 / P2×3）修复评测数据可信度问题——配置关闭、表单修改、分页 rank 三类失真源全部堵住，并补齐聚合构建状态的契约测试：
+
+- **P1 语义候选关闭时静默返回空结果**：`RequirementSemanticCandidateAdapter.loadDetailed` 在 `candidate-retrieval-enabled=false` 与 NORMATIVE 拦截时不再返回空 `CandidateLoad`，改为携带稳定警告码 `SEMANTIC_CANDIDATE_RETRIEVAL_DISABLED` / `SEMANTIC_NORMATIVE_RETRIEVAL_DISABLED`；`/api/requirement-semantic/builds/aggregate` 新增 `candidateRetrievalEnabled` / `normativeRetrievalEnabled` 透传开关；前端状态条在开关关闭时明确提示“构建已发布但候选不参与检索，本次结果不得作为评测数据”，`markJudgement` / `markMissedRecall` 对 SEMANTIC 模式直接拒绝写入评测并提示。
+- **P1 评测标记绑定可编辑表单而非已执行请求**：`runSemanticSearch` 请求发起时保存不可变 `semantic.responseContext` 快照（projectId/version/query/intent/limit/page/activeBuildIds/activeDocumentCount），后端分页元数据返回后合并真实 page/limit；`evaluationKey` / `evaluationContext` / 分页 rank 全部改读快照——用户改查询/版本但未重新检索时，旧结果不再被记为“新查询/新版本”的评测数据。
+- **P1 第二页以后评测 rank 错误**：`knowledge.html` 评测按钮改用 `index + 1 + page * limit`（快照中的真实分页元数据），第二页第一条保存为 rank=11 而非 1，Precision@K / MRR / 首个相关位置不再失真。
+- **P2 对比检索两侧耗时统一为慢速链路**：`runCompareSearch` 改为每个 Promise 自身 finally 记录独立耗时（错误请求也记录），不再等 `allSettled` 后统一计算——传统 100ms / 语义 5s 时两侧显示各自真实耗时，可正确对比。
+- **P2 compare.requestId 真正生效**：`runCompareSearch` 开头生成 `compare.requestId`，所有 then/catch 写入前校验仍为当前请求；切换检索模式时递增 `compare.requestId` 吊销在飞对比请求并重置 loading——慢返回旧请求不再写入 `compare.*`，也不阻塞其它模式提交。
+- **P2 构建状态异常分支仍可写入旧上下文**：`loadSemanticBuild` 抽取统一 `stillCurrent()`（requestId + projectId + version 三项），成功/异常/finally 三支共用——请求期间改版本但未触发新状态请求时，旧请求失败不再落到新版本页面。
+- **收口：`semanticAvailable` 去重**：删除 methods 中的重复定义，仅保留 computed（模板已正确引用 computed，删除避免 Vue 选项冲突与误改维护）。
+- **收口：测试补强**（新增 11 例）：Controller 聚合接口 JSON 字段（含 retrieval 开关）/ 空体（200 null）/ 访问控制拒绝不吞异常（3）；Store 聚合跨文档 active 计数、FAILED 不计入 active、顺序稳定可重入、无 run 空、项目/版本隔离（5）；语义适配器关闭警告码契约（2）；`searchText` 被 `@JsonIgnore` 排除在序列化 JSON 之外（1）。
+- 遗留：知识完整性（expectedDocumentCount/coverageStatus=COMPLETE/PARTIAL/EMPTY）需业务文档清单支撑，留待正式评测强调完整性时再引入；`latestRunWarnings` 已可携带截断/禁用等稳定码供前端消费。
+
 ## 0.9.4 — 2026-08-23
 
 ### Added

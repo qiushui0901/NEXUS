@@ -174,7 +174,8 @@ public class KnowledgeManagementController {
         return new KnowledgeBaseView(project.id() + ":requirement", project.id(),
                 project.name() + " 需求", BaseType.REQUIREMENT, project.requirementCollection(),
                 SourceType.ZIP, status, null, project.latestRequirementVersion(), 0, 0, 0,
-                count.points(), null, null, null);
+                count.points(), null, null, null,
+                project.requirementDocumentId(), project.latestRequirementVersion());
     }
 
     private KnowledgeBaseView businessCodeBase(BusinessProject project, CodeRepository repository) {

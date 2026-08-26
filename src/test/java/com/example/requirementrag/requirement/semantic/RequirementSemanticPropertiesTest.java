@@ -23,6 +23,16 @@ class RequirementSemanticPropertiesTest {
         });
     }
 
+    @Test
+    void maxCandidateAnnotationsDefaultsTo5000WhenNotConfigured() {
+        contextRunner.run(context -> {
+            RequirementSemanticProperties properties = context.getBean(RequirementSemanticProperties.class);
+            assertThat(properties.maxCandidateAnnotations())
+                    .as("max-candidate-annotations 未配置时默认 5000")
+                    .isEqualTo(5_000);
+        });
+    }
+
     @Configuration
     @EnableConfigurationProperties(RequirementSemanticProperties.class)
     static class Config {

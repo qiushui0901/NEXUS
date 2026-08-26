@@ -223,9 +223,9 @@ public class RequirementSemanticBuildService {
     }
 
     /**
-     * 持久化构建代际：只有 SUCCESS 构建才切换 active（PARTIAL_FAILURE/FAILED 不接管线上结果），
-     * 同时持久化当前构建的输入集合，active 查询必须按输入集合过滤标注，
-     * 不再批量改写旧 Annotation 的 source_revision。
+     * 持久化构建执行与代际（单事务）：只有 SUCCESS 构建才切换 active（PARTIAL_FAILURE/FAILED 不接管线上结果），
+     * 同时代际行、输入集合与 run 记录原子写入；同 buildId 的失败重跑只记录 run，
+     * 不覆盖既有 active 成功代际及其输入集合。
      */
     private void persistBuildGeneration(String projectId, SemanticBuildRequest request,
                                         String sourceRevision, String model, String promptVersion,
@@ -234,11 +234,10 @@ public class RequirementSemanticBuildService {
         boolean active = result.status() == SemanticBuildStatus.SUCCESS;
         String buildId = SQLiteRequirementSemanticStore.buildId(projectId, request.documentId(),
                 request.requirementVersion(), sourceRevision, model, promptVersion, schemaVersion);
-        store.saveBuild(new SemanticBuildRecord(buildId, projectId, request.documentId(),
+        store.recordBuildRun(new SemanticBuildRecord(buildId, projectId, request.documentId(),
                 request.requirementVersion(), sourceRevision, model, promptVersion, schemaVersion,
                 result.status(), result.totalChunks(), result.skippedChunks(), result.completedChunks(),
-                result.failedChunks(), result.warnings(), startedAt, Instant.now(), active));
-        store.saveBuildInputs(buildId, buildInputs);
+                result.failedChunks(), result.warnings(), startedAt, Instant.now(), active), buildInputs);
     }
 
     /** 把父块展开为标注输入：短块整块标注，长块按结构感知窗口切分，不静默丢尾部。 */

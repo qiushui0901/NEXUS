@@ -28,7 +28,7 @@ class RequirementSemanticAnnotationValidatorTest {
     static RequirementSemanticProperties properties() {
         return new RequirementSemanticProperties(true, false, false, false, "", null,
                 "requirement-semantic-v1", "v1", 12_000, 30, 30, 30, 30, 20, 30, 2,
-                1_000, 1_800, 1_000_000, 400, true);
+                1_000, 1_800, 1_000_000, 400, true, 5_000);
     }
 
     @Test

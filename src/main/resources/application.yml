@@ -293,6 +293,8 @@ app:
       max-model-calls: ${REQUIREMENT_SEMANTIC_MAX_MODEL_CALLS:1000}
       max-wall-clock-seconds: ${REQUIREMENT_SEMANTIC_MAX_WALL_CLOCK_SECONDS:1800}
       max-estimated-tokens: ${REQUIREMENT_SEMANTIC_MAX_ESTIMATED_TOKENS:1000000}
+      # 候选召回单次加载的标注上限：命中上限会输出 SEMANTIC_CANDIDATE_TRUNCATED 警告日志。
+      max-candidate-annotations: ${REQUIREMENT_SEMANTIC_MAX_CANDIDATE_ANNOTATIONS:5000}
       window-overlap-chars: ${REQUIREMENT_SEMANTIC_WINDOW_OVERLAP_CHARS:400}
       allow-inferred-candidate: ${REQUIREMENT_SEMANTIC_ALLOW_INFERRED_CANDIDATE:false}
     wiki:

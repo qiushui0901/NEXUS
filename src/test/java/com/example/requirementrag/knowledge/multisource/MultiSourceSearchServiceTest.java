@@ -236,6 +236,27 @@ class MultiSourceSearchServiceTest {
         }
     }
 
+    @Test
+    void searchTextIsNeverSerializedIntoHttpJson() throws Exception {
+        // searchText 是内部评分字段（可能回退到 rawText，放大响应体），必须被 @JsonIgnore 排除在
+        // HTTP 响应之外——前端不使用它，泄露还会显著放大多源检索响应体。
+        UnifiedKnowledgeClaim claim = new UnifiedKnowledgeClaim(
+                "req:1", "fengshen", "5.1", "fengshen|5.1|订单|订单-001",
+                "订单-001", "允许取消", "允许", "TEXT", null,
+                SourceType.REQUIREMENT, Authority.PRIMARY,
+                MultiSourceKnowledgeModels.KnowledgeStatus.VERIFIED,
+                "5.1", null, "graph:s1#req:1", "订单",
+                "这是一段很长的语义检索文本，不应出现在 HTTP 响应中");
+
+        String json = new ObjectMapper().writeValueAsString(claim);
+
+        // searchText 及其内容不得出现在序列化 JSON 中；结构化字段仍正常输出。
+        assertThat(json).doesNotContain("\"searchText\"");
+        assertThat(json).doesNotContain("语义检索文本");
+        assertThat(json).contains("订单-001");
+        assertThat(json).contains("graph:s1#req:1");
+    }
+
     private MultiSourceCandidateAdapter requirementAdapter() {
         return new MultiSourceCandidateAdapter() {
             @Override

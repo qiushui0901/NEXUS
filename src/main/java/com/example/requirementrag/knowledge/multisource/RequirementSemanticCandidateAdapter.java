@@ -45,8 +45,6 @@ import java.util.Map;
         havingValue = "true", matchIfMissing = false)
 public class RequirementSemanticCandidateAdapter implements MultiSourceCandidateAdapter {
     private static final Logger log = LoggerFactory.getLogger(RequirementSemanticCandidateAdapter.class);
-    /** 单次加载的标注上限：与语义图适配器的实体/关系上限同量级，防止超大项目拖垮查询。 */
-    private static final int MAX_ANNOTATIONS = 5_000;
 
     private final SQLiteRequirementSemanticStore store;
     private final RequirementSemanticProperties properties;
@@ -71,20 +69,44 @@ public class RequirementSemanticCandidateAdapter implements MultiSourceCandidate
     @Override
     public List<UnifiedKnowledgeClaim> load(String projectId, String version, String query,
                                             KnowledgeQueryIntent intent) {
-        if (!properties.candidateRetrievalEnabled()) return List.of();
+        return loadDetailed(projectId, version, query, intent).claims();
+    }
+
+    @Override
+    public CandidateLoad loadDetailed(String projectId, String version, String query,
+                                      KnowledgeQueryIntent intent) {
+        // P1：配置关闭不能静默返回空候选（否则前端把“配置关闭”误判成“召回质量差”）。
+        // 返回稳定警告码，由检索层并入响应 warnings；前端据此提示且不用此类结果做评测。
+        if (!properties.candidateRetrievalEnabled()) {
+            return new CandidateLoad(List.of(),
+                    List.of("SEMANTIC_CANDIDATE_RETRIEVAL_DISABLED:语义候选检索已关闭（candidate-retrieval-enabled=false），本次结果不含语义候选；请勿将其作为召回评测数据"));
+        }
         if (intent == KnowledgeQueryIntent.NORMATIVE && !properties.normativeRetrievalEnabled()) {
-            return List.of();
+            return new CandidateLoad(List.of(),
+                    List.of("SEMANTIC_NORMATIVE_RETRIEVAL_DISABLED:规范事实意图下语义候选被开关拦截（normative-retrieval-enabled=false），本次结果不含语义候选；请勿将其作为召回评测数据"));
         }
         try {
+            // limit + 1 探测截断：命中上限说明候选被按文档位置截断，后段相关候选不可见，
+            // 必须作为非致命警告进入检索响应，而不是只写日志让上层把"截断"误读为"无召回能力"。
+            int limit = properties.maxCandidateAnnotations();
+            List<SemanticAnnotationRecord> loaded =
+                    store.listActiveByProjectVersion(projectId, version, limit + 1, query);
+            boolean truncated = loaded.size() > limit;
             List<SemanticAnnotationRecord> annotations =
-                    store.listActiveByProjectVersion(projectId, version, MAX_ANNOTATIONS, query);
-            // 重叠窗口会产生相同事实：按（主体|谓词|值|单位|值类型）折叠，保留最早窗口的首个声明。
+                    truncated ? List.copyOf(loaded.subList(0, limit)) : loaded;
+            if (truncated) {
+                log.warn("SEMANTIC_CANDIDATE_TRUNCATED project={} version={} limit={}",
+                        safe(projectId), safe(version), limit);
+            }
+            // 重叠窗口会产生相同事实：按（factKey|主体|谓词|值|单位|值类型）折叠，保留最早窗口的首个声明；
+            // factKey 纳入键避免不同领域事实（不同 factKey、相同字段值）被错误吞并。
             Map<String, UnifiedKnowledgeClaim> unique = new LinkedHashMap<>();
             for (SemanticAnnotationRecord annotation : annotations) {
                 if (annotation.result() == null) continue;
                 project(annotation, unique);
             }
-            return List.copyOf(unique.values());
+            return new CandidateLoad(List.copyOf(unique.values()),
+                    truncated ? List.of("SEMANTIC_CANDIDATE_TRUNCATED") : List.of());
         } catch (RuntimeException exception) {
             // 存储故障不能伪装成“没有语义结果”：抛稳定异常，由 MultiSourceSearchService 转成检索警告。
             throw new RequirementSemanticException("SEMANTIC_CANDIDATE_LOAD_FAILED",
@@ -137,6 +159,10 @@ public class RequirementSemanticCandidateAdapter implements MultiSourceCandidate
         String resolvedFactKey = safe(factKeyOverride).isBlank()
                 ? factKey(annotation.projectId(), annotation.requirementVersion(), subject, predicate)
                 : safe(factKeyOverride);
+        // 保留语义摘要作为检索文本：数据库预过滤命中 semantic_summary 但结构化字段
+        // （subject/predicate/value）未包含查询词时，评分阶段靠 searchText 兜底，避免候选被归零过滤。
+        String searchText = safe(annotation.semanticSummary());
+        if (searchText.isEmpty()) searchText = safe(annotation.rawText());
         return new UnifiedKnowledgeClaim(
                 claimId, annotation.projectId(), annotation.requirementVersion(),
                 resolvedFactKey,
@@ -144,15 +170,18 @@ public class RequirementSemanticCandidateAdapter implements MultiSourceCandidate
                 SourceType.REQUIREMENT_SEMANTIC, authority(certainty), KnowledgeStatus.EXTRACTED,
                 annotation.requirementVersion(), null,
                 "requirement-semantic:" + annotation.annotationId() + claimIdSuffix(claimId),
-                safe(subject));
+                safe(subject), searchText);
     }
 
     private void add(Map<String, UnifiedKnowledgeClaim> unique, UnifiedKnowledgeClaim claim, String certainty) {
         // INFERRED / UNKNOWN 默认不进入候选：模型推断未获原文直接支撑，需要显式开关放行；
         // EXPLICIT / DERIVED（同块推导）不受此限制。
         if (!properties.allowInferredCandidate() && inferred(certainty)) return;
-        String key = (safe(claim.subject()) + "|" + safe(claim.predicate()) + "|" + safe(claim.value())
-                + "|" + safe(claim.unit()) + "|" + safe(claim.valueType())).toLowerCase(Locale.ROOT);
+        // factKey 必须纳入去重键：不同领域事实（growth_fund.reward_currency 与 lottery.reward_currency）
+        // 可能拥有相同主体/谓词/值，仅按字段值折叠会静默丢失领域事实。
+        String key = (safe(claim.factKey()) + "|" + safe(claim.subject()) + "|" + safe(claim.predicate())
+                + "|" + safe(claim.value()) + "|" + safe(claim.unit())
+                + "|" + safe(claim.valueType())).toLowerCase(Locale.ROOT);
         unique.putIfAbsent(key, claim);
     }
 

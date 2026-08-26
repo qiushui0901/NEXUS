@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="/assets/app-shell.css?v=20260818">
   <link rel="stylesheet" href="/assets/components.css?v=20260818">
   <link rel="stylesheet" href="/assets/responsive.css?v=20260818">
-  <link rel="stylesheet" href="/assets/knowledge-app.css?v=20260818-3">
+  <link rel="stylesheet" href="/assets/knowledge-app.css?v=20260825-4">
 </head>
 <body>
 <div data-nexus-shell data-page="knowledge"></div>
@@ -185,63 +185,245 @@
     <section v-else-if="view==='retrieval'" class="workspace">
       <breadcrumb :items="[{label:'知识库',action:goHome},{label:selectedBase.name,action:()=>openBase(selectedBase)},{label:'检索测试'}]"></breadcrumb>
       <div class="page-heading compact retrieval-heading">
-        <div><h1>检索测试</h1><p>复用正式混合检索与重排链路，结果不会写入知识库。</p></div>
+        <div><h1>检索测试</h1><p>传统 Chunk 与语义 Claim 并行接入，对比观察两条召回链路；结果不会写入知识库。</p></div>
         <button type="button" @click="backToBase"><span aria-hidden="true">←</span> 返回知识库</button>
       </div>
-      <form class="retrieval-form" :class="{'has-version':selectedBase.type!=='CODE'}" @submit.prevent="runRetrieval">
+
+      <div class="tabs mode-tabs" role="tablist">
+        <button type="button" role="tab" :class="{active:retrievalMode==='legacy'}" @click="setRetrievalMode('legacy')">传统 Chunk</button>
+        <button v-if="semanticAvailable" type="button" role="tab" :class="{active:retrievalMode==='semantic'}" @click="setRetrievalMode('semantic')">语义 Claim</button>
+        <button v-if="semanticAvailable" type="button" role="tab" :class="{active:retrievalMode==='compare'}" @click="setRetrievalMode('compare')">对比检索</button>
+      </div>
+
+      <form class="retrieval-form semantic-form" :class="{'has-version':selectedBase.type!=='CODE'}" @submit.prevent="submitRetrieval">
         <label class="query-input">查询<input v-model.trim="retrieval.query" required placeholder="输入要验证的业务问题或代码实现描述"></label>
         <label v-if="selectedBase.type!=='CODE'" class="version-input">版本<input v-model.trim="retrieval.version" placeholder="默认当前版本"></label>
+        <template v-if="retrievalMode!=='legacy'">
+          <label class="intent-input">查询意图<select v-model="semantic.intent">
+            <option value="">自动识别</option>
+            <option v-for="item in intentOptions" :key="item" :value="item">{{ item }}</option>
+          </select></label>
+        </template>
         <label class="limit-input">Top K<input v-model.number="retrieval.limit" type="number" min="1" max="50"></label>
         <div class="retrieval-actions">
-          <p v-if="selectedBase.type==='CODE'">范围：当前项目已发布代码索引，结果标注 Git 提交。</p>
-          <p v-else>范围：{{ retrieval.version || selectedBase.publishedRevision || '当前需求版本' }}</p>
-          <button class="primary" type="submit" :disabled="retrieval.loading"><span aria-hidden="true">⌕</span> {{ retrieval.loading ? '检索中' : '运行检索' }}</button>
+          <p v-if="retrievalMode==='legacy' && selectedBase.type==='CODE'">范围：当前项目已发布代码索引，结果标注 Git 提交。</p>
+          <p v-else-if="retrievalMode==='legacy'">范围：{{ retrieval.version || selectedBase.publishedRevision || '当前需求版本' }}</p>
+          <p v-else>语义范围：{{ semanticScope }}</p>
+          <button class="primary" type="submit" :disabled="retrieval.loading||semantic.loading||compare.loading">
+            <span aria-hidden="true">⌕</span>
+            {{ retrievalMode==='compare' ? (compare.loading?'对比检索中':'运行对比') : (retrieval.loading||semantic.loading?'检索中':'运行检索') }}
+          </button>
         </div>
       </form>
-      <div v-if="retrieval.response" class="retrieval-status">
-        <status-badge :status="retrieval.response.status"></status-badge>
-        <span>{{ retrievalHits.length }} 个结果</span>
-        <span v-if="retrieval.response.warnings.length">{{ retrieval.response.warnings.length }} 个降级提示</span>
-      </div>
-      <section v-if="retrieval.response" class="retrieval-metrics" aria-label="本次检索指标">
-        <div><span>端到端耗时</span><strong>{{ formatLatency(retrieval.elapsedMs) }}</strong></div>
-        <div><span>返回结果</span><strong>{{ retrievalHits.length }} / {{ retrieval.limit }}</strong></div>
-        <div><span>来源文件</span><strong>{{ retrievalSourceCount }}</strong></div>
-        <div><span>{{ selectedBase.type==='CODE' ? '代码提交' : '需求版本' }}</span><strong><code>{{ retrievalScope }}</code></strong></div>
-      </section>
-      <details v-if="retrievalDiagnostics.length" class="retrieval-diagnostics">
-        <summary>阶段明细 <span>{{ retrievalDiagnostics.length }} 项</span></summary>
-        <div class="diagnostic-list">
-          <div v-for="(item,index) in retrievalDiagnostics" :key="item.stage+'-'+index" class="diagnostic-row">
-            <div><strong>{{ retrievalStageLabel(item.stage) }}</strong><code>{{ item.stage }}</code></div>
-            <status-badge :status="item.status"></status-badge>
-            <span>{{ item.itemCount }} 项</span>
-            <span>{{ formatLatency(item.durationMs) }}</span>
-          </div>
+
+      <!-- 传统 Chunk 模式：保持原有链路与展示不变 -->
+      <template v-if="retrievalMode==='legacy'">
+        <div v-if="retrieval.response" class="retrieval-status">
+          <status-badge :status="retrieval.response.status"></status-badge>
+          <span>{{ retrievalHits.length }} 个结果</span>
+          <span v-if="retrieval.response.warnings.length">{{ retrieval.response.warnings.length }} 个降级提示</span>
         </div>
-      </details>
-      <div class="result-list">
-        <article v-for="hit in retrievalHits" :key="hit.chunkId" class="result-row">
-          <span class="rank">{{ hit.rank }}</span>
-          <div>
-            <h2>{{ hit.sourcePath || hit.filePath || hit.documentId }}</h2>
-            <p>{{ hit.childText || hit.text }}</p>
-            <small><code>{{ hit.chunkId }}</code> ·
-              <template v-if="hit.requirementId">需求 {{ hit.requirementId }} · </template>
-              <template v-if="hit.sectionPath">{{ hit.sectionPath }} · </template>
-              <template v-if="hit.acceptanceCriteria">验收: {{ hit.acceptanceCriteria }} · </template>
-              <template v-if="hit.symbolName">{{ hit.symbolType }} {{ hit.symbolName }} · {{ hit.startLine }}-{{ hit.endLine }}</template>
-              <template v-else-if="hit.parentId">parent {{ hit.parentId }}</template> ·
-              <template v-if="hit.commitSha">提交 {{ shortHash(hit.commitSha) }} · </template>
-              {{ shortHash(hit.contentHash) }}
-            </small>
+        <section v-if="retrieval.response" class="retrieval-metrics" aria-label="本次检索指标">
+          <div><span>端到端耗时</span><strong>{{ formatLatency(retrieval.elapsedMs) }}</strong></div>
+          <div><span>返回结果</span><strong>{{ retrievalHits.length }} / {{ retrieval.limit }}</strong></div>
+          <div><span>来源文件</span><strong>{{ retrievalSourceCount }}</strong></div>
+          <div><span>{{ selectedBase.type==='CODE' ? '代码提交' : '需求版本' }}</span><strong><code>{{ retrievalScope }}</code></strong></div>
+        </section>
+        <details v-if="retrievalDiagnostics.length" class="retrieval-diagnostics">
+          <summary>阶段明细 <span>{{ retrievalDiagnostics.length }} 项</span></summary>
+          <div class="diagnostic-list">
+            <div v-for="(item,index) in retrievalDiagnostics" :key="item.stage+'-'+index" class="diagnostic-row">
+              <div><strong>{{ retrievalStageLabel(item.stage) }}</strong><code>{{ item.stage }}</code></div>
+              <status-badge :status="item.status"></status-badge>
+              <span>{{ item.itemCount }} 项</span>
+              <span>{{ formatLatency(item.durationMs) }}</span>
+            </div>
           </div>
-        </article>
-        <empty-state v-if="retrieval.response && retrievalHits.length===0"
-          title="没有命中结果"
-          :message="selectedBase.type==='CODE' ? '尝试更具体的类名/方法名/实现名词，或检查代码索引是否已完成。' : '尝试更具体的业务名词，或检查目标版本是否已发布。'"></empty-state>
-        <loading-state v-if="retrieval.loading"></loading-state>
-      </div>
+        </details>
+        <div class="result-list">
+          <article v-for="hit in retrievalHits" :key="hit.chunkId" class="result-row">
+            <span class="rank">{{ hit.rank }}</span>
+            <div>
+              <h2>{{ hit.sourcePath || hit.filePath || hit.documentId }}</h2>
+              <p>{{ hit.childText || hit.text }}</p>
+              <small><code>{{ hit.chunkId }}</code> ·
+                <template v-if="hit.requirementId">需求 {{ hit.requirementId }} · </template>
+                <template v-if="hit.sectionPath">{{ hit.sectionPath }} · </template>
+                <template v-if="hit.acceptanceCriteria">验收: {{ hit.acceptanceCriteria }} · </template>
+                <template v-if="hit.symbolName">{{ hit.symbolType }} {{ hit.symbolName }} · {{ hit.startLine }}-{{ hit.endLine }}</template>
+                <template v-else-if="hit.parentId">parent {{ hit.parentId }}</template> ·
+                <template v-if="hit.commitSha">提交 {{ shortHash(hit.commitSha) }} · </template>
+                {{ shortHash(hit.contentHash) }}
+              </small>
+            </div>
+          </article>
+          <empty-state v-if="retrieval.response && retrievalHits.length===0"
+            title="没有命中结果"
+            :message="selectedBase.type==='CODE' ? '尝试更具体的类名/方法名/实现名词，或检查代码索引是否已完成。' : '尝试更具体的业务名词，或检查目标版本是否已发布。'"></empty-state>
+          <loading-state v-if="retrieval.loading"></loading-state>
+        </div>
+      </template>
+
+      <!-- 语义 Claim 模式 -->
+      <template v-else-if="retrievalMode==='semantic'">
+        <div class="build-notice" :class="'tone-'+semanticBuildNotice.tone" role="status">
+          <span aria-hidden="true">{{ semanticBuildNotice.tone==='good'?'✓':semanticBuildNotice.tone==='bad'?'!':'◐' }}</span>
+          {{ semanticBuildNotice.text }}
+          <button type="button" class="refresh-build" :disabled="semantic.buildLoading" @click="loadSemanticBuild">刷新构建状态</button>
+        </div>
+
+        <section v-if="semantic.response" class="retrieval-metrics semantic-metrics" aria-label="本次语义检索指标">
+          <div><span>结论状态</span><strong><status-badge :status="semantic.response.answerStatus"></status-badge></strong></div>
+          <div><span>命中 Claim</span><strong>{{ semanticClaims.length }} / {{ semantic.response.total }}</strong></div>
+          <div><span>端到端耗时</span><strong>{{ formatLatency(semantic.elapsedMs) }}</strong></div>
+          <div><span>冲突 / 存疑</span><strong>{{ semanticConflicts.length }} / {{ semanticDoubts.length }}</strong></div>
+        </section>
+        <div v-if="semantic.response" class="retrieval-status">
+          <span>意图 {{ semantic.response.intent || '—' }}</span>
+          <span>第 {{ semantic.response.page + 1 }} 页 · 每页 {{ semantic.response.limit }}</span>
+          <span v-if="semantic.response.hasConflictsOutsidePage" class="outside-conflict">当前页外仍有冲突，翻页查看</span>
+          <span class="pagination-inline">
+            <button type="button" :disabled="semantic.page<=0||semantic.loading" @click="changeSemanticPage(-1)">← 上一页</button>
+            <button type="button" :disabled="!semantic.response.hasMore||semantic.loading" @click="changeSemanticPage(1)">下一页 →</button>
+          </span>
+        </div>
+
+        <div v-if="semanticWarnings.length" class="warning-list" role="alert">
+          <div v-for="(item,index) in semanticWarnings" :key="'w'+index"><span aria-hidden="true">⚠</span>{{ warningText(item) }}</div>
+        </div>
+
+        <div v-if="semantic.response" class="result-list claim-list">
+          <article v-for="(claim,index) in semanticClaims" :key="claim.claimId" class="claim-row" :class="{expanded:semantic.expandedClaimId===claim.claimId}">
+            <span class="rank">{{ index + 1 + semantic.response.page * semantic.response.limit }}</span>
+            <div class="claim-body">
+              <header>
+                <span :class="sourceTypeClass(claim.sourceType)">{{ sourceTypeLabel(claim.sourceType) }}</span>
+                <status-badge :status="claim.status"></status-badge>
+                <code class="fact-key" :title="claim.factKey">{{ claim.factKey }}</code>
+                <button type="button" class="icon-button expand" :aria-expanded="semantic.expandedClaimId===claim.claimId"
+                        :aria-label="semantic.expandedClaimId===claim.claimId?'收起详情':'展开详情'"
+                        @click="semantic.expandedClaimId=semantic.expandedClaimId===claim.claimId?null:claim.claimId">{{ semantic.expandedClaimId===claim.claimId?'−':'+' }}</button>
+              </header>
+              <p class="claim-fact"><strong>{{ claim.subject || '—' }}</strong> · {{ claim.predicate || '—' }} · <strong>{{ claim.value || '—' }}</strong><template v-if="claim.unit"> {{ claim.unit }}</template></p>
+              <small class="claim-meta">
+                <code>{{ claim.claimId }}</code>
+                <template v-if="claim.valueType"> · {{ claim.valueType }}</template>
+                <template v-if="claim.authority"> · 权威 {{ claim.authority }}</template>
+                <template v-if="claim.version"> · 版本 {{ claim.version }}</template>
+              </small>
+              <p v-if="semantic.expandedClaimId===claim.claimId" class="claim-evidence">
+                <template v-if="claim.evidenceLocation">证据：<code>{{ claim.evidenceLocation }}</code></template>
+                <template v-else><span class="no-evidence">证据不可回查</span></template>
+                <template v-if="claim.module"> · 模块 {{ claim.module }}</template>
+              </p>
+              <div class="judgement-row" role="group" aria-label="人工相关性标记">
+                <button v-for="option in ['RELEVANT','PARTIAL','IRRELEVANT']" :key="option" type="button"
+                        :class="{active:currentJudgement('SEMANTIC',claim.claimId)===option}"
+                        @click="markJudgement('SEMANTIC',claim.claimId,index+1+(semantic.responseContext?semantic.responseContext.page:0)*(semantic.responseContext?semantic.responseContext.limit:0),option)">{{ judgementLabel(option) }}</button>
+              </div>
+            </div>
+          </article>
+          <empty-state v-if="semantic.response && semanticClaims.length===0"
+            title="没有命中的 Claim"
+            message="尝试更换业务名词或查询意图；若语义构建未发布，语义候选不会参与本次检索。"></empty-state>
+          <loading-state v-if="semantic.loading"></loading-state>
+        </div>
+
+        <details v-if="semanticConflicts.length" class="conflict-panel" open>
+          <summary>冲突 <span>{{ semanticConflicts.length }} 项</span></summary>
+          <div class="conflict-list">
+            <p v-for="(item,index) in semanticConflicts" :key="'c'+index" :class="{potential:item.potential}">
+              <span class="conflict-tag" :class="item.potential?'potential':'confirmed'">{{ item.potential?'疑似':'确定' }}</span>
+              {{ item.potential ? item.message.replace('POTENTIAL_CROSS_SOURCE_CONFLICT:','') : item.message }}
+            </p>
+          </div>
+        </details>
+        <details v-if="semanticDoubts.length" class="doubt-panel" open>
+          <summary>存疑 <span>{{ semanticDoubts.length }} 项</span></summary>
+          <div class="doubt-list">
+            <p v-for="doubt in semanticDoubts" :key="doubt.doubtId" :class="{open:doubt.status==='OPEN'||doubt.status==='UNDER_DISCUSSION'}">
+              <span class="conflict-tag" :class="doubt.status==='OPEN'?'warn':'neutral'">{{ doubt.status }}</span>
+              {{ doubt.question }}<template v-if="doubt.answer"> — {{ doubt.answer }}</template>
+              <small v-if="doubt.owner"> · 负责人 {{ doubt.owner }}<template v-if="doubt.severity"> · {{ doubt.severity }}</template></small>
+              <small v-if="doubt.evidenceLocation"> · <code>{{ doubt.evidenceLocation }}</code></small>
+            </p>
+          </div>
+        </details>
+        <details v-if="semanticRelations.length" class="relation-panel">
+          <summary>跨源关系 <span>{{ semanticRelations.length }} 项</span></summary>
+          <div class="relation-list">
+            <p v-for="(relation,index) in semanticRelations" :key="'r'+index">
+              <code>{{ relation.sourceClaimId }}</code> → {{ relation.relationType }} → <code>{{ relation.targetClaimId }}</code>
+            </p>
+          </div>
+        </details>
+
+        <div class="evaluation-bar">
+          <span>人工评测：{{ evaluationSize }} 条标记（本地存储）</span>
+          <button type="button" :class="{active:missRecallMarked('SEMANTIC')}" @click="markMissedRecall('SEMANTIC')">标记漏召回</button>
+          <button type="button" @click="exportEvaluations">导出 JSON</button>
+          <button type="button" class="danger" @click="clearEvaluations">清空</button>
+        </div>
+      </template>
+
+      <!-- 对比检索模式 -->
+      <template v-else-if="retrievalMode==='compare'">
+        <div class="build-notice" :class="'tone-'+semanticBuildNotice.tone" role="status">
+          <span aria-hidden="true">{{ semanticBuildNotice.tone==='good'?'✓':semanticBuildNotice.tone==='bad'?'!':'◐' }}</span>
+          {{ semanticBuildNotice.text }}
+          <button type="button" class="refresh-build" :disabled="semantic.buildLoading" @click="loadSemanticBuild">刷新构建状态</button>
+        </div>
+        <div class="compare-grid">
+          <section class="compare-column" aria-label="传统 Chunk 召回">
+            <header>
+              <h2>传统 Chunk 召回</h2>
+              <status-badge v-if="compare.legacyResponse" :status="compare.legacyResponse.status"></status-badge>
+              <span v-if="compare.legacyElapsedMs!==null">{{ formatLatency(compare.legacyElapsedMs) }}</span>
+            </header>
+            <p v-if="compare.legacyError" class="compare-error">传统链路失败：{{ compare.legacyError.message || '请求异常' }}（不影响右侧语义结果）</p>
+            <div v-else-if="compare.legacyResponse" class="compare-hits">
+              <p class="muted">{{ (compare.legacyResponse.hits||compare.legacyResponse.codeHits||[]).length }} 个结果</p>
+              <article v-for="hit in (compare.legacyResponse.hits||compare.legacyResponse.codeHits||[])" :key="hit.chunkId" class="result-row">
+                <span class="rank">{{ hit.rank }}</span>
+                <div>
+                  <h2>{{ hit.sourcePath || hit.filePath || hit.documentId }}</h2>
+                  <p>{{ hit.childText || hit.text }}</p>
+                  <small v-if="hit.sectionPath">{{ hit.sectionPath }}</small>
+                </div>
+              </article>
+            </div>
+            <loading-state v-if="compare.loading && !compare.legacyResponse && !compare.legacyError"></loading-state>
+          </section>
+          <section class="compare-column" aria-label="语义 Claim 召回">
+            <header>
+              <h2>语义 Claim 召回</h2>
+              <status-badge v-if="compare.semanticResponse" :status="compare.semanticResponse.answerStatus"></status-badge>
+              <span v-if="compare.semanticElapsedMs!==null">{{ formatLatency(compare.semanticElapsedMs) }}</span>
+            </header>
+            <p v-if="compare.semanticError" class="compare-error">语义链路失败：{{ compare.semanticError.message || '请求异常' }}（不影响左侧传统结果）</p>
+            <div v-else-if="compare.semanticResponse" class="compare-hits">
+              <p class="muted">{{ (compare.semanticResponse.claims||[]).length }} 个 Claim · 冲突 {{ (compare.semanticResponse.conflicts||[]).length }} 项<template v-if="compare.semanticResponse.hasConflictsOutsidePage">（含页外）</template></p>
+              <article v-for="(claim,index) in (compare.semanticResponse.claims||[])" :key="claim.claimId" class="claim-row">
+                <span class="rank">{{ index + 1 }}</span>
+                <div class="claim-body">
+                  <header>
+                    <span :class="sourceTypeClass(claim.sourceType)">{{ sourceTypeLabel(claim.sourceType) }}</span>
+                    <status-badge :status="claim.status"></status-badge>
+                    <code class="fact-key" :title="claim.factKey">{{ claim.factKey }}</code>
+                  </header>
+                  <p class="claim-fact"><strong>{{ claim.subject || '—' }}</strong> · {{ claim.predicate || '—' }} · <strong>{{ claim.value || '—' }}</strong></p>
+                  <small class="claim-meta"><template v-if="claim.evidenceLocation"><code>{{ claim.evidenceLocation }}</code></template><template v-else><span class="no-evidence">证据不可回查</span></template></small>
+                </div>
+              </article>
+            </div>
+            <loading-state v-if="compare.loading && !compare.semanticResponse && !compare.semanticError"></loading-state>
+          </section>
+        </div>
+        <div class="evaluation-bar">
+          <span>人工评测：{{ evaluationSize }} 条标记（本地存储）</span>
+          <button type="button" @click="exportEvaluations">导出 JSON</button>
+        </div>
+      </template>
     </section>
   </main>
 
@@ -267,8 +449,8 @@
 <script src="/assets/error-normalizer.js?v=20260818"></script>
 <script src="/assets/api-client.js?v=20260818"></script>
 <script src="/assets/app-shell.js?v=20260818-2"></script>
-<script src="/assets/status-contract.js?v=20260818-2"></script>
-<script src="/assets/knowledge-api.js?v=20260818"></script>
-<script src="/assets/knowledge-app.js?v=20260818-3"></script>
+<script src="/assets/status-contract.js?v=20260825-3"></script>
+<script src="/assets/knowledge-api.js?v=20260825-2"></script>
+<script src="/assets/knowledge-app.js?v=20260825-4"></script>
 </body>
 </html>

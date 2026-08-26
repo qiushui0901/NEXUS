@@ -184,8 +184,20 @@ public final class MultiSourceKnowledgeModels {
             String effectiveFrom,
             String effectiveTo,
             String evidenceLocation,
-            String module
+            String module,
+            /** 参与评分的自然语言检索文本（语义摘要/原文等）：结构化字段未命中查询词时兜底，避免数据库预过滤命中但评分归零。
+             * 内部评分字段：不序列化到 HTTP 响应（语义摘要可能回退到 rawText，达 maxInputChars，放大响应体且前端不使用）。 */
+            @com.fasterxml.jackson.annotation.JsonIgnore String searchText
     ) {
+        /** 兼容旧构造：无自然语言检索文本。 */
+        public UnifiedKnowledgeClaim(String claimId, String projectId, String version, String factKey,
+                                     String subject, String predicate, String value, String valueType,
+                                     String unit, SourceType sourceType, Authority authority,
+                                     KnowledgeStatus status, String effectiveFrom, String effectiveTo,
+                                     String evidenceLocation, String module) {
+            this(claimId, projectId, version, factKey, subject, predicate, value, valueType, unit,
+                    sourceType, authority, status, effectiveFrom, effectiveTo, evidenceLocation, module, null);
+        }
     }
 
     /** 多源结论状态。 */
@@ -261,7 +273,8 @@ public final class MultiSourceKnowledgeModels {
             int total,
             int page,
             int limit,
-            boolean hasMore
+            boolean hasMore,
+            boolean hasConflictsOutsidePage
     ) {
         public MultiSourceSearchResponse {
             claims = claims == null ? List.of() : List.copyOf(claims);

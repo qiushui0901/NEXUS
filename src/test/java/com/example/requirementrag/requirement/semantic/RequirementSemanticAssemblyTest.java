@@ -42,7 +42,7 @@ class RequirementSemanticAssemblyTest {
         return new RequirementSemanticProperties(true, true, false, false,
                 tempDir.resolve("semantic.db").toString(), "test-model",
                 "requirement-semantic-v1", "v1", 12_000, 30, 30, 30, 30, 20, 30, 0,
-                1_000, 1_800, 1_000_000, 400, true);
+                1_000, 1_800, 1_000_000, 400, true, 5_000);
     }
 
     @ParameterizedTest

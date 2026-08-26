@@ -114,7 +114,7 @@ class RequirementSemanticAnnotationServiceTest {
         // maxRetries=2 → 单窗口最多 3 次调用；但剩余预算优先约束总次数。
         RequirementSemanticProperties properties = new RequirementSemanticProperties(
                 true, false, false, false, "", "test-model", "requirement-semantic-v1", "v1",
-                12_000, 30, 30, 30, 30, 20, 30, 2, 1_000, 1_800, 1_000_000, 400, true);
+                12_000, 30, 30, 30, 30, 20, 30, 2, 1_000, 1_800, 1_000_000, 400, true, 5_000);
         RequirementSemanticAnnotationService service = new RequirementSemanticAnnotationService(
                 chatClient, null, properties,
                 new RequirementSemanticPromptService(properties),

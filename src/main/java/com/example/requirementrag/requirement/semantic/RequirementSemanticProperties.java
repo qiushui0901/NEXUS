@@ -26,7 +26,8 @@ public record RequirementSemanticProperties(
         int maxWallClockSeconds,
         int maxEstimatedTokens,
         int windowOverlapChars,
-        boolean allowInferredCandidate
+        boolean allowInferredCandidate,
+        int maxCandidateAnnotations
 ) {
     @ConstructorBinding
     public RequirementSemanticProperties {
@@ -47,6 +48,7 @@ public record RequirementSemanticProperties(
         maxWallClockSeconds = bounded(maxWallClockSeconds, 1, 86_400, 1_800);
         maxEstimatedTokens = bounded(maxEstimatedTokens, 0, 100_000_000, 1_000_000);
         windowOverlapChars = bounded(windowOverlapChars, 0, 20_000, 400);
+        maxCandidateAnnotations = bounded(maxCandidateAnnotations, 100, 100_000, 5_000);
     }
 
     private static String textOr(String value, String fallback) {

@@ -298,6 +298,94 @@ public final class RequirementSemanticModels {
     ) {
     }
 
+    /**
+     * 构建状态查询视图：最新一次执行（run）与当前生效代际（generation）分开表述。
+     * <ul>
+     *   <li>{@code latestRunStatus} / 统计 / runId：最新一次执行；同 buildId 失败重跑时
+     *       {@code latestRunStatus=PARTIAL_FAILURE} 且 {@code generationActive=true} 表示
+     *       "最新执行失败，但它所属代际（此前成功的同一代际）仍在线"；</li>
+     *   <li>{@code activeGeneration*}：当前范围内真正 active 的代际（LEFT JOIN 查询，与最新 run
+     *       所属代际无关）——"rev-1 SUCCESS active + rev-2 FAILED inactive" 时
+     *       {@code generationActive=false} 但 {@code activeGenerationStatus=SUCCESS}；
+     *       无 active 代际时三个字段为 null。</li>
+     * </ul>
+     */
+    public record SemanticBuildStatusView(
+            String runId,
+            String buildId,
+            String projectId,
+            String documentId,
+            String requirementVersion,
+            String sourceRevision,
+            String model,
+            String promptVersion,
+            String schemaVersion,
+            SemanticBuildStatus latestRunStatus,
+            int totalChunks,
+            int skippedChunks,
+            int completedChunks,
+            int failedChunks,
+            List<String> warnings,
+            Instant runStartedAt,
+            Instant runFinishedAt,
+            boolean generationActive,
+            String activeGenerationBuildId,
+            String activeGenerationSourceRevision,
+            SemanticBuildStatus activeGenerationStatus
+    ) {
+        public SemanticBuildStatusView {
+            warnings = warnings == null ? List.of() : List.copyOf(warnings);
+        }
+
+        /** 兼容旧 {@code SemanticBuildRecord} JSON 字段：旧调用方仍按 buildStatus 消费（需 @JsonProperty 才会出现在序列化结果中）。 */
+        @Deprecated
+        @com.fasterxml.jackson.annotation.JsonProperty("buildStatus")
+        public SemanticBuildStatus buildStatus() {
+            return latestRunStatus;
+        }
+
+        /** 兼容旧 {@code SemanticBuildRecord} JSON 字段：旧调用方仍按 active 消费（需 @JsonProperty 才会出现在序列化结果中）。 */
+        @Deprecated
+        @com.fasterxml.jackson.annotation.JsonProperty("active")
+        public boolean active() {
+            return generationActive;
+        }
+    }
+
+    /**
+     * 项目/版本级聚合构建状态视图：多文档项目里语义检索按 projectId+version 召回该版本
+     * 全部 active 文档，因此状态条必须按同样范围聚合，不能只展示单个 documentId 的状态。
+     * <ul>
+     *   <li>{@code hasActiveGeneration}：该 project+version 下是否存在任一 active SUCCESS 代际；</li>
+     *   <li>{@code activeDocumentCount} / {@code activeDocumentIds}：active 代际覆盖的文档；</li>
+     *   <li>{@code latestRun*}：整个范围内最近一次执行（跨文档），用于提示"最新执行失败但仍有在线代际"；</li>
+     *   <li>无任何 run 记录时返回 empty（调用方按 404/不可用处理）。</li>
+     * </ul>
+     */
+    public record SemanticBuildAggregateView(
+            String projectId,
+            String requirementVersion,
+            boolean hasActiveGeneration,
+            int activeDocumentCount,
+            List<String> activeDocumentIds,
+            List<String> activeBuildIds,
+            String latestRunRunId,
+            String latestRunBuildId,
+            SemanticBuildStatus latestRunStatus,
+            int latestRunTotalChunks,
+            int latestRunCompletedChunks,
+            int latestRunFailedChunks,
+            List<String> latestRunWarnings,
+            boolean candidateRetrievalEnabled,
+            boolean normativeRetrievalEnabled
+    ) {
+        public SemanticBuildAggregateView {
+            activeDocumentIds = immutable(activeDocumentIds);
+            activeBuildIds = immutable(activeBuildIds);
+            latestRunWarnings = immutable(latestRunWarnings);
+        }
+    }
+
     private static <T> List<T> immutable(List<T> values) {
         return values == null ? List.of() : List.copyOf(values);
     }
