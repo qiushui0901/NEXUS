@@ -681,6 +681,26 @@ class SQLiteRequirementSemanticStoreTest {
     }
 
     @Test
+    void listActiveByProjectVersionWithBuildsReturnsAllActiveBuildIdsEvenWhenZeroAnnotationsMatch() {
+        // 高（Review #1）：零命中时 buildIds 必须仍包含被查询的 active 代际——
+        // 否则前端无法区分"语义源未参与"（空）与"参与但零命中"（应非空）。
+        SQLiteRequirementSemanticStore store = store();
+        store.save(record("p1", "doc", "5.1", "file.md|p|0", "hash-1", "model-a", "v1", "v1",
+                ExtractionStatus.SUCCEEDED));
+        SemanticBuildRecord build = build("p1", "rev-1", true);
+        store.recordBuildRun(build, List.of(
+                new RequirementSemanticModels.SemanticBuildInput("file.md|p|0", null, "hash-1")));
+
+        // 查询词不匹配任何标注 → 零命中标注，但 active 代际确实被查询了。
+        SQLiteRequirementSemanticStore.ActiveAnnotations loaded =
+                store.listActiveByProjectVersionWithBuilds("p1", "5.1", 10, "不存在的查询词");
+
+        assertThat(loaded.annotations()).isEmpty();
+        // buildIds 仍包含被查询的 active 代际——区分"参与但零命中"与"未参与"。
+        assertThat(loaded.buildIds()).containsExactly(build.buildId());
+    }
+
+    @Test
     void listOrdersWindowsByWindowIndexAndOffset() {
         SQLiteRequirementSemanticStore store = store();
         store.save(windowRecord("file.md|p|0", "hash-1", "win-2", 2, 400, 800));

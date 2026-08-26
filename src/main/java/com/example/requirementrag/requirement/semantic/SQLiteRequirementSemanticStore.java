@@ -543,21 +543,44 @@ public class SQLiteRequirementSemanticStore {
         }
         sql.append(" order by a.source_file, a.parent_order, a.window_index, a.start_offset, a.source_chunk_id limit ?");
         params.add(Integer.toString(Math.max(1, limit)));
-        try (Connection connection = open();
-             PreparedStatement statement = connection.prepareStatement(sql.toString())) {
-            for (int index = 0; index < params.size(); index++) {
-                statement.setString(index + 1, params.get(index));
+        // 高（Review #1）：buildIds 必须包含本次被查询的全部 active 代际，而非只返回产生候选行的代际——
+        // 零命中时（语义源确实查询了 active 代际但无匹配标注）返回空 IDs，前端无法与"语义源未参与"区分。
+        // 两条查询在同一只读事务中执行，保证单快照一致。
+        String activeBuildIdsSql = """
+                select build_id from requirement_semantic_build
+                where project_id=? and requirement_version=? and active=1 and build_status='SUCCESS'
+                order by coalesce(finished_at, started_at) desc, rowid desc
+                """;
+        try (Connection connection = open()) {
+            try (Statement transaction = connection.createStatement()) {
+                transaction.execute("begin");
             }
-            try (ResultSet rows = statement.executeQuery()) {
-                List<SemanticAnnotationRecord> records = new ArrayList<>();
-                java.util.LinkedHashSet<String> buildIds = new java.util.LinkedHashSet<>();
-                while (rows.next()) {
-                    records.add(record(rows));
-                    String buildId = rows.getString("read_build_id");
-                    if (buildId != null && !buildId.isBlank()) buildIds.add(buildId);
+            List<SemanticAnnotationRecord> records = new ArrayList<>();
+            try (PreparedStatement statement = connection.prepareStatement(sql.toString())) {
+                for (int index = 0; index < params.size(); index++) {
+                    statement.setString(index + 1, params.get(index));
                 }
-                return new ActiveAnnotations(List.copyOf(records), List.copyOf(buildIds));
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) {
+                        records.add(record(rows));
+                    }
+                }
             }
+            java.util.LinkedHashSet<String> buildIds = new java.util.LinkedHashSet<>();
+            try (PreparedStatement statement = connection.prepareStatement(activeBuildIdsSql)) {
+                statement.setString(1, safe(projectId));
+                statement.setString(2, safe(requirementVersion));
+                try (ResultSet rows = statement.executeQuery()) {
+                    while (rows.next()) {
+                        String buildId = rows.getString("build_id");
+                        if (buildId != null && !buildId.isBlank()) buildIds.add(buildId);
+                    }
+                }
+            }
+            try (Statement transaction = connection.createStatement()) {
+                transaction.execute("commit");
+            }
+            return new ActiveAnnotations(List.copyOf(records), List.copyOf(buildIds));
         } catch (SQLException exception) {
             throw new IllegalStateException("Unable to list active requirement semantic annotations", exception);
         }

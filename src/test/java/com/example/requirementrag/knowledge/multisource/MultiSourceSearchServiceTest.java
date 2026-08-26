@@ -283,7 +283,7 @@ class MultiSourceSearchServiceTest {
         MultiSourceCandidateAdapter semantic = new MultiSourceCandidateAdapter() {
             @Override
             public SourceType sourceType() {
-                return SourceType.REQUIREMENT;
+                return SourceType.REQUIREMENT_SEMANTIC;
             }
 
             @Override
@@ -314,6 +314,8 @@ class MultiSourceSearchServiceTest {
 
         // 检索实际读取的代际 ids 出现在响应中，供前端评测上下文绑定。
         assertThat(response.semanticBuildIds()).containsExactly("build-2");
+        // 语义源确实参与了检索（VALIDATION 意图含 REQUIREMENT_SEMANTIC 且适配器存在）。
+        assertThat(response.semanticSourceAttempted()).isTrue();
     }
 
     @Test
@@ -322,6 +324,44 @@ class MultiSourceSearchServiceTest {
         MultiSourceSearchResponse response = service.search("fengshen", "5.1", "订单",
                 KnowledgeQueryIntent.VALIDATION);
         assertThat(response.semanticBuildIds()).isEmpty();
+        // 无语义适配器 → 语义源未参与。
+        assertThat(response.semanticSourceAttempted()).isFalse();
+    }
+
+    @Test
+    void searchResponseSemanticSourceNotAttemptedForDoubtIntent() {
+        // 高（Review #1）：DOUBT 意图排除 REQUIREMENT_SEMANTIC → 语义源未参与，
+        // semanticSourceAttempted=false 且 buildIds 为空——前端据此 fail-closed，不回退到全局 active IDs。
+        MultiSourceCandidateAdapter semantic = new MultiSourceCandidateAdapter() {
+            @Override
+            public SourceType sourceType() {
+                return SourceType.REQUIREMENT_SEMANTIC;
+            }
+
+            @Override
+            public List<UnifiedKnowledgeClaim> load(String projectId, String version, String query) {
+                return List.of();
+            }
+
+            @Override
+            public MultiSourceCandidateAdapter.CandidateLoad loadDetailed(String projectId, String version,
+                                                                         String query, KnowledgeQueryIntent intent) {
+                return new MultiSourceCandidateAdapter.CandidateLoad(List.of(), List.of(),
+                        List.of("build-should-not-appear"));
+            }
+        };
+        MultiSourceKnowledgeStore localStore = newStore();
+        MultiSourceSearchService withSemantic = new MultiSourceSearchService(localStore,
+                new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(),
+                List.of(semantic), new CrossSourceRelationExtractor());
+
+        MultiSourceSearchResponse response =
+                withSemantic.search("fengshen", "5.1", "订单", KnowledgeQueryIntent.DOUBT);
+
+        // DOUBT 排除语义源 → 未参与 → 空 buildIds + semanticSourceAttempted=false。
+        assertThat(response.semanticBuildIds()).isEmpty();
+        assertThat(response.semanticSourceAttempted()).isFalse();
     }
 
     private MultiSourceKnowledgeStore newStore() {

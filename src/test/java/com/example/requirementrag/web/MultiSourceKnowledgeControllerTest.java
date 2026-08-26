@@ -51,7 +51,7 @@ class MultiSourceKnowledgeControllerTest {
                 "权限撤销传播时间是多少", KnowledgeQueryIntent.PARAMETER,
                 MultiSourceKnowledgeModels.AnswerStatus.CONFIRMED,
                 List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-                3, 0, 20, true, false, List.of());
+                3, 0, 20, true, false, List.of(), false);
         when(searchService.search(eq("fengshen"), eq("5.1"), eq("权限撤销传播时间是多少"),
                 any(), anyInt(), anyInt())).thenReturn(response);
 

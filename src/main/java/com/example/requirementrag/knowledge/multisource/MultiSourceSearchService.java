@@ -131,7 +131,7 @@ public class MultiSourceSearchService {
                     intentOverride != null ? intentOverride : KnowledgeQueryIntent.GENERAL,
                     AnswerStatus.NO_RESULT, List.of(), List.of(), List.of(), List.of(), List.of(),
                     List.of("MULTI_SOURCE_DISABLED"), List.of(),
-                    0, effectivePage, effectiveLimit, false, false, List.of());
+                    0, effectivePage, effectiveLimit, false, false, List.of(), false);
         }
         KnowledgeQueryIntent intent = intentOverride != null ? intentOverride : classifier.classify(query);
         boolean llmUsed = false;
@@ -143,6 +143,10 @@ public class MultiSourceSearchService {
             }
         }
         Set<SourceType> allowedSources = sourceFilter.allowedSources(intent);
+        // 高（Review #1）：区分"语义源未参与"（DOUBT 意图排除 REQUIREMENT_SEMANTIC）与"参与但零命中"——
+        // 前者 semanticSourceAttempted=false 且 buildIds 为空；后者 true 且 buildIds 含全部 active 代际。
+        boolean semanticSourceAttempted = allowedSources.contains(SourceType.REQUIREMENT_SEMANTIC)
+                && adapters.stream().anyMatch(adapter -> adapter.sourceType() == SourceType.REQUIREMENT_SEMANTIC);
         List<String> warnings = new ArrayList<>();
         List<UnifiedKnowledgeClaim> candidates = loadCandidates(projectId, version, allowedSources, query, intent, warnings, semanticBuildIds)
                 .stream()
@@ -201,7 +205,7 @@ public class MultiSourceSearchService {
         boolean hasMore = (long) (effectivePage + 1) * effectiveLimit < scored.size();
         return new MultiSourceSearchResponse(query, intent, status, claims, evidence, conflicts, doubts,
                 explanations, warnings, relations, scored.size(), effectivePage, effectiveLimit, hasMore,
-                hasConflictsOutsidePage, List.copyOf(semanticBuildIds));
+                hasConflictsOutsidePage, List.copyOf(semanticBuildIds), semanticSourceAttempted);
     }
 
     /** 读取当前命中页 Claim 的一跳预生成关系；无新关系时回退旧表只读。 */

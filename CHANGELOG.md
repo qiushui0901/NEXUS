@@ -202,6 +202,14 @@
 - **低：构建锁注册表永久增长**：`RequirementSemanticBuildService.buildLocks` 从 `ConcurrentHashMap`（每 scope 永久保留对象）改为固定 64 条带的 `Object[]` striped locks（`Math.floorMod(key.hashCode(),64)`）——内存恒定，同 scope 仍互斥，不同 scope 撞同条带只是保守串行。
 - **测试补强**（新增 5 例，全量 870→875）：Store 与标注同查询读出 build ids（1）+ 无 active 代际时返回空（1）；Controller 空白 projectId 在目录解析前抛 SEMANTIC_REQUEST_INVALID（1，断言 `.code()` 字段）；MultiSourceSearchService 响应回传实际 semanticBuildIds（1）+ 无语义来源时 build ids 空（1）。
 
+### Fixed（0.9.5 — Review 第十五批：语义源参与契约与评测资格绑定响应快照）
+
+依据外部代码 Review（高×2，审查范围 `7480b4c..3fbd070`）修复 semanticBuildIds 空列表语义与评测资格读取全局状态：
+
+- **高：semanticBuildIds 空列表无法区分“语义源未参与”与“参与但零命中”**：`SQLiteRequirementSemanticStore.listActiveByProjectVersionWithBuilds` 改为单只读事务（begin/commit），buildIds 从独立 SQL 查全部 active 代际而非只从产生候选行的标注收集——零命中时仍返回被查询的 active 代际。`MultiSourceSearchResponse` 新增 `semanticSourceAttempted` 字段（意图含 REQUIREMENT_SEMANTIC 且存在语义适配器时 true），由 `MultiSourceSearchService` 透传。前端 `responseContext.activeBuildIds` 取 `response.semanticBuildIds` 不回退——DOUBT 意图下 IDs 空且 attempted=false，不补入全局 active IDs；`semanticEvaluationUsable` 先检 `semanticSourceAttempted`，空列表是权威结果不 fail-open。
+- **高：评测资格仍读取全局展示状态而非本次响应私有快照**：`runSemanticSearch` 把私有构建状态（`hasActiveGeneration`/`candidateRetrievalEnabled`/`normativeRetrievalEnabled`/`buildUnavailable`/`buildError`/`activeDocumentCount`/`semanticSourceAttempted`）全部写入 `responseContext` 不可变快照。`semanticEvaluationUsable` 只读 `responseContext`——用户等待状态期间编辑版本时，全局展示状态可能来自版本 A 而结果属版本 B，不再导致版本 B 的无代际结果被错误允许或有效响应被错误拒绝。
+- **测试补强**（新增 2 例，全量 875→877）：Store 零命中时 buildIds 仍含 active 代际（1）；Service DOUBT 意图下 semanticSourceAttempted=false 且 buildIds 空（1）+ 既有测试补断 semanticSourceAttempted（2）。
+
 ## 0.9.4 — 2026-08-23
 
 ### Added

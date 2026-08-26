@@ -170,15 +170,20 @@
       // 就会 fail-open，用户可保存空 build identity 的 MISS。
       // #6：当前响应携带不可评测 warning（NORMATIVE 检索被关闭、候选被截断、语义来源加载失败）
       // 时拒绝写入，避免把"配置/加载问题"误记为"召回问题"。评测资格必须绑定当前响应。
+      // 高（Review #2）：评测资格只读取 responseContext（请求发起时的不可变快照），
+      // 不再读可变全局 buildStatus——用户等待状态期间编辑版本时，全局展示状态可能来自版本 A
+      // 而结果属于版本 B，导致版本 B 的无代际结果被错误允许或有效响应被错误拒绝。
+      // 高（Review #1）：semanticSourceAttempted 区分"语义源未参与"（DOUBT，IDs 空，不可评测）
+      // 与"语义源参与但零命中"（IDs 非空，可评测）；空 activeBuildIds 是权威结果不 fail-open。
       semanticEvaluationUsable(){
         if(!this.semantic.response)return false;
-        // #5：状态查询失败/不可用 → 无代际身份可绑定，不可评测。
-        if(this.semantic.buildUnavailable||this.semantic.buildError)return false;
-        const build=this.semantic.buildStatus||{};
-        if(!build.hasActiveGeneration)return false;
-        const buildIds=build.activeBuildIds||[];
+        const ctx=this.semantic.responseContext||{};
+        if(!ctx.semanticSourceAttempted)return false;
+        if(ctx.buildUnavailable||ctx.buildError)return false;
+        if(!ctx.hasActiveGeneration)return false;
+        const buildIds=ctx.activeBuildIds||[];
         if(!buildIds.length)return false;
-        if(build.candidateRetrievalEnabled===false)return false;
+        if(ctx.candidateRetrievalEnabled===false)return false;
         const warnings=this.semantic.response.warnings||[];
         if(warnings.some(function(w){
           return /^SEMANTIC_NORMATIVE_RETRIEVAL_DISABLED|^SEMANTIC_CANDIDATE_TRUNCATED|^SEMANTIC_CANDIDATE_LOAD_FAILED|^SEMANTIC_CANDIDATE_RETRIEVAL_DISABLED|^MULTI_SOURCE_CANDIDATE_LOAD_FAILED/.test(w||"");
@@ -363,11 +368,12 @@
           });
           // 竞态保护：旧请求的响应不覆盖新查询。
           if(requestId!==this.semantic.requestId)return;
-          // 高（Review #1）：评测上下文优先绑定检索响应实际读取的 build ids（response.semanticBuildIds），
-          // 而不是另行请求的构建状态——状态查询返回 b1、检索执行前发布 b2 时，评测必须绑定 b2。
-          // 响应未带 build ids（无语义候选/来源失败）时回退到状态快照，供构建可用性判定。
+          // 高（Review #1+#2）：评测上下文绑定本次响应的权威、不可变快照——
+          // #1：activeBuildIds 取 response.semanticBuildIds（实际读取代际），空列表是权威结果不回退——
+          //     DOUBT 意图下语义源未参与时 IDs 为空且 semanticSourceAttempted=false，不补入 active IDs。
+          // #2：构建状态（hasActiveGeneration/开关/unavailable/error）全部写入快照，
+          //     semanticEvaluationUsable 只读该快照，不再读可变全局 buildStatus。
           const build=(state&&state.buildStatus)||{};
-          const responseBuildIds=(response.semanticBuildIds&&response.semanticBuildIds.length)?response.semanticBuildIds:(build.activeBuildIds||[]);
           this.semantic.responseContext={
             projectId:params.projectId,
             version:params.version,
@@ -375,8 +381,14 @@
             intent:params.intent,
             limit:typeof response.limit==="number"?response.limit:params.limit,
             page:typeof response.page==="number"?response.page:params.page,
-            activeBuildIds:responseBuildIds.slice(),
-            activeDocumentCount:build.activeDocumentCount||0
+            activeBuildIds:((response.semanticBuildIds||[])).slice(),
+            activeDocumentCount:build.activeDocumentCount||0,
+            hasActiveGeneration:build.hasActiveGeneration||false,
+            candidateRetrievalEnabled:build.candidateRetrievalEnabled,
+            normativeRetrievalEnabled:build.normativeRetrievalEnabled,
+            buildUnavailable:!!(state&&state.unavailable),
+            buildError:!!(state&&state.error),
+            semanticSourceAttempted:response.semanticSourceAttempted||false
           };
           this.semantic.response=response;
           // #8：只在响应成功时提交当前页。

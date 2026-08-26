@@ -275,7 +275,8 @@ public final class MultiSourceKnowledgeModels {
             int limit,
             boolean hasMore,
             boolean hasConflictsOutsidePage,
-            List<String> semanticBuildIds
+            List<String> semanticBuildIds,
+            boolean semanticSourceAttempted
     ) {
         public MultiSourceSearchResponse {
             claims = claims == null ? List.of() : List.copyOf(claims);
