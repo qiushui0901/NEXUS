@@ -157,8 +157,18 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
             Map<String, Double> scores = new LinkedHashMap<>();
             int staleCount = 0;
             int scopeMismatchCount = 0;
+            int generationMismatchCount = 0;
             int intentFilteredCount = 0;
             for (ClaimVectorHit hit : hits) {
+                // 高（Review 4）：投影代际一致性校验——Qdrant alias 命中点的代际必须等于
+                // SQLite 当前 ACTIVE 代际。若构建/回滚分叉窗口（alias 已切换而 SQLite 未提交，或
+                // SQLite 已回滚而 alias 未切回）导致 alias 指向非 ACTIVE 集合，命中点代际不匹配，
+                // 丢弃这些命中（fail-close），防止把新/旧代际数据登记到错误的代际身份下。
+                if (hit.point() != null && hit.point().projectionGenerationId() != null
+                        && !hit.point().projectionGenerationId().equals(active.get().generationId())) {
+                    generationMismatchCount++;
+                    continue;
+                }
                 // payload 级版本校验（第一道防线，跨 scope 旧点防御）
                 if (hit.point() != null && hit.point().businessVersion() != null
                         && !hit.point().businessVersion().equals(version)) {
@@ -192,8 +202,14 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
                         safe(projectId), safe(version), staleCount, hits.size());
             }
             if (scopeMismatchCount > 0) {
-                LOGGER.warn("CLAIM_VECTOR_SCOPE_MISMATCH project={} version={} mismatched={}/{}",
-                        safe(projectId), safe(version), scopeMismatchCount, hits.size());
+                LOGGER.warn("CLAIM_VECTOR_SCOPE_MISMATCH project={} version={} mismatched={}/{} (含投影代际不一致)",
+                        safe(projectId), safe(version), scopeMismatchCount + generationMismatchCount, hits.size());
+            }
+            if (generationMismatchCount > 0) {
+                LOGGER.warn("CLAIM_VECTOR_GENERATION_MISMATCH project={} version={} mismatched={}/{} "
+                                + "activeGen={}——构建/回滚分叉窗口，命中已按 fail-close 丢弃",
+                        safe(projectId), safe(version), generationMismatchCount, hits.size(),
+                        active.get().generationId());
             }
             if (intentFilteredCount > 0) {
                 LOGGER.debug("CLAIM_VECTOR_INTENT_FILTERED project={} version={} filtered={}/{} intent={}",

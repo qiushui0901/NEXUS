@@ -73,7 +73,7 @@ class ClaimVectorQualityGateTest {
         ClaimVectorGenerationManifest manifest = activeManifest(100, 100);
         when(sqliteStore.findActiveGeneration("proj-1", "v1"))
                 .thenReturn(Optional.of(manifest));
-        when(qdrantStore.aliasTarget("knowledge_claims_live-proj-1-v1"))
+        when(qdrantStore.aliasTarget(properties.liveAlias("proj-1", "v1")))
                 .thenReturn("knowledge_claims_live-123456");
         when(qdrantStore.countPointsIfAvailable("knowledge_claims_live-123456"))
                 .thenReturn(100L);
@@ -114,7 +114,7 @@ class ClaimVectorQualityGateTest {
         ClaimVectorGenerationManifest manifest = activeManifest(100, 100);
         when(sqliteStore.findActiveGeneration("proj-1", "v1"))
                 .thenReturn(Optional.of(manifest));
-        when(qdrantStore.aliasTarget("knowledge_claims_live-proj-1-v1"))
+        when(qdrantStore.aliasTarget(properties.liveAlias("proj-1", "v1")))
                 .thenReturn("knowledge_claims_live-old");
         when(qdrantStore.countPointsIfAvailable(anyString())).thenReturn(100L);
         when(shadowEvaluator.scopeMetric(anyString(), anyString())).thenReturn(

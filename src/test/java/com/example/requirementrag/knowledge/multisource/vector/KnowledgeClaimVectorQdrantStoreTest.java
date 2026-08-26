@@ -166,15 +166,18 @@ class KnowledgeClaimVectorQdrantStoreTest {
         KnowledgeClaimVectorQdrantStore store =
                 new KnowledgeClaimVectorQdrantStore(builder.build(), properties);
 
+        // 高（Review 1）：真实 Qdrant /points/query 响应为 {"result":{"points":[...]}}
+        // 而非顶层数组——旧测试模拟了错误结构导致通过但不符真实响应，此处按真实结构钉死。
         String payload = """
-                {"result":[{"id":1,"score":0.92,"payload":{
+                {"result":{"points":[{"id":1,"score":0.92,"payload":{
                   "projectId":"proj-1","businessVersion":"v1","claimId":"c-1",
                   "documentVersionId":"dv-1","sourceType":"REQUIREMENT","authority":"PRIMARY",
                   "knowledgeStatus":"ACTIVE","factKey":"fk","subject":"subj","predicate":"pred",
                   "valueType":"TEXT","unit":"","evidenceIds":[],
                   "projectionGenerationId":"gen","projectionSchemaVersion":"schema-v1",
-                  "embeddingModel":"model","textHash":"hash"}}]}""";
-        server.expect(requestTo("/collections/knowledge_claims_live-proj-1-v1/points/query"))
+                  "embeddingModel":"model","textHash":"hash"}}]}}""";
+        String alias = properties.liveAlias("proj-1", "v1");
+        server.expect(requestTo("/collections/" + alias + "/points/query"))
                 .andExpect(method(HttpMethod.POST))
                 .andExpect(jsonPath("$.query").isArray())
                 .andExpect(jsonPath("$.using").value("dense"))
@@ -183,7 +186,7 @@ class KnowledgeClaimVectorQdrantStoreTest {
                 .andRespond(withSuccess(payload, MediaType.APPLICATION_JSON));
 
         List<KnowledgeClaimVectorQdrantStore.ClaimVectorHit> hits =
-                store.search("knowledge_claims_live-proj-1-v1", new float[]{0.1f, 0.2f}, 10);
+                store.search(properties.liveAlias("proj-1", "v1"), new float[]{0.1f, 0.2f}, 10);
         server.verify(); // 任何未匹配请求（如旧 /points/search）都会在此失败
 
         assertThat(hits).hasSize(1);

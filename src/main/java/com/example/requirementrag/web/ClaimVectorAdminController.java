@@ -21,12 +21,16 @@ import java.util.Optional;
 /**
  * Claim 向量投影运维管理 API（高：Review 10——运维手册列出的 build/status/quality-gate/rollback 端点此前不存在，
  * 且手册引用了不存在的 rollbackTo；此处补齐，使手册描述的构建、检查与指定代际回滚均可执行）。
- * <p>仅当 {@code app.rag.multi-source.claim-vector.enabled=true} 时装配——否则依赖的
- * BuildService/QualityGate 条件 Bean 不存在，避免启动失败。</p>
+ * <p>仅当 {@code app.rag.multi-source.claim-vector.enabled=true} 且
+ * {@code build-enabled=true} 时装配——与本 Controller 的强依赖
+ * KnowledgeClaimVectorBuildService（同样要求 enabled+build-enabled）条件对齐；
+ * 高（Review 5）：候选/影子阶段 enabled=true+build-enabled=false 时不装配本 Controller，
+ * 避免因 BuildService 条件 Bean 不存在导致应用启动失败。</p>
  */
 @RestController
 @RequestMapping("/api/knowledge/multi-source/claim-vector")
-@ConditionalOnProperty(prefix = "app.rag.multi-source.claim-vector", name = "enabled", havingValue = "true")
+@ConditionalOnProperty(prefix = "app.rag.multi-source.claim-vector",
+        name = {"enabled", "build-enabled"}, havingValue = "true")
 public class ClaimVectorAdminController {
 
     private final KnowledgeClaimVectorBuildService buildService;

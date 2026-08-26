@@ -164,6 +164,9 @@ public class MultiSourceSearchService {
         boolean semanticSourceAttempted = allowedSources.contains(SourceType.REQUIREMENT_SEMANTIC)
                 && adapters.stream().anyMatch(adapter -> adapter.sourceType() == SourceType.REQUIREMENT_SEMANTIC);
         List<String> warnings = new ArrayList<>();
+        // 词法归一化在融合之前计算（高：Review 3——融合只接收词法相关的直接候选，需先有 base 分数）
+        List<String> tokens = tokenize(query);
+        String normalizedQuery = query == null ? "" : query.toLowerCase(Locale.ROOT);
         // 高（Review 4/5）：向量候选只加载一次（融合路径），融合后统一过 gate 状态门禁；
         // 融合分数参与最终排序——向量相似度不再被丢弃，也不绕过状态/意图过滤。
         boolean fusionEligible = claimVectorAdapter != null && claimVectorFusion != null
@@ -176,14 +179,25 @@ public class MultiSourceSearchService {
         if (fusionEligible) {
             KnowledgeClaimVectorFusion.ScoredCandidateLoad scoredVectorLoad =
                     claimVectorAdapter.loadScored(projectId, version, query, intent);
+            // 高（Review 7）：语义适配器的诊断（NO_ACTIVE_GENERATION/嵌入失败等）与
+            // 本次实际读取的构建代际 ids 必须回传 API——不因零命中或跳过融合而丢失。
+            warnings.addAll(scoredVectorLoad.warnings());
+            semanticBuildIds.addAll(scoredVectorLoad.buildIds());
             // 影子模式：记录向量 vs 结构化对比指标，不影响主检索路径
             if (shadowEvaluator != null) {
                 shadowEvaluator.recordQuery(projectId, version, query,
                         scoredVectorLoad.claims(), candidates, 0);
             }
             if (!scoredVectorLoad.claims().isEmpty()) {
+                // 高（Review 3）：只有词法相关的直接候选才交给融合——融合给直接候选固定 lexScore=1.0，
+                // 若把全部直接候选（含词法不相关）喂入，向量一次命中会让该意图下所有参数/测试等 Claim
+                // 拿到融合分数进入排序/冲突分析/totalCount。词法门槛前置后，融合分数只影响排序不决定准入。
+                List<UnifiedKnowledgeClaim> directRelevant = candidates.stream()
+                        .filter(claim -> normalizedQuery.isEmpty()
+                                || score(claim, normalizedQuery, tokens) > 0)
+                        .toList();
                 KnowledgeClaimVectorFusion.FusionResult fusionResult =
-                        claimVectorFusion.fuse(scoredVectorLoad, candidates, query);
+                        claimVectorFusion.fuse(scoredVectorLoad, directRelevant, query);
                 // gate 统一应用在融合之后——向量候选同样受状态门禁约束（Review 4）
                 candidates = fusionResult.candidates().stream()
                         .filter(claim -> gate.isRetrievable(claim.status()))
@@ -194,11 +208,11 @@ public class MultiSourceSearchService {
                 }
             }
         }
-        List<String> tokens = tokenize(query);
-        String normalizedQuery = query == null ? "" : query.toLowerCase(Locale.ROOT);
         Set<String> conflictGroups = conflictAnalyzer.conflictGroups(candidates);
 
         // 确定性评分召回：融合分数优先（已含向量/词法/策略/精确权重），否则字段加权 + 冲突惩罚。
+        // 高（Review 3）：融合分数只用于排序；准入仍由词法门槛（base>0）或向量语义相关性保证——
+        // 直接候选进入融合前已过滤，此处对融合候选不再需要重复词法门槛（它们已被 base>0 筛选）。
         List<ScoredClaim> scored = new ArrayList<>();
         for (UnifiedKnowledgeClaim claim : candidates) {
             double penalty = conflictPenalty(claim, conflictGroups);

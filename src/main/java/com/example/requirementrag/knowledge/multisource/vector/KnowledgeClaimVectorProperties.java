@@ -50,16 +50,41 @@ public record KnowledgeClaimVectorProperties(
         return liveAlias(projectId, businessVersion) + "-";
     }
 
-    /** 将 scope 分量规整为 Qdrant 集合名安全 token（小写字母数字与连字符，截断防超长）。 */
+    /**
+     * 将 scope 分量规整为 Qdrant 集合名安全 token（高：Review 6——旧实现把所有非 ASCII
+     * 字符替换为 '-' 并截断到 32 字符：项目甲/项目乙 都会变成 unknown，不同长 ID 也可能
+     * 拥有相同前 32 字符，导致跨 scope 共用 alias/物理集合前缀而互相覆盖或误删）。
+     * <p>新实现保留可读 token（截断到 24 字符），并附加原始 scope 的稳定 hash 后缀
+     * （sha256 前 10 位 hex）——可读部分即使被归并为 unknown，hash 也保证不同原始值
+     * 生成不同 token，一一映射。</p>
+     */
     private static String scopeToken(String value) {
-        String normalized = value == null ? "unknown" : value.trim().toLowerCase()
+        String raw = value == null ? "unknown" : value.trim();
+        String normalized = raw.toLowerCase()
                 .replaceAll("[^a-z0-9._-]", "-")
                 .replaceAll("-{2,}", "-")
                 .replaceAll("(^-+)|(-+$)", "");
         if (normalized.isEmpty()) {
             normalized = "unknown";
         }
-        return normalized.length() > 32 ? normalized.substring(0, 32) : normalized;
+        String readable = normalized.length() > 24 ? normalized.substring(0, 24) : normalized;
+        return readable + "-" + stableHash(raw);
+    }
+
+    /** sha256 hex 前 10 位——稳定且不可逆，用于保证 scope token 一一映射。 */
+    private static String stableHash(String value) {
+        try {
+            java.security.MessageDigest digest =
+                    java.security.MessageDigest.getInstance("SHA-256");
+            byte[] bytes = digest.digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (int i = 0; i < 5; i++) {
+                hex.append(String.format("%02x", bytes[i] & 0xff));
+            }
+            return hex.toString();
+        } catch (java.security.NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("SHA-256 不可用", exception);
+        }
     }
 
     private static String textOr(String value, String fallback) {

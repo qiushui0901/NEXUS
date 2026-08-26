@@ -100,7 +100,7 @@ class ClaimVectorCandidateAdapterTest {
                 .thenReturn(Optional.of(activeManifest()));
         when(embeddingBatcher.embedAll(List.of("登录")))
                 .thenReturn(List.of(new float[]{0.1f, 0.2f}));
-        when(qdrantStore.search(eq("knowledge_claims_live-proj-1-v1"), any(), anyInt()))
+        when(qdrantStore.search(eq(properties.liveAlias("proj-1", "v1")), any(), anyInt()))
                 .thenReturn(List.of(
                         hit("c-1", 0.95),
                         hit("c-2", 0.80)));

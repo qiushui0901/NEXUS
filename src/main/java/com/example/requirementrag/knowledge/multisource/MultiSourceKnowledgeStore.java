@@ -1717,47 +1717,123 @@ public class MultiSourceKnowledgeStore {
 
     // ===== 0.9.3 Phase D：发布目录（active document-version manifest）=====
 
-    /** 发布某业务版本的 active document-version：主库 manifest 更新为 PUBLISHED。 */
+    /**
+     * 发布某业务版本的 active document-version：主库 manifest 更新为 PUBLISHED，
+     * 并把该 document-version 本身标记为 PUBLISHED（高：Review 2——向量投影只读已发布资料版本）。
+     * <p>替换语义：新发布者成为该 scope 唯一 ACTIVE 签名文档，上一发布者从 PUBLISHED 降回 DRAFT
+     * （与单行 manifest PK(project_id,business_version) 的替换语义一致，避免两个发布版本同时可投影）。</p>
+     */
     public void publishDocumentVersion(String projectId, String businessVersion, String documentVersionId) {
         String now = Instant.now().toString();
-        try (Connection connection = open();
-             PreparedStatement statement = connection.prepareStatement("""
+        try (Connection connection = open()) {
+            // 找到当前 active 版本（即将被替换的上一发布者）
+            String previousActive = null;
+            try (PreparedStatement find = connection.prepareStatement("""
+                     select document_version_id from knowledge_active_version
+                     where project_id=? and business_version=?
+                     """)) {
+                find.setString(1, projectId);
+                find.setString(2, businessVersion);
+                try (ResultSet rows = find.executeQuery()) {
+                    if (rows.next()) {
+                        previousActive = rows.getString("document_version_id");
+                    }
+                }
+            }
+            try (PreparedStatement statement = connection.prepareStatement("""
                      insert into knowledge_active_version(project_id,business_version,document_version_id,status,published_at,updated_at)
                      values(?,?,?,?,?,?)
                      on conflict(project_id,business_version) do update set
                        document_version_id=excluded.document_version_id,
                        status=excluded.status, published_at=excluded.published_at, updated_at=excluded.updated_at
                      """)) {
-            statement.setString(1, projectId);
-            statement.setString(2, businessVersion);
-            statement.setString(3, documentVersionId);
-            statement.setString(4, "PUBLISHED");
-            statement.setString(5, now);
-            statement.setString(6, now);
-            statement.executeUpdate();
+                statement.setString(1, projectId);
+                statement.setString(2, businessVersion);
+                statement.setString(3, documentVersionId);
+                statement.setString(4, "PUBLISHED");
+                statement.setString(5, now);
+                statement.setString(6, now);
+                statement.executeUpdate();
+            }
+            // 旧发布者从 PUBLISHED 降回 DRAFT（替换语义）
+            if (previousActive != null && !previousActive.equals(documentVersionId)) {
+                try (PreparedStatement demote = connection.prepareStatement("""
+                         update knowledge_document_version
+                         set status='DRAFT', published_at=null where document_version_id=?
+                         """)) {
+                    demote.setString(1, previousActive);
+                    demote.executeUpdate();
+                }
+            }
+            // 同步把资料版本本身标记为 PUBLISHED（向量投影的权威过滤条件）
+            try (PreparedStatement mark = connection.prepareStatement("""
+                     update knowledge_document_version
+                     set status='PUBLISHED', published_at=? where document_version_id=?
+                     """)) {
+                mark.setString(1, now);
+                mark.setString(2, documentVersionId);
+                mark.executeUpdate();
+            }
         } catch (SQLException exception) {
             throw new IllegalStateException("发布文档版本失败", exception);
         }
     }
 
-    /** 回滚 active manifest 到目标版本。 */
+    /**
+     * 回滚 active manifest 到目标版本（高：Review 2——同时把被替换的版本从 PUBLISHED 降回 DRAFT，
+     * 保证向量投影不把已回滚/未发布的版本继续当已发布投影）。
+     */
     public void rollbackActiveVersion(String projectId, String businessVersion, String documentVersionId) {
         String now = Instant.now().toString();
-        try (Connection connection = open();
-             PreparedStatement statement = connection.prepareStatement("""
+        try (Connection connection = open()) {
+            // 找到当前 active 版本（即将被替换）
+            String previousActive = null;
+            try (PreparedStatement find = connection.prepareStatement("""
+                     select document_version_id from knowledge_active_version
+                     where project_id=? and business_version=?
+                     """)) {
+                find.setString(1, projectId);
+                find.setString(2, businessVersion);
+                try (ResultSet rows = find.executeQuery()) {
+                    if (rows.next()) {
+                        previousActive = rows.getString("document_version_id");
+                    }
+                }
+            }
+            try (PreparedStatement statement = connection.prepareStatement("""
                      update knowledge_active_version
                      set document_version_id=?, status=?, updated_at=?
                      where project_id=? and business_version=?
                      """)) {
-            statement.setString(1, documentVersionId);
-            statement.setString(2, "ROLLED_BACK");
-            statement.setString(3, now);
-            statement.setString(4, projectId);
-            statement.setString(5, businessVersion);
-            int updated = statement.executeUpdate();
-            if (updated == 0) {
-                throw new IllegalArgumentException("未找到可回滚的 active version: "
-                        + projectId + "|" + businessVersion);
+                statement.setString(1, documentVersionId);
+                statement.setString(2, "ROLLED_BACK");
+                statement.setString(3, now);
+                statement.setString(4, projectId);
+                statement.setString(5, businessVersion);
+                int updated = statement.executeUpdate();
+                if (updated == 0) {
+                    throw new IllegalArgumentException("未找到可回滚的 active version: "
+                            + projectId + "|" + businessVersion);
+                }
+            }
+            // 被替换的旧 active 版本从 PUBLISHED 降回 DRAFT
+            if (previousActive != null && !previousActive.equals(documentVersionId)) {
+                try (PreparedStatement demote = connection.prepareStatement("""
+                         update knowledge_document_version
+                         set status='DRAFT', published_at=null where document_version_id=?
+                         """)) {
+                    demote.setString(1, previousActive);
+                    demote.executeUpdate();
+                }
+            }
+            // 目标版本提升为 PUBLISHED
+            try (PreparedStatement promote = connection.prepareStatement("""
+                     update knowledge_document_version
+                     set status='PUBLISHED', published_at=? where document_version_id=?
+                     """)) {
+                promote.setString(1, now);
+                promote.setString(2, documentVersionId);
+                promote.executeUpdate();
             }
         } catch (SQLException exception) {
             throw new IllegalStateException("回滚文档版本失败", exception);
@@ -1911,11 +1987,40 @@ public class MultiSourceKnowledgeStore {
 
     /**
      * 按项目/业务版本分页列出统一 Claim（高：Review 3——旧实现只按 project_id 过滤，漏绑 version 参数，
-     * 会把其他业务版本的 Claim 投影进当前版本；Review 8——流式构建按页读取避免 20 万条一次性驻留内存）。
+     * 会把其他业务版本的 Claim 投影进当前版本；Review 8——分页加唯一 claim_id 尾排序保证
+     * 跨页不重复/不遗漏，同名 subject 不再导致页边界漂移）。
      * 通过 JOIN knowledge_document_version 以 document_version_id 关联业务版本；FK 约束保证无孤儿行。
+     * 注意：本方法不限发布状态，供关系图/漂移/概念提取等消费方使用；
+     * 向量投影专用已发布过滤见 {@link #findPublishedClaimsByProjectVersionPage}。
      */
     public List<KnowledgeClaimRecord> findClaimsByProjectVersionPage(String projectId, String version,
                                                                      int limit, long offset) {
+        return findClaimsByProjectVersionPageInternal(projectId, version, limit, offset,
+                "order by c.source_type,c.subject,c.claim_id", null);
+    }
+
+    /**
+     * 仅已发布 Claim 的投影分页查询（高：Review 2——旧实现不检查
+     * knowledge_document_version.status 也不关联 knowledge_active_version，
+     * 导入器以 DRAFT 创建的资料版本也会进入 ACTIVE Claim 向量代际）。
+     * 双重治理边界：文档版本 PUBLISHED + 业务版本存在 active manifest 记录
+     * （manifest 状态为 PUBLISHED 或 ROLLED_BACK 均可——回滚恢复的是此前已发布的文档）。
+     */
+    public List<KnowledgeClaimRecord> findPublishedClaimsByProjectVersionPage(String projectId, String version,
+                                                                              int limit, long offset) {
+        return findClaimsByProjectVersionPageInternal(projectId, version, limit, offset,
+                "order by c.source_type,c.subject,c.claim_id",
+                """
+                and d.status='PUBLISHED'
+                and exists (select 1 from knowledge_active_version av
+                            where av.project_id=c.project_id and av.business_version=d.business_version)
+                """);
+    }
+
+    private List<KnowledgeClaimRecord> findClaimsByProjectVersionPageInternal(String projectId, String version,
+                                                                               int limit, long offset,
+                                                                               String orderClause,
+                                                                               String extraFilter) {
         List<KnowledgeClaimRecord> result = new ArrayList<>();
         String sql = """
                 select c.claim_id,c.project_id,c.document_version_id,c.source_type,c.authority,c.fact_key,
@@ -1924,7 +2029,7 @@ public class MultiSourceKnowledgeStore {
                 from knowledge_claim c
                 join knowledge_document_version d on d.document_version_id = c.document_version_id
                 where c.project_id=? and d.business_version=?
-                order by c.source_type,c.subject""";
+                """ + (extraFilter == null ? "" : extraFilter) + orderClause;
         if (limit > 0 && limit < Integer.MAX_VALUE) {
             sql += " limit ? offset ?";
         }

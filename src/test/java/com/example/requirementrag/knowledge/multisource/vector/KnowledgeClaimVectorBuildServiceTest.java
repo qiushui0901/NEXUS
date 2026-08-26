@@ -24,9 +24,11 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -39,8 +41,10 @@ import static org.mockito.Mockito.when;
  */
 class KnowledgeClaimVectorBuildServiceTest {
 
-    /** 与生产一致的 scope 化 live alias（properties.liveAlias("proj-1","v1")）。 */
-    private static final String LIVE_ALIAS = "knowledge_claims_live-proj-1-v1";
+    /** 与生产一致的 scope 化 live alias（properties.liveAlias("proj-1","v1")，含稳定 hash 后缀）。 */
+    private String liveAlias() {
+        return properties.liveAlias("proj-1", "v1");
+    }
 
     @TempDir
     Path tempDir;
@@ -82,7 +86,7 @@ class KnowledgeClaimVectorBuildServiceTest {
 
     /** 分页读取桩：第一页返回给定 Claims，后续 offset 默认空列表终止流式循环。 */
     private void stubClaims(List<KnowledgeClaimRecord> claims) {
-        when(knowledgeStore.findClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(0L)))
+        when(knowledgeStore.findPublishedClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(0L)))
                 .thenReturn(claims);
     }
 
@@ -116,13 +120,13 @@ class KnowledgeClaimVectorBuildServiceTest {
         assertThat(result.expectedPointCount()).isEqualTo(2);
         assertThat(result.indexedPointCount()).isEqualTo(2);
         // 高（Review 2）：物理 collection 与 alias 均按 scope 隔离
-        assertThat(result.physicalCollection()).startsWith(LIVE_ALIAS + "-");
+        assertThat(result.physicalCollection()).startsWith(liveAlias() + "-");
 
         // 验证 Qdrant 调用：建集合 + 分块追加 + 校验点数 + scope 化 alias 切换
         verify(qdrantStore).createCollectionIfAbsent(anyString(), eq(8));
         verify(qdrantStore).appendPoints(anyString(), anyList(), anyList());
         verify(qdrantStore).verifyPointCount(anyString(), eq(2));
-        verify(qdrantStore).switchAlias(eq(LIVE_ALIAS), anyString());
+        verify(qdrantStore).switchAlias(eq(liveAlias()), anyString());
     }
 
     @Test
@@ -163,9 +167,9 @@ class KnowledgeClaimVectorBuildServiceTest {
                 claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a"));
         List<KnowledgeClaimRecord> page2 = List.of(
                 claim("c-2", SourceType.PARAMETER_TABLE, "参数B", "fk-b"));
-        when(knowledgeStore.findClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(0L)))
+        when(knowledgeStore.findPublishedClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(0L)))
                 .thenReturn(page1);
-        when(knowledgeStore.findClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(1L)))
+        when(knowledgeStore.findPublishedClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(1L)))
                 .thenReturn(page2);
 
         // 分块嵌入：两个 chunk 各 1 条
@@ -182,11 +186,12 @@ class KnowledgeClaimVectorBuildServiceTest {
 
         assertThat(result.expectedPointCount()).isEqualTo(2);
         assertThat(result.indexedPointCount()).isEqualTo(2);
-        // 两 DB 页合成 2 条 composed → 单个嵌入分块（EMBED_CHUNK_SIZE=64）；
-        // 关键断言：确认流式读取真的越过了第二页（offset 1），而不是一次性全量加载
-        verify(embeddingBatcher, times(1)).embedAll(any());
-        verify(knowledgeStore).findClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(0L));
-        verify(knowledgeStore).findClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(1L));
+        // 两 DB 页合成 2 条 composed → 每页一个嵌入分块（EMBED_CHUNK_SIZE=64），共 2 次嵌入；
+        // 关键断言：确认流式读取真的越过了第二页（offset 1），而不是一次性全量加载；
+        // 两遍流式会各读两页，故用 atLeastOnce() 验证 offset 0/1 均被读取。
+        verify(embeddingBatcher, times(2)).embedAll(any());
+        verify(knowledgeStore, atLeastOnce()).findPublishedClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(0L));
+        verify(knowledgeStore, atLeastOnce()).findPublishedClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(1L));
         verify(qdrantStore).verifyPointCount(anyString(), eq(2));
     }
 
@@ -271,6 +276,51 @@ class KnowledgeClaimVectorBuildServiceTest {
         assertThat(gen.get().warningsJson()).contains("KNOWLEDGE_CLAIM_VECTOR_ALIAS_SWITCH_FAILED");
     }
 
+    @Test
+    void markActiveFailureRollsAliasBackToPreviousTarget() {
+        // 高（Review 4）：markActive（SQLite 权威提交）失败时 Qdrant alias 已切到新代际——
+        // 必须补偿把 alias 切回前序目标，消除 SQLite/Qdrant 分叉窗口。
+        SQLiteKnowledgeClaimVectorStore spyStore = spy(vectorStore);
+        doThrow(new RuntimeException("SQLite busy"))
+                .when(spyStore).markActive(anyString(), anyString());
+        KnowledgeClaimVectorBuildService spyBuildService = new KnowledgeClaimVectorBuildService(
+                knowledgeStore, spyStore, qdrantStore, textComposer,
+                embeddingBatcher, embeddingModel, properties);
+        stubClaims(List.of(claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a")));
+        stubEmbeddings();
+        String previousTarget = "old-collection-1";
+        when(qdrantStore.aliasTarget(eq(liveAlias()))).thenReturn(previousTarget);
+
+        assertThatThrownBy(() -> spyBuildService.build("proj-1", "v1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("代际激活失败");
+
+        // 补偿：alias 已切回前序目标；SQLite 无 ACTIVE
+        verify(qdrantStore).rollbackAlias(eq(liveAlias()), eq(previousTarget));
+        assertThat(spyStore.findActiveGeneration("proj-1", "v1")).isEmpty();
+    }
+
+    @Test
+    void secondPassDriftFailsGeneration() {
+        // 高（Review 8）：两遍流式读取间数据漂移（第一遍统计 2 条，第二遍只读回 1 条）
+        // 必须拒绝发布，避免 manifest 计数与实际投影不一致。
+        when(knowledgeStore.findPublishedClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(0L)))
+                .thenReturn(List.of(
+                        claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a"),
+                        claim("c-2", SourceType.PARAMETER_TABLE, "参数B", "fk-b")))
+                .thenReturn(List.of(claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a")));
+        stubEmbeddings();
+
+        assertThatThrownBy(() -> buildService.build("proj-1", "v1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("漂移");
+
+        verify(qdrantStore, never()).switchAlias(anyString(), anyString());
+        Optional<ClaimVectorGenerationManifest> gen = vectorStore.findLatestGeneration("proj-1", "v1");
+        assertThat(gen).isPresent();
+        assertThat(gen.get().status()).isEqualTo(GenerationStatus.FAILED);
+    }
+
     // ── 边界 ──────────────────────────────────────────────────────────
 
     @Test
@@ -310,7 +360,7 @@ class KnowledgeClaimVectorBuildServiceTest {
         assertThat(restored.get().status()).isEqualTo(GenerationStatus.ACTIVE);
 
         // Qdrant alias 按 scope 化切回旧 collection
-        verify(qdrantStore).rollbackAlias(eq(LIVE_ALIAS), eq(first.physicalCollection()));
+        verify(qdrantStore).rollbackAlias(eq(liveAlias()), eq(first.physicalCollection()));
     }
 
     @Test
@@ -346,7 +396,7 @@ class KnowledgeClaimVectorBuildServiceTest {
         Optional<ClaimVectorGenerationManifest> active = buildService.findActive("proj-1", "v1");
         assertThat(active).isPresent();
         assertThat(active.get().generationId()).isEqualTo(first.generationId());
-        verify(qdrantStore).rollbackAlias(eq(LIVE_ALIAS), eq(first.physicalCollection()));
+        verify(qdrantStore).rollbackAlias(eq(liveAlias()), eq(first.physicalCollection()));
     }
 
     @Test

@@ -162,8 +162,14 @@ public class KnowledgeClaimVectorQdrantStore {
                     .body(request)
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {});
+            // 高（Review 2）：真实 Qdrant /points/query 响应结构为 {"result":{"points":[...]}}
+            // 而非顶层数组；与 QdrantHybridStore.extractScoredPoints 保持一致——
+            // result 为对象时取 points 列表，兜底兼容个别直接返回数组的场景。
+            Object result = response == null ? null : response.get("result");
+            Map<String, Object> resultMap = map(result);
+            Object points = resultMap.isEmpty() ? result : resultMap.get("points");
             List<ClaimVectorHit> hits = new ArrayList<>();
-            for (Object raw : list(response == null ? null : response.get("result"))) {
+            for (Object raw : list(points)) {
                 Map<String, Object> entry = map(raw);
                 KnowledgeClaimVectorPoint point = toPoint(raw);
                 double score = entry.get("score") instanceof Number n ? n.doubleValue() : 0.0;

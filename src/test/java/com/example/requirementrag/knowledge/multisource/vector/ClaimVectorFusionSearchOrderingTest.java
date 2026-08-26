@@ -52,7 +52,13 @@ class ClaimVectorFusionSearchOrderingTest {
     @TempDir
     Path tempDir;
 
-    private static final String LIVE_ALIAS = "knowledge_claims_live-proj-1-v1";
+    /** 与生产一致的 scope 化 live alias（properties.liveAlias("proj-1","v1")，含稳定 hash 后缀）。 */
+    private static final String LIVE_ALIAS =
+            new KnowledgeClaimVectorProperties(
+                    true, true, true, true,
+                    "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
+                    200, 3, 32, 3, 2, null)
+                    .liveAlias("proj-1", "v1");
 
     private SQLiteKnowledgeClaimVectorStore vectorStore;
     private KnowledgeClaimVectorQdrantStore qdrantStore;
@@ -177,5 +183,34 @@ class ClaimVectorFusionSearchOrderingTest {
         assertThat(response.claims()).hasSize(1);
         assertThat(response.claims().get(0).claimId()).isEqualTo("c-req");
         assertThat(response.claims().get(0).sourceType()).isEqualTo(SourceType.REQUIREMENT);
+    }
+
+    /**
+     * 高（Review 7）：语义适配器的诊断与构建代际 ids 必须回传 API——
+     * 无活跃代际时不因零命中而丢失 NO_ACTIVE_GENERATION 警告，也不丢失 buildIds。
+     */
+    @Test
+    void vectorAdapterDiagnosticsAndBuildIdsPropagateToResponse() {
+        when(vectorStore.findActiveGeneration("proj-1", "v1")).thenReturn(Optional.empty());
+        when(qdrantStore.search(anyString(), any(), anyInt())).thenReturn(List.of());
+
+        MultiSourceSearchResponse response = searchService.search(
+                "proj-1", "v1", "登录", KnowledgeQueryIntent.NORMATIVE, 20, 0);
+
+        assertThat(response.warnings())
+                .anySatisfy(w -> assertThat(w).contains("CLAIM_VECTOR_NO_ACTIVE_GENERATION"));
+    }
+
+    /**
+     * 高（Review 7）：向量候选实际命中的构建代际 ids 进入响应 semanticBuildIds——
+     * 即使结构化候选为空，语义来源的 generation id 也不丢失。
+     */
+    @Test
+    void vectorAdapterBuildIdsPropagateWhenCandidatesEmpty() {
+        // 查询为空：适配器返回空候选但携带 active generationId（命中前即返回）
+        MultiSourceSearchResponse response = searchService.search(
+                "proj-1", "v1", "", KnowledgeQueryIntent.NORMATIVE, 20, 0);
+
+        assertThat(response.semanticBuildIds()).contains("gen-1");
     }
 }

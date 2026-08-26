@@ -68,6 +68,18 @@ Reviews 定位 10 项问题（8 High 2 Medium），全部修复，全量 990 tes
 - **Medium·enabled 真正总开关 + 运维 API 落地**：BuildService/Adapter/ShadowEvaluator 条件加 `enabled`（enabled=false 全部不装配）；新增 `ClaimVectorAdminController`（POST /build、GET /status、GET /quality-gate、POST /rollback、POST /rollback-to，enabled=true 才装配），运维手册引用的端点与 `rollbackTo` 全部真实存在。（Review 10）
 - **新增测试 11 例**：BuildService 多页流式读取、verify 点数失败、alias 切换失败 FAILED 非 ACTIVE、rollbackTo（未知代际/跨 scope/非 RETIRED）共 4 例；Qdrant 命名向量请求体协议 1 例；条件 Bean 装配 3 例；主搜索端到端（gate 过滤 REJECTED 向量候选、融合分数排序、单次加载、意图过滤 DOUBT）3 例。全量 990 tests 通过。
 
+### Fixed（0.9.6 — Claim 向量投影 Review 第二批次）
+
+Reviews 定位 8 项问题（6 High 2 Medium），全部修复，全量 997 tests 通过：
+
+- **High·投影只读已发布资料**（`MultiSourceKnowledgeStore`）：旧投影查询只按 project+版本过滤，不检查 `knowledge_document_version.status` 也不关联 `knowledge_active_version`——导入器以 DRAFT 创建的资料版本会进入 ACTIVE Claim 向量代际。新增 `findPublishedClaimsByProjectVersionPage`（文档版本 PUBLISHED + 业务版本存在 active manifest 记录，双治理边界），构建服务改用它；`publishDocumentVersion` 同步把资料版本标记 PUBLISHED（替换语义：上一发布者降回 DRAFT），`rollbackActiveVersion` 降级被替换版本并提升目标。（Review 2）
+- **High·融合不再绕过词法门槛**（`MultiSourceSearchService.search`）：融合给直接候选固定 lexScore=1.0，向量一次命中会让该意图下所有参数/测试等 Claim 拿融合分数进入排序/冲突分析/totalCount。改为融合前按词法相关性（base>0）过滤直接候选，融合分数只影响排序不决定准入。（Review 3）
+- **High·构建/回滚分叉窗口补偿**（`KnowledgeClaimVectorBuildService`）：markActive（SQLite 权威提交）失败时 Qdrant alias 已切到新代际；回滚时 SQLite 已提交而 alias 切换失败。两条路径补补偿：markActive 失败把 alias 切回前序目标；rollbackAlias 失败把 SQLite 恢复到原 ACTIVE 代际。检索端适配器新增投影代际一致性校验——命中点代际 != SQLite ACTIVE 代际时丢弃（fail-close），杜绝把分叉数据登记到错误代际身份。（Review 4）
+- **High·运维 API 装配条件对齐**（`ClaimVectorAdminController`）：旧装配条件只要求 enabled=true 却强依赖需 enabled+build-enabled 的 BuildService——候选/影子阶段（enabled=true+build-enabled=false）应用启动失败。改为 `enabled`+`build-enabled` 双条件，与强依赖对齐。（Review 5）
+- **High·语义适配器诊断回传 API**（`MultiSourceSearchService.search`）：NO_ACTIVE_GENERATION/嵌入失败等诊断与本次实际读取的构建代际 ids 此前被丢弃。融合路径现在把 `scoredVectorLoad.warnings()` 与 `buildIds()` 合并进响应 warnings/semanticBuildIds——不因零命中或跳过融合而丢失。（Review 7）
+- **Medium·两遍流式 + 漂移保护**（`KnowledgeClaimVectorBuildService`）：第一遍仍全量驻留文本+输入（仅向量被释放）。改为两遍流式：第一遍只收轻量输入（claimId/docVersion/textHash/updatedAt）算指纹，第二遍重读分页组合文本→分块嵌入→逐块写点，任一时刻内存仅一页+一块；两遍读取间数据漂移（分页带唯一 claim_id 尾排序，边界确定）则拒绝发布并标记 FAILED。（Review 8）
+- **新增测试 7 例**：发布标记资料版本 PUBLISHED、已发布投影排除 DRAFT+scope/版本隔离、回滚降级上一发布者并提升目标（Review 2）3 例；markActive 失败补偿回滚 alias、两遍漂移 FAILED（Review 4/8）2 例；语义适配器诊断与 buildIds 回传（Review 7）2 例。全量 997 tests 通过。
+
 ## 0.9.5 — 2026-08-25
 
 ### Added
