@@ -17,6 +17,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -70,39 +71,60 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
     @Override
     public CandidateLoad loadDetailed(String projectId, String version, String query,
                                       KnowledgeQueryIntent intent) {
+        return doSearch(projectId, version, query).load();
+    }
+
+    /**
+     * 带分加载——返回 Qdrant 原始 cosine 分数供 {@link KnowledgeClaimVectorFusion} 融合使用。
+     *
+     * <p>仅在融合路径调用；普通 {@link #loadDetailed} 不携带分数。
+     *
+     * @return 带分候选载荷（scores: claimId → Qdrant 原始分数）
+     */
+    public KnowledgeClaimVectorFusion.ScoredCandidateLoad loadScored(
+            String projectId, String version, String query) {
+        SearchResult result = doSearch(projectId, version, query);
+        return new KnowledgeClaimVectorFusion.ScoredCandidateLoad(result.load(), result.scores());
+    }
+
+    /**
+     * 核心检索逻辑——返回候选载荷 + Qdrant 原始分数映射。
+     */
+    private SearchResult doSearch(String projectId, String version, String query) {
         if (!properties.candidateRetrievalEnabled()) {
-            return new CandidateLoad(List.of(),
+            return new SearchResult(new CandidateLoad(List.of(),
                     List.of("CLAIM_VECTOR_CANDIDATE_RETRIEVAL_DISABLED:Claim 向量候选检索已关闭（candidate-retrieval-enabled=false），本次结果不含向量召回候选"),
-                    List.of());
+                    List.of()), Map.of());
         }
 
         Optional<ClaimVectorGenerationManifest> active =
                 vectorStore.findActiveGeneration(projectId, version);
         if (active.isEmpty()) {
-            return new CandidateLoad(List.of(),
+            return new SearchResult(new CandidateLoad(List.of(),
                     List.of("CLAIM_VECTOR_NO_ACTIVE_GENERATION:项目 " + safe(projectId)
                             + " 版本 " + safe(version) + " 无活跃 Claim 向量代际，跳过向量召回"),
-                    List.of());
+                    List.of()), Map.of());
         }
 
         if (query == null || query.isBlank()) {
-            return new CandidateLoad(List.of(), List.of(), List.of(active.get().generationId()));
+            return new SearchResult(new CandidateLoad(List.of(), List.of(),
+                    List.of(active.get().generationId())), Map.of());
         }
 
         try {
             List<float[]> embeddings = embeddingBatcher.embedAll(List.of(query));
             if (embeddings.isEmpty() || embeddings.get(0).length == 0) {
-                return new CandidateLoad(List.of(),
+                return new SearchResult(new CandidateLoad(List.of(),
                         List.of("CLAIM_VECTOR_EMBEDDING_EMPTY:查询嵌入为空，跳过向量召回"),
-                        List.of(active.get().generationId()));
+                        List.of(active.get().generationId())), Map.of());
             }
             float[] queryVector = embeddings.get(0);
 
             int limit = properties.candidateLimit() * properties.overFetchFactor();
             List<ClaimVectorHit> hits = qdrantStore.search(properties.alias(), queryVector, limit);
             if (hits.isEmpty()) {
-                return new CandidateLoad(List.of(), List.of(),
-                        List.of(active.get().generationId()));
+                return new SearchResult(new CandidateLoad(List.of(), List.of(),
+                        List.of(active.get().generationId())), Map.of());
             }
 
             List<String> claimIds = hits.stream().map(ClaimVectorHit::claimId).toList();
@@ -110,6 +132,7 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
                     .collect(Collectors.toMap(KnowledgeClaimRecord::claimId, Function.identity(), (a, b) -> a));
 
             List<UnifiedKnowledgeClaim> candidates = new ArrayList<>();
+            Map<String, Double> scores = new LinkedHashMap<>();
             int staleCount = 0;
             for (ClaimVectorHit hit : hits) {
                 KnowledgeClaimRecord record = records.get(hit.claimId());
@@ -118,23 +141,27 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
                     continue;
                 }
                 candidates.add(toUnified(record, version));
+                scores.put(hit.claimId(), hit.score());
             }
             if (staleCount > 0) {
                 LOGGER.warn("CLAIM_VECTOR_STALE_HITS project={} version={} stale={}/{}",
                         safe(projectId), safe(version), staleCount, hits.size());
             }
 
-            return new CandidateLoad(List.copyOf(candidates), List.of(),
-                    List.of(active.get().generationId()));
+            return new SearchResult(new CandidateLoad(List.copyOf(candidates), List.of(),
+                    List.of(active.get().generationId())), scores);
         } catch (RuntimeException exception) {
             LOGGER.warn("CLAIM_VECTOR_SEARCH_FAILED project={} version={} error={}",
                     safe(projectId), safe(version), exception.getClass().getSimpleName());
-            return new CandidateLoad(List.of(),
+            return new SearchResult(new CandidateLoad(List.of(),
                     List.of("CLAIM_VECTOR_SEARCH_FAILED:向量检索失败，跳过向量召回（"
                             + exception.getClass().getSimpleName() + ")"),
-                    List.of(active.get().generationId()));
+                    List.of(active.get().generationId())), Map.of());
         }
     }
+
+    /** 检索结果——候选载荷 + Qdrant 分数。 */
+    private record SearchResult(CandidateLoad load, Map<String, Double> scores) {}
 
     private UnifiedKnowledgeClaim toUnified(KnowledgeClaimRecord record, String version) {
         return new UnifiedKnowledgeClaim(

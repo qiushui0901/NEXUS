@@ -15,7 +15,12 @@ import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeMode
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
+
+import com.example.requirementrag.knowledge.multisource.vector.ClaimVectorCandidateAdapter;
+import com.example.requirementrag.knowledge.multisource.vector.ClaimVectorShadowEvaluator;
+import com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVectorFusion;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -46,6 +51,9 @@ public class MultiSourceSearchService {
     private final KnowledgeQueryIntentLlmFallback intentFallback;
     private final MultiSourceKnowledgeProperties properties;
     private final CrossSourceRelationConfirmer relationConfirmer;
+    private final KnowledgeClaimVectorFusion claimVectorFusion;
+    private final ClaimVectorShadowEvaluator shadowEvaluator;
+    private final ClaimVectorCandidateAdapter claimVectorAdapter;
 
     private static final KnowledgeQueryIntentLlmFallback NO_OP_FALLBACK = query -> Optional.empty();
     private static final CrossSourceRelationConfirmer NO_OP_CONFIRMER =
@@ -62,7 +70,10 @@ public class MultiSourceSearchService {
                                     CrossSourceRelationExtractor relationExtractor,
                                     KnowledgeQueryIntentLlmFallback intentFallback,
                                     MultiSourceKnowledgeProperties properties,
-                                    CrossSourceRelationConfirmer relationConfirmer) {
+                                    CrossSourceRelationConfirmer relationConfirmer,
+                                    @Nullable KnowledgeClaimVectorFusion claimVectorFusion,
+                                    @Nullable ClaimVectorShadowEvaluator shadowEvaluator,
+                                    @Nullable ClaimVectorCandidateAdapter claimVectorAdapter) {
         this.store = store;
         this.classifier = classifier;
         this.gate = gate;
@@ -73,6 +84,9 @@ public class MultiSourceSearchService {
         this.intentFallback = intentFallback == null ? NO_OP_FALLBACK : intentFallback;
         this.properties = properties == null ? MultiSourceKnowledgeProperties.enabledDefault() : properties;
         this.relationConfirmer = relationConfirmer == null ? NO_OP_CONFIRMER : relationConfirmer;
+        this.claimVectorFusion = claimVectorFusion;
+        this.shadowEvaluator = shadowEvaluator;
+        this.claimVectorAdapter = claimVectorAdapter;
     }
 
     /** 测试/离线场景无 LLM 回退、灰度配置与关系确认器时的兼容构造器（默认启用）。 */
@@ -84,7 +98,8 @@ public class MultiSourceSearchService {
                                     List<MultiSourceCandidateAdapter> adapters,
                                     CrossSourceRelationExtractor relationExtractor) {
         this(store, classifier, gate, sourceFilter, conflictAnalyzer, adapters, relationExtractor,
-                NO_OP_FALLBACK, MultiSourceKnowledgeProperties.enabledDefault(), NO_OP_CONFIRMER);
+                NO_OP_FALLBACK, MultiSourceKnowledgeProperties.enabledDefault(), NO_OP_CONFIRMER,
+                null, null, null);
     }
 
     /** 测试/离线场景无关系确认器时的兼容构造器。 */
@@ -98,7 +113,7 @@ public class MultiSourceSearchService {
                                     KnowledgeQueryIntentLlmFallback intentFallback,
                                     MultiSourceKnowledgeProperties properties) {
         this(store, classifier, gate, sourceFilter, conflictAnalyzer, adapters, relationExtractor,
-                intentFallback, properties, NO_OP_CONFIRMER);
+                intentFallback, properties, NO_OP_CONFIRMER, null, null, null);
     }
 
     /** 测试/离线场景无适配器时的兼容构造器。 */
@@ -152,6 +167,28 @@ public class MultiSourceSearchService {
                 .stream()
                 .filter(claim -> gate.isRetrievable(claim.status()))
                 .toList();
+        // Phase D：确定性融合——向量候选与结构化候选按 claimId 去重 + 加权评分 + 稳定排序。
+        // 融合发生在 gate 过滤之后、冲突分析与评分之前，确保去重后的候选集进入完整治理管道。
+        Set<String> vectorClaimIds = Set.of();
+        if (claimVectorAdapter != null && claimVectorFusion != null
+                && allowedSources.contains(SourceType.CLAIM_VECTOR)) {
+            KnowledgeClaimVectorFusion.ScoredCandidateLoad scoredVectorLoad =
+                    claimVectorAdapter.loadScored(projectId, version, query);
+            // 影子模式：记录向量 vs 结构化对比指标，不影响主检索路径
+            if (shadowEvaluator != null) {
+                shadowEvaluator.recordQuery(projectId, version, query,
+                        scoredVectorLoad.claims(), candidates, 0);
+            }
+            if (!scoredVectorLoad.claims().isEmpty()) {
+                KnowledgeClaimVectorFusion.FusionResult fusionResult =
+                        claimVectorFusion.fuse(scoredVectorLoad, candidates, query);
+                candidates = fusionResult.candidates();
+                vectorClaimIds = scoredVectorLoad.scores().keySet();
+                if (fusionResult.duplicateRemovedCount() > 0) {
+                    warnings.add("CLAIM_VECTOR_FUSION_DEDUP:" + fusionResult.duplicateRemovedCount());
+                }
+            }
+        }
         List<String> tokens = tokenize(query);
         String normalizedQuery = query == null ? "" : query.toLowerCase(Locale.ROOT);
         Set<String> conflictGroups = conflictAnalyzer.conflictGroups(candidates);
@@ -161,8 +198,13 @@ public class MultiSourceSearchService {
         for (UnifiedKnowledgeClaim claim : candidates) {
             double base = score(claim, normalizedQuery, tokens);
             double penalty = conflictPenalty(claim, conflictGroups);
-            if (normalizedQuery.isEmpty() || base > 0) {
-                scored.add(new ScoredClaim(claim, Math.max(0, base - penalty)));
+            // 向量候选即使文本匹配为 0 也保留（语义召回不依赖词面命中），给子最低分避免完全过滤
+            if (normalizedQuery.isEmpty() || base > 0 || vectorClaimIds.contains(claim.claimId())) {
+                double score = Math.max(0, base - penalty);
+                if (score == 0 && vectorClaimIds.contains(claim.claimId())) {
+                    score = 0.01; // 向量召回但无文本匹配的候选给最低分，排在文本命中之后
+                }
+                scored.add(new ScoredClaim(claim, score));
             }
         }
         List<UnifiedKnowledgeClaim> claims = scored.stream()

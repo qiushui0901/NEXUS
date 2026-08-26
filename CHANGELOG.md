@@ -32,6 +32,17 @@
 - **Claim 向量候选适配器**（`ClaimVectorCandidateAdapter`）：`@Component`+`@ConditionalOnProperty("candidate-retrieval-enabled")`，实现 `MultiSourceCandidateAdapter`。流水线：findActiveGeneration→embedAll→qdrantStore.search→findClaimsByIds 水化→过滤 stale 命中（Qdrant 有但 SQLite 已删除的 Claim 被跳过）→转换 UnifiedKnowledgeClaim。返回 `CandidateLoad(claims, warnings, buildIds=[generationId])`。候选保留原始 sourceType（REQUIREMENT/PARAMETER_TABLE/TEST_CASE/DOUBT），不使用 CLAIM_VECTOR——与直接加载的候选按 equals 自然去重，向量只补充直接加载未命中的 Claim。失败模式：配置关闭返回稳定警告码；无活跃代际返回警告+空候选；嵌入失败返回警告+空候选+buildIds；Qdrant 故障返回警告不抛异常；零命中返回空候选+buildIds。
 - **测试**：新增 13 例——适配器 9 例（sourceType=CLAIM_VECTOR、happy path 水化+buildIds、stale 命中过滤、配置关闭警告+不调 Qdrant、无活跃代际警告、空 query 返回空+buildIds、Qdrant 故障不抛异常、零命中、保留原始 sourceType 不用 CLAIM_VECTOR）；Qdrant store 4 例（search 空 alias/空向量/null 向量抛异常、ClaimVectorHit record 字段可访问）。全量 942 tests 通过。
 
+### Added（0.9.6 — Phase D：确定性融合与影子模式）
+
+实现 0.9.6 方案 Phase D（§10），新增确定性融合组件、影子评估器与 MultiSourceSearchService 集成：
+
+- **确定性融合组件**（`KnowledgeClaimVectorFusion`）：@Component，按 claimId 去重 + 加权评分 + 稳定排序。融合公式 `0.55*normalizedVectorScore + 0.25*lexicalFieldScore + 0.10*sourcePolicyWeight + 0.10*exactFactOrSubjectBoost - existingConflictPenalty`。向量分数 min-max 归一化；直接候选词法分数=1.0；来源策略权重 PRIMARY=1.0/SECONDARY=0.8/DERIVED=0.6；精确命中 factKey 或 subject 加分；CONFLICTED 状态扣分。稳定排序 `score desc → sourceType → factKey → claimId`。`ScoredCandidateLoad(CandidateLoad, Map<String,Double> scores)` 带分载荷。`FusionResult(candidates, vectorHitCount, directHitCount, duplicateRemovedCount, fusionWeightsSnapshot)`。
+- **影子评估器**（`ClaimVectorShadowEvaluator`）：@Component+@ConditionalOnProperty("shadow-query-enabled")。记录每次查询的向量命中数、结构化命中数、重合数、响应时间，按 projectId+version 聚合统计。`publishIfReady` 判断——需至少 20 条影子查询且向量新增召回比例 ≥ 30%。不影响主检索路径。
+- **MultiSourceSearchService 集成**：search() 方法在 loadCandidates+gate 过滤之后、冲突分析+评分之前插入融合步骤。当 CLAIM_VECTOR 在 allowedSources 且适配器已注册时：调用 `claimVectorAdapter.loadScored()` 获取带分向量候选 → `shadowEvaluator.recordQuery()` 记录对比指标 → `claimVectorFusion.fuse()` 合并去重 → 替换候选列表。向量候选即使文本评分为 0 也保留（给最低分 0.01 排在文本命中之后）。三个新依赖 `@Nullable` 注入（条件 bean 可能未注册）。
+- **SourceFilterStrategy 扩展**：CLAIM_VECTOR 加入所有非 DOUBT 意图（NORMATIVE/VALIDATION/PARAMETER/CONSISTENCY/IMPACT/GENERAL），与 REQUIREMENT_SEMANTIC 平级。DOUBT 意图排除 CLAIM_VECTOR（只查存疑事实不查语义近似）。
+- **ClaimVectorCandidateAdapter 扩展**：新增 `loadScored()` 方法返回 `ScoredCandidateLoad`（候选 + Qdrant 原始分数映射），供融合组件使用。重构 `loadDetailed` 复用 `doSearch` 内部方法。
+- **测试**：新增 27 例——融合组件 13 例（空输入、向量归一化、去重、稳定排序、冲突惩罚、精确命中、权重配置、统计字段、ScoredCandidateLoad）；影子评估器 11 例（空结果、非空结果、scope 隔离、多查询聚合、publishIfReady 阈值、recentQueries 上限）；SourceFilterStrategy 3 例（CLAIM_VECTOR 在非 DOUBT 意图中、DOUBT 排除、REQUIREMENT_SEMANTIC 仍在）。全量 969 tests 通过。
+
 ## 0.9.5 — 2026-08-25
 
 ### Added
