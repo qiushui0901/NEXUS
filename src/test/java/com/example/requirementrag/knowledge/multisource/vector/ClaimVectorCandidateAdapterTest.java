@@ -5,6 +5,8 @@ import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeClaimRecord;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeStore;
 import com.example.requirementrag.knowledge.multisource.MultiSourceCandidateAdapter.CandidateLoad;
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels;
+import com.example.requirementrag.knowledge.multisource.SourceFilterStrategy;
 import com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVectorModels.ClaimVectorGenerationManifest;
 import com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVectorModels.GenerationStatus;
 import com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVectorQdrantStore.ClaimVectorHit;
@@ -36,6 +38,7 @@ class ClaimVectorCandidateAdapterTest {
     private SQLiteKnowledgeClaimVectorStore vectorStore;
     private KnowledgeClaimVectorQdrantStore qdrantStore;
     private EmbeddingBatcher embeddingBatcher;
+    private SourceFilterStrategy sourceFilter;
     private KnowledgeClaimVectorProperties properties;
     private ClaimVectorCandidateAdapter adapter;
 
@@ -45,12 +48,13 @@ class ClaimVectorCandidateAdapterTest {
         vectorStore = mock(SQLiteKnowledgeClaimVectorStore.class);
         qdrantStore = mock(KnowledgeClaimVectorQdrantStore.class);
         embeddingBatcher = mock(EmbeddingBatcher.class);
+        sourceFilter = new SourceFilterStrategy();
         properties = new KnowledgeClaimVectorProperties(
                 true, true, true, true,
                 "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
                 200, 3, 32, 3, 2, tempDir.resolve("test-adapter.db").toString());
         adapter = new ClaimVectorCandidateAdapter(
-                knowledgeStore, vectorStore, qdrantStore, embeddingBatcher, properties);
+                knowledgeStore, vectorStore, qdrantStore, embeddingBatcher, sourceFilter, properties);
     }
 
     private KnowledgeClaimRecord claim(String id, SourceType type) {
@@ -96,7 +100,7 @@ class ClaimVectorCandidateAdapterTest {
                 .thenReturn(Optional.of(activeManifest()));
         when(embeddingBatcher.embedAll(List.of("登录")))
                 .thenReturn(List.of(new float[]{0.1f, 0.2f}));
-        when(qdrantStore.search(eq("knowledge_claims_live"), any(), anyInt()))
+        when(qdrantStore.search(eq("knowledge_claims_live-proj-1-v1"), any(), anyInt()))
                 .thenReturn(List.of(
                         hit("c-1", 0.95),
                         hit("c-2", 0.80)));
@@ -146,7 +150,7 @@ class ClaimVectorCandidateAdapterTest {
                 "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
                 200, 3, 32, 3, 2, tempDir.resolve("test-disabled.db").toString());
         adapter = new ClaimVectorCandidateAdapter(
-                knowledgeStore, vectorStore, qdrantStore, embeddingBatcher, properties);
+                knowledgeStore, vectorStore, qdrantStore, embeddingBatcher, sourceFilter, properties);
 
         CandidateLoad loaded = adapter.loadDetailed("proj-1", "v1", "登录", null);
 

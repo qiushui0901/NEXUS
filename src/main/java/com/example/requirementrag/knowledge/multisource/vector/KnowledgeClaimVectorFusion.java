@@ -122,6 +122,12 @@ public class KnowledgeClaimVectorFusion {
         List<UnifiedKnowledgeClaim> fused = scoredClaims.stream()
                 .map(ScoredClaim::claim)
                 .toList();
+        // 高（Review 5）：分数随结果返回，供 SearchService 直接用融合分数参与最终排序——
+        // 向量相似度不再被丢弃（旧实现排序后只留 Claim，向量权重形同虚设）。
+        Map<String, Double> fusionScores = new LinkedHashMap<>();
+        for (ScoredClaim s : scoredClaims) {
+            fusionScores.put(s.claim().claimId(), s.score());
+        }
 
         String weightsSnapshot = String.format(
                 "vec=%.2f,lex=%.2f,policy=%.2f,exact=%.2f",
@@ -132,7 +138,8 @@ public class KnowledgeClaimVectorFusion {
                 vecClaims.size(),
                 direct.size(),
                 duplicateRemoved,
-                weightsSnapshot);
+                weightsSnapshot,
+                fusionScores);
     }
 
     // ── 内部计算 ──────────────────────────────────────────────────────
@@ -256,17 +263,21 @@ public class KnowledgeClaimVectorFusion {
     }
 
     /**
-     * 融合结果——去重+加权+稳定排序后的候选列表 + 来源统计。
+     * 融合结果——去重+加权+稳定排序后的候选列表 + 来源统计 + 逐候选融合分数。
+     *
+     * @param scores claimId → 融合 finalScore（高：Review 5——供 SearchService 用于最终排序）
      */
     public record FusionResult(
             List<UnifiedKnowledgeClaim> candidates,
             int vectorHitCount,
             int directHitCount,
             int duplicateRemovedCount,
-            String fusionWeightsSnapshot
+            String fusionWeightsSnapshot,
+            Map<String, Double> scores
     ) {
         public FusionResult {
             candidates = candidates != null ? candidates : List.of();
+            scores = scores != null ? scores : Map.of();
         }
     }
 }

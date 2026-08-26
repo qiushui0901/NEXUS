@@ -52,6 +52,22 @@
 - **发布决策记录**（`docs/claim-vector-rollout-decision-record.md`）：发布范围与前置条件清单、灰度发布 6 阶段计划（关闭→构建→影子→候选→融合→正式）、回滚预案与触发条件、融合权重决策与风险评估、代码组件清单。
 - **测试**：新增 10 例——质量门 10 例（无活跃代际失败、全检查通过 readyToPublish、点数不匹配失败、alias 不匹配失败、物理点数不一致失败、Qdrant 不可用失败、影子数据不足失败、影子数据为 null 失败、影子关闭时跳过检查、报告汇总字段）。全量 979 tests 通过。
 
+### Fixed（0.9.6 — Claim 向量投影 Review 修复批次）
+
+Reviews 定位 10 项问题（8 High 2 Medium），全部修复，全量 990 tests 通过：
+
+- **High·Qdrant 命名向量查询协议**（`KnowledgeClaimVectorQdrantStore.search`）：旧实现向 `/points/search` 发裸 vector，与 dense 命名向量不兼容会被 Qdrant 拒绝且被吞成空结果；改为与 QdrantHybridStore 一致的 `/collections/{collection}/points/query` + `using:"dense"`。新增 MockRestServiceServer 请求体协议测试钉死。（Review 1）
+- **High·scope 隔离防跨项目泄漏**（`KnowledgeClaimVectorProperties.liveAlias(projectId, version)`）：每个 project+version 使用独立 live alias 与物理 collection 前缀（`knowledge_claims_live-<project>-<version>`），构建/切换/回滚/清理全部按 scope；候选水化后校验 `record.projectId()` 与 payload businessVersion，杜绝 A 项目返回 B 项目 Claim。（Review 2）
+- **High·构建输入绑定 businessVersion**（`MultiSourceKnowledgeStore.findClaimsByProjectVersion`）：旧 SQL 只按 project_id 过滤，版本参数从未绑定，5.1 投影会混入其他版本 Claim；改为 JOIN `knowledge_document_version` 以 business_version 过滤，并新增分页变体 `findClaimsByProjectVersionPage`。（Review 3）
+- **High·向量候选回到治理管道**（`MultiSourceSearchService.search`）：旧实现第二次加载向量候选绕过 gate 状态门禁与意图过滤，且每请求重复两次 embedding/Qdrant/水化。改为：`loadCandidates` 跳过 CLAIM_VECTOR、融合路径单次 `loadScored(intent)`、融合后统一 `gate.isRetrievable`、适配器按 `SourceFilterStrategy.allowedSources(intent)` 过滤 DOUBT 等不允许来源。（Review 4）
+- **High·融合分数参与最终排序**（`KnowledgeClaimVectorFusion.FusionResult`）：旧实现排序后丢弃分数，向量候选统一 0.01 排在末尾。FusionResult 新增 `scores`（claimId→finalScore），SearchService 用融合分数排序，向量相似度真正决定顺序。新增端到端排序测试。（Review 5）
+- **High·alias 切换失败不再返回虚假成功**（`KnowledgeClaimVectorBuildService`）：旧实现 SQLite 先 ACTIVE、alias 切换失败只记日志仍返回 ACTIVE。改为 alias 切换先于 markActive——切换失败该代际 FAILED（`ALIAS_SWITCH_FAILED`）保持非 ACTIVE，旧 ACTIVE 与旧 alias 不变，构建抛异常。（Review 6）
+- **High·条件 Bean 组合修复启动失败**（`ClaimVectorQualityGate`）：shadowEvaluator 改为 `@Nullable` 可选注入——`enabled=true + shadow-query-enabled=false` 的构建阶段不再因缺 Bean 启动失败。新增 ApplicationContextRunner 装配测试（含 enabled=false 全部不装配、shadow 开关生效）。（Review 7）
+- **High·20 万 Claim 流式构建**（`KnowledgeClaimVectorBuildService`）：旧实现全量驻留 Claim/文本/输入/向量/点（约 1.2 GB）。改为按页（500）流式读取、分块（64）嵌入并逐块写 Qdrant（`createCollectionIfAbsent`/`appendPoints`/`verifyPointCount`），仅驻留轻量投影记录与文本。（Review 8）
+- **Medium·回滚取最近退役代际**（`KnowledgeClaimVectorBuildService.rollback`）：旧实现按 published_at desc 列表取最后一个（最旧）代际且可能已被保留策略删除；改为取索引 0（最近退役上一代），并新增 `rollbackTo(projectId, version, generationId)`（scope+RETIRED 校验）。（Review 9）
+- **Medium·enabled 真正总开关 + 运维 API 落地**：BuildService/Adapter/ShadowEvaluator 条件加 `enabled`（enabled=false 全部不装配）；新增 `ClaimVectorAdminController`（POST /build、GET /status、GET /quality-gate、POST /rollback、POST /rollback-to，enabled=true 才装配），运维手册引用的端点与 `rollbackTo` 全部真实存在。（Review 10）
+- **新增测试 11 例**：BuildService 多页流式读取、verify 点数失败、alias 切换失败 FAILED 非 ACTIVE、rollbackTo（未知代际/跨 scope/非 RETIRED）共 4 例；Qdrant 命名向量请求体协议 1 例；条件 Bean 装配 3 例；主搜索端到端（gate 过滤 REJECTED 向量候选、融合分数排序、单次加载、意图过滤 DOUBT）3 例。全量 990 tests 通过。
+
 ## 0.9.5 — 2026-08-25
 
 ### Added

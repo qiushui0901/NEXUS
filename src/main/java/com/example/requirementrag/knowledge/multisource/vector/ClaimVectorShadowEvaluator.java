@@ -22,7 +22,7 @@ import java.util.stream.Collectors;
 @Component
 @ConditionalOnProperty(
         prefix = "app.rag.multi-source.claim-vector",
-        name = "shadow-query-enabled",
+        name = {"enabled", "shadow-query-enabled"},
         matchIfMissing = false)
 public class ClaimVectorShadowEvaluator {
 

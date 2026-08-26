@@ -1906,15 +1906,36 @@ public class MultiSourceKnowledgeStore {
 
     /** 按项目/业务版本列出全部统一 Claim（用于图构建聚合）。 */
     public List<KnowledgeClaimRecord> findClaimsByProjectVersion(String projectId, String version) {
+        return findClaimsByProjectVersionPage(projectId, version, Integer.MAX_VALUE, 0);
+    }
+
+    /**
+     * 按项目/业务版本分页列出统一 Claim（高：Review 3——旧实现只按 project_id 过滤，漏绑 version 参数，
+     * 会把其他业务版本的 Claim 投影进当前版本；Review 8——流式构建按页读取避免 20 万条一次性驻留内存）。
+     * 通过 JOIN knowledge_document_version 以 document_version_id 关联业务版本；FK 约束保证无孤儿行。
+     */
+    public List<KnowledgeClaimRecord> findClaimsByProjectVersionPage(String projectId, String version,
+                                                                     int limit, long offset) {
         List<KnowledgeClaimRecord> result = new ArrayList<>();
+        String sql = """
+                select c.claim_id,c.project_id,c.document_version_id,c.source_type,c.authority,c.fact_key,
+                  c.subject,c.predicate,c.object_value,c.value_type,c.unit,c.status,c.confidence,
+                  c.effective_from,c.effective_to,c.extraction_method,c.extraction_run_id,c.created_at,c.updated_at
+                from knowledge_claim c
+                join knowledge_document_version d on d.document_version_id = c.document_version_id
+                where c.project_id=? and d.business_version=?
+                order by c.source_type,c.subject""";
+        if (limit > 0 && limit < Integer.MAX_VALUE) {
+            sql += " limit ? offset ?";
+        }
         try (Connection connection = open();
-             PreparedStatement statement = connection.prepareStatement("""
-                     select claim_id,project_id,document_version_id,source_type,authority,fact_key,
-                       subject,predicate,object_value,value_type,unit,status,confidence,
-                       effective_from,effective_to,extraction_method,extraction_run_id,created_at,updated_at
-                     from knowledge_claim where project_id=? order by source_type,subject
-                     """)) {
+             PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, projectId);
+            statement.setString(2, version);
+            if (limit > 0 && limit < Integer.MAX_VALUE) {
+                statement.setInt(3, limit);
+                statement.setLong(4, offset);
+            }
             try (ResultSet rows = statement.executeQuery()) {
                 while (rows.next()) {
                     result.add(claim(rows));

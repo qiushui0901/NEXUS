@@ -7,6 +7,7 @@ import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeMode
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeStatus;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.UnifiedKnowledgeClaim;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeStore;
+import com.example.requirementrag.knowledge.multisource.SourceFilterStrategy;
 import com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVectorModels.ClaimVectorGenerationManifest;
 import com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVectorQdrantStore.ClaimVectorHit;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeClaimRecord;
@@ -32,10 +33,18 @@ import java.util.stream.Collectors;
  * 一个点代表一个 Claim；命中后用 claimId 回查 SQLite，过滤已删除窗口的 stale 记录。
  * 返回的 {@link UnifiedKnowledgeClaim} 保留原始 sourceType（REQUIREMENT/PARAMETER_TABLE/TEST_CASE/DOUBT），
  * 与直接加载的候选按 equals 自然去重——Claim 向量只补充直接加载未命中的 Claim。
+ * <p>
+ * 安全保证：
+ * <ul>
+ *   <li>高（Review 2）：检索使用按 project+version 隔离的 live alias；水化后校验 claim.projectId 与
+ *       请求一致、代际 payload 版本与请求一致，杜绝跨 scope 泄漏。</li>
+ *   <li>高（Review 4）：接收 intent，按 SourceFilterStrategy 过滤原始来源类型——NORMATIVE 查询不会
+ *       混入 DOUBT Claim；被 gate 排除的状态（REJECTED/STALE/OBSOLETE）在 SearchService 融合后统一过滤。</li>
+ * </ul>
  */
 @Component
 @ConditionalOnProperty(prefix = "app.rag.multi-source.claim-vector",
-        name = "candidate-retrieval-enabled", matchIfMissing = false)
+        name = {"enabled", "candidate-retrieval-enabled"}, havingValue = "true", matchIfMissing = false)
 public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ClaimVectorCandidateAdapter.class);
@@ -44,17 +53,20 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
     private final SQLiteKnowledgeClaimVectorStore vectorStore;
     private final KnowledgeClaimVectorQdrantStore qdrantStore;
     private final EmbeddingBatcher embeddingBatcher;
+    private final SourceFilterStrategy sourceFilter;
     private final KnowledgeClaimVectorProperties properties;
 
     public ClaimVectorCandidateAdapter(MultiSourceKnowledgeStore knowledgeStore,
                                        SQLiteKnowledgeClaimVectorStore vectorStore,
                                        KnowledgeClaimVectorQdrantStore qdrantStore,
                                        EmbeddingBatcher embeddingBatcher,
+                                       SourceFilterStrategy sourceFilter,
                                        KnowledgeClaimVectorProperties properties) {
         this.knowledgeStore = knowledgeStore;
         this.vectorStore = vectorStore;
         this.qdrantStore = qdrantStore;
         this.embeddingBatcher = embeddingBatcher;
+        this.sourceFilter = sourceFilter;
         this.properties = properties;
     }
 
@@ -71,7 +83,7 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
     @Override
     public CandidateLoad loadDetailed(String projectId, String version, String query,
                                       KnowledgeQueryIntent intent) {
-        return doSearch(projectId, version, query).load();
+        return doSearch(projectId, version, query, intent).load();
     }
 
     /**
@@ -79,18 +91,26 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
      *
      * <p>仅在融合路径调用；普通 {@link #loadDetailed} 不携带分数。
      *
+     * @param intent 查询意图（高：Review 4——用于过滤该意图不允许的原始来源类型）
      * @return 带分候选载荷（scores: claimId → Qdrant 原始分数）
      */
     public KnowledgeClaimVectorFusion.ScoredCandidateLoad loadScored(
-            String projectId, String version, String query) {
-        SearchResult result = doSearch(projectId, version, query);
+            String projectId, String version, String query, KnowledgeQueryIntent intent) {
+        SearchResult result = doSearch(projectId, version, query, intent);
         return new KnowledgeClaimVectorFusion.ScoredCandidateLoad(result.load(), result.scores());
+    }
+
+    /** 后向兼容：无意图的带分加载（不按意图过滤来源类型）。 */
+    public KnowledgeClaimVectorFusion.ScoredCandidateLoad loadScored(
+            String projectId, String version, String query) {
+        return loadScored(projectId, version, query, null);
     }
 
     /**
      * 核心检索逻辑——返回候选载荷 + Qdrant 原始分数映射。
      */
-    private SearchResult doSearch(String projectId, String version, String query) {
+    private SearchResult doSearch(String projectId, String version, String query,
+                                  KnowledgeQueryIntent intent) {
         if (!properties.candidateRetrievalEnabled()) {
             return new SearchResult(new CandidateLoad(List.of(),
                     List.of("CLAIM_VECTOR_CANDIDATE_RETRIEVAL_DISABLED:Claim 向量候选检索已关闭（candidate-retrieval-enabled=false），本次结果不含向量召回候选"),
@@ -121,7 +141,9 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
             float[] queryVector = embeddings.get(0);
 
             int limit = properties.candidateLimit() * properties.overFetchFactor();
-            List<ClaimVectorHit> hits = qdrantStore.search(properties.alias(), queryVector, limit);
+            // 高（Review 2）：按 project+version 隔离的 live alias，避免跨 scope 检索
+            String liveAlias = properties.liveAlias(projectId, version);
+            List<ClaimVectorHit> hits = qdrantStore.search(liveAlias, queryVector, limit);
             if (hits.isEmpty()) {
                 return new SearchResult(new CandidateLoad(List.of(), List.of(),
                         List.of(active.get().generationId())), Map.of());
@@ -134,10 +156,32 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
             List<UnifiedKnowledgeClaim> candidates = new ArrayList<>();
             Map<String, Double> scores = new LinkedHashMap<>();
             int staleCount = 0;
+            int scopeMismatchCount = 0;
+            int intentFilteredCount = 0;
             for (ClaimVectorHit hit : hits) {
+                // payload 级版本校验（第一道防线，跨 scope 旧点防御）
+                if (hit.point() != null && hit.point().businessVersion() != null
+                        && !hit.point().businessVersion().equals(version)) {
+                    scopeMismatchCount++;
+                    continue;
+                }
                 KnowledgeClaimRecord record = records.get(hit.claimId());
                 if (record == null) {
                     staleCount++;
+                    continue;
+                }
+                // SQLite 水化后权威校验：project 归属（第二道防线）
+                if (!projectId.equals(record.projectId())) {
+                    scopeMismatchCount++;
+                    continue;
+                }
+                if (record.documentVersionId() == null || record.documentVersionId().isBlank()) {
+                    staleCount++;
+                    continue;
+                }
+                // 意图过滤（高：Review 4——NORMATIVE 等意图不得混入 DOUBT 等不允许的来源）
+                if (intent != null && !sourceFilter.allowedSources(intent).contains(record.sourceType())) {
+                    intentFilteredCount++;
                     continue;
                 }
                 candidates.add(toUnified(record, version));
@@ -146,6 +190,14 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
             if (staleCount > 0) {
                 LOGGER.warn("CLAIM_VECTOR_STALE_HITS project={} version={} stale={}/{}",
                         safe(projectId), safe(version), staleCount, hits.size());
+            }
+            if (scopeMismatchCount > 0) {
+                LOGGER.warn("CLAIM_VECTOR_SCOPE_MISMATCH project={} version={} mismatched={}/{}",
+                        safe(projectId), safe(version), scopeMismatchCount, hits.size());
+            }
+            if (intentFilteredCount > 0) {
+                LOGGER.debug("CLAIM_VECTOR_INTENT_FILTERED project={} version={} filtered={}/{} intent={}",
+                        safe(projectId), safe(version), intentFilteredCount, hits.size(), intent);
             }
 
             return new SearchResult(new CandidateLoad(List.copyOf(candidates), List.of(),

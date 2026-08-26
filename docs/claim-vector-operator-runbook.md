@@ -34,7 +34,7 @@ SQLite（权威）                  Qdrant（可弃）
 | `build-enabled` | `false` | 构建服务开关。关闭时不接受构建请求 |
 | `candidate-retrieval-enabled` | `false` | 候选检索开关。关闭时 `ClaimVectorCandidateAdapter` 不注册 |
 | `shadow-query-enabled` | `false` | 影子模式开关。关闭时不记录对比指标 |
-| `alias` | `knowledge_claims_live` | Qdrant alias 名称 |
+| `alias` | `knowledge_claims_live` | 基础 alias 名。实际 live alias 按 project+version 派生（形如 `knowledge_claims_live-<project>-<version>`，见 §3），物理 collection 同样按 scope 隔离——不同项目/版本互不干扰（Review 2） |
 | `projection-schema-version` | `knowledge-claim-vector-v1` | 投影 schema 版本 |
 | `text-composer-version` | `knowledge-claim-text-v1` | 文本组合器版本 |
 | `candidate-limit` | `200` | 单次检索候选上限 |
@@ -50,17 +50,22 @@ SQLite（权威）                  Qdrant（可弃）
 
 ### 3.1 首次构建
 
-```bash
-# 1. 确认配置已启用
-curl -X GET http://localhost:8080/api/knowledge/multi-source/claim-vector/status
+> 高（Review 10）：build/status/quality-gate/rollback/rollback-to 端点由 `ClaimVectorAdminController` 提供，
+> 仅当 `app.rag.multi-source.claim-vector.enabled=true` 时装配。
+> 高（Review 2）：每个 project+version 使用独立 live alias 与物理 collection 前缀，
+> 例如 `knowledge_claims_live-immortal-5-1`——跨 scope 不共享、不误删。
 
-# 2. 触发构建（通过 REST 或直接调用 BuildService）
+```bash
+# 1. 确认配置已启用并存在活跃代际
+curl -X GET "http://localhost:8080/api/knowledge/multi-source/claim-vector/status?projectId=immortal&businessVersion=5.1"
+
+# 2. 触发构建（返回 ACTIVE 代际 manifest）
 curl -X POST http://localhost:8080/api/knowledge/multi-source/claim-vector/build \
   -H "Content-Type: application/json" \
   -d '{"projectId": "immortal", "businessVersion": "5.1"}'
 
-# 3. 查看构建状态
-curl -X GET http://localhost:8080/api/knowledge/multi-source/claim-vector/status?projectId=immortal&businessVersion=5.1
+# 3. 质量门检查
+curl -X GET "http://localhost:8080/api/knowledge/multi-source/claim-vector/quality-gate?projectId=immortal&businessVersion=5.1"
 ```
 
 构建流水线：
@@ -85,8 +90,9 @@ curl -X GET http://localhost:8080/api/knowledge/multi-source/claim-vector/status
 | 失败点 | 行为 | 恢复 |
 |--------|------|------|
 | 嵌入失败 | `updateStatus(FAILED)` + warnings，alias 不变 | 修复嵌入模型后重新构建 |
-| Qdrant 写入失败 | `updateStatus(FAILED)` + warnings，alias 不变 | 检查 Qdrant 连接后重新构建 |
-| alias 切换失败 | SQLite 不回滚（已 ACTIVE），Qdrant 仍指旧 collection | 手动 `switchAlias` 或 `rollbackAlias` |
+| Qdrant 写入失败 | `updateStatus(FAILED)` + warnings，alias 不变（半成品物理 collection 由下次 retire 清理） | 检查 Qdrant 连接后重新构建 |
+| alias 切换失败 | 高（Review 6）：代际标记 `FAILED`（ALIAS_SWITCH_FAILED）且保持**非 ACTIVE**，旧 ACTIVE 与旧 alias 不变，构建抛异常——不再返回虚假成功。SQLite 与 Qdrant 均未提交新代际 | 确认 Qdrant 健康后重新构建（同指纹会命中可复用项跳过嵌入） |
+| markActive 失败 | 极为罕见（同一 SQLite 连接此前已成功写入）；抛异常，Qdrant alias 可能已指向新物理 collection，需人工核对 | 检查 SQLite 状态后手动清理 |
 | 无 eligible Claim | 抛 `IllegalStateException` | 检查数据源是否有 Claims |
 
 ---
@@ -103,8 +109,14 @@ buildService.rollback("immortal", "5.1");
 
 ### 4.2 回滚到指定代际
 
-```java
-buildService.rollbackTo("immortal", "5.1", "gen-20250115-abc123");
+```bash
+# 通过 REST（高：Review 10——端点已实现）
+curl -X POST http://localhost:8080/api/knowledge/multi-source/claim-vector/rollback-to \
+  -H "Content-Type: application/json" \
+  -d '{"projectId": "immortal", "businessVersion": "5.1", "generationId": "cv-xxx"}'
+
+# 等价：通过 BuildService
+buildService.rollbackTo("immortal", "5.1", "cv-xxx");
 ```
 
 ### 4.3 回滚后验证

@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -163,17 +164,18 @@ public class MultiSourceSearchService {
         boolean semanticSourceAttempted = allowedSources.contains(SourceType.REQUIREMENT_SEMANTIC)
                 && adapters.stream().anyMatch(adapter -> adapter.sourceType() == SourceType.REQUIREMENT_SEMANTIC);
         List<String> warnings = new ArrayList<>();
+        // 高（Review 4/5）：向量候选只加载一次（融合路径），融合后统一过 gate 状态门禁；
+        // 融合分数参与最终排序——向量相似度不再被丢弃，也不绕过状态/意图过滤。
+        boolean fusionEligible = claimVectorAdapter != null && claimVectorFusion != null
+                && allowedSources.contains(SourceType.CLAIM_VECTOR);
+        Map<String, Double> fusedScores = Map.of();
         List<UnifiedKnowledgeClaim> candidates = loadCandidates(projectId, version, allowedSources, query, intent, warnings, semanticBuildIds)
                 .stream()
                 .filter(claim -> gate.isRetrievable(claim.status()))
                 .toList();
-        // Phase D：确定性融合——向量候选与结构化候选按 claimId 去重 + 加权评分 + 稳定排序。
-        // 融合发生在 gate 过滤之后、冲突分析与评分之前，确保去重后的候选集进入完整治理管道。
-        Set<String> vectorClaimIds = Set.of();
-        if (claimVectorAdapter != null && claimVectorFusion != null
-                && allowedSources.contains(SourceType.CLAIM_VECTOR)) {
+        if (fusionEligible) {
             KnowledgeClaimVectorFusion.ScoredCandidateLoad scoredVectorLoad =
-                    claimVectorAdapter.loadScored(projectId, version, query);
+                    claimVectorAdapter.loadScored(projectId, version, query, intent);
             // 影子模式：记录向量 vs 结构化对比指标，不影响主检索路径
             if (shadowEvaluator != null) {
                 shadowEvaluator.recordQuery(projectId, version, query,
@@ -182,8 +184,11 @@ public class MultiSourceSearchService {
             if (!scoredVectorLoad.claims().isEmpty()) {
                 KnowledgeClaimVectorFusion.FusionResult fusionResult =
                         claimVectorFusion.fuse(scoredVectorLoad, candidates, query);
-                candidates = fusionResult.candidates();
-                vectorClaimIds = scoredVectorLoad.scores().keySet();
+                // gate 统一应用在融合之后——向量候选同样受状态门禁约束（Review 4）
+                candidates = fusionResult.candidates().stream()
+                        .filter(claim -> gate.isRetrievable(claim.status()))
+                        .toList();
+                fusedScores = fusionResult.scores();
                 if (fusionResult.duplicateRemovedCount() > 0) {
                     warnings.add("CLAIM_VECTOR_FUSION_DEDUP:" + fusionResult.duplicateRemovedCount());
                 }
@@ -193,18 +198,19 @@ public class MultiSourceSearchService {
         String normalizedQuery = query == null ? "" : query.toLowerCase(Locale.ROOT);
         Set<String> conflictGroups = conflictAnalyzer.conflictGroups(candidates);
 
-        // 确定性评分召回：字段加权 + 冲突惩罚，稳定排序后一次性分页。
+        // 确定性评分召回：融合分数优先（已含向量/词法/策略/精确权重），否则字段加权 + 冲突惩罚。
         List<ScoredClaim> scored = new ArrayList<>();
         for (UnifiedKnowledgeClaim claim : candidates) {
-            double base = score(claim, normalizedQuery, tokens);
             double penalty = conflictPenalty(claim, conflictGroups);
-            // 向量候选即使文本匹配为 0 也保留（语义召回不依赖词面命中），给子最低分避免完全过滤
-            if (normalizedQuery.isEmpty() || base > 0 || vectorClaimIds.contains(claim.claimId())) {
-                double score = Math.max(0, base - penalty);
-                if (score == 0 && vectorClaimIds.contains(claim.claimId())) {
-                    score = 0.01; // 向量召回但无文本匹配的候选给最低分，排在文本命中之后
+            Double fusionScore = fusedScores.get(claim.claimId());
+            if (fusionScore != null) {
+                // 高（Review 5）：用融合分数排序——向量相似度真正参与最终排序
+                scored.add(new ScoredClaim(claim, Math.max(0, fusionScore - penalty)));
+            } else {
+                double base = score(claim, normalizedQuery, tokens);
+                if (normalizedQuery.isEmpty() || base > 0) {
+                    scored.add(new ScoredClaim(claim, Math.max(0, base - penalty)));
                 }
-                scored.add(new ScoredClaim(claim, score));
             }
         }
         List<UnifiedKnowledgeClaim> claims = scored.stream()
@@ -349,6 +355,11 @@ public class MultiSourceSearchService {
             store.findTestResults(projectId, version).forEach(claim -> result.add(toUnified(claim)));
         }
         for (MultiSourceCandidateAdapter adapter : adapters) {
+            // 高（Review 4）：CLAIM_VECTOR 由融合路径单独加载一次（见 search()），
+            // 此处跳过——否则每个请求会对向量源执行两次 embedding/Qdrant/SQLite 水化。
+            if (adapter.sourceType() == SourceType.CLAIM_VECTOR) {
+                continue;
+            }
             if (allowed.contains(adapter.sourceType())) {
                 try {
                     MultiSourceCandidateAdapter.CandidateLoad loaded =

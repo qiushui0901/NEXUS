@@ -5,6 +5,7 @@ import com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVec
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -43,9 +44,14 @@ public class ClaimVectorQualityGate {
     private final ClaimVectorShadowEvaluator shadowEvaluator;
     private final KnowledgeClaimVectorProperties properties;
 
+    /**
+     * 高（Review 7）：shadowEvaluator 在 shadow-query-enabled=false 时不装配，因此此处必须 {@code @Nullable}
+     * 可选注入——否则 enabled=true + shadow-query-enabled=false 的构建阶段会因缺少 Bean 导致启动失败。
+     * 影子检查仅在 shadowEvaluator 非 null 且 shadowQueryEnabled 时才执行。
+     */
     public ClaimVectorQualityGate(SQLiteKnowledgeClaimVectorStore sqliteStore,
                                   KnowledgeClaimVectorQdrantStore qdrantStore,
-                                  ClaimVectorShadowEvaluator shadowEvaluator,
+                                  @Nullable ClaimVectorShadowEvaluator shadowEvaluator,
                                   KnowledgeClaimVectorProperties properties) {
         this.sqliteStore = sqliteStore;
         this.qdrantStore = qdrantStore;
@@ -120,7 +126,8 @@ public class ClaimVectorQualityGate {
     }
 
     private QualityCheck checkAlias(ClaimVectorGenerationManifest manifest) {
-        String alias = properties.alias();
+        // 高（Review 2）：alias 按 project+version 隔离，检查本 scope 的 live alias
+        String alias = properties.liveAlias(manifest.projectId(), manifest.businessVersion());
         String expectedPhysical = manifest.physicalCollection();
         String actualTarget = qdrantStore.aliasTarget(alias);
         if (actualTarget == null || actualTarget.isBlank()) {

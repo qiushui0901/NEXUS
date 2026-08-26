@@ -36,6 +36,32 @@ public record KnowledgeClaimVectorProperties(
         retainPhysicalCollections = bounded(retainPhysicalCollections, 1, 10, 2);
     }
 
+    /**
+     * 返回指定项目+业务版本的独立 live alias（高：Review 2——所有项目/版本共用一个 alias 会跨项目泄漏）。
+     * <p>每个 scope 独立 alias 与独立物理 collection 前缀，避免项目 B 构建后覆盖项目 A 的检索结果。
+     * 形如 {@code knowledge_claims_live-<project>-<version>}。</p>
+     */
+    public String liveAlias(String projectId, String businessVersion) {
+        return alias + "-" + scopeToken(projectId) + "-" + scopeToken(businessVersion);
+    }
+
+    /** 物理 collection 前缀（含 scope），供 retireOldCollections 只清理本 scope 的集合。 */
+    public String physicalPrefix(String projectId, String businessVersion) {
+        return liveAlias(projectId, businessVersion) + "-";
+    }
+
+    /** 将 scope 分量规整为 Qdrant 集合名安全 token（小写字母数字与连字符，截断防超长）。 */
+    private static String scopeToken(String value) {
+        String normalized = value == null ? "unknown" : value.trim().toLowerCase()
+                .replaceAll("[^a-z0-9._-]", "-")
+                .replaceAll("-{2,}", "-")
+                .replaceAll("(^-+)|(-+$)", "");
+        if (normalized.isEmpty()) {
+            normalized = "unknown";
+        }
+        return normalized.length() > 32 ? normalized.substring(0, 32) : normalized;
+    }
+
     private static String textOr(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value.trim();
     }

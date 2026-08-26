@@ -49,6 +49,8 @@ public final class KnowledgeClaimVectorModels {
         public static final String BUDGET_EXCEEDED       = "KNOWLEDGE_CLAIM_VECTOR_BUDGET_EXCEEDED";
         public static final String BUILD_FAILED          = "KNOWLEDGE_CLAIM_VECTOR_BUILD_FAILED";
         public static final String VERIFICATION_FAILED   = "KNOWLEDGE_CLAIM_VECTOR_VERIFICATION_FAILED";
+        /** 高（Review 6）：Qdrant alias 切换失败——代际保持非 ACTIVE，旧 ACTIVE 与旧 alias 不变。 */
+        public static final String ALIAS_SWITCH_FAILED   = "KNOWLEDGE_CLAIM_VECTOR_ALIAS_SWITCH_FAILED";
 
         private WarningCode() {}
     }

@@ -4,6 +4,9 @@ import com.example.requirementrag.conflict.KnowledgeConflictModels.Authority;
 import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
 import com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVectorModels.KnowledgeClaimVectorPoint;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.client.MockRestServiceServer;
 import org.springframework.web.client.RestClient;
 
 import java.util.List;
@@ -11,6 +14,10 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /**
  * Claim 向量 Qdrant 发布器测试：验证点结构（payload + 确定性 ID + dense-only vector）。
@@ -144,5 +151,44 @@ class KnowledgeClaimVectorQdrantStoreTest {
         assertThat(hit.claimId()).isEqualTo("c-1");
         assertThat(hit.score()).isEqualTo(0.95);
         assertThat(hit.point()).isSameAs(point);
+    }
+
+    // ── search 请求协议（高：Review 1）──────────────────────────────────
+
+    /**
+     * 验证 search() 向 /points/query 发送命名向量查询（query + using="dense"）——
+     * 而非先前与命名向量不兼容的 /points/search + 裸 vector。请求体断言直接钉死协议。
+     */
+    @Test
+    void searchUsesNamedVectorQueryProtocol() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        KnowledgeClaimVectorQdrantStore store =
+                new KnowledgeClaimVectorQdrantStore(builder.build(), properties);
+
+        String payload = """
+                {"result":[{"id":1,"score":0.92,"payload":{
+                  "projectId":"proj-1","businessVersion":"v1","claimId":"c-1",
+                  "documentVersionId":"dv-1","sourceType":"REQUIREMENT","authority":"PRIMARY",
+                  "knowledgeStatus":"ACTIVE","factKey":"fk","subject":"subj","predicate":"pred",
+                  "valueType":"TEXT","unit":"","evidenceIds":[],
+                  "projectionGenerationId":"gen","projectionSchemaVersion":"schema-v1",
+                  "embeddingModel":"model","textHash":"hash"}}]}""";
+        server.expect(requestTo("/collections/knowledge_claims_live-proj-1-v1/points/query"))
+                .andExpect(method(HttpMethod.POST))
+                .andExpect(jsonPath("$.query").isArray())
+                .andExpect(jsonPath("$.using").value("dense"))
+                .andExpect(jsonPath("$.limit").value(10))
+                .andExpect(jsonPath("$.with_payload").value(true))
+                .andRespond(withSuccess(payload, MediaType.APPLICATION_JSON));
+
+        List<KnowledgeClaimVectorQdrantStore.ClaimVectorHit> hits =
+                store.search("knowledge_claims_live-proj-1-v1", new float[]{0.1f, 0.2f}, 10);
+        server.verify(); // 任何未匹配请求（如旧 /points/search）都会在此失败
+
+        assertThat(hits).hasSize(1);
+        assertThat(hits.get(0).claimId()).isEqualTo("c-1");
+        assertThat(hits.get(0).score()).isEqualTo(0.92);
+        assertThat(hits.get(0).point().sourceType()).isEqualTo(SourceType.REQUIREMENT);
     }
 }

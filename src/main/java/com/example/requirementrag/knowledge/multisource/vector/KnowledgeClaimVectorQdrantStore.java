@@ -137,7 +137,8 @@ public class KnowledgeClaimVectorQdrantStore {
     }
 
     /**
-     * 通过 alias 向量检索最近的 Claim 点。
+     * 通过 alias 向量检索最近的 Claim 点（高：Review 1——旧实现向 /points/search 发送裸 vector，
+     * 与命名向量 dense 不兼容会被 Qdrant 拒绝；改为与 QdrantHybridStore 一致的 /points/query + using="dense"）。
      * 返回按 score 降序排列的命中列表，payload 含 Qdrant 投影时的快照字段。
      * Qdrant 不可用时返回空列表并写 warn——fail-safe 不影响其他来源检索。
      */
@@ -150,12 +151,13 @@ public class KnowledgeClaimVectorQdrantStore {
         }
         try {
             Map<String, Object> request = new java.util.LinkedHashMap<>();
-            request.put("vector", queryVector);
+            request.put("query", queryVector);
+            request.put("using", "dense");
             request.put("limit", Math.max(1, limit));
             request.put("with_payload", true);
             request.put("with_vector", false);
             Map<String, Object> response = client.post()
-                    .uri("/collections/{collection}/points/search", alias)
+                    .uri("/collections/{collection}/points/query", alias)
                     .contentType(MediaType.APPLICATION_JSON)
                     .body(request)
                     .retrieve()
@@ -235,6 +237,36 @@ public class KnowledgeClaimVectorQdrantStore {
                         Map.entry("projectionSchemaVersion", nullSafe(point.projectionSchemaVersion())),
                         Map.entry("embeddingModel", nullSafe(point.embeddingModel())),
                         Map.entry("textHash", nullSafe(point.textHash()))));
+    }
+
+    /**
+     * 物理 collection 不存在时创建（建 collection 幂等，高：Review 8——流式构建按页写入的第一步）。
+     * 与采集同名集合已存在时直接返回。
+     */
+    public void createCollectionIfAbsent(String collection, int dimension) {
+        ensureCollection(collection, dimension);
+    }
+
+    /**
+     * 向已有物理 collection 追加一批点（分块 upsert）。
+     * 高：Review 8——流式构建逐块写，避免 20 万条 point/vector 全部驻留内存。
+     */
+    public void appendPoints(String collection, List<KnowledgeClaimVectorPoint> points,
+                             List<float[]> vectors) {
+        if (points == null || points.isEmpty()) {
+            return;
+        }
+        if (vectors == null || vectors.size() != points.size()) {
+            throw new IllegalArgumentException("vectors size must match points size");
+        }
+        writePointBatches(collection, points, vectors, properties.batchSize());
+    }
+
+    /**
+     * 校验物理 collection 实际点数（流式构建收尾）。点数不一致时抛异常。
+     */
+    public void verifyPointCount(String collection, int expected) {
+        verifyPhysicalCount(collection, expected);
     }
 
     // ── private ───────────────────────────────────────────────────────────
