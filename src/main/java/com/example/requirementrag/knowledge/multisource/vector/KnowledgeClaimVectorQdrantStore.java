@@ -369,7 +369,27 @@ public class KnowledgeClaimVectorQdrantStore {
         }
     }
 
-    private void deleteCollection(String collection) {
+    /**
+     * 删除指定 alias（恢复为无 alias 状态，高：Review 4——首次构建 markActive 失败时
+     * 无前序目标可回退，需删除错误指向未激活代际的新 alias）。alias 不存在时静默返回。
+     */
+    public void deleteAlias(String alias) {
+        if (alias == null || alias.isBlank()) {
+            return;
+        }
+        try {
+            postAliasActions(Map.of("delete_alias", Map.of("alias_name", alias)));
+        } catch (HttpClientErrorException.NotFound exception) {
+            // alias 不存在（首次构建前无 alias）——已处于无 alias 状态
+        }
+    }
+
+    /** 删除物理 collection；不存在时静默返回（高：Review 5——失败构建清理半成品集合）。 */
+    public void deleteCollection(String collection) {
+        deleteCollectionQuietly(collection);
+    }
+
+    private void deleteCollectionQuietly(String collection) {
         try {
             client.delete().uri("/collections/{collection}", collection)
                     .retrieve().toBodilessEntity();

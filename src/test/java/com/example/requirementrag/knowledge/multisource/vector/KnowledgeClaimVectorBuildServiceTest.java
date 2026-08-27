@@ -295,8 +295,36 @@ class KnowledgeClaimVectorBuildServiceTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("代际激活失败");
 
-        // 补偿：alias 已切回前序目标；SQLite 无 ACTIVE
+        // 补偿：alias 已切回前序目标；SQLite 无 ACTIVE；半成品物理 collection 被清理（高：Review 5）
         verify(qdrantStore).rollbackAlias(eq(liveAlias()), eq(previousTarget));
+        verify(qdrantStore).deleteCollection(anyString());
+        assertThat(spyStore.findActiveGeneration("proj-1", "v1")).isEmpty();
+    }
+
+    @Test
+    void markActiveFailureOnFirstBuildDeletesAliasAndCollection() {
+        // 高（Review 4）：首次构建无前序 alias 目标——markActive 失败时必须删除新 alias
+        // （恢复无 alias 状态），并清理本代际半成品物理 collection（高：Review 5），
+        // 避免残留错误指向未激活代际的 alias 与孤儿集合。
+        SQLiteKnowledgeClaimVectorStore spyStore = spy(vectorStore);
+        doThrow(new RuntimeException("SQLite busy"))
+                .when(spyStore).markActive(anyString(), anyString());
+        KnowledgeClaimVectorBuildService spyBuildService = new KnowledgeClaimVectorBuildService(
+                knowledgeStore, spyStore, qdrantStore, textComposer,
+                embeddingBatcher, embeddingModel, properties);
+        stubClaims(List.of(claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a")));
+        stubEmbeddings();
+        // 首次构建：alias 尚不存在（aliasTarget 返回 null，无前序目标）
+        when(qdrantStore.aliasTarget(eq(liveAlias()))).thenReturn(null);
+
+        assertThatThrownBy(() -> spyBuildService.build("proj-1", "v1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("代际激活失败");
+
+        // 补偿：删除新 alias（而非回滚——无前序目标）；半成品集合已清理；SQLite 无 ACTIVE
+        verify(qdrantStore).deleteAlias(eq(liveAlias()));
+        verify(qdrantStore, never()).rollbackAlias(anyString(), anyString());
+        verify(qdrantStore).deleteCollection(anyString());
         assertThat(spyStore.findActiveGeneration("proj-1", "v1")).isEmpty();
     }
 
@@ -319,6 +347,31 @@ class KnowledgeClaimVectorBuildServiceTest {
         Optional<ClaimVectorGenerationManifest> gen = vectorStore.findLatestGeneration("proj-1", "v1");
         assertThat(gen).isPresent();
         assertThat(gen.get().status()).isEqualTo(GenerationStatus.FAILED);
+    }
+
+    @Test
+    void equalCountReplacementDriftFailsGeneration() {
+        // 高（Review 3）：两遍读取间发生等量替换（第一遍 [A,B]，第二遍 [A已变更,B]，
+        // 数量仍是 2）——仅比较数量检测不到，必须逐项校验 claimId+documentVersionId+textHash
+        // 才能发现 A 被替换为不同内容。
+        when(knowledgeStore.findPublishedClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(0L)))
+                .thenReturn(List.of(
+                        claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a"),
+                        claim("c-2", SourceType.PARAMETER_TABLE, "参数B", "fk-b")))
+                .thenReturn(List.of(
+                        claim("c-1", SourceType.REQUIREMENT, "需求A已变更", "fk-a"),
+                        claim("c-2", SourceType.PARAMETER_TABLE, "参数B", "fk-b")));
+        stubEmbeddings();
+
+        assertThatThrownBy(() -> buildService.build("proj-1", "v1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("漂移");
+
+        verify(qdrantStore, never()).switchAlias(anyString(), anyString());
+        Optional<ClaimVectorGenerationManifest> gen = vectorStore.findLatestGeneration("proj-1", "v1");
+        assertThat(gen).isPresent();
+        assertThat(gen.get().status()).isEqualTo(GenerationStatus.FAILED);
+        assertThat(gen.get().warningsJson()).contains("第二遍流式漂移");
     }
 
     // ── 边界 ──────────────────────────────────────────────────────────

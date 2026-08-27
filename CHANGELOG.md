@@ -80,6 +80,17 @@ Reviews 定位 8 项问题（6 High 2 Medium），全部修复，全量 997 test
 - **Medium·两遍流式 + 漂移保护**（`KnowledgeClaimVectorBuildService`）：第一遍仍全量驻留文本+输入（仅向量被释放）。改为两遍流式：第一遍只收轻量输入（claimId/docVersion/textHash/updatedAt）算指纹，第二遍重读分页组合文本→分块嵌入→逐块写点，任一时刻内存仅一页+一块；两遍读取间数据漂移（分页带唯一 claim_id 尾排序，边界确定）则拒绝发布并标记 FAILED。（Review 8）
 - **新增测试 7 例**：发布标记资料版本 PUBLISHED、已发布投影排除 DRAFT+scope/版本隔离、回滚降级上一发布者并提升目标（Review 2）3 例；markActive 失败补偿回滚 alias、两遍漂移 FAILED（Review 4/8）2 例；语义适配器诊断与 buildIds 回传（Review 7）2 例。全量 997 tests 通过。
 
+### Fixed（0.9.6 — Claim 向量投影 Review 第三批次）
+
+Reviews 定位 5 项问题（3 High 2 Medium），全部修复，全量 1002 tests 通过：
+
+- **High·投影精确绑定 manifest 的 document_version_id**（`MultiSourceKnowledgeStore`）：已发布投影的 `exists(knowledge_active_version)` 只校验项目+业务版本存在任意 active 记录，不要求 `av.document_version_id=c.document_version_id`——同业务版本存在多个 PUBLISHED 文档时，旧发布者或其他文档的 Claim 也会进入投影。改为三重治理边界：文档版本本身 PUBLISHED + manifest 的 document_version_id 精确等于 Claim 所属文档版本 + manifest 状态仅允许 PUBLISHED/ROLLED_BACK（回滚恢复的是此前已发布文档）。（Review 1）
+- **High·发布/回滚原子化 + 目标校验**（`MultiSourceKnowledgeStore`）：`publishDocumentVersion`/`rollbackActiveVersion` 原为默认 autocommit 多步更新——manifest 成功、目标标记失败即得半完成状态；且不校验 documentVersionId 存在性与归属，可把不存在/跨项目 ID 写入 manifest。改为 `begin immediate` 单事务 + SQL commit/rollback（任一步失败全部回滚），并在事务内校验目标文档版本存在且属于该项目+业务版本（knowledge_active_version 无外键，由方法承担引用完整性校验）。（Review 2）
+- **High·两遍构建逐项漂移检测**（`KnowledgeClaimVectorBuildService`）：原漂移检测只比较 `written != totalEligible` 数量——第一遍 [A,B] 第二遍替换成 [C,B] 数量相同检测不到，manifest input 集合与 Qdrant 实际点集合不一致。第二遍改为按稳定顺序逐项校验 claimId+documentVersionId+textHash，任一不一致即拒绝发布并标记 FAILED（含漂移明细写入 warnings）。（Review 3）
+- **Medium·首次构建 markActive 失败清理新 alias**（`KnowledgeClaimVectorBuildService` + `KnowledgeClaimVectorQdrantStore`）：markActive 失败补偿只有前序目标存在时才回滚 alias；首次构建无旧 alias 时，新 alias 残留指向未激活代际。新增 `deleteAlias`（Qdrant delete_alias 动作，不存在时静默），无前序目标时删除新 alias 恢复无 alias 状态。（Review 4）
+- **Medium·失败构建清理半成品物理 collection**（`KnowledgeClaimVectorBuildService` + `KnowledgeClaimVectorQdrantStore`）：嵌入/写入/漂移/点数校验/markActive 失败直接抛出，`retireOldCollections` 只在成功 switchAlias 路径调用——失败多了遗留孤儿 collection。新增公开 `deleteCollection`，各失败路径 best-effort 删除当前代际物理 collection（未建集合时跳过；markActive 失败在补偿成功后才删除）。`rollbackActiveVersion` 的原子化回滚语义与发布对齐。（Review 5）
+- **新增测试 5 例**：发布拒绝未知/跨项目文档版本、回滚拒绝未知/跨项目文档版本、多 PUBLISHED 文档时投影只含 manifest 绑定版本 Claim（Review 1/2）3 例；等量替换漂移 FAILED、首次构建 markActive 失败删除 alias+collection（Review 3/4/5）2 例。全量 1002 tests 通过。
+
 ## 0.9.5 — 2026-08-25
 
 ### Added

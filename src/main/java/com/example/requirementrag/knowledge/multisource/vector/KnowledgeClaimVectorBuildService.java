@@ -242,9 +242,11 @@ public class KnowledgeClaimVectorBuildService {
 
         // 4. 第二遍流式：重读分页 → 组合文本 → 分块嵌入 → 逐块写点（内存只驻留一页 + 一块）
         //    （高：Review 8——避免 20 万 Claim 全量文本驻留）
+        //    （高：Review 3——逐项校验 claimId+documentVersionId+textHash，防等量替换漂移）
         String physicalCollection = liveAlias + "-" + Instant.now().toEpochMilli();
         boolean collectionReady = false;
         long written = 0;
+        int inputIndex = 0;   // 与第一遍 inputs 序列逐项对齐的游标
         offset = 0;
         while (true) {
             List<KnowledgeClaimRecord> page = knowledgeStore.findPublishedClaimsByProjectVersionPage(
@@ -266,6 +268,22 @@ public class KnowledgeClaimVectorBuildService {
                             claim.unit(), claim.updatedAt(), text.get(), textHash));
                 }
             }
+            // 高（Review 3）：逐项与第一遍 inputs 对齐校验——等量替换（如 A→C）数量不变也会被发现
+            for (ComposedClaim composed : pageComposed) {
+                if (inputIndex >= inputs.size()) {
+                    driftAndFail(generationId, "第二遍出现第一遍不存在的 Claim", composed.claimId(),
+                            composed.documentVersionId(), composed.textHash(), null, null, null);
+                }
+                ClaimVectorGenerationInput expected = inputs.get(inputIndex);
+                if (!expected.claimId().equals(composed.claimId())
+                        || !expected.documentVersionId().equals(composed.documentVersionId())
+                        || !expected.textHash().equals(composed.textHash())) {
+                    driftAndFail(generationId, "第二遍 Claim 与第一遍不一致（数据漂移或等量替换）",
+                            composed.claimId(), composed.documentVersionId(), composed.textHash(),
+                            expected.claimId(), expected.documentVersionId(), expected.textHash());
+                }
+                inputIndex++;
+            }
             for (int start = 0; start < pageComposed.size(); start += EMBED_CHUNK_SIZE) {
                 int end = Math.min(start + EMBED_CHUNK_SIZE, pageComposed.size());
                 List<ComposedClaim> chunk = pageComposed.subList(start, end);
@@ -275,11 +293,13 @@ public class KnowledgeClaimVectorBuildService {
                     vectors = embeddingBatcher.embedAll(texts);
                 } catch (RuntimeException exception) {
                     failGeneration(generationId, WarningCode.BUILD_FAILED, "嵌入失败", exception.getMessage());
+                    cleanupFailedCollection(physicalCollection, collectionReady);
                     throw new IllegalStateException("Claim 向量嵌入失败: " + exception.getMessage(), exception);
                 }
                 if (vectors.size() != chunk.size()) {
                     failGeneration(generationId, WarningCode.BUILD_FAILED, "嵌入数量不一致",
                             "期望 " + chunk.size() + " 实际 " + vectors.size());
+                    cleanupFailedCollection(physicalCollection, collectionReady);
                     throw new IllegalStateException("Claim 向量嵌入数量不一致");
                 }
                 List<KnowledgeClaimVectorPoint> points = new ArrayList<>(chunk.size());
@@ -301,19 +321,22 @@ public class KnowledgeClaimVectorBuildService {
                     qdrantStore.appendPoints(physicalCollection, points, vectors);
                 } catch (RuntimeException exception) {
                     failGeneration(generationId, WarningCode.BUILD_FAILED, "Qdrant 写入失败", exception.getMessage());
+                    cleanupFailedCollection(physicalCollection, collectionReady);
                     throw new IllegalStateException("Claim 向量写入失败: " + exception.getMessage(), exception);
                 }
                 written += chunk.size();
             }
             offset += page.size();
         }
-        if (written != totalEligible) {
+        if (inputIndex != inputs.size()) {
             // 高（Review 8）：两遍读取间数据不应漂移（分页含 claim_id 唯一尾排序，边界确定）；
             // 若漂移则拒绝发布，避免 manifest 计数与实际投影不一致。
-            failGeneration(generationId, WarningCode.BUILD_FAILED, "第二遍读取数量漂移",
-                    "第二遍写入 " + written + "，第一遍统计 " + totalEligible);
-            throw new IllegalStateException("Claim 向量两遍流式读取数量漂移: 第二遍 " + written
-                    + " != 第一遍 " + totalEligible);
+            driftAndFail(generationId, "第二遍读取数量漂移", null, null, null,
+                    null, null, null);
+        }
+        if (written != totalEligible) {
+            driftAndFail(generationId, "第二遍写入数量与第一遍统计不一致", null, null, null,
+                    null, null, null);
         }
 
         // 5. 校验物理 collection 点数
@@ -321,6 +344,7 @@ public class KnowledgeClaimVectorBuildService {
             qdrantStore.verifyPointCount(physicalCollection, (int) written);
         } catch (RuntimeException exception) {
             failGeneration(generationId, WarningCode.BUILD_FAILED, "Qdrant 写入校验失败", exception.getMessage());
+            cleanupFailedCollection(physicalCollection, collectionReady);
             throw new IllegalStateException("Claim 向量写入失败: " + exception.getMessage(), exception);
         }
 
@@ -340,6 +364,7 @@ public class KnowledgeClaimVectorBuildService {
         } catch (RuntimeException exception) {
             failGeneration(generationId, WarningCode.ALIAS_SWITCH_FAILED, "alias 切换失败",
                     "SQLite 代际保持 SUCCESS（未 ACTIVE），旧 ACTIVE 与旧 alias 不变: " + exception.getMessage());
+            cleanupFailedCollection(physicalCollection, collectionReady);
             throw new IllegalStateException("Claim 向量 alias 切换失败: " + exception.getMessage(), exception);
         }
 
@@ -353,14 +378,56 @@ public class KnowledgeClaimVectorBuildService {
             if (previousAliasTarget != null) {
                 try {
                     qdrantStore.rollbackAlias(liveAlias, previousAliasTarget);
+                    // 高（Review 5）：alias 已切回前序目标，本代际物理 collection 成孤儿——删除
+                    cleanupFailedCollection(physicalCollection, collectionReady);
                 } catch (RuntimeException compensationFailure) {
                     LOGGER.error("markActive 补偿回滚 alias 失败，SQLite 与 Qdrant 可能不一致", compensationFailure);
+                }
+            } else {
+                // 高（Review 4）：首次构建无前序目标——删除新 alias（恢复无 alias 状态），
+                // 并清理本代际物理 collection，避免残留错误 alias/孤儿集合。
+                try {
+                    qdrantStore.deleteAlias(liveAlias);
+                    cleanupFailedCollection(physicalCollection, collectionReady);
+                } catch (RuntimeException compensationFailure) {
+                    LOGGER.error("markActive 补偿删除 alias 失败，SQLite 与 Qdrant 可能不一致", compensationFailure);
                 }
             }
             throw new IllegalStateException("Claim 向量代际激活失败: " + exception.getMessage(), exception);
         }
         return vectorStore.findGeneration(generationId)
                 .orElseThrow(() -> new IllegalStateException("代际写入后消失: " + generationId));
+    }
+
+    /**
+     * 高（Review 5）：失败构建清理当前代际的半成品物理 collection（best-effort）。
+     * 仅在已建集合（collectionReady）时删除；嵌入首块即失败时集合尚未创建，无需清理。
+     */
+    private void cleanupFailedCollection(String physicalCollection, boolean collectionReady) {
+        if (!collectionReady || physicalCollection == null) {
+            return;
+        }
+        try {
+            qdrantStore.deleteCollection(physicalCollection);
+            LOGGER.info("已清理失败构建的半成品物理 collection {}", physicalCollection);
+        } catch (RuntimeException exception) {
+            LOGGER.warn("清理失败构建的半成品物理 collection {} 失败: {}",
+                    physicalCollection, exception.getMessage());
+        }
+    }
+
+    /** 高（Review 3）：两遍流式逐项漂移——拒绝发布并标记 FAILED。 */
+    private void driftAndFail(String generationId, String summary,
+                              String actualClaimId, String actualDocVersion, String actualHash,
+                              String expectedClaimId, String expectedDocVersion, String expectedHash) {
+        String detail = "第一遍项: " + safe(expectedClaimId) + "|" + safe(expectedDocVersion) + "|" + safe(expectedHash)
+                + "；第二遍项: " + safe(actualClaimId) + "|" + safe(actualDocVersion) + "|" + safe(actualHash);
+        failGeneration(generationId, WarningCode.BUILD_FAILED, "第二遍流式漂移——" + summary, detail);
+        throw new IllegalStateException("Claim 向量两遍流式漂移: " + summary);
+    }
+
+    private String safe(String value) {
+        return value == null ? "" : value;
     }
 
     private void failGeneration(String generationId, String warningCode, String summary, String detail) {
