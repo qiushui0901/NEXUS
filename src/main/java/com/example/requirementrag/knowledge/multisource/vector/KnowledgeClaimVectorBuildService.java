@@ -272,7 +272,8 @@ public class KnowledgeClaimVectorBuildService {
             for (ComposedClaim composed : pageComposed) {
                 if (inputIndex >= inputs.size()) {
                     driftAndFail(generationId, "第二遍出现第一遍不存在的 Claim", composed.claimId(),
-                            composed.documentVersionId(), composed.textHash(), null, null, null);
+                            composed.documentVersionId(), composed.textHash(), null, null, null,
+                            physicalCollection, collectionReady);
                 }
                 ClaimVectorGenerationInput expected = inputs.get(inputIndex);
                 if (!expected.claimId().equals(composed.claimId())
@@ -280,7 +281,8 @@ public class KnowledgeClaimVectorBuildService {
                         || !expected.textHash().equals(composed.textHash())) {
                     driftAndFail(generationId, "第二遍 Claim 与第一遍不一致（数据漂移或等量替换）",
                             composed.claimId(), composed.documentVersionId(), composed.textHash(),
-                            expected.claimId(), expected.documentVersionId(), expected.textHash());
+                            expected.claimId(), expected.documentVersionId(), expected.textHash(),
+                            physicalCollection, collectionReady);
                 }
                 inputIndex++;
             }
@@ -332,11 +334,11 @@ public class KnowledgeClaimVectorBuildService {
             // 高（Review 8）：两遍读取间数据不应漂移（分页含 claim_id 唯一尾排序，边界确定）；
             // 若漂移则拒绝发布，避免 manifest 计数与实际投影不一致。
             driftAndFail(generationId, "第二遍读取数量漂移", null, null, null,
-                    null, null, null);
+                    null, null, null, physicalCollection, collectionReady);
         }
         if (written != totalEligible) {
             driftAndFail(generationId, "第二遍写入数量与第一遍统计不一致", null, null, null,
-                    null, null, null);
+                    null, null, null, physicalCollection, collectionReady);
         }
 
         // 5. 校验物理 collection 点数
@@ -364,7 +366,31 @@ public class KnowledgeClaimVectorBuildService {
         } catch (RuntimeException exception) {
             failGeneration(generationId, WarningCode.ALIAS_SWITCH_FAILED, "alias 切换失败",
                     "SQLite 代际保持 SUCCESS（未 ACTIVE），旧 ACTIVE 与旧 alias 不变: " + exception.getMessage());
-            cleanupFailedCollection(physicalCollection, collectionReady);
+            // 高（Review 4）：switchAlias 内部回收已 best-effort，此处异常必为 alias 操作本身失败——
+            // 但作防御性确认：若 alias 当前竟指向本代际 collection（切换实际已生效），
+            // 则必须回滚/删除 alias 后再清理，绝不能删除 alias 指向的线上 collection。
+            String currentTarget = null;
+            try {
+                currentTarget = qdrantStore.aliasTarget(liveAlias);
+            } catch (RuntimeException ignored) {
+                // alias 不可达时按未指向本代际处理
+            }
+            if (physicalCollection.equals(currentTarget)) {
+                LOGGER.warn("alias 切换实际已生效但返回异常，先恢复 alias 再清理半成品 collection");
+                try {
+                    if (previousAliasTarget != null) {
+                        qdrantStore.rollbackAlias(liveAlias, previousAliasTarget);
+                    } else {
+                        qdrantStore.deleteAlias(liveAlias);
+                    }
+                    cleanupFailedCollection(physicalCollection, collectionReady);
+                } catch (RuntimeException compensationFailure) {
+                    LOGGER.error("alias 已指向本代际但补偿恢复失败，SQLite 与 Qdrant 可能不一致",
+                            compensationFailure);
+                }
+            } else {
+                cleanupFailedCollection(physicalCollection, collectionReady);
+            }
             throw new IllegalStateException("Claim 向量 alias 切换失败: " + exception.getMessage(), exception);
         }
 
@@ -416,10 +442,14 @@ public class KnowledgeClaimVectorBuildService {
         }
     }
 
-    /** 高（Review 3）：两遍流式逐项漂移——拒绝发布并标记 FAILED。 */
+    /** 高（Review 3）：两遍流式逐项漂移——拒绝发布、清理半成品 collection 并标记 FAILED。 */
     private void driftAndFail(String generationId, String summary,
                               String actualClaimId, String actualDocVersion, String actualHash,
-                              String expectedClaimId, String expectedDocVersion, String expectedHash) {
+                              String expectedClaimId, String expectedDocVersion, String expectedHash,
+                              String physicalCollection, boolean collectionReady) {
+        // 高（Review 4）：漂移失败路径必须与其余失败路径一致——清理已写入的半成品物理 collection。
+        // 首当已写入、后续页发现漂移时 collectionReady 已为 true，不清理会残留孤儿集合。
+        cleanupFailedCollection(physicalCollection, collectionReady);
         String detail = "第一遍项: " + safe(expectedClaimId) + "|" + safe(expectedDocVersion) + "|" + safe(expectedHash)
                 + "；第二遍项: " + safe(actualClaimId) + "|" + safe(actualDocVersion) + "|" + safe(actualHash);
         failGeneration(generationId, WarningCode.BUILD_FAILED, "第二遍流式漂移——" + summary, detail);

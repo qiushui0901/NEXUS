@@ -13,10 +13,12 @@ import java.util.List;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.jsonPath;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withServerError;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 /**
@@ -193,5 +195,42 @@ class KnowledgeClaimVectorQdrantStoreTest {
         assertThat(hits.get(0).claimId()).isEqualTo("c-1");
         assertThat(hits.get(0).score()).isEqualTo(0.92);
         assertThat(hits.get(0).point().sourceType()).isEqualTo(SourceType.REQUIREMENT);
+    }
+
+    // ── alias 切换（高：Review 4：切换后旧 collection 回收必须 best-effort）──
+
+    /**
+     * 高（Review 4）：alias 已切换成功后，若 GET /collections 旧集合回收列表查询/解析
+     * 临时失败，switchAlias 不得向上抛出——否则调用方会把它误判为"alias 切换失败"，
+     * 进而删除当前 alias 指向的线上 collection，留下悬空 alias 与 SQLite/Qdrant 分叉。
+     */
+    @Test
+    void switchAliasSucceedsEvenWhenRetireOldCollectionsFails() {
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        KnowledgeClaimVectorQdrantStore store =
+                new KnowledgeClaimVectorQdrantStore(builder.build(), properties);
+
+        String alias = properties.liveAlias("proj-1", "v1");
+        // 1) aliasTarget → GET /aliases 返回旧目标 old-collection-1
+        server.expect(requestTo("/aliases"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withSuccess(
+                        "{\"result\":{\"aliases\":[{\"alias_name\":\"" + alias
+                                + "\",\"collection_name\":\"old-collection-1\"}]}}",
+                        MediaType.APPLICATION_JSON));
+        // 2) POST /collections/aliases 切换成功
+        server.expect(requestTo("/collections/aliases"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess());
+        // 3) GET /collections 旧集合回收列表查询失败（500）——不得让 switchAlias 抛异常
+        server.expect(requestTo("/collections"))
+                .andExpect(method(HttpMethod.GET))
+                .andRespond(withServerError());
+
+        // 切换已完成，回收失败仅告警（best-effort），不得抛出
+        assertThatCode(() -> store.switchAlias(alias, "new-collection-1"))
+                .doesNotThrowAnyException();
+        server.verify();
     }
 }

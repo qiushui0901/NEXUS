@@ -16,6 +16,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -25,6 +26,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -329,6 +331,38 @@ class KnowledgeClaimVectorBuildServiceTest {
     }
 
     @Test
+    void aliasSwitchExceptionButAliasAlreadyPointedToNewCollectionRestoresAliasFirst() {
+        // 高（Review 4）：switchAlias 抛异常但 alias 实际已指向本代际 collection（切换已生效）
+        // ——必须先恢复 alias（回滚到前序目标）再清理半成品集合，绝不能删除还挂着的集合。
+        stubClaims(List.of(claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a")));
+        stubEmbeddings();
+        // 捕获传给 switchAlias 的 physicalCollection，供防御性 aliasTarget 复查返回
+        AtomicReference<String> capturedPhysical = new AtomicReference<>();
+        doAnswer(invocation -> {
+            capturedPhysical.set(invocation.getArgument(1));
+            throw new RuntimeException("alias switch timeout after actual switch");
+        }).when(qdrantStore).switchAlias(anyString(), anyString());
+        // 第一次 aliasTarget（记录前序目标）→ 旧目标；第二次（防御复查）→ 已指向本代际
+        when(qdrantStore.aliasTarget(eq(liveAlias())))
+                .thenReturn("old-collection-1")
+                .thenAnswer(invocation -> capturedPhysical.get());
+
+        assertThatThrownBy(() -> buildService.build("proj-1", "v1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("alias 切换失败");
+
+        // 先回滚 alias 到前序目标，再清理半成品集合；不得删除仍在 alias 上的本代际集合
+        verify(qdrantStore).rollbackAlias(eq(liveAlias()), eq("old-collection-1"));
+        verify(qdrantStore).deleteCollection(anyString());
+        verify(qdrantStore, never()).deleteAlias(anyString());
+        Optional<ClaimVectorGenerationManifest> gen = vectorStore.findLatestGeneration("proj-1", "v1");
+        assertThat(gen).isPresent();
+        assertThat(gen.get().status()).isEqualTo(GenerationStatus.FAILED);
+        assertThat(gen.get().warningsJson()).contains("KNOWLEDGE_CLAIM_VECTOR_ALIAS_SWITCH_FAILED");
+        assertThat(vectorStore.findActiveGeneration("proj-1", "v1")).isEmpty();
+    }
+
+    @Test
     void secondPassDriftFailsGeneration() {
         // 高（Review 8）：两遍流式读取间数据漂移（第一遍统计 2 条，第二遍只读回 1 条）
         // 必须拒绝发布，避免 manifest 计数与实际投影不一致。
@@ -344,6 +378,8 @@ class KnowledgeClaimVectorBuildServiceTest {
                 .hasMessageContaining("漂移");
 
         verify(qdrantStore, never()).switchAlias(anyString(), anyString());
+        // 高（Review 4）：漂移失败路径必须清理已写入的半成品物理 collection（首当已写入）
+        verify(qdrantStore).deleteCollection(anyString());
         Optional<ClaimVectorGenerationManifest> gen = vectorStore.findLatestGeneration("proj-1", "v1");
         assertThat(gen).isPresent();
         assertThat(gen.get().status()).isEqualTo(GenerationStatus.FAILED);

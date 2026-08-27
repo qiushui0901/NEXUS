@@ -94,7 +94,15 @@ public class KnowledgeClaimVectorQdrantStore {
                 postAliasActions(actions);
             }
         }
-        retireOldCollections(alias, physicalCollection);
+        // 高（Review 4）：alias 已切换成功后旧 collection 回收必须 best-effort——
+        // 回收阶段的 GET /collections 列表查询/解析异常不得向上抛出，否则调用方会把
+        // "切换后回收失败"误判为"alias 切换失败"，进而删除当前 alias 指向的线上 collection。
+        try {
+            retireOldCollections(alias, physicalCollection);
+        } catch (RuntimeException exception) {
+            LOGGER.warn("alias 切换成功但旧 collection 回收失败（best-effort，不影响已切换的 alias）: {}",
+                    exception.getMessage());
+        }
     }
 
     /** 回滚 alias 到指定物理 collection（如上一个成功版本）。 */

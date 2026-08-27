@@ -80,6 +80,14 @@ Reviews 定位 8 项问题（6 High 2 Medium），全部修复，全量 997 test
 - **Medium·两遍流式 + 漂移保护**（`KnowledgeClaimVectorBuildService`）：第一遍仍全量驻留文本+输入（仅向量被释放）。改为两遍流式：第一遍只收轻量输入（claimId/docVersion/textHash/updatedAt）算指纹，第二遍重读分页组合文本→分块嵌入→逐块写点，任一时刻内存仅一页+一块；两遍读取间数据漂移（分页带唯一 claim_id 尾排序，边界确定）则拒绝发布并标记 FAILED。（Review 8）
 - **新增测试 7 例**：发布标记资料版本 PUBLISHED、已发布投影排除 DRAFT+scope/版本隔离、回滚降级上一发布者并提升目标（Review 2）3 例；markActive 失败补偿回滚 alias、两遍漂移 FAILED（Review 4/8）2 例；语义适配器诊断与 buildIds 回传（Review 7）2 例。全量 997 tests 通过。
 
+### Fixed（0.9.6 — Claim 向量投影 Review 第四批次）
+
+Reviews 定位 2 项问题（1 High 1 Medium），全部修复，全量 1004 tests 通过：
+
+- **High·alias 切换后旧集合回收异常不再被误判为切换失败**（`KnowledgeClaimVectorQdrantStore.switchAlias` / `KnowledgeClaimVectorBuildService`）：旧实现先完成切换、再调 `retireOldCollections`，后者 GET /collections 列表查询或解析异常会向上抛出，被构建服务当作"alias 切换失败"，进而清理（删除）当前 alias 已指向的线上物理 collection——留下悬空 alias 或 SQLite/Qdrant 分叉。改为：① 回收阶段整体 best-effort（catch 后仅告警，不影响已切换的 alias）；② 构建服务防御性复查 `aliasTarget`——发现 alias 实际已指向本代际 collection 时，先回滚 alias 到前序目标（无前序则删除 alias）再清理半成品集合，绝不删除仍被 alias 引用的集合。（Review 4）
+- **Medium·漂移失败路径泄漏半成品物理集合**（`KnowledgeClaimVectorBuildService.driftAndFail`）：两遍流式漂移只会 failGeneration+抛异常，已写入的 collection 不会清理——首当已写入、后续页发现漂移时 collectionReady 已为 true，集合遗留 Qdrant。改为一并走带清理的失败处理：`driftAndFail` 接收 physicalCollection/collectionReady 并在抛异常前调用 `cleanupFailedCollection`。（Review 4）
+- **新增测试 2 例**：QdrantStore 切换已完成但 GET /collections 返回 500 时 switchAlias 不抛异常 1 例；构建服务 alias 切换异常但 alias 实际已指向新代际时先回滚 alias 再清理、不删除仍在 alias 上的集合 1 例；另扩建漂移失败测试断言 `deleteCollection` 被调用（堵住资源泄漏回归）。全量 1004 tests 通过（上批 1002）。
+
 ### Fixed（0.9.6 — Claim 向量投影 Review 第三批次）
 
 Reviews 定位 5 项问题（3 High 2 Medium），全部修复，全量 1002 tests 通过：
