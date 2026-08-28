@@ -131,6 +131,17 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
                     List.of(active.get().generationId())), Map.of());
         }
 
+        // High：active 代际的投影 schema 必须等于当前应用配置——投影契约（如点 ID 算法、schema 版本）
+        // 变更后，旧 schema 的 ACTIVE 代际（findActiveGeneration 已按配置过滤，此处双保险）不得被检索。
+        if (!properties.projectionSchemaVersion().equals(active.get().projectionSchemaVersion())) {
+            return new SearchResult(new CandidateLoad(List.of(),
+                    List.of("CLAIM_VECTOR_SCHEMA_MISMATCH:active 代际 schema="
+                            + safe(active.get().projectionSchemaVersion())
+                            + " != 当前配置 " + safe(properties.projectionSchemaVersion())
+                            + "——投影契约变更后旧代际不参与检索，需重新构建"),
+                    List.of()), Map.of());
+        }
+
         try {
             List<float[]> embeddings = embeddingBatcher.embedAll(List.of(query));
             if (embeddings.isEmpty() || embeddings.get(0).length == 0) {
@@ -139,6 +150,28 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
                         List.of(active.get().generationId())), Map.of());
             }
             float[] queryVector = embeddings.get(0);
+
+            // Med：查询向量维度必须等于 active 代际构建维度——远端嵌入模型若被替换（维度变化），
+            // 查询与索引向量来自不同模型，检索静默失真，必须 fail-close
+            if (active.get().embeddingDimension() > 0
+                    && queryVector.length != active.get().embeddingDimension()) {
+                return new SearchResult(new CandidateLoad(List.of(),
+                        List.of("CLAIM_VECTOR_EMBEDDING_DIMENSION_MISMATCH:查询向量维度 " + queryVector.length
+                                + " != 代际构建维度 " + active.get().embeddingDimension()
+                                + "——运行时代际与当前嵌入模型不一致，需重新构建"),
+                        List.of()), Map.of());
+            }
+            // 运行时嵌入模型身份（EmbeddingBatcher 指纹 class:dim）与代际一致性校验（可用时）——
+            // 远端模型被替换但客户端类型/维度不变时也能识别
+            String runtimeModel = embeddingBatcher.modelFingerprint();
+            if (runtimeModel != null && !runtimeModel.isBlank()
+                    && !runtimeModel.equals(active.get().embeddingModel())) {
+                return new SearchResult(new CandidateLoad(List.of(),
+                        List.of("CLAIM_VECTOR_EMBEDDING_MODEL_MISMATCH:运行时嵌入模型 " + runtimeModel
+                                + " != 代际构建模型 " + safe(active.get().embeddingModel())
+                                + "——需重新构建"),
+                        List.of()), Map.of());
+            }
 
             int limit = properties.candidateLimit() * properties.overFetchFactor();
             // 高（Review 2）：按 project+version 隔离的 live alias，避免跨 scope 检索
@@ -149,9 +182,16 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
                         List.of(active.get().generationId())), Map.of());
             }
 
-            List<String> claimIds = hits.stream().map(ClaimVectorHit::claimId).toList();
-            Map<String, KnowledgeClaimRecord> records = knowledgeStore.findPublishedClaimsByIds(
-                            projectId, version, claimIds).stream()
+            List<String> claimIds = hits.stream()
+                    .flatMap(hit -> claimIdsOf(hit).stream())
+                    .distinct().toList();
+            // 水化范围与构建 scope 对齐：ALL_PUBLISHED 代际 → 全部已发布文档（与实体层同态）；
+            // 默认 ACTIVE_DOC → active manifest 单文档（多源融合路径契约）。
+            boolean allPublished = KnowledgeClaimVectorProperties.SCOPE_ALL_PUBLISHED
+                    .equals(active.get().buildScope());
+            Map<String, KnowledgeClaimRecord> records = (allPublished
+                    ? knowledgeStore.findPublishedClaimsByIdsAll(projectId, version, claimIds)
+                    : knowledgeStore.findPublishedClaimsByIds(projectId, version, claimIds)).stream()
                     .collect(Collectors.toMap(KnowledgeClaimRecord::claimId, Function.identity(), (a, b) -> a));
 
             List<UnifiedKnowledgeClaim> candidates = new ArrayList<>();
@@ -161,42 +201,62 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
             int generationMismatchCount = 0;
             int intentFilteredCount = 0;
             for (ClaimVectorHit hit : hits) {
-                // 高（Review 4）：投影代际一致性校验——Qdrant alias 命中点的代际必须等于
-                // SQLite 当前 ACTIVE 代际。若构建/回滚分叉窗口（alias 已切换而 SQLite 未提交，或
-                // SQLite 已回滚而 alias 未切回）导致 alias 指向非 ACTIVE 集合，命中点代际不匹配，
-                // 丢弃这些命中（fail-close），防止把新/旧代际数据登记到错误的代际身份下。
-                if (hit.point() != null && hit.point().projectionGenerationId() != null
-                        && !hit.point().projectionGenerationId().equals(active.get().generationId())) {
+                // 高（Review 4 + High）：投影契约完整性校验——fail-close，不得按“字段为空则跳过”：
+                // 命中点必须携带与 active 代际一致的 generation/schema/model，以及匹配的 project/version；
+                // 任一缺失或不匹配即丢弃（Qdrant payload 可缺失/伪造，SQLite 之外没有可信字段）。
+                if (hit.point() == null
+                        || hit.point().projectionGenerationId() == null
+                        || hit.point().projectionGenerationId().isBlank()
+                        || !hit.point().projectionGenerationId().equals(active.get().generationId())) {
                     generationMismatchCount++;
                     continue;
                 }
-                // payload 级版本校验（第一道防线，跨 scope 旧点防御）
-                if (hit.point() != null && hit.point().businessVersion() != null
-                        && !hit.point().businessVersion().equals(version)) {
+                if (hit.point().projectionSchemaVersion() == null
+                        || !hit.point().projectionSchemaVersion().equals(active.get().projectionSchemaVersion())) {
+                    generationMismatchCount++;
+                    continue;
+                }
+                if (hit.point().embeddingModel() == null
+                        || !hit.point().embeddingModel().equals(active.get().embeddingModel())) {
+                    generationMismatchCount++;
+                    continue;
+                }
+                // payload 级版本/项目校验（跨 scope 旧点防御；必填，不允许缺失跳过）
+                if (hit.point().businessVersion() == null
+                        || !hit.point().businessVersion().equals(version)) {
                     scopeMismatchCount++;
                     continue;
                 }
-                KnowledgeClaimRecord record = records.get(hit.claimId());
-                if (record == null) {
-                    staleCount++;
-                    continue;
-                }
-                // SQLite 水化后权威校验：project 归属（第二道防线）
-                if (!projectId.equals(record.projectId())) {
+                if (hit.point().projectId() == null
+                        || !hit.point().projectId().equals(projectId)) {
                     scopeMismatchCount++;
                     continue;
                 }
-                if (record.documentVersionId() == null || record.documentVersionId().isBlank()) {
-                    staleCount++;
-                    continue;
+                for (String claimId : claimIdsOf(hit)) {
+                    KnowledgeClaimRecord record = records.get(claimId);
+                    if (record == null) {
+                        staleCount++;
+                        continue;
+                    }
+                    // SQLite 水化后权威校验：project 归属（第二道防线）
+                    if (!projectId.equals(record.projectId())) {
+                        scopeMismatchCount++;
+                        continue;
+                    }
+                    if (record.documentVersionId() == null || record.documentVersionId().isBlank()) {
+                        staleCount++;
+                        continue;
+                    }
+                    // 意图过滤（高：Review 4——NORMATIVE 等意图不得混入 DOUBT 等不允许的来源）
+                    if (intent != null && !sourceFilter.allowedSources(intent).contains(record.sourceType())) {
+                        intentFilteredCount++;
+                        continue;
+                    }
+                    if (candidates.stream().noneMatch(candidate -> candidate.claimId().equals(record.claimId()))) {
+                        candidates.add(toUnified(record, version));
+                    }
+                    scores.putIfAbsent(record.claimId(), hit.score());
                 }
-                // 意图过滤（高：Review 4——NORMATIVE 等意图不得混入 DOUBT 等不允许的来源）
-                if (intent != null && !sourceFilter.allowedSources(intent).contains(record.sourceType())) {
-                    intentFilteredCount++;
-                    continue;
-                }
-                candidates.add(toUnified(record, version));
-                scores.put(hit.claimId(), hit.score());
             }
             if (staleCount > 0) {
                 LOGGER.warn("CLAIM_VECTOR_STALE_HITS project={} version={} stale={}/{}",
@@ -268,6 +328,15 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
         int pipe = factKey.indexOf('|');
         int end = hash < 0 ? pipe : (pipe < 0 ? hash : Math.min(hash, pipe));
         return end > 0 ? factKey.substring(0, end) : factKey;
+    }
+
+    private List<String> claimIdsOf(ClaimVectorHit hit) {
+        if (hit == null || hit.point() == null) return List.of();
+        List<String> ids = hit.point().claimIds();
+        if (ids == null || ids.isEmpty()) {
+            return hit.claimId() == null || hit.claimId().isBlank() ? List.of() : List.of(hit.claimId());
+        }
+        return ids.stream().filter(id -> id != null && !id.isBlank()).distinct().toList();
     }
 
     private String safe(String value) {

@@ -1053,6 +1053,26 @@ public class MultiSourceKnowledgeStore {
     }
 
     /** 按唯一键查找资料版本。 */
+    /** 项目+业务版本下的全部文档版本 ID（发布/回滚枚举用）。 */
+    public List<String> findDocumentVersionIds(String projectId, String businessVersion) {
+        List<String> ids = new ArrayList<>();
+        String sql = "select document_version_id from knowledge_document_version"
+                + " where project_id=? and business_version=? order by document_version_id";
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, projectId);
+            statement.setString(2, businessVersion);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    ids.add(rows.getString(1));
+                }
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询项目业务版本文档失败", exception);
+        }
+        return ids;
+    }
+
     public Optional<KnowledgeDocumentVersion> findDocumentVersion(String documentId, String businessVersion,
                                                                   String contentHash, String parserVersion,
                                                                   String extractionVersion) {
@@ -1291,10 +1311,90 @@ public class MultiSourceKnowledgeStore {
         return result;
     }
 
+    /** 实体层“已发布全量”按 ID 查询：仅文档状态 PUBLISHED，**不绑定 active manifest**（并行来源全部可见）。
+     * 供局部图扩展/向量命中映射回实体使用（图与实体层保持同态）。 */
+    public Set<String> findPublishedClaimIdsByIdsAll(String projectId, java.util.Collection<String> claimIds) {
+        if (projectId == null || projectId.isBlank() || claimIds == null || claimIds.isEmpty()) return Set.of();
+        List<String> ids = claimIds.stream().filter(id -> id != null && !id.isBlank()).distinct().toList();
+        if (ids.isEmpty()) return Set.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        String sql = "select c.claim_id from knowledge_claim c"
+                + " join knowledge_document_version d on d.document_version_id=c.document_version_id"
+                + " where c.project_id=? and c.claim_id in (" + placeholders + ")"
+                + publishedDocumentVersionFilter();
+        Set<String> result = new java.util.LinkedHashSet<>();
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            int index = 1;
+            statement.setString(index++, projectId);
+            for (String id : ids) statement.setString(index++, id);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) result.add(rows.getString(1));
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询已发布 Claim ID 失败", exception);
+        }
+        return result;
+    }
+
     /** 按项目与 Claim ID 查询当前已发布 Claim。 */
     public List<KnowledgeClaimRecord> findPublishedClaimsByIds(String projectId,
                                                                 java.util.Collection<String> claimIds) {
         return findPublishedClaimsByIds(projectId, null, claimIds);
+    }
+    /** 实体层“已发布全量”按 ID 批量水化：仅文档状态 PUBLISHED，**不绑定 active manifest**（并行来源全部可见）。 */
+    public List<KnowledgeClaimRecord> findPublishedClaimsByIdsAll(String projectId,
+                                                                   java.util.Collection<String> claimIds) {
+        if (projectId == null || projectId.isBlank() || claimIds == null || claimIds.isEmpty()) return List.of();
+        List<String> ids = claimIds.stream().filter(id -> id != null && !id.isBlank()).distinct().toList();
+        if (ids.isEmpty()) return List.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        String sql = "select c.claim_id,c.project_id,c.document_version_id,c.source_type,c.authority,c.fact_key,"
+                + "c.subject,c.predicate,c.object_value,c.value_type,c.unit,c.status,c.confidence,"
+                + "c.effective_from,c.effective_to,c.extraction_method,c.extraction_run_id,c.created_at,c.updated_at "
+                + "from knowledge_claim c join knowledge_document_version d on d.document_version_id=c.document_version_id "
+                + "where c.project_id=? and c.claim_id in (" + placeholders + ")"
+                + publishedDocumentVersionFilter();
+        List<KnowledgeClaimRecord> result = new ArrayList<>();
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            int index = 1;
+            statement.setString(index++, projectId);
+            for (String id : ids) statement.setString(index++, id);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) result.add(claim(rows));
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询已发布 Claim 失败", exception);
+        }
+        return result;
+    }
+
+    /** 实体层“已发布全量”按 ID 批量水化（按业务版本收窄）：不绑定 active manifest，但强制 SQLite 侧
+     * 校验 Claim 关联文档的业务版本等于请求版本——Qdrant payload 可伪造/缺失，SQLite 是事实权威。 */
+    public List<KnowledgeClaimRecord> findPublishedClaimsByIdsAll(String projectId, String businessVersion,
+                                                                   java.util.Collection<String> claimIds) {
+        if (projectId == null || projectId.isBlank() || claimIds == null || claimIds.isEmpty()) return List.of();
+        List<String> ids = claimIds.stream().filter(id -> id != null && !id.isBlank()).distinct().toList();
+        if (ids.isEmpty()) return List.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        String sql = "select c.claim_id,c.project_id,c.document_version_id,c.source_type,c.authority,c.fact_key,"
+                + "c.subject,c.predicate,c.object_value,c.value_type,c.unit,c.status,c.confidence,"
+                + "c.effective_from,c.effective_to,c.extraction_method,c.extraction_run_id,c.created_at,c.updated_at "
+                + "from knowledge_claim c join knowledge_document_version d on d.document_version_id=c.document_version_id "
+                + "where c.project_id=? and c.claim_id in (" + placeholders + ")"
+                + publishedDocumentVersionFilter() + " and d.business_version=?";
+        List<KnowledgeClaimRecord> result = new ArrayList<>();
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            int index = 1;
+            statement.setString(index++, projectId);
+            for (String id : ids) statement.setString(index++, id);
+            statement.setString(index++, businessVersion);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) result.add(claim(rows));
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询已发布 Claim 失败", exception);
+        }
+        return result;
     }
 
     /** 按项目、业务版本与 Claim ID 查询当前已发布 Claim，供向量水化和关系端点隔离使用。 */
@@ -1331,7 +1431,7 @@ public class MultiSourceKnowledgeStore {
     public Map<String, String> findPublishedClaimVersions(String projectId,
                                                            java.util.Collection<String> claimIds) {
         Map<String, String> result = new java.util.LinkedHashMap<>();
-        for (KnowledgeClaimRecord claim : findPublishedClaimsByIds(projectId, claimIds)) {
+        for (KnowledgeClaimRecord claim : findPublishedClaimsByIdsAll(projectId, claimIds)) {
             findDocumentVersionById(claim.documentVersionId()).ifPresent(document ->
                     result.put(claim.claimId(), document.businessVersion()));
         }
@@ -1441,6 +1541,53 @@ public class MultiSourceKnowledgeStore {
         }
     }
 
+    /** 关系证据校验：Evidence 必须已发布（实体层同态，不绑 active manifest）**且属于关系端点 Claim**
+     * （knowledge_claim_evidence 绑定），**且与端点 Claim 同一文档、同来源类型**。
+     * <ul>
+     *   <li>Claim-Claim 关系：evidence 须绑定 source 或 target Claim，文档版本与来源类型一致；</li>
+     *   <li>Claim → 代码符号关系（targetClaimId 为空，如 READS_CONFIG/VERIFIES）：evidence 绑定 source Claim 即可——
+     *       代码符号端没有 Claim，不能强制两端都有 Claim ID，否则会把有效关系误降级为 UNVERIFIED。</li>
+     * </ul>
+     */
+    public boolean isPublishedEvidenceForRelation(String projectId, String businessVersion, String evidenceId,
+                                                   String sourceClaimId, String targetClaimId) {
+        if (projectId == null || projectId.isBlank() || businessVersion == null || businessVersion.isBlank()
+                || evidenceId == null || evidenceId.isBlank()
+                || sourceClaimId == null || sourceClaimId.isBlank()) {
+            return false;
+        }
+        List<String> endpointClaims = new java.util.ArrayList<>();
+        endpointClaims.add(sourceClaimId);
+        if (targetClaimId != null && !targetClaimId.isBlank() && !targetClaimId.equals(sourceClaimId)) {
+            endpointClaims.add(targetClaimId);
+        }
+        String placeholders = String.join(",", java.util.Collections.nCopies(endpointClaims.size(), "?"));
+        String sql = "select 1 from knowledge_evidence e"
+                + " join knowledge_document_version d on d.document_version_id=e.document_version_id"
+                + " where e.project_id=? and e.evidence_id=? and d.business_version=? and d.status='PUBLISHED'"
+                + " and exists (select 1 from knowledge_claim_evidence ce"
+                + "             join knowledge_claim c on c.claim_id=ce.claim_id"
+                + "             where ce.evidence_id=e.evidence_id and ce.claim_id in (" + placeholders + ")"
+                + "             and c.project_id=e.project_id"
+                + "             and c.document_version_id=e.document_version_id"
+                + "             and c.source_type=e.source_type)"
+                + " limit 1";
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            int index = 1;
+            statement.setString(index++, projectId);
+            statement.setString(index++, evidenceId);
+            statement.setString(index++, businessVersion);
+            for (String claimId : endpointClaims) {
+                statement.setString(index++, claimId);
+            }
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next();
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询已发布关系 Evidence 失败", exception);
+        }
+    }
+
     /** 查询仍属于当前已发布文档的 Claim Evidence。 */
     public Optional<String> findPublishedEvidenceIdForClaim(String projectId, String claimId) {
         if (projectId == null || projectId.isBlank() || claimId == null || claimId.isBlank()) return Optional.empty();
@@ -1476,6 +1623,37 @@ public class MultiSourceKnowledgeStore {
                 + " where c.project_id=? and ce.claim_id in (" + placeholders + ")"
                 + " and e.project_id=c.project_id and e.document_version_id=c.document_version_id"
                 + " and e.source_type=c.source_type" + publishedDocumentFilter()
+                + " order by ce.claim_id,ce.evidence_id";
+        Map<String, List<String>> result = new java.util.LinkedHashMap<>();
+        try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
+            int index = 1;
+            statement.setString(index++, projectId);
+            for (String id : ids) statement.setString(index++, id);
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    result.computeIfAbsent(rows.getString(1), ignored -> new ArrayList<>())
+                            .add(rows.getString(2));
+                }
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("查询已发布 Claim Evidence 失败", exception);
+        }
+        return result;
+    }
+    /** 实体层“已发布全量”Evidence 批量水化：不绑定 active manifest。 */
+    public Map<String, List<String>> findPublishedEvidenceIdsByClaimIdsAll(String projectId,
+                                                                           java.util.Collection<String> claimIds) {
+        if (projectId == null || projectId.isBlank() || claimIds == null || claimIds.isEmpty()) return Map.of();
+        List<String> ids = claimIds.stream().filter(id -> id != null && !id.isBlank()).distinct().toList();
+        if (ids.isEmpty()) return Map.of();
+        String placeholders = String.join(",", java.util.Collections.nCopies(ids.size(), "?"));
+        String sql = "select ce.claim_id,ce.evidence_id from knowledge_claim_evidence ce"
+                + " join knowledge_claim c on c.claim_id=ce.claim_id"
+                + " join knowledge_evidence e on e.evidence_id=ce.evidence_id"
+                + " join knowledge_document_version d on d.document_version_id=c.document_version_id"
+                + " where c.project_id=? and ce.claim_id in (" + placeholders + ")"
+                + " and e.project_id=c.project_id and e.document_version_id=c.document_version_id"
+                + " and e.source_type=c.source_type" + publishedDocumentVersionFilter()
                 + " order by ce.claim_id,ce.evidence_id";
         Map<String, List<String>> result = new java.util.LinkedHashMap<>();
         try (Connection connection = open(); PreparedStatement statement = connection.prepareStatement(sql)) {
@@ -1955,8 +2133,17 @@ public class MultiSourceKnowledgeStore {
                     statement.setString(6, now);
                     statement.executeUpdate();
                 }
-                // 旧发布者从 PUBLISHED 降回 DRAFT（替换语义）
-                if (previousActive != null && !previousActive.equals(documentVersionId)) {
+                // 替换语义仅对同一文档的新版本生效：previousActive 与目标属于同一 document_id 才降级；
+                // 不同文档（同业务版本下的并行来源，如 immortal 的 case/data/qa/prd）互不互斥，
+                // 保持全部 PUBLISHED（active manifest 仍单文档，供向量投影精确定位）
+                String previousActiveDocumentId = previousActive == null
+                        ? null : documentIdOf(connection, previousActive);
+                String targetDocumentId = documentIdOf(connection, documentVersionId);
+                boolean replaceSameDocument = previousActive != null
+                        && !previousActive.equals(documentVersionId)
+                        && previousActiveDocumentId != null
+                        && previousActiveDocumentId.equals(targetDocumentId);
+                if (replaceSameDocument) {
                     try (PreparedStatement demote = connection.prepareStatement("""
                              update knowledge_document_version
                              set status='DRAFT', published_at=null where document_version_id=?
@@ -2037,8 +2224,16 @@ public class MultiSourceKnowledgeStore {
                                 + projectId + "|" + businessVersion);
                     }
                 }
-                // 被替换的旧 active 版本从 PUBLISHED 降回 DRAFT
-                if (previousActive != null && !previousActive.equals(documentVersionId)) {
+                // 被替换的旧 active 版本仅在同一文档（同 document_id）内降级；
+                // 不同文档（并行来源）保持 PUBLISHED，回滚只切换 manifest 的投影目标
+                String previousActiveDocumentId = previousActive == null
+                        ? null : documentIdOf(connection, previousActive);
+                String targetDocumentId = documentIdOf(connection, documentVersionId);
+                boolean replaceSameDocument = previousActive != null
+                        && !previousActive.equals(documentVersionId)
+                        && previousActiveDocumentId != null
+                        && previousActiveDocumentId.equals(targetDocumentId);
+                if (replaceSameDocument) {
                     try (PreparedStatement demote = connection.prepareStatement("""
                              update knowledge_document_version
                              set status='DRAFT', published_at=null where document_version_id=?
@@ -2103,6 +2298,21 @@ public class MultiSourceKnowledgeStore {
             statement.setString(3, businessVersion);
             try (ResultSet rows = statement.executeQuery()) {
                 return rows.next();
+            }
+        }
+    }
+
+    /** 在给定连接内查询文档版本所属 document_id（发布/回滚判断同文档替换用，避免跨连接快照）。 */
+    private String documentIdOf(Connection connection, String documentVersionId) throws SQLException {
+        if (documentVersionId == null || documentVersionId.isBlank()) {
+            return null;
+        }
+        try (PreparedStatement statement = connection.prepareStatement("""
+                 select document_id from knowledge_document_version where document_version_id=?
+                 """)) {
+            statement.setString(1, documentVersionId);
+            try (ResultSet rows = statement.executeQuery()) {
+                return rows.next() ? rows.getString("document_id") : null;
             }
         }
     }
@@ -2256,15 +2466,8 @@ public class MultiSourceKnowledgeStore {
      * 对尚未迁移 active manifest 的旧数据库，仅在该业务版本不存在 manifest 时兼容读取唯一发布状态。 */
     public List<String> findPublishedBusinessVersions(String projectId) {
         List<String> versions = new ArrayList<>();
-        String sql = "select distinct d.business_version from knowledge_document_version d"
-                + " where d.project_id=? and d.status='PUBLISHED'"
-                + " and (exists (select 1 from knowledge_active_version av where av.project_id=d.project_id"
-                + " and av.business_version=d.business_version and av.document_version_id=d.document_version_id"
-                + " and av.status in ('PUBLISHED','ROLLED_BACK'))"
-                + " or (not exists (select 1 from knowledge_active_version av2 where av2.project_id=d.project_id"
-                + " and av2.business_version=d.business_version) and 1=(select count(*) from knowledge_document_version d2"
-                + " where d2.project_id=d.project_id and d2.business_version=d.business_version"
-                + " and d2.status='PUBLISHED'))) order by d.business_version";
+        String sql = "select distinct business_version from knowledge_document_version"
+                + " where project_id=? and status='PUBLISHED' order by business_version";
         try (Connection connection = open();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, projectId);
@@ -2283,32 +2486,47 @@ public class MultiSourceKnowledgeStore {
     /** 某业务版本 active manifest 绑定文档的已发布 Claim。
      * 尚未有该版本 manifest 的旧数据库兼容读取发布状态文档。 */
     public List<KnowledgeClaimRecord> findPublishedClaimsByProjectVersionAll(String projectId, String version) {
+        // 实体层“已发布全量”：仅按文档状态过滤，**不绑定 active manifest**——
+        // 同一业务版本下多个已发布文档（并行来源）全部纳入；
+        // 单文档激活绑定仅保留给 Claim 向量投影（publishedDocumentFilter）
         return findClaimsByProjectVersionPageInternal(projectId, version, Integer.MAX_VALUE, 0,
-                "", publishedDocumentFilter());
+                "", " and c.status not in ('DRAFT','REJECTED','STALE','OBSOLETE') and d.status='PUBLISHED'");
+    }
+
+    /** 实体层“已发布全量”：仅按文档状态过滤，**不绑定 active manifest**——
+     * 同一业务版本下多个已发布文档（并行来源）全部纳入；
+     * 单文档激活绑定仅保留给 Claim 向量投影（publishedDocumentFilter）
+     * <p>分页变体：供 Claim 向量 build-scope=ALL_PUBLISHED 流式投影使用。
+     * 注意：list 版无限分页（Integer.MAX_VALUE, 0）仅供实体聚合等全量消费；流式构建必须用分页版。
+     */
+    public List<KnowledgeClaimRecord> findPublishedClaimsByProjectVersionAllPage(String projectId, String version,
+                                                                                  int limit, long offset) {
+        return findClaimsByProjectVersionPageInternal(projectId, version, limit, offset,
+                "order by c.source_type,c.subject,c.claim_id", publishedDocumentVersionFilter());
     }
 
     /** 项目下当前 active manifest 绑定的 PUBLISHED 文档版本 ID 集合。 */
     public java.util.Set<String> findPublishedDocumentVersionIds(String projectId) {
         java.util.Set<String> ids = new java.util.LinkedHashSet<>();
-        String sql = "select d.document_version_id from knowledge_document_version d"
-                + " where d.project_id=? and d.status='PUBLISHED'"
-                + " and (exists (select 1 from knowledge_active_version av where av.project_id=d.project_id"
-                + " and av.business_version=d.business_version and av.document_version_id=d.document_version_id"
-                + " and av.status in ('PUBLISHED','ROLLED_BACK'))"
-                + " or (not exists (select 1 from knowledge_active_version av2 where av2.project_id=d.project_id"
-                + " and av2.business_version=d.business_version) and 1=(select count(*) from knowledge_document_version d2"
-                + " where d2.project_id=d.project_id and d2.business_version=d.business_version"
-                + " and d2.status='PUBLISHED')))";
+        String sql = "select document_version_id from knowledge_document_version"
+                + " where project_id=? and status='PUBLISHED'";
         try (Connection connection = open();
              PreparedStatement statement = connection.prepareStatement(sql)) {
             statement.setString(1, projectId);
             try (ResultSet rows = statement.executeQuery()) {
-                while (rows.next()) ids.add(rows.getString(1));
+                while (rows.next()) {
+                    ids.add(rows.getString(1));
+                }
             }
         } catch (SQLException exception) {
             throw new IllegalStateException("查询项目已发布文档版本失败", exception);
         }
         return ids;
+    }
+
+    /** 实体层过滤：仅文档状态 PUBLISHED，不绑定 active manifest（同一业务版本并行来源全部可见）。 */
+    private String publishedDocumentVersionFilter() {
+        return " and c.status not in ('DRAFT','REJECTED','STALE','OBSOLETE') and d.status='PUBLISHED'";
     }
 
     private String publishedDocumentFilter() {

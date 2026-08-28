@@ -297,7 +297,7 @@ app:
       max-candidate-annotations: ${REQUIREMENT_SEMANTIC_MAX_CANDIDATE_ANNOTATIONS:5000}
       window-overlap-chars: ${REQUIREMENT_SEMANTIC_WINDOW_OVERLAP_CHARS:400}
       allow-inferred-candidate: ${REQUIREMENT_SEMANTIC_ALLOW_INFERRED_CANDIDATE:false}
-    # 多源 Claim 向量检索（0.9.6）：默认全关。SQLite 为事实权威，Qdrant 为可弃投影。
+    # 多源 Claim 向量检索（0.9.6）：投影/构建/检索默认关闭，语义增强默认开启且仅在构建时使用。SQLite 为事实权威，Qdrant 为可弃投影。
     # Rollout: build-only → shadow-query → internal-fusion → limited-prod → default-on。
     multi-source:
       claim-vector:
@@ -305,14 +305,19 @@ app:
         build-enabled: ${KNOWLEDGE_CLAIM_VECTOR_BUILD_ENABLED:false}
         candidate-retrieval-enabled: ${KNOWLEDGE_CLAIM_VECTOR_CANDIDATE_RETRIEVAL_ENABLED:false}
         shadow-query-enabled: ${KNOWLEDGE_CLAIM_VECTOR_SHADOW_QUERY_ENABLED:false}
+        build-scope: ${KNOWLEDGE_CLAIM_VECTOR_BUILD_SCOPE:ACTIVE_DOC}
         alias: ${KNOWLEDGE_CLAIM_VECTOR_ALIAS:knowledge_claims_live}
-        projection-schema-version: ${KNOWLEDGE_CLAIM_VECTOR_PROJECTION_SCHEMA_VERSION:knowledge-claim-vector-v1}
-        text-composer-version: ${KNOWLEDGE_CLAIM_VECTOR_TEXT_COMPOSER_VERSION:knowledge-claim-text-v1}
+        projection-schema-version: ${KNOWLEDGE_CLAIM_VECTOR_PROJECTION_SCHEMA_VERSION:knowledge-claim-vector-v2}
+        text-composer-version: ${KNOWLEDGE_CLAIM_VECTOR_TEXT_COMPOSER_VERSION:knowledge-claim-text-v2}
         candidate-limit: ${KNOWLEDGE_CLAIM_VECTOR_CANDIDATE_LIMIT:200}
         over-fetch-factor: ${KNOWLEDGE_CLAIM_VECTOR_OVER_FETCH_FACTOR:3}
         batch-size: ${KNOWLEDGE_CLAIM_VECTOR_BATCH_SIZE:32}
         representative-evidence-limit: ${KNOWLEDGE_CLAIM_VECTOR_REPRESENTATIVE_EVIDENCE_LIMIT:3}
         retain-physical-collections: ${KNOWLEDGE_CLAIM_VECTOR_RETAIN_PHYSICAL_COLLECTIONS:2}
+        # 只限制单个 Qdrant 语义块的文本载荷大小；玩法卡实体和 SQLite Claim 不按数量截断。
+        block-max-chars: ${KNOWLEDGE_CLAIM_VECTOR_BLOCK_MAX_CHARS:24000}
+        semantic-enhancement-enabled: ${KNOWLEDGE_CLAIM_VECTOR_SEMANTIC_ENHANCEMENT_ENABLED:true}
+        semantic-enhancement-model: ${KNOWLEDGE_CLAIM_VECTOR_SEMANTIC_ENHANCEMENT_MODEL:gpt-5.6-luna}
         database-path: ${KNOWLEDGE_CLAIM_VECTOR_DATABASE_PATH:data/multi-source-knowledge.db}
     wiki:
       root-path: ${WIKI_ROOT_PATH:data/wiki}

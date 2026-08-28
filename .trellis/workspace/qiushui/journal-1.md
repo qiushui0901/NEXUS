@@ -1233,3 +1233,135 @@ Phase 2-6 全部落地：341 测试 verify 全绿；状态契约注册表 + CONT
 ### Status
 
 [OK] **Review 第二轮 8 项全部修复并回归覆盖**
+
+## Session 33: 实体中心真实数据链路打通（Path B 发布并行化 + 实体/向量发布语义分离）
+
+**Date**: 2026-08-27
+**Task**: 08-27-entity-centric-knowledge-retrieval（真实数据验证 + Path B）
+**Branch**: `main`
+
+### 结论
+
+用户要求"看到当前过程在真实数据上的结果"。跑了 ImmortalEntityViewIT 全链路（导入→发布→buildProject→entity-search），发现并修复两个根因后，实体视图在真实 immortal 数据上产出真实实体数据。
+
+### 根因与修复
+
+1. **发布互斥（Path B 前）**：publish 循环把 199 个同版本文档互相降级，只剩最后一个（存疑文档）PUBLISHED → 实体层只看到 2100 存疑。
+2. **实体层误用 manifest 绑定（用户第三轮 review 引入 + 我早期复用）**：`publishedDocumentFilter()` 带 `knowledge_active_version` 单文档绑定，被实体层查询使用 → 即使全部 PUBLISHED，也只返回 active 单文档。
+
+修复：发布降级仅限同 document_id 替换；实体层 published 查询改为无绑定（All 变体），向量层保留绑定。buildProject 从 1 概念/2100 成员 → 26,319 概念/201,281 成员；entity-search"等级上限"返回实体等级 7 条真实参数（50/100/…/2500）。
+
+### 数据形态观察
+
+- immortal 参数是**通用配置表形态**（列名 id/level/等级 当参数、每行一个值、同 factKey 多值）→ 实体"等级"出现 conflicts=1（7 个不同值同 factKey）。这是数据形状，不是链路 bug。
+- 需求（123 条）是文档级占位 claim（subject=HTML 文件名），未跑需求图/语义深抽。
+- 攻击力/传播时间 无对应别名 → ENTITY_UNRESOLVED（数据里没有这些列）。
+
+### Testing
+
+- `./mvnw test`：1077 tests，0 failures。
+
+### Status
+
+[OK] **真实数据链路可用：发布并行化 + 实体聚合全量 + entity-search 返回真实实体**
+
+## Session 34: LightRAG 可选召回方式（recallMode）
+
+**Date**: 2026-08-27
+**Task**: 08-27-entity-centric-knowledge-retrieval（LightRAG 可选召回）
+**Branch**: `main`
+
+### Summary
+
+实现 dev md §13 可选召回：`RecallMode`（DETERMINISTIC/LIGHTRAG/HYBRID）。LIGHTRAG = 确定性实体检索 + 局部图一跳/二跳扩展 + 可选 Claim 向量补召回（ObjectProvider 可选装配，无代际降级）；HYBRID = 两路并集；默认 DETERMINISTIC 行为不变。`EntityRecallService` 编排 + `EntityRecallResponse` 响应 + `KnowledgeAnswerService.answerWithRecall` 上下文入包（引用类型校验照旧）。API：entity-search / entity-answer 请求体新增可选 recallMode。
+
+### 设计决策
+
+- 图/向量只做**召回增强**，不改变事实权威（代码/数值表优先级、类型化引用校验、发布边界仍生效）——与 dev md §13“不把 LightRAG 的 LLM 图谱当作事实库”一致。
+- `ClaimVectorCandidateAdapter` 用 `ObjectProvider` 注入：该 Bean 是 @ConditionalOnProperty（candidate-retrieval-enabled），可能不存在；不存在/代际缺失/检索失败一律降级为空 + 稳定告警。
+- LIGHTRAG 与 HYBRID 在检索层并集相同；HYBRID 语义 = 确定性 + 图/向量都要，答案层都走 answerWithRecall。
+- 真实数据上 alignment_relation 为空（immortal 未跑关系对齐），图扩展会返回空——这是数据状态不是链路问题。
+
+### Testing
+
+- `./mvnw test`：1083 tests，0 failures（+6 召回模式测试）。
+
+### Status
+
+[OK] **LightRAG 可选召回落地；下一步可选：前端接 recallMode 或起 Qdrant 构建 Claim 向量代际让向量补召回真实生效**
+
+## Session 35: 第三轮 review 修复（引用安全 + 合并实体集 + 多版本对齐 + 去点名）
+
+**Date**: 2026-08-28
+**Task**: 08-27-entity-centric-knowledge-retrieval（可选召回模式 review 修复）
+**Branch**: `main`
+
+### 修复清单（4 High + 6 Medium）
+
+1. [High] answerWithRecall 不再把 Claim ID 注册进允许集（只认真实 Evidence ID）→ 模型引用 Claim ID 整段回退模板。
+2. [High] 向量命中 Claim → mapVectorHitsToEntities 映射为实体并入集合水化 → 事实/引用/评估同态进证据包。
+3. [High] 证据包改为基于合并实体集（evidence.entities = 种子+图+向量）。
+4. [High] 点 ID 64-hex→UUID 后 projectionSchemaVersion 升 v2（投影契约变更，旧代际不误复用）。
+5. [Med] 图扩展/向量映射改用 findPublishedClaimIdsByIdsAll + isPublishedEvidenceAll（实体层同态）。
+6. [Med] 新增 findPublishedClaimsByIdsAll(projectId, businessVersion, claimIds)——SQLite 以业务版本为权威。
+7. [Med] 向量补召回覆盖全部已发布版本（原只查 latest/第一版）。
+8. [Med] 向量诊断透传 warnings（有具体诊断不再叠 VECTOR_RECALL_EMPTY）。
+9. [Med] entity-answer 响应带 recall 包；前端开启回答只调一次接口。
+10. [Med] CHANGELOG 测试数同步（1092）。
+
+### 命名约束（用户明确）
+
+不出现 LightRAG 字样（借鉴不点名）。RecallMode 值 LIGHTRAG → GRAPH_VECTOR；前端下拉用标签（确定性/图+向量/并集）；CHANGELOG/spec/注释全部中性化。
+
+### 本地 Qdrant（用户提示“本地文件就有”）
+
+`tools/qdrant`（qdrant 1.15.4，仓库内，非 docker/brew）；启动 `tools/qdrant-start.sh`；数据 `qdrant-storage/`；端口 6333。已写入 .trellis/spec/backend/retrieval-and-version-knowledge.md。
+
+### 真实构建
+
+- 网关 text-embedding-v4（1024 维）批量上限 10（实测 8 OK / 12 拒），EmbeddingBatcher 已按 8 分批（既有注释即写明了）。
+- 首次构建因 64-hex 点 ID 被 Qdrant 400 拒绝而 FAILED（claim-vector 写入路径从未对真 Qdrant 跑过）——修 UUID + schema v2 后待重跑。
+- ALL_PUBLISHED ≈ 201,186 条 claim ≈ 4 小时串行嵌入。等待用户确认后启动（用户此前要求先别构建）。
+
+### Testing
+
+- 全量 `./mvnw test`：1092 tests，0 failures（+6 本轮）。
+- 更新测试：EntityRecallServiceTest +3（向量→实体进证据包 / 多版本逐版本 / 诊断透传）；KnowledgeAnswerServiceTest +2（Claim ID 冒充拒绝 / 扩展实体证据可引用）；MultiSourceKnowledgePublishTest +1（兄弟文档 All 变体可见、active 绑定不可见）；适配器 ALL_PUBLISHED 水化改版本收窄桩；RecallMode 重命名同步。
+
+### Status
+
+[OK] 第三轮 review 全部 High/Medium 修复 + 命名约束落实；等用户确认后重跑 4 小时真实 Claim 向量构建。
+
+## Session 36: 可选召回第四轮 review 修复（1 High + 5 Med）
+
+**Date**: 2026-08-28
+
+1. [High] 向量检索投影契约 fail-close：findActiveGeneration 按配置 schema 过滤 + adapter active 代际 schema 校验（SCHEMA_MISMATCH）+ 命中点五字段必填匹配 + payload 构造缺 schema/model 抛错（去 v1 回退）。
+2. [Med] 聚合器关系状态改 isPublishedEvidenceAll（与图扩展同态）。
+3. [Med] Qdrant search 上抛异常 → adapter CLAIM_VECTOR_SEARCH_FAILED（不再伪装空命中）。
+4. [Med] application.yml 补 build-scope 绑定（环境变量与 API 双入口）。
+5. [Med] 前端 revokeRetrievalRequests 纳入实体请求。
+6. [Med] evidenceTypeById 从全部输出事实 evidenceIds 建注册表（第二及后续 Evidence 可引用）。
+- 测试：+6 → 全量 **1098 tests** 全绿。真实 Qdrant/嵌入回归由 ImmortalClaimVectorBuildIT（-Dimmortal.vector=true）覆盖，待构建执行。
+- 状态：[OK] 第四轮全部修复；真实 4h 构建仍待用户确认启动。
+
+## Session 37: 可选召回第五轮 review 修复（1 High + 3 Med + docs）
+
+1. [High] 关系证据端点绑定：isPublishedEvidenceForRelation（knowledge_claim_evidence 绑定 source/target Claim），聚合器+图扩展统一。测试证实“并行无关证据判 false”。
+2. [Med] 前端 runEntitySearch 传 versions（版本边界回归修复）。
+3. [Med] setRetrievalMode 离开实体模式清理 entity.requestId/loading/resetEntityState。
+4. [Med] 多版本向量召回逐版本 try/catch（单版本失败保留其它命中 + 版本级告警）。
+- docs：0.9.6 development plan 同步 v2 + UUID + build-scope。
+- 测试：+2 → 全量 **1100 tests** 全绿。真实 Qdrant/嵌入构建（ImmortalClaimVectorBuildIT）仍待确认启动。
+- 状态：[OK] 第五轮全部修复。
+
+## Session 38: 可选召回第六轮 review 修复（1 High + 5 Med + spec 矛盾）
+
+1. [High] request.versions() 现覆盖分析器版本范围（前端版本输入真正生效）。
+2. [Med] 关系证据校验：Claim→代码符号（target 空）只绑 source；加文档版本+来源类型一致校验。
+3. [Med] Qdrant search 逐点容错（坏点跳过保留合法点）。
+4. [Med] adapter 加查询向量维度 + 运行时模型指纹校验（fail-close）。
+5. [Med] 可复用代际物理集合存在性校验（缺失→标记 FAILED+重建）。
+6. [Med] spec 矛盾修复（evidenceTypeById=全部输出事实）。
+- 测试：+5 → 全量 **1105 tests** 全绿。真实 Qdrant/嵌入构建（ImmortalClaimVectorBuildIT）仍待确认。
+- 状态：[OK] 第六轮全部修复。

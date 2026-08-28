@@ -31,7 +31,7 @@ The design follows one hard boundary:
 
 > SQLite remains authoritative for facts, versions, status, evidence, relations, and audit. Qdrant is a disposable retrieval projection that must be reproducible from SQLite.
 
-The first release indexes one point per eligible Claim. It does not independently index all Evidence rows, replace structured filters, or allow vector similarity to determine authority or truth.
+The first release indexes semantic blocks grouped by source type and `canonical_module`. A block may contain multiple eligible Claims; it does not independently index Evidence rows, replace structured filters, or allow vector similarity to determine authority or truth. The entity layer follows the gameplay-card rule: one gameplay/system maps to one card, while every atomic Claim and Evidence remains individually traceable in SQLite.
 
 ---
 
@@ -167,13 +167,15 @@ canonical retrieval text is non-blank
 at least one stable Claim ID exists
 ```
 
-### 5.2 One Point per Claim
+### 5.2 Semantic Block Point
 
-Each Qdrant point represents one canonical Claim, not one Evidence row. The point ID is deterministic:
+Each Qdrant point represents one semantic block grouped by `sourceType + canonical_module`, not one Evidence row. The block carries `blockId` and all member `claimIds`; the corresponding atomic Claims and Evidence remain authoritative in SQLite. Blocks are split only when deterministic text exceeds the configured payload character capacity. The point ID is deterministic — a **standard UUID** (Qdrant v1.15+ rejects arbitrary strings; a bare 64-char SHA-256 hex is a 400):
 
 ```text
-SHA-256(projectId | businessVersion | claimId | projectionSchemaVersion)
+UUID v5(SHA-256(projectId | businessVersion | blockId | projectionSchemaVersion) 前 16 字节)
 ```
+
+Point ID format is part of the projection schema contract: it changed in 0.9.7 (64-hex → UUID), which is why the default `projectionSchemaVersion` was bumped to `knowledge-claim-vector-v2`. Changing the algorithm again **must** bump the schema version, otherwise old generations are served under the new contract.
 
 Representative Evidence IDs are payload references. Full Evidence is loaded from SQLite after a hit. The first implementation should retain at most three stable Evidence IDs per Claim, sorted by role and ID.
 
@@ -217,7 +219,8 @@ Introduce a dedicated immutable model such as `KnowledgeClaimVectorPoint` rather
 {
   "projectId": "immortal",
   "businessVersion": "5.1",
-  "claimId": "claim-...",
+  "blockId": "block:...",
+  "claimIds": ["claim-..."],
   "documentVersionId": "dv-...",
   "sourceType": "TEST_CASE",
   "authority": "SECONDARY",
@@ -229,7 +232,7 @@ Introduce a dedicated immutable model such as `KnowledgeClaimVectorPoint` rather
   "unit": null,
   "evidenceIds": ["evidence-1"],
   "projectionGenerationId": "kgp-...",
-  "projectionSchemaVersion": "knowledge-claim-vector-v1",
+  "projectionSchemaVersion": "knowledge-claim-vector-v2",
   "embeddingModel": "...",
   "textHash": "sha256:..."
 }
@@ -421,9 +424,12 @@ app:
         build-enabled: false
         candidate-retrieval-enabled: false
         shadow-query-enabled: false
+        build-scope: ACTIVE_DOC
         alias: knowledge_claims_live
-        projection-schema-version: knowledge-claim-vector-v1
-        text-composer-version: knowledge-claim-text-v1
+        projection-schema-version: knowledge-claim-vector-v2
+        text-composer-version: knowledge-claim-text-v2
+        semantic-enhancement-enabled: true
+        semantic-enhancement-model: gpt-5.6-luna
         candidate-limit: 200
         over-fetch-factor: 3
         batch-size: 32
@@ -431,7 +437,7 @@ app:
         retain-physical-collections: 2
 ```
 
-All switches default to `false`. Rollout stages:
+The Claim vector projection, build, candidate retrieval, and shadow-query switches default to `false`. Semantic enhancement defaults to `true`, but it is only invoked during an enabled vector build and only contributes recall text; deterministic fact text remains authoritative and is used as the fallback. Rollout stages:
 
 1. **Build-only:** create and verify generations; query path unchanged.
 2. **Shadow query:** execute vector retrieval, record metrics, but do not alter responses.

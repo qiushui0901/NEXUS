@@ -1327,3 +1327,60 @@ QueryPlan RequirementGraphQueryPlanner.plan(SearchRequest request)
 - LLM proposals never write knowledge facts; values from LLM must not overwrite source original values. Relations proposed by LLM are saved as `matchMethod=LLM_PROPOSED`, `status=PROPOSED`, with confidence and evidence.
 - SQLite `UNIQUE` treats NULLs as distinct: an `ON CONFLICT(<unique column list>)` upsert never matches when any conflict column is NULL. Use a deterministic NOT-NULL key (e.g. derived `context_id`) as the conflict target for idempotent re-resolve.
 - Membership/alias text lookup uses `instr(?, name) > 0` (query text contains the name), always with a `limit` cap; never a full unscanned scan.
+
+### Publish granularity and entity-layer published scope (0.9.7)
+
+- `publishDocumentVersion`/`rollbackActiveVersion` demote the previous active **only when it is a new version of the same `document_id`** (replacement). Different documents under the same business version (parallel sources: case/data/qa/prd) stay PUBLISHED — they do not mutually demote.
+- `knowledge_active_version` remains a single row per `(project_id, business_version)` and is the projection anchor for the Claim-vector layer only.
+- Entity-layer published reads are **manifest-agnostic**: `findPublishedClaimsByProjectVersionAll`, `findPublishedClaimsByIdsAll`, `findPublishedEvidenceIdsByClaimIdsAll`, `findPublishedClaimVersions`, `findPublishedBusinessVersions`, `findPublishedDocumentVersionIds` filter on `status='PUBLISHED'` only, so all parallel-source documents of a version are aggregated into concepts/members and entity search.
+- Claim-vector projection keeps the single-active binding (`publishedDocumentFilter()` + `findPublishedClaimsByIds`), unchanged: one active document per business version is projected.
+- Rule of thumb: entity layer = all PUBLISHED docs; vector projection = active manifest single doc. Do not cross-use the filters.
+
+### Local Qdrant & Claim-vector projection operations (0.9.7)
+
+- **本地 Qdrant 用仓库内二进制，不依赖 Docker**：二进制在 `tools/qdrant`（来自 `tools/qdrant.tar.gz`，qdrant 1.15.4）；启动 `tools/qdrant-start.sh`，停止 `tools/qdrant-stop.sh`，数据目录项目根 `qdrant-storage/`（历史集合保留），端口 6333/6334。机器上无 docker/qdrant 公式时不要下载（brew 无公式），直接用仓库内二进制。
+- **Claim 向量构建开关**（默认全关）：`KNOWLEDGE_CLAIM_VECTOR_ENABLED/BUILD_ENABLED/CANDIDATE_RETRIEVAL_ENABLED`；嵌入走网关 `text-embedding-v4`（1024 维，`/v1/embeddings`，`encoding_format=float`），网关**批量上限 10**（实测 8 OK/16 拒）——`EmbeddingBatcher.DEFAULT_BATCH_SIZE=8` 是刻意的，勿改大。
+- **build-scope（0.9.7）**：`ACTIVE_DOC`（默认，active manifest 单文档，契约不变）与 `ALL_PUBLISHED`（全部已发布文档，与实体层同态，供图/向量增强召回的向量补召回）。scope 进入代际 manifest(`build_scope`) 与输入指纹（防跨 scope 误复用）；查询侧水化按 active 代际 scope 选查询。
+- **Qdrant 点 ID 必须是无符号整数或标准 UUID**（v1.15+ 拒绝任意字符串，64-hex 报 400）。`deterministicPointId` 用 SHA-256 前 16 字节 → UUID v5 式；点 ID 算法属于投影 schema——`projectionSchemaVersion` 默认已是 `knowledge-claim-vector-v2`，换算法必须升 schema，禁止只改函数。
+- SQLite 是事实权威：ALL_PUBLISHED 水化用 `findPublishedClaimsByIdsAll(projectId, businessVersion, claimIds)`（按文档关联业务版本收窄），不依赖可伪造/缺失的 Qdrant payload 版本字段。
+- 真实构建量级参考（immortal 5.1）：ALL_PUBLISHED ≈ 201,186 条已发布 claim，8 条/批 × 网关 ≈ 4 小时串行。验证链路：`./mvnw test -Dtest=ImmortalClaimVectorBuildIT -Dimmortal.vector=true`（@SpringBootTest，需 Qdrant 起 + .env 密钥）。
+
+### Optional recall modes (0.9.7, GRAPH_VECTOR/HYBRID)
+
+- `RecallMode`：`DETERMINISTIC`（默认，规则链）/ `GRAPH_VECTOR`（解析 + 局部图一跳/二跳 + 可选向量补召回）/ `HYBRID`（并集）。命名借鉴图RAG思想但**不点名实现**；任何用户可见文案/注释/文档不得出现产品名。
+- 图/向量只做**召回增强**：事实权威（代码/数值表优先级、类型化引用校验、发布边界）不变。图扩展与实体层同态（`findPublishedClaimIdsByIdsAll` / `isPublishedEvidenceAll`，全部 PUBLISHED 并行文档可见），不再绑 active manifest。
+- **证据包基于合并实体集**（种子 + 图 + 向量命中映射实体）：`evidence.entities` = 合并水化结果，citations/factAssessment 同态；扩展事实的 subject/value/unit/代码摘录/Evidence 必须进 LLM 输入。
+- **答案引用只认真实 Evidence ID**：`evidenceTypeById` 从**全部输出事实**（代码/数值表/测试/时间轴分区）的 evidenceIds 建立注册表（同 Claim 第二及后续证据也可引用）；Claim ID 一律不得进入允许集（模型引用 Claim ID → 整段回退模板）。
+- 向量补召回覆盖**全部已发布业务版本**（确定性聚合的覆盖范围），逐版本检索去重；向量链路诊断（`CLAIM_VECTOR_NO_ACTIVE_GENERATION/SEARCH_FAILED/STALE_HITS/SCOPE_MISMATCH`）透传到响应 warnings。
+- `entity-answer` 响应带完整召回包（`recall` 字段）：前端开启 AI 回答时只调一次接口完成检索+回答，禁止前端再单独调 entity-search 重复召回。
+
+### Claim-vector 投影契约 fail-close 与证据注册（0.9.7 第四轮）
+
+- **投影契约完整性（High）**：`findActiveGeneration` 按当前配置 `projectionSchemaVersion` 过滤——旧 schema 的 ACTIVE 代际（如 v1 点 ID 产物）不可被读取/检索；adapter 检索前校验 active 代际 schema == 配置（不等 → `CLAIM_VECTOR_SCHEMA_MISMATCH`，不查 Qdrant）；命中点五字段（projectionGenerationId / projectionSchemaVersion / embeddingModel / projectId / businessVersion）**必填且匹配**，任一缺失/不符即丢弃——不得按“字段为空则跳过”。payload 构造器对缺 schema/model 直接抛错（禁止回退默认版本）。
+- **向量服务故障不得伪装为空命中（Med）**：`KnowledgeClaimVectorQdrantStore.search` 上抛异常，由 adapter 转 `CLAIM_VECTOR_SEARCH_FAILED` 稳定告警透传；可区分“确实无命中”与“向量服务不可用”。
+- **关系/证据状态同态（Med）**：实体层关系状态（聚合器）与图扩展统一用 `isPublishedEvidenceAll`（全部 PUBLISHED 并行文档），禁止实体层混用 active-manifest 绑定的 `isPublishedEvidence`。
+- **buildScope 配置入口（Med）**：application.yml 已绑定 `build-scope: ${KNOWLEDGE_CLAIM_VECTOR_BUILD_SCOPE:ACTIVE_DOC}`——环境变量与 `/build` API 显式 buildScope 两条入口同权；配置字段与文档契约一致。
+- **证据注册表从全部输出事实建立（Med）**：`evidenceTypeById` 登记代码/数值表/测试/时间轴分区所有 FactRef 的**全部** evidenceIds（同 Claim 第二及后续证据也可引用）；只登记真实 Evidence（Claim ID 不入允许集），事实本身已由聚合器按项目/版本/发布过滤。
+
+### Gameplay-card entity and vector granularity (0.9.7)
+
+- `GameplayCardModuleResolver` owns the gameplay-card boundary described by the external generation prompt: one gameplay/system maps to one `canonical_module`; version pages, child/optimization pages, supporting tables, QA, and test cases use the same alignment anchor when their catalog category identifies the source.
+- `BusinessConceptService`, code-symbol attachment, and Claim-vector block construction reuse that resolver. Atomic SQLite Claims and Evidence are never merged or overwritten; source page/table/module/parameter names remain aliases or members for traceability.
+- Known catalog records use `GAMEPLAY_CARD` concepts keyed by the normalized `canonical_module`. Synthetic records without a catalog category retain the legacy `<module>.<subject>` key to avoid unverified cross-gameplay merges.
+- Claim-vector blocks group by `sourceType + canonical_module`. One gameplay/system has one `GAMEPLAY_CARD` entity with no artificial member-count limit; atomic SQLite Claims and Evidence remain individually traceable. Qdrant blocks split only when deterministic text exceeds `block-max-chars`, which is a transport/retrieval payload boundary rather than an entity or fact-count rule. All matched code symbols remain attached to the card and independently searchable in the code index.
+- 前端 `revokeRetrievalRequests()` 必须吊销实体请求（递增 entity.requestId + 释放 loading + resetEntityState），与 legacy/semantic/compare 同等对待。
+
+### 关系证据端点绑定与版本边界（0.9.7 第五轮）
+
+- **关系证据必须属于端点 Claim（High）**：关系状态校验使用 `isPublishedEvidenceForRelation(projectId, businessVersion, evidenceId, sourceClaimId, targetClaimId)`——除项目/版本/发布状态外，还必须通过 `knowledge_claim_evidence` 绑定到 source/target Claim 之一；仅“同项目+同版本+已发布”的任意 Evidence 不得当作关系证据（禁止把并行文档中无关证据判 CONFIRMED）。聚合器与图扩展必须统一用该方法；跨来源独立关系证据需单独建模并校验。
+- **实体 API 版本边界**：前端实体检索/回答必须传页面版本 `versions:[retrieval.version]`（空数组 = 聚合全部已发布版本）；版本输入不得被丢弃。
+- **多版本向量召回逐版本容错**：版本循环内逐版本独立 try/catch——单版本失败按 `VECTOR_RECALL_UNAVAILABLE:版本 X` 告警透传并保留其它版本命中；不得整体清空。
+- 投影契约文档（0.9.6 development plan）任何时点必须与代码同步：点 ID = UUID（非 64-hex）、默认 schema v2、build-scope 配置项。
+
+### 版本范围、关系证据与向量代际完整性（0.9.7 第六轮）
+
+- **显式请求版本必须生效**：`EntityQueryService.search` 用 `request.versions()`（非空时）覆盖分析器从查询文本抽取的版本范围——前端版本输入 → 实体聚合/向量补召回/回答全部按此范围执行；空则沿用分析器推导。禁止“收下参数却不生效”。
+- **关系证据端点绑定 + 文档/来源一致（High）**：`isPublishedEvidenceForRelation` 必须满足——Evidence 已发布（实体层同态）**且**通过 `knowledge_claim_evidence` 绑定 source/target Claim **且** `c.document_version_id=e.document_version_id` **且** `c.source_type=e.source_type`。Claim→代码符号关系（targetClaimId 为空，如 READS_CONFIG/VERIFIES）只绑定 source Claim 即可，不得强制两端都有 Claim ID（否则把有效关系误降级 UNVERIFIED）。
+- **单点损坏 payload 只跳过该点**：`KnowledgeClaimVectorQdrantStore.search` 逐点解析失败记日志并 continue（保留同批合法命中）；仅响应结构本身损坏才整次失败（上抛 → adapter CLAIM_VECTOR_SEARCH_FAILED）。
+- **向量代际与运行时嵌入身份完整校验**：adapter 校验（1）查询向量维度 == 代际构建维度（`CLAIM_VECTOR_EMBEDDING_DIMENSION_MISMATCH`）；（2）运行时 EmbeddingBatcher 模型指纹（class:dim，可用时）== 代际模型（`CLAIM_VECTOR_EMBEDDING_MODEL_MISMATCH`）——远端模型被替换而客户端类型/维度不变时也能识别；两者 fail-close 不查 Qdrant。
+- **可复用代际必须物理集合仍存在**：`findReusableGeneration` 命中后需 `qdrantStore.collectionExists(physicalCollection)` 确认；物理集合缺失（运维删库/重建数据目录）→ 标记该代际 FAILED 并重建（避免 UNIQUE(scope+fingerprint+schema+model) 挡住 recordBuildStart）。

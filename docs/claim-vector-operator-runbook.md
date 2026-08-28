@@ -35,8 +35,10 @@ SQLite（权威）                  Qdrant（可弃）
 | `candidate-retrieval-enabled` | `false` | 候选检索开关。关闭时 `ClaimVectorCandidateAdapter` 不注册 |
 | `shadow-query-enabled` | `false` | 影子模式开关。关闭时不记录对比指标 |
 | `alias` | `knowledge_claims_live` | 基础 alias 名。实际 live alias 按 project+version 派生（形如 `knowledge_claims_live-<project>-<version>`，见 §3），物理 collection 同样按 scope 隔离——不同项目/版本互不干扰（Review 2） |
-| `projection-schema-version` | `knowledge-claim-vector-v1` | 投影 schema 版本 |
-| `text-composer-version` | `knowledge-claim-text-v1` | 文本组合器版本 |
+| `projection-schema-version` | `knowledge-claim-vector-v2` | 投影 schema 版本 |
+| `text-composer-version` | `knowledge-claim-text-v2` | 可独立回答事实文本组合器版本 |
+| `semantic-enhancement-enabled` | `true` | 是否调用 LLM 生成召回辅助表达；只影响向量召回文本，不改变 SQLite 权威 Claim/Evidence |
+| `semantic-enhancement-model` | `gpt-5.6-luna` | 语义增强 Chat 模型 |
 | `candidate-limit` | `200` | 单次检索候选上限 |
 | `over-fetch-factor` | `3` | 过度检索因子（candidate-limit × 此值） |
 | `batch-size` | `32` | Qdrant 批量写入大小 |

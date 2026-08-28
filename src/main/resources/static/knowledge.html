@@ -193,6 +193,7 @@
         <button type="button" role="tab" :class="{active:retrievalMode==='legacy'}" @click="setRetrievalMode('legacy')">传统 Chunk</button>
         <button v-if="semanticAvailable" type="button" role="tab" :class="{active:retrievalMode==='semantic'}" @click="setRetrievalMode('semantic')">语义 Claim</button>
         <button v-if="semanticAvailable" type="button" role="tab" :class="{active:retrievalMode==='compare'}" @click="setRetrievalMode('compare')">对比检索</button>
+        <button v-if="entityAvailable" type="button" role="tab" :class="{active:retrievalMode==='entity'}" @click="setRetrievalMode('entity')">实体检索</button>
       </div>
 
       <form class="retrieval-form semantic-form" :class="{'has-version':selectedBase.type!=='CODE'}" @submit.prevent="submitRetrieval">
@@ -203,15 +204,24 @@
             <option value="">自动识别</option>
             <option v-for="item in intentOptions" :key="item" :value="item">{{ item }}</option>
           </select></label>
+          <label v-if="retrievalMode==='entity'" class="intent-input">召回方式
+            <select v-model="entity.recallMode">
+              <option v-for="item in recallModeOptions" :key="item" :value="item">{{ recallModeLabel(item) }}</option>
+            </select>
+          </label>
+          <label v-if="retrievalMode==='entity'" class="checkbox-input">
+            <input type="checkbox" v-model="entity.withAnswer"> 同时生成 AI 带证据回答
+          </label>
         </template>
         <label class="limit-input">Top K<input v-model.number="retrieval.limit" type="number" min="1" max="50"></label>
         <div class="retrieval-actions">
           <p v-if="retrievalMode==='legacy' && selectedBase.type==='CODE'">范围：当前项目已发布代码索引，结果标注 Git 提交。</p>
           <p v-else-if="retrievalMode==='legacy'">范围：{{ retrieval.version || selectedBase.publishedRevision || '当前需求版本' }}</p>
+          <p v-else-if="retrievalMode==='entity'">实体中心：{{ selectedBase.projectId }} 全部已发布资料 · {{ recallHint() }}</p>
           <p v-else>语义范围：{{ semanticScope }}</p>
-          <button class="primary" type="submit" :disabled="retrieval.loading||semantic.loading||compare.loading">
+          <button class="primary" type="submit" :disabled="retrieval.loading||semantic.loading||compare.loading||entity.loading">
             <span aria-hidden="true">⌕</span>
-            {{ retrievalMode==='compare' ? (compare.loading?'对比检索中':'运行对比') : (retrieval.loading||semantic.loading?'检索中':'运行检索') }}
+            {{ retrievalMode==='compare' ? (compare.loading?'对比检索中':'运行对比') : (retrievalMode==='entity' ? (entity.loading?'实体检索中':'运行实体检索') : (retrieval.loading||semantic.loading?'检索中':'运行检索')) }}
           </button>
         </div>
       </form>
@@ -423,6 +433,127 @@
           <span>人工评测：{{ evaluationSize }} 条标记（本地存储）</span>
           <button type="button" @click="exportEvaluations">导出 JSON</button>
         </div>
+      </template>
+
+      <!-- 实体中心模式（§11/§12）：确定性实体证据 + 可选图/向量增强 + 可选 AI 回答 -->
+      <template v-else-if="retrievalMode==='entity'">
+        <div v-if="entity.error" class="compare-error">实体检索失败：{{ entity.error.message || '请求异常' }}</div>
+        <div v-else-if="entity.response" class="retrieval-status">
+          <span class="badge-entity">{{ entityRecallMode() }}</span>
+          <span>{{ entityEntities().length }} 个实体</span>
+          <span v-if="entityRelatedCount()">图扩展 {{ entityRelatedCount() }} 个</span>
+          <span>{{ entityVectorHits().length }} 条向量命中</span>
+          <span>{{ entityGraphLinks().length }} 条图关系（深 {{ entityGraphDepth() }}）</span>
+          <span v-if="entity.elapsedMs!==null">{{ formatLatency(entity.elapsedMs) }}</span>
+        </div>
+        <section v-if="entity.response" class="retrieval-metrics" aria-label="实体检索指标">
+          <div><span>查询意图</span><strong>{{ entityIntent() || '—' }}</strong></div>
+          <div><span>识别实体词</span><strong>{{ entityMentions().length }}</strong></div>
+          <div><span>引用数</span><strong>{{ entityCitations().length }}</strong></div>
+          <div><span>降级提示</span><strong>{{ entityWarnings().length }}</strong></div>
+        </section>
+
+        <!-- AI 带证据回答 -->
+        <article v-if="entity.answer" class="entity-answer">
+          <header class="entity-answer-head">
+            <h3>AI 回答</h3>
+            <status-badge :status="entityAnswerStatus()"></status-badge>
+            <span v-if="entityAnswerQuality()" class="muted">引用质量：{{ entityAnswerQuality() }}</span>
+          </header>
+          <p class="entity-answer-text">{{ entityAnswerText() }}</p>
+          <details v-if="entityAnswerSections().length" class="conflict-panel">
+            <summary>分节引用 <span>{{ entityAnswerSections().length }} 节</span></summary>
+            <div v-for="(section,index) in entityAnswerSections()" :key="'s'+index" class="entity-section">
+              <strong>{{ section.title }}</strong>
+              <p>{{ section.text }}</p>
+            </div>
+          </details>
+        </article>
+
+        <!-- 解析计划：识别出的实体词 -->
+        <details v-if="entityMentions().length" class="relation-panel" open>
+          <summary>解析计划 <span>{{ entityMentions().length }} 个实体词</span></summary>
+          <p v-for="(mention,index) in entityMentions()" :key="'m'+index" class="entity-mention">
+            <code>{{ mention.text || mention.canonicalName }}</code>
+            <template v-if="mention.entityId"> → {{ mention.entityId }}（{{ mention.status }}）</template>
+            <template v-else> — <span class="no-evidence">{{ mention.status || '未解析' }}</span></template>
+          </p>
+        </details>
+
+        <!-- 实体证据视图 -->
+        <article v-for="(entity,index) in entityEntities()" :key="'e'+index" class="entity-card">
+          <header class="entity-card-head">
+            <h3>{{ entity.canonicalName || entity.name }}</h3>
+            <code v-if="entity.entityId" class="muted">{{ entity.entityId }}</code>
+            <span v-if="entity.status" class="muted">{{ entity.status }}</span>
+          </header>
+          <div v-if="entity.warnings && entity.warnings.length" class="entity-warnings">
+            <p v-for="(warn,wi) in entity.warnings" :key="'w'+wi">⚠ {{ warn }}</p>
+          </div>
+          <div v-if="entityPartitionFacts(entity,'code').length" class="entity-partition">
+            <h4>代码实现</h4>
+            <p v-for="(fact,fi) in entityPartitionFacts(entity,'code')" :key="'cf'+fi" class="entity-fact">
+              {{ entityFactText(fact) }}
+              <small class="claim-meta"><code>{{ fact.location || '' }}</code><template v-if="fact.businessVersion"> · {{ fact.businessVersion }}</template></small>
+            </p>
+          </div>
+          <div v-if="entityPartitionFacts(entity,'parameterTables').length" class="entity-partition">
+            <h4>数值表</h4>
+            <p v-for="(fact,fi) in entityPartitionFacts(entity,'parameterTables')" :key="'pf'+fi" class="entity-fact">
+              {{ entityFactText(fact) }}
+              <small class="claim-meta"><template v-if="fact.location"><code>{{ fact.location }}</code></template><template v-else><span class="no-evidence">证据不可回查</span></template><template v-if="fact.businessVersion"> · {{ fact.businessVersion }}</template></small>
+            </p>
+          </div>
+          <div v-if="entityPartitionFacts(entity,'testResults').length" class="entity-partition">
+            <h4>测试结果</h4>
+            <p v-for="(fact,fi) in entityPartitionFacts(entity,'testResults')" :key="'tf'+fi" class="entity-fact">{{ entityFactText(fact) }}</p>
+          </div>
+          <details v-if="entity.conflicts && entity.conflicts.length" class="conflict-panel">
+            <summary>冲突 <span>{{ entity.conflicts.length }} 项</span></summary>
+            <p v-for="(conflict,ci) in entity.conflicts" :key="'x'+ci">
+              <code>{{ conflict.subject }}</code>：{{ (conflict.values||[]).join(' / ') }}
+              <template v-if="conflict.status">（{{ conflict.status }}）</template>
+            </p>
+          </details>
+          <details v-if="entity.timeline && entity.timeline.length" class="relation-panel">
+            <summary>版本时间轴 <span>{{ entity.timeline.length }} 个版本</span></summary>
+            <p v-for="(block,bi) in entity.timeline" :key="'t'+bi" class="entity-fact">
+              <strong>{{ block.businessVersion }}</strong>：
+              <template v-if="block.requirements&&block.requirements.length">{{ block.requirements.length }} 条需求</template>
+              <template v-if="block.parameterTables&&block.parameterTables.length"> · {{ block.parameterTables.length }} 条参数</template>
+              <template v-if="block.tests&&block.tests.length"> · {{ block.tests.length }} 条测试</template>
+            </p>
+          </details>
+        </article>
+
+        <!-- 局部图关系 + 向量补召回命中 -->
+        <details v-if="entityGraphLinks().length" class="relation-panel">
+          <summary>局部图关系 <span>{{ entityGraphLinks().length }} 条关系</span></summary>
+          <p v-for="(link,li) in entityGraphLinks()" :key="'l'+li" class="entity-fact">
+            <code>{{ link.sourceClaimId }}</code> —[{{ link.relationType }}]→ <code>{{ link.targetClaimId }}</code>
+            <small class="claim-meta">{{ link.matchMethod }} · {{ link.status }}</small>
+          </p>
+        </details>
+        <details v-if="entityVectorHits().length" class="relation-panel">
+          <summary>向量补召回 <span>{{ entityVectorHits().length }} 条命中</span></summary>
+          <p v-for="(hit,hi) in entityVectorHits()" :key="'h'+hi" class="entity-fact">
+            <code>{{ hit.claimId }}</code>
+            <template v-if="hit.subject"> {{ hit.subject }}</template>
+            <small class="claim-meta">{{ hit.sourceType }}</small>
+          </p>
+        </details>
+
+        <!-- 引用 -->
+        <details v-if="entityCitations().length" class="relation-panel" open>
+          <summary>证据引用 <span>{{ entityCitations().length }} 条</span></summary>
+          <p v-for="(citation,ci) in entityCitations()" :key="'c'+ci" class="entity-fact">
+            <code>{{ citation.claimId }}</code>
+            <template v-if="citation.evidenceId"> ← {{ citation.evidenceId }}</template>
+            <small class="claim-meta">{{ citation.sourceType }} · {{ citation.businessVersion }}</small>
+          </p>
+        </details>
+        <p v-if="entityWarnings().length" class="compare-error">降级/告警：{{ entityWarnings().join('；') }}</p>
+        <loading-state v-if="entity.loading"></loading-state>
       </template>
     </section>
   </main>

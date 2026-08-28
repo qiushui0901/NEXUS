@@ -21,9 +21,10 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * LightRAG 式局部图扩展（dev md §14 Phase 6）：实体一跳/两跳关系召回 + 向量/Claim 命中映射回实体。
+ * 局部图扩展（dev md §14 Phase 6）：实体一跳/两跳关系召回 + 向量/Claim 命中映射回实体。
  *
  * <p>事实权威不变：图扩展只追加召回线索与关系视图，不改变 factAssessment、不写图。
+ * 图/向量只做召回增强；实体层语义 = 全部已发布文档（不绑定 active manifest）。
  * 项目级历史 Claim collection 与向量索引扩大以评测数据证明收益为前提（dev md §10.3 第 3 种），
  * 本阶段仅提供候选映射能力与指标，不接 Qdrant。
  */
@@ -72,7 +73,7 @@ public class EntityGraphExpansionService {
             conceptById.put(concept.conceptId(), concept);
         }
 
-        Set<String> publishedClaimIds = knowledgeStore.findPublishedClaimIdsByIds(projectId, seedClaimIds);
+        Set<String> publishedClaimIds = knowledgeStore.findPublishedClaimIdsByIdsAll(projectId, seedClaimIds);
         Set<String> visitedClaims = new LinkedHashSet<>(publishedClaimIds);
         List<String> frontier = new ArrayList<>(publishedClaimIds);
         List<RelatedLink> links = new ArrayList<>();
@@ -112,8 +113,9 @@ public class EntityGraphExpansionService {
                     String other = claimId.equals(relation.sourceClaimId())
                             ? relation.targetClaimId()
                             : relation.sourceClaimId();
-                    String relationStatus = knowledgeStore.isPublishedEvidence(
-                            projectId, relation.version(), relation.evidenceId())
+                    String relationStatus = knowledgeStore.isPublishedEvidenceForRelation(
+                            projectId, relation.version(), relation.evidenceId(),
+                            relation.sourceClaimId(), relation.targetClaimId())
                             ? relation.status() : "UNVERIFIED";
                     links.add(new RelatedLink(relation.relationId(), relation.sourceClaimId(),
                             relation.targetClaimId(), relation.relationType(),
@@ -154,8 +156,9 @@ public class EntityGraphExpansionService {
                 if (!seenLinks.add(relation.relationId()) || links.size() >= MAX_RELATIONS) {
                     continue;
                 }
-                String relationStatus = knowledgeStore.isPublishedEvidence(
-                        projectId, version, relation.evidenceId())
+                String relationStatus = knowledgeStore.isPublishedEvidenceForRelation(
+                        projectId, version, relation.evidenceId(),
+                        relation.sourceClaimId(), relation.targetClaimId())
                         ? relation.status() : "UNVERIFIED";
                 links.add(new RelatedLink(relation.relationId(), relation.sourceClaimId(),
                         relation.targetClaimId(), relation.relationType(), relation.extractionMethod(),
@@ -194,7 +197,7 @@ public class EntityGraphExpansionService {
         if (claimIds == null || claimIds.isEmpty()) {
             return entityIds;
         }
-        Set<String> publishedClaimIds = knowledgeStore.findPublishedClaimIdsByIds(projectId, claimIds);
+        Set<String> publishedClaimIds = knowledgeStore.findPublishedClaimIdsByIdsAll(projectId, claimIds);
         Map<String, String> versions = knowledgeStore.findPublishedClaimVersions(projectId, publishedClaimIds);
         for (String claimId : publishedClaimIds) {
             entityIds.addAll(alignmentStore.findConceptIdsByClaim(projectId, claimId,

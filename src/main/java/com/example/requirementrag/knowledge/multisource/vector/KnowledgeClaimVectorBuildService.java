@@ -70,6 +70,7 @@ public class KnowledgeClaimVectorBuildService {
     private final EmbeddingBatcher embeddingBatcher;
     private final EmbeddingModel embeddingModel;
     private final KnowledgeClaimVectorProperties properties;
+    private final KnowledgeClaimVectorBlockBuilder blockBuilder;
 
     public KnowledgeClaimVectorBuildService(MultiSourceKnowledgeStore knowledgeStore,
                                             SQLiteKnowledgeClaimVectorStore vectorStore,
@@ -78,6 +79,20 @@ public class KnowledgeClaimVectorBuildService {
                                             EmbeddingBatcher embeddingBatcher,
                                             EmbeddingModel embeddingModel,
                                             KnowledgeClaimVectorProperties properties) {
+        this(knowledgeStore, vectorStore, qdrantStore, textComposer, embeddingBatcher,
+                embeddingModel, properties,
+                (org.springframework.beans.factory.ObjectProvider<KnowledgeClaimVectorSemanticEnhancer>) null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public KnowledgeClaimVectorBuildService(MultiSourceKnowledgeStore knowledgeStore,
+                                            SQLiteKnowledgeClaimVectorStore vectorStore,
+                                            KnowledgeClaimVectorQdrantStore qdrantStore,
+                                            KnowledgeClaimVectorTextComposer textComposer,
+                                            EmbeddingBatcher embeddingBatcher,
+                                            EmbeddingModel embeddingModel,
+                                            KnowledgeClaimVectorProperties properties,
+                                            org.springframework.beans.factory.ObjectProvider<KnowledgeClaimVectorSemanticEnhancer> semanticEnhancerProvider) {
         this.knowledgeStore = knowledgeStore;
         this.vectorStore = vectorStore;
         this.qdrantStore = qdrantStore;
@@ -85,6 +100,15 @@ public class KnowledgeClaimVectorBuildService {
         this.embeddingBatcher = embeddingBatcher;
         this.embeddingModel = embeddingModel;
         this.properties = properties;
+        if (semanticEnhancerProvider == null) {
+            // The legacy constructor is retained for pre-block unit callers and tests.
+            this.blockBuilder = null;
+        } else {
+            KnowledgeClaimVectorSemanticEnhancer semanticEnhancer = semanticEnhancerProvider.getIfAvailable();
+            // Block granularity is part of the projection contract; LLM enhancement is optional.
+            this.blockBuilder = new KnowledgeClaimVectorBlockBuilder(
+                    textComposer, semanticEnhancer, properties);
+        }
     }
 
     /**
@@ -94,13 +118,37 @@ public class KnowledgeClaimVectorBuildService {
      * @return ACTIVE 代际 manifest
      */
     public ClaimVectorGenerationManifest build(String projectId, String businessVersion) {
+        return build(projectId, businessVersion, null);
+    }
+
+    /**
+     * 带显式投影范围构建：buildScope 为 {@code ACTIVE_DOC}（默认，active manifest 单文档）或
+     * {@code ALL_PUBLISHED}（全部已发布文档——与实体层同态，供图/向量增强召回的向量补召回使用）；
+     * 非法/空值回退 properties.buildScope() 默认。
+     */
+    public ClaimVectorGenerationManifest build(String projectId, String businessVersion, String buildScope) {
         if (projectId == null || projectId.isBlank()) {
             throw new IllegalArgumentException("projectId 不能为空");
         }
         if (businessVersion == null || businessVersion.isBlank()) {
             throw new IllegalArgumentException("businessVersion 不能为空");
         }
-        return withScopeLock(projectId, businessVersion, () -> doBuild(projectId, businessVersion));
+        String scope = resolveScope(buildScope);
+        return withScopeLock(projectId, businessVersion, () -> doBuild(projectId, businessVersion, scope));
+    }
+
+    private String resolveScope(String explicit) {
+        if (explicit != null && !explicit.isBlank()) {
+            String normalized = explicit.trim().toUpperCase(java.util.Locale.ROOT);
+            if (KnowledgeClaimVectorProperties.SCOPE_ALL_PUBLISHED.equals(normalized)) {
+                return KnowledgeClaimVectorProperties.SCOPE_ALL_PUBLISHED;
+            }
+            return KnowledgeClaimVectorProperties.SCOPE_ACTIVE_DOC;
+        }
+        String configured = properties.buildScope();
+        return KnowledgeClaimVectorProperties.SCOPE_ALL_PUBLISHED.equals(configured)
+                ? KnowledgeClaimVectorProperties.SCOPE_ALL_PUBLISHED
+                : KnowledgeClaimVectorProperties.SCOPE_ACTIVE_DOC;
     }
 
     /**
@@ -217,38 +265,69 @@ public class KnowledgeClaimVectorBuildService {
         return restored;
     }
 
-    private ClaimVectorGenerationManifest doBuild(String projectId, String businessVersion) {
+    /** 按 build-scope 选择投影分页查询：ALL_PUBLISHED→实体层同态全量；默认→active manifest 单文档。 */
+    private List<KnowledgeClaimRecord> publishedClaimsPage(String projectId, String businessVersion,
+                                                           int limit, long offset, String buildScope) {
+        if (KnowledgeClaimVectorProperties.SCOPE_ALL_PUBLISHED.equals(buildScope)) {
+            return knowledgeStore.findPublishedClaimsByProjectVersionAllPage(
+                    projectId, businessVersion, limit, offset);
+        }
+        return knowledgeStore.findPublishedClaimsByProjectVersionPage(
+                projectId, businessVersion, limit, offset);
+    }
+
+    private List<KnowledgeClaimVectorBlockBuilder.SemanticBlock> loadSemanticBlocks(
+            String projectId, String businessVersion, String buildScope) {
+        List<KnowledgeClaimRecord> claims = new ArrayList<>();
+        long offset = 0;
+        while (true) {
+            List<KnowledgeClaimRecord> page = publishedClaimsPage(
+                    projectId, businessVersion, STREAM_PAGE_SIZE, offset, buildScope);
+            if (page.isEmpty()) break;
+            claims.addAll(page);
+            offset += page.size();
+        }
+        return blockBuilder.build(claims, businessVersion);
+    }
+
+    private ClaimVectorGenerationManifest doBuild(String projectId, String businessVersion, String buildScope) {
         String embeddingModelName = embeddingModel.getClass().getName() + ":" + embeddingModel.dimensions();
         int dimension = embeddingModel.dimensions();
         String liveAlias = properties.liveAlias(projectId, businessVersion);
 
-        // ── 第一遍流式：仅计算指纹与输入集合，不驻留全量文本（高：Review 8——两遍流式）
-        // 每页只保留该页文本计算 hash 后即释放；inputs 仅含轻量元数据（claimId/documentVersionId/textHash/updatedAt）。
+        // 第一遍构建索引输入：生产路径按文档/来源/模块合并语义块；兼容构造器保留旧 Claim 点测试路径。
+        List<KnowledgeClaimVectorBlockBuilder.SemanticBlock> semanticBlocks = blockBuilder == null
+                ? List.of() : loadSemanticBlocks(projectId, businessVersion, buildScope);
         List<ClaimVectorGenerationInput> inputs = new ArrayList<>();
-        long totalEligible = 0;
+        long totalEligible;
         long offset = 0;
-        while (true) {
-            List<KnowledgeClaimRecord> page = knowledgeStore.findPublishedClaimsByProjectVersionPage(
-                    projectId, businessVersion, STREAM_PAGE_SIZE, offset);
-            if (page.isEmpty()) {
-                break;
+        if (blockBuilder != null) {
+            for (KnowledgeClaimVectorBlockBuilder.SemanticBlock block : semanticBlocks) {
+                inputs.add(new ClaimVectorGenerationInput("pending", block.blockId(),
+                        block.documentVersionId(), block.textHash(), block.updatedAt()));
             }
-            for (KnowledgeClaimRecord claim : page) {
-                if (!textComposer.isSourceEligible(claim.sourceType())) {
-                    continue;
+            totalEligible = semanticBlocks.size();
+        } else {
+            totalEligible = 0;
+            while (true) {
+                List<KnowledgeClaimRecord> page = publishedClaimsPage(
+                        projectId, businessVersion, STREAM_PAGE_SIZE, offset, buildScope);
+                if (page.isEmpty()) break;
+                for (KnowledgeClaimRecord claim : page) {
+                    if (!textComposer.isSourceEligible(claim.sourceType())) continue;
+                    Optional<String> text = textComposer.compose(claim, businessVersion);
+                    if (text.isPresent()) {
+                        String textHash = KnowledgeClaimVectorTextComposer.textHash(text.get());
+                        inputs.add(new ClaimVectorGenerationInput("pending", claim.claimId(),
+                                claim.documentVersionId(), textHash, claim.updatedAt()));
+                        totalEligible++;
+                    }
                 }
-                Optional<String> text = textComposer.compose(claim, businessVersion);
-                if (text.isPresent()) {
-                    String textHash = KnowledgeClaimVectorTextComposer.textHash(text.get());
-                    inputs.add(new ClaimVectorGenerationInput("pending", claim.claimId(),
-                            claim.documentVersionId(), textHash, claim.updatedAt()));
-                    totalEligible++;
-                }
+                offset += page.size();
             }
-            offset += page.size();
         }
         if (totalEligible == 0) {
-            throw new IllegalStateException("无可投影 Claim: projectId=" + projectId
+            throw new IllegalStateException("无可投影 Claim 语义块: projectId=" + projectId
                     + " version=" + businessVersion
                     + "（无已发布(PUBLISHED)资料版本，或所有 Claim 来源类型被排除/文本为空）");
         }
@@ -256,12 +335,29 @@ public class KnowledgeClaimVectorBuildService {
         // 2. 指纹 + 可复用代际检查——同一指纹已有 SUCCESS/ACTIVE 代际则跳过（无需第二遍）
         String fingerprint = KnowledgeClaimVectorModels.computeInputFingerprint(
                 inputs, properties.projectionSchemaVersion(), properties.textComposerVersion(),
-                embeddingModelName, dimension);
+                embeddingModelName, dimension, buildScope,
+                properties.semanticEnhancementEnabled(), properties.semanticEnhancementModel());
         Optional<ClaimVectorGenerationManifest> reusable = vectorStore.findReusableGeneration(
                 projectId, businessVersion, fingerprint,
                 properties.projectionSchemaVersion(), embeddingModelName);
         if (reusable.isPresent()) {
-            return reusable.get();
+            ClaimVectorGenerationManifest candidate = reusable.get();
+            // Med：可复用必须同时满足 SQLite 记录存在 **且** 物理 Qdrant collection 仍存在——
+            // 运维手工删库/重建数据目录后 SQLite 记录残留、物理集合已无，直接复用会导致检索持续不可用
+            if (candidate.physicalCollection() != null
+                    && qdrantStore.collectionExists(candidate.physicalCollection())) {
+                return candidate;
+            }
+            LOGGER.warn("可复用代际 {} 物理集合 {} 不存在，跳过复用重新构建",
+                    candidate.generationId(), candidate.physicalCollection());
+            // 物理集合已丢失的代际不可复用：先标记 FAILED，使 deleteSupersededGenerations 能清理同一指纹的
+            // 旧记录（含 ACTIVE），避免 recordBuildStart 的 UNIQUE(scope+fingerprint+schema+model) 约束挡住重建
+            try {
+                vectorStore.updateStatus(candidate.generationId(), GenerationStatus.FAILED,
+                        candidate.indexedPointCount(), "物理 Qdrant collection 已不存在，触发重新构建");
+            } catch (RuntimeException markingFailure) {
+                LOGGER.warn("标记代际 {} FAILED 失败（忽略，继续重建）", candidate.generationId());
+            }
         }
 
         // 3. 生成代际 ID 并 recordBuildStart
@@ -271,7 +367,7 @@ public class KnowledgeClaimVectorBuildService {
                 generationId, projectId, businessVersion, fingerprint,
                 properties.projectionSchemaVersion(), properties.textComposerVersion(),
                 embeddingModelName, dimension, null, GenerationStatus.BUILDING,
-                (int) totalEligible, 0, "[]", startedAt, null, null);
+                (int) totalEligible, 0, "[]", startedAt, null, null, buildScope);
         List<ClaimVectorGenerationInput> finalInputs = inputs.stream()
                 .map(i -> new ClaimVectorGenerationInput(
                         generationId, i.claimId(), i.documentVersionId(),
@@ -283,17 +379,80 @@ public class KnowledgeClaimVectorBuildService {
                 properties.projectionSchemaVersion(), embeddingModelName);
         vectorStore.recordBuildStart(manifest, finalInputs);
 
-        // 4. 第二遍流式：重读分页 → 组合文本 → 分块嵌入 → 逐块写点（内存只驻留一页 + 一块）
-        //    （高：Review 8——避免 20 万 Claim 全量文本驻留）
-        //    （高：Review 3——逐项校验 claimId+documentVersionId+textHash，防等量替换漂移）
+        // 4. 第二遍：兼容路径仍按 Claim 流式写入；生产路径按同一规则重建语义块写入。
         String physicalCollection = liveAlias + "-" + Instant.now().toEpochMilli();
         boolean collectionReady = false;
         long written = 0;
-        int inputIndex = 0;   // 与第一遍 inputs 序列逐项对齐的游标
-        offset = 0;
-        while (true) {
-            List<KnowledgeClaimRecord> page = knowledgeStore.findPublishedClaimsByProjectVersionPage(
-                    projectId, businessVersion, STREAM_PAGE_SIZE, offset);
+        int inputIndex = 0;
+        if (blockBuilder != null) {
+            List<KnowledgeClaimVectorBlockBuilder.SemanticBlock> secondPassBlocks =
+                    loadSemanticBlocks(projectId, businessVersion, buildScope);
+            if (secondPassBlocks.size() != inputs.size()) {
+                driftAndFail(generationId, "第二遍语义块数量漂移", null, null, null,
+                        null, null, null, physicalCollection, collectionReady);
+            }
+            for (int start = 0; start < secondPassBlocks.size(); start += EMBED_CHUNK_SIZE) {
+                int end = Math.min(start + EMBED_CHUNK_SIZE, secondPassBlocks.size());
+                List<KnowledgeClaimVectorBlockBuilder.SemanticBlock> chunk = secondPassBlocks.subList(start, end);
+                for (int index = start; index < end; index++) {
+                    KnowledgeClaimVectorBlockBuilder.SemanticBlock actual = secondPassBlocks.get(index);
+                    ClaimVectorGenerationInput expected = inputs.get(index);
+                    if (!expected.claimId().equals(actual.blockId())
+                            || !expected.documentVersionId().equals(actual.documentVersionId())
+                            || !expected.textHash().equals(actual.textHash())) {
+                        driftAndFail(generationId, "第二遍语义块与第一遍不一致（数据漂移或等量替换）",
+                                actual.blockId(), actual.documentVersionId(), actual.textHash(),
+                                expected.claimId(), expected.documentVersionId(), expected.textHash(),
+                                physicalCollection, collectionReady);
+                    }
+                }
+                List<String> texts = chunk.stream()
+                        .map(block -> blockBuilder.enhancedText(projectId, businessVersion, block)).toList();
+                List<float[]> vectors;
+                try {
+                    vectors = embeddingBatcher.embedAll(texts);
+                } catch (RuntimeException exception) {
+                    failGeneration(generationId, WarningCode.BUILD_FAILED, "嵌入失败", exception.getMessage());
+                    cleanupFailedCollection(physicalCollection, collectionReady);
+                    throw new IllegalStateException("语义块向量嵌入失败: " + exception.getMessage(), exception);
+                }
+                if (vectors.size() != chunk.size()) {
+                    failGeneration(generationId, WarningCode.BUILD_FAILED, "嵌入数量不一致",
+                            "期望 " + chunk.size() + " 实际 " + vectors.size());
+                    cleanupFailedCollection(physicalCollection, collectionReady);
+                    throw new IllegalStateException("语义块向量嵌入数量不一致");
+                }
+                List<KnowledgeClaimVectorPoint> points = new ArrayList<>(chunk.size());
+                for (int index = 0; index < chunk.size(); index++) {
+                    KnowledgeClaimVectorBlockBuilder.SemanticBlock block = chunk.get(index);
+                    KnowledgeClaimRecord representative = block.claims().get(0);
+                    String text = texts.get(index);
+                    points.add(new KnowledgeClaimVectorPoint(projectId, businessVersion,
+                            representative.claimId(), block.documentVersionId(), representative.sourceType(),
+                            representative.authority(), representative.status(), representative.factKey(),
+                            representative.subject(), representative.predicate(), representative.valueType(),
+                            representative.unit(), List.of(), generationId,
+                            properties.projectionSchemaVersion(), embeddingModelName, block.textHash(),
+                            block.blockId(), block.claimIds(), text));
+                }
+                if (!collectionReady) {
+                    qdrantStore.createCollectionIfAbsent(physicalCollection, dimension);
+                    collectionReady = true;
+                }
+                try {
+                    qdrantStore.appendPoints(physicalCollection, points, vectors);
+                } catch (RuntimeException exception) {
+                    failGeneration(generationId, WarningCode.BUILD_FAILED, "Qdrant 写入失败", exception.getMessage());
+                    cleanupFailedCollection(physicalCollection, collectionReady);
+                    throw new IllegalStateException("语义块向量写入失败: " + exception.getMessage(), exception);
+                }
+                written += chunk.size();
+            }
+        } else {
+            offset = 0;
+            while (true) {
+            List<KnowledgeClaimRecord> page = publishedClaimsPage(
+                    projectId, businessVersion, STREAM_PAGE_SIZE, offset, buildScope);
             if (page.isEmpty()) {
                 break;
             }
@@ -371,9 +530,10 @@ public class KnowledgeClaimVectorBuildService {
                 }
                 written += chunk.size();
             }
-            offset += page.size();
+                offset += page.size();
+            }
         }
-        if (inputIndex != inputs.size()) {
+        if (blockBuilder == null && inputIndex != inputs.size()) {
             // 高（Review 8）：两遍读取间数据不应漂移（分页含 claim_id 唯一尾排序，边界确定）；
             // 若漂移则拒绝发布，避免 manifest 计数与实际投影不一致。
             driftAndFail(generationId, "第二遍读取数量漂移", null, null, null,

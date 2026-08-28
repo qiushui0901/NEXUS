@@ -132,10 +132,10 @@ public class EntityEvidenceAggregator {
         Map<String, List<String>> evidenceByClaim = new HashMap<>();
         if (!claimIds.isEmpty()) {
             // Claim、文档状态和 active manifest 必须由同一查询规则校验，避免状态过滤在实体层分叉。
-            for (KnowledgeClaimRecord claim : knowledgeStore.findPublishedClaimsByIds(projectId, claimIds)) {
+            for (KnowledgeClaimRecord claim : knowledgeStore.findPublishedClaimsByIdsAll(projectId, claimIds)) {
                 claimsById.put(claim.claimId(), claim);
             }
-            evidenceByClaim.putAll(knowledgeStore.findPublishedEvidenceIdsByClaimIds(projectId, claimIds));
+            evidenceByClaim.putAll(knowledgeStore.findPublishedEvidenceIdsByClaimIdsAll(projectId, claimIds));
         }
         Map<String, String> versionOfClaim = new HashMap<>(
                 knowledgeStore.findPublishedClaimVersions(projectId, claimIds));
@@ -240,8 +240,9 @@ public class EntityEvidenceAggregator {
                         || !claimVersionMatches(relation, claimVersion, versionOfClaim, projectId)) {
                     continue;
                 }
-                String relationStatus = knowledgeStore.isPublishedEvidence(
-                        projectId, relation.version(), relation.evidenceId())
+                String relationStatus = knowledgeStore.isPublishedEvidenceForRelation(
+                        projectId, relation.version(), relation.evidenceId(),
+                        relation.sourceClaimId(), relation.targetClaimId())
                         ? relation.status() : "UNVERIFIED";
                 relations.add(new RelationView(relation.relationId(), relation.relationType(),
                         relation.sourceClaimId(), relation.targetClaimId(), relation.matchMethod(),
@@ -343,6 +344,11 @@ public class EntityEvidenceAggregator {
     public String latestVersion(String projectId) {
         List<String> versions = knowledgeStore.findPublishedBusinessVersions(projectId);
         return versions.isEmpty() ? null : versions.get(versions.size() - 1);
+    }
+
+    /** 项目全部已发布业务版本（确定性聚合的覆盖范围；向量补召回须同范围）。 */
+    public List<String> publishedBusinessVersions(String projectId) {
+        return knowledgeStore.findPublishedBusinessVersions(projectId);
     }
 
     private void appendToBlock(VersionFactBlock block, KnowledgeClaimRecord claim,

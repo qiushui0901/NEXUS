@@ -31,9 +31,12 @@ import java.util.Optional;
 public class SQLiteKnowledgeClaimVectorStore {
 
     private final String databasePath;
+    /** findActiveGeneration 按当前配置 schema 过滤（投影契约升级后旧 ACTIVE 代际不参与检索）。 */
+    private final String projectionSchemaVersion;
 
     public SQLiteKnowledgeClaimVectorStore(KnowledgeClaimVectorProperties properties) {
         this.databasePath = properties.databasePath();
+        this.projectionSchemaVersion = properties.projectionSchemaVersion();
         initialize();
     }
 
@@ -62,10 +65,26 @@ public class SQLiteKnowledgeClaimVectorStore {
                       started_at text not null,
                       finished_at text,
                       published_at text,
+                      build_scope text not null default 'ACTIVE_DOC',
                       unique(project_id, business_version, input_fingerprint,
                              projection_schema_version, embedding_model)
                     )
                     """);
+            // 轻量迁移：老库（0.9.6 及更早）已建表但无 build_scope 列 → ALTER 补列，默认 ACTIVE_DOC
+            try (ResultSet columns = statement.executeQuery(
+                    "PRAGMA table_info(knowledge_claim_vector_generation)")) {
+                boolean hasBuildScope = false;
+                while (columns.next()) {
+                    if ("build_scope".equals(columns.getString("name"))) {
+                        hasBuildScope = true;
+                        break;
+                    }
+                }
+                if (!hasBuildScope) {
+                    statement.executeUpdate("alter table knowledge_claim_vector_generation"
+                            + " add column build_scope text not null default 'ACTIVE_DOC'");
+                }
+            }
             statement.executeUpdate("""
                     create table if not exists knowledge_claim_vector_generation_input(
                       generation_id text not null,
@@ -113,8 +132,8 @@ public class SQLiteKnowledgeClaimVectorStore {
                       projection_schema_version, text_composer_version, embedding_model,
                       embedding_dimension, physical_collection, status,
                       expected_point_count, indexed_point_count, warnings_json,
-                      started_at, finished_at, published_at
-                    ) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                      started_at, finished_at, published_at, build_scope
+                    ) values (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     """)) {
                 insert.setString(1, manifest.generationId());
                 insert.setString(2, manifest.projectId());
@@ -132,6 +151,7 @@ public class SQLiteKnowledgeClaimVectorStore {
                 insert.setString(14, manifest.startedAt());
                 insert.setString(15, manifest.finishedAt());
                 insert.setString(16, manifest.publishedAt());
+                insert.setString(17, manifest.buildScope());
                 insert.executeUpdate();
             }
             saveInputs(connection, manifest.generationId(), inputs);
@@ -311,13 +331,17 @@ public class SQLiteKnowledgeClaimVectorStore {
 
     /** 查找指定 scope 的当前 ACTIVE 代际。 */
     public Optional<ClaimVectorGenerationManifest> findActiveGeneration(String projectId, String businessVersion) {
+        // High：只认可当前配置 schema 的 ACTIVE 代际——投影契约（schema）升级后，旧 schema 的 ACTIVE
+        // 代际（如 v1 点 ID 算法产物）不得继续服务检索（fail-close，由调用方按无代际处理并告警）。
         try (Connection connection = open();
              PreparedStatement statement = connection.prepareStatement("""
                      select * from knowledge_claim_vector_generation
                      where project_id=? and business_version=? and status='ACTIVE'
+                       and projection_schema_version=?
                      """)) {
             statement.setString(1, projectId);
             statement.setString(2, businessVersion);
+            statement.setString(3, projectionSchemaVersion);
             try (ResultSet rows = statement.executeQuery()) {
                 return rows.next() ? Optional.of(manifest(rows)) : Optional.empty();
             }
@@ -560,6 +584,7 @@ public class SQLiteKnowledgeClaimVectorStore {
                 rows.getString("warnings_json"),
                 rows.getString("started_at"),
                 rows.getString("finished_at"),
-                rows.getString("published_at"));
+                rows.getString("published_at"),
+                rows.getString("build_scope"));
     }
 }

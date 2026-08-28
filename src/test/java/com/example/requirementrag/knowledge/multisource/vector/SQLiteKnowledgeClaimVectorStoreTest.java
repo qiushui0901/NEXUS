@@ -21,14 +21,14 @@ class SQLiteKnowledgeClaimVectorStoreTest {
     private final KnowledgeClaimVectorProperties properties = new KnowledgeClaimVectorProperties(
             false, false, false, false,
             "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
-            200, 3, 32, 3, 2, null);
+            200, 3, 32, 3, 2, null, "ACTIVE_DOC");
 
     private SQLiteKnowledgeClaimVectorStore store() {
         // 用 null databasePath → compact 构造器回退到默认值，但测试需要临时路径
         KnowledgeClaimVectorProperties props = new KnowledgeClaimVectorProperties(
                 false, false, false, false,
                 "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
-                200, 3, 32, 3, 2, tempDir.resolve("vector.db").toString());
+                200, 3, 32, 3, 2, tempDir.resolve("vector.db").toString(), "ACTIVE_DOC");
         return new SQLiteKnowledgeClaimVectorStore(props);
     }
 
@@ -58,7 +58,7 @@ class SQLiteKnowledgeClaimVectorStoreTest {
                 "gen-1", "immortal", "5.1", "default-fp-gen-1",
                 "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
                 "test-model", 1024, null, GenerationStatus.BUILDING,
-                2, 0, "[]", Instant.now().toString(), null, null);
+                2, 0, "[]", Instant.now().toString(), null, null, "ACTIVE_DOC");
         store.recordBuildStart(manifest, inputs);
 
         Optional<ClaimVectorGenerationManifest> found = store.findGeneration("gen-1");
@@ -205,13 +205,42 @@ class SQLiteKnowledgeClaimVectorStoreTest {
     // ===== 可复用代际 =====
 
     @Test
+    void findActiveGenerationFiltersByConfiguredSchema() {
+        // High：投影契约升级后，旧 schema 的 ACTIVE 代际不得被 findActiveGeneration 返回（fail-close）
+        KnowledgeClaimVectorProperties v2Props = new KnowledgeClaimVectorProperties(
+                false, false, false, false,
+                "knowledge_claims_live", "knowledge-claim-vector-v2", "knowledge-claim-text-v1",
+                200, 3, 32, 3, 2, tempDir.resolve("vector-v2.db").toString(), "ACTIVE_DOC");
+        SQLiteKnowledgeClaimVectorStore v2Store = new SQLiteKnowledgeClaimVectorStore(v2Props);
+
+        // 旧 schema（v1）的 ACTIVE 代际
+        v2Store.recordBuildStart(manifest("gen-old-v1", "BUILDING"), List.of());
+        v2Store.markActive("gen-old-v1", "col-old-v1");
+        assertThat(v2Store.findActiveGeneration("immortal", "5.1")).isEmpty();
+
+        // 当前 schema（v2）的 ACTIVE 代际可见
+        ClaimVectorGenerationManifest v2 = new ClaimVectorGenerationManifest(
+                "gen-v2", "immortal", "5.1", "fp-v2",
+                "knowledge-claim-vector-v2", "knowledge-claim-text-v1",
+                "test-model", 1024, null, GenerationStatus.BUILDING,
+                0, 0, "[]", Instant.now().toString(), null, null, "ACTIVE_DOC");
+        v2Store.recordBuildStart(v2, List.of());
+        v2Store.markActive("gen-v2", "col-v2");
+        assertThat(v2Store.findActiveGeneration("immortal", "5.1"))
+                .isPresent()
+                .get()
+                .extracting(ClaimVectorGenerationManifest::generationId)
+                .isEqualTo("gen-v2");
+    }
+
+    @Test
     void findReusableGenerationFindsSuccessWithSameFingerprint() {
         SQLiteKnowledgeClaimVectorStore store = store();
         ClaimVectorGenerationManifest manifest = new ClaimVectorGenerationManifest(
                 "gen-reuse", "immortal", "5.1", "fp-abc",
                 "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
                 "test-model", 1024, "reuse-collection", GenerationStatus.SUCCESS,
-                10, 10, "[]", Instant.now().toString(), null, null);
+                10, 10, "[]", Instant.now().toString(), null, null, "ACTIVE_DOC");
         store.recordBuildStart(manifest, List.of());
 
         Optional<ClaimVectorGenerationManifest> found = store.findReusableGeneration(
@@ -231,7 +260,7 @@ class SQLiteKnowledgeClaimVectorStoreTest {
                 "gen-orphan", "immortal", "5.1", "fp-abc",
                 "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
                 "test-model", 1024, null, GenerationStatus.SUCCESS,
-                10, 10, "[]", Instant.now().toString(), null, null);
+                10, 10, "[]", Instant.now().toString(), null, null, "ACTIVE_DOC");
         store.recordBuildStart(orphan, List.of());
 
         Optional<ClaimVectorGenerationManifest> found = store.findReusableGeneration(
@@ -294,6 +323,6 @@ class SQLiteKnowledgeClaimVectorStoreTest {
                 generationId, "immortal", "5.1", "default-fp-" + generationId,
                 "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
                 "test-model", 1024, null, GenerationStatus.valueOf(status),
-                0, 0, "[]", Instant.now().toString(), null, null);
+                0, 0, "[]", Instant.now().toString(), null, null, "ACTIVE_DOC");
     }
 }

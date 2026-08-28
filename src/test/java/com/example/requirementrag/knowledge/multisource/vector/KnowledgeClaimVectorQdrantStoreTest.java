@@ -30,7 +30,7 @@ class KnowledgeClaimVectorQdrantStoreTest {
     private final KnowledgeClaimVectorProperties properties = new KnowledgeClaimVectorProperties(
             true, true, true, true,
             "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
-            200, 3, 32, 3, 2, null);
+            200, 3, 32, 3, 2, null, "ACTIVE_DOC");
     private final KnowledgeClaimVectorQdrantStore store =
             new KnowledgeClaimVectorQdrantStore(RestClient.builder().build(), properties);
 
@@ -156,6 +156,70 @@ class KnowledgeClaimVectorQdrantStoreTest {
     }
 
     // ── search 请求协议（高：Review 1）──────────────────────────────────
+
+    @Test
+    void searchFailureRethrowsInsteadOfMaskingAsEmptyHits() {
+        // Med：Qdrant 检索服务故障必须上抛（由适配器转成 CLAIM_VECTOR_SEARCH_FAILED），
+        // 不得把“向量服务不可用”伪装成“没有命中”
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        KnowledgeClaimVectorQdrantStore store =
+                new KnowledgeClaimVectorQdrantStore(builder.build(), properties);
+        String alias = properties.liveAlias("proj-1", "v1");
+        server.expect(requestTo("/collections/" + alias + "/points/query"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withServerError());
+
+        assertThatThrownBy(() -> store.search(alias, new float[]{0.1f}, 10))
+                .isInstanceOf(RuntimeException.class);
+    }
+
+    @Test
+    void corruptedPointIsSkippedWhileValidHitsSurvive() {
+        // Med：单条损坏 payload（缺必填字段）只跳过该点，同批其它合法命中保留；不得整次失败
+        RestClient.Builder builder = RestClient.builder();
+        MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+        KnowledgeClaimVectorQdrantStore store =
+                new KnowledgeClaimVectorQdrantStore(builder.build(), properties);
+        String payload = """
+                {"result":{"points":[
+                  {"id":1,"score":0.92,"payload":{
+                    "projectId":"proj-1","businessVersion":"v1","claimId":"c-1",
+                    "documentVersionId":"dv-1","sourceType":"REQUIREMENT","authority":"PRIMARY",
+                    "knowledgeStatus":"ACTIVE","factKey":"fk","subject":"subj","predicate":"pred",
+                    "valueType":"TEXT","unit":"","evidenceIds":[],
+                    "projectionGenerationId":"gen","projectionSchemaVersion":"schema-v1",
+                    "embeddingModel":"model","textHash":"hash"}},
+                  {"id":2,"score":0.5,"payload":{
+                    "projectId":"proj-1","businessVersion":"v1","claimId":"c-bad",
+                    "documentVersionId":"dv-1","sourceType":"REQUIREMENT","authority":"PRIMARY",
+                    "factKey":"fk","subject":"s","predicate":"p","valueType":"TEXT","unit":"",
+                    "evidenceIds":[],"projectionGenerationId":"gen",
+                    "embeddingModel":"model","textHash":"hash"}}]}}""";
+        String alias = properties.liveAlias("proj-1", "v1");
+        server.expect(requestTo("/collections/" + alias + "/points/query"))
+                .andExpect(method(HttpMethod.POST))
+                .andRespond(withSuccess(payload, MediaType.APPLICATION_JSON));
+
+        List<KnowledgeClaimVectorQdrantStore.ClaimVectorHit> hits =
+                store.search(alias, new float[]{0.1f}, 10);
+
+        // 缺 projectionSchemaVersion 的坏点被跳过，合法点保留
+        assertThat(hits).hasSize(1);
+        assertThat(hits.get(0).claimId()).isEqualTo("c-1");
+    }
+
+    @Test
+    void incompletePointPayloadFailsFast() {
+        // High：投影契约字段（schema/model）必填——构造时缺 schema 直接抛错，不允许回退旧版本
+        assertThatThrownBy(() -> new KnowledgeClaimVectorPoint(
+                "proj-1", "v1", "c-1", "dv-1",
+                SourceType.REQUIREMENT, Authority.PRIMARY, "ACTIVE",
+                "fk", "subj", "pred", "TEXT", "",
+                List.of(), "gen", null, "model", "hash"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("projectionSchemaVersion");
+    }
 
     /**
      * 验证 search() 向 /points/query 发送命名向量查询（query + using="dense"）——

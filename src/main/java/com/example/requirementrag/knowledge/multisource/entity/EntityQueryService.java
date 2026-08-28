@@ -60,9 +60,13 @@ public class EntityQueryService {
         EntityQueryPlan rulePlan = analyzer.analyze(projectId, query);
         boolean includeHistory = request.includeHistory() != null
                 ? request.includeHistory() : rulePlan.includeHistory();
+        // High：显式请求版本必须生效——request.versions() 覆盖分析器从查询文本抽取的版本范围
+        // （前端版本输入 → 实体聚合/向量补召回/回答全部按此范围执行；空则沿用分析器推导）
+        List<String> versions = (request.versions() != null && !request.versions().isEmpty())
+                ? java.util.List.copyOf(request.versions()) : rulePlan.requestedVersions();
         EntityQueryPlan plan = new EntityQueryPlan(
                 rulePlan.projectId(), rulePlan.originalQuery(), rulePlan.mentions(),
-                rulePlan.intent(), rulePlan.requestedVersions(), includeHistory,
+                rulePlan.intent(), versions, includeHistory,
                 rulePlan.asksCurrentState(), rulePlan.asksImplementation(), rulePlan.asksNumericValue());
         List<String> warnings = new ArrayList<>();
 
@@ -83,11 +87,16 @@ public class EntityQueryService {
         List<Citation> citations = aggregator.citations(projectId, views);
 
         // 4. 每个实体都参与评估；响应级摘要取所有实体的确定性风险并保留全部事实分区
-        FactAssessment assessment = views.isEmpty()
-                ? FactAssessment.EMPTY
-                : mergeAssessments(views.stream().map(view -> factPriorityService.assess(plan, view)).toList());
+        FactAssessment assessment = assessMerged(plan, views);
 
         return new EntitySearchResponse(query, plan, views, assessment, citations, warnings);
+    }
+
+    /** 对给定实体集做响应级确定性评估摘要（图/向量增强召回复用：合并实体集的评估同态）。 */
+    public FactAssessment assessMerged(EntityQueryPlan plan, List<EntityView> views) {
+        return views.isEmpty()
+                ? FactAssessment.EMPTY
+                : mergeAssessments(views.stream().map(view -> factPriorityService.assess(plan, view)).toList());
     }
 
     private FactAssessment mergeAssessments(List<FactAssessment> assessments) {

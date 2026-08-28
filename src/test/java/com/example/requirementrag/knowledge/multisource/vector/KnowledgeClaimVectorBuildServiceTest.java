@@ -23,6 +23,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
@@ -69,7 +70,7 @@ class KnowledgeClaimVectorBuildServiceTest {
         properties = new KnowledgeClaimVectorProperties(
                 true, true, true, true,
                 "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
-                200, 3, 32, 3, 2, tempDir.resolve("test-vector.db").toString());
+                200, 3, 32, 3, 2, tempDir.resolve("test-vector.db").toString(), "ACTIVE_DOC");
         vectorStore = new SQLiteKnowledgeClaimVectorStore(properties);
         textComposer = new KnowledgeClaimVectorTextComposer(properties);
         when(embeddingModel.dimensions()).thenReturn(8);
@@ -152,6 +153,8 @@ class KnowledgeClaimVectorBuildServiceTest {
         // 第一次构建
         stubClaims(List.of(claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a")));
         stubEmbeddings();
+        // 物理 collection 存在 → 可复用
+        when(qdrantStore.collectionExists(anyString())).thenReturn(true);
         ClaimVectorGenerationManifest first = buildService.build("proj-1", "v1");
 
         // 第二次构建同一指纹——应跳过
@@ -160,6 +163,21 @@ class KnowledgeClaimVectorBuildServiceTest {
         assertThat(second.generationId()).isEqualTo(first.generationId());
         // 只嵌入一次（第一次）
         verify(embeddingBatcher, times(1)).embedAll(any());
+    }
+
+    @Test
+    void buildRebuildsWhenReusablePhysicalCollectionMissing() {
+        // Med：SQLite 有可复用代际但物理 Qdrant collection 已被删除 → 不得复用，须重建
+        stubClaims(List.of(claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a")));
+        stubEmbeddings();
+        when(qdrantStore.collectionExists(anyString())).thenReturn(false);
+
+        ClaimVectorGenerationManifest first = buildService.build("proj-1", "v1");
+        ClaimVectorGenerationManifest second = buildService.build("proj-1", "v1");
+
+        // 物理集合缺失 → 跳过复用，重新构建新代际
+        assertThat(second.generationId()).isNotEqualTo(first.generationId());
+        verify(embeddingBatcher, times(2)).embedAll(any());
     }
 
     @Test
@@ -195,6 +213,55 @@ class KnowledgeClaimVectorBuildServiceTest {
         verify(knowledgeStore, atLeastOnce()).findPublishedClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(0L));
         verify(knowledgeStore, atLeastOnce()).findPublishedClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(1L));
         verify(qdrantStore).verifyPointCount(anyString(), eq(2));
+    }
+
+    @Test
+    void allPublishedScopeStreamsAllPublishedClaimsAndRecordsScope() {
+        // build-scope=ALL_PUBLISHED：走实体层同态全量分页查询（不绑定 active manifest）
+        List<KnowledgeClaimRecord> claims = List.of(
+                claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a"),
+                claim("c-2", SourceType.PARAMETER_TABLE, "参数B", "fk-b"));
+        when(knowledgeStore.findPublishedClaimsByProjectVersionAllPage(
+                        eq("proj-1"), eq("v1"), anyInt(), eq(0L)))
+                .thenReturn(claims);
+        when(embeddingBatcher.embedAll(anyList())).thenAnswer(invocation -> {
+            List<?> texts = invocation.getArgument(0);
+            List<float[]> vectors = new ArrayList<>();
+            for (int i = 0; i < texts.size(); i++) {
+                vectors.add(new float[]{0.1f * (i + 1)});
+            }
+            return vectors;
+        });
+
+        ClaimVectorGenerationManifest result = buildService.build("proj-1", "v1", "ALL_PUBLISHED");
+
+        assertThat(result.buildScope()).isEqualTo("ALL_PUBLISHED");
+        assertThat(result.status()).isEqualTo(GenerationStatus.ACTIVE);
+        assertThat(result.expectedPointCount()).isEqualTo(2);
+        assertThat(result.indexedPointCount()).isEqualTo(2);
+        // 全程只走全量分页查询，绝不触碰 active-manifest 绑定查询
+        verify(knowledgeStore, atLeastOnce())
+                .findPublishedClaimsByProjectVersionAllPage(eq("proj-1"), eq("v1"), anyInt(), eq(0L));
+        verify(knowledgeStore, never())
+                .findPublishedClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), anyLong());
+    }
+
+    @Test
+    void defaultScopeStaysActiveDocContract() {
+        // 默认/非法 scope：ACTIVE_DOC 契约不变
+        List<KnowledgeClaimRecord> claims = List.of(
+                claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a"));
+        stubClaims(claims);
+        stubEmbeddings();
+
+        ClaimVectorGenerationManifest result = buildService.build("proj-1", "v1", "bogus-scope");
+
+        assertThat(result.buildScope()).isEqualTo("ACTIVE_DOC");
+        assertThat(result.expectedPointCount()).isEqualTo(1);
+        verify(knowledgeStore, atLeastOnce())
+                .findPublishedClaimsByProjectVersionPage(eq("proj-1"), eq("v1"), anyInt(), eq(0L));
+        verify(knowledgeStore, never())
+                .findPublishedClaimsByProjectVersionAllPage(eq("proj-1"), eq("v1"), anyInt(), anyLong());
     }
 
     // ── 失败保护 ──────────────────────────────────────────────────────

@@ -31,7 +31,7 @@ class ClaimVectorConditionalAssemblyTest {
         return new KnowledgeClaimVectorProperties(
                 enabled, true, true, shadow,
                 "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
-                200, 3, 32, 3, 2, "data/conditional-test.db");
+                200, 3, 32, 3, 2, "data/conditional-test.db", "ACTIVE_DOC");
     }
 
     private final EmbeddingModel embeddingModel = mock(EmbeddingModel.class);

@@ -24,8 +24,7 @@ public class EmbeddingBatcher {
 
     private final EmbeddingModel embeddingModel;
     private final BoundedTtlCache<String, float[]> cache;
-    private final String modelFingerprint;
-    /** 同一文本并发 miss 只允许一次模型调用，避免需求与代码分支重复击穿本地 Ollama。 */
+    private final String modelFingerprint;    /** 同一文本并发 miss 只允许一次模型调用，避免需求与代码分支重复击穿本地 Ollama。 */
     private final ConcurrentHashMap<String, CompletableFuture<float[]>> inFlight = new ConcurrentHashMap<>();
 
     public EmbeddingBatcher(EmbeddingModel embeddingModel) {
@@ -54,9 +53,12 @@ public class EmbeddingBatcher {
         }
     }
 
-    /**
-     * 为全部文本生成向量，按 32 条一批分批调用嵌入服务。
-     *
+    /** 运行时嵌入模型身份指纹（class:dimensions）——构建与检索两侧身份校验用。 */
+    public String modelFingerprint() {
+        return modelFingerprint;
+    }
+
+    /** 为全部文本生成向量，按 32 条一批分批调用嵌入服务。
      * @param texts 待嵌入的文本列表；为 null 或空时返回空列表
      * @return 与输入顺序一致的向量列表（向量为缓存的克隆副本）
      */

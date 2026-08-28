@@ -36,7 +36,7 @@ class ClaimVectorQualityGateTest {
         properties = new KnowledgeClaimVectorProperties(
                 true, true, true, true,
                 "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
-                200, 3, 32, 3, 2, tempDir.resolve("test-gate.db").toString());
+                200, 3, 32, 3, 2, tempDir.resolve("test-gate.db").toString(), "ACTIVE_DOC");
         gate = new ClaimVectorQualityGate(sqliteStore, qdrantStore, shadowEvaluator, properties);
     }
 
@@ -47,7 +47,7 @@ class ClaimVectorQualityGateTest {
                 "test-model", 8, "knowledge_claims_live-123456",
                 GenerationStatus.ACTIVE, indexed, expected, "[]",
                 "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z",
-                "2025-01-01T00:00:00Z");
+                "2025-01-01T00:00:00Z", "ACTIVE_DOC");
     }
 
     // ── no active generation ────────────────────────────────────────────
@@ -205,7 +205,7 @@ class ClaimVectorQualityGateTest {
         properties = new KnowledgeClaimVectorProperties(
                 true, true, true, false,
                 "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
-                200, 3, 32, 3, 2, tempDir.resolve("test-no-shadow.db").toString());
+                200, 3, 32, 3, 2, tempDir.resolve("test-no-shadow.db").toString(), "ACTIVE_DOC");
         gate = new ClaimVectorQualityGate(sqliteStore, qdrantStore, shadowEvaluator, properties);
         ClaimVectorGenerationManifest manifest = activeManifest(100, 100);
         when(sqliteStore.findActiveGeneration("proj-1", "v1"))

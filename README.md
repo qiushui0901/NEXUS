@@ -95,7 +95,7 @@ NEXUS 会把它拆成可验证的证据链：
 - 四类输入（需求 PRD、immortal-data 数值参数表、immortal-case 测试用例、immortal-qa 存疑）统一入库为 `document → version → evidence → Claim` 三元组，SQLite 为权威、Qdrant 为可弃投影；按项目与业务版本隔离。
 - 0.9.6 Claim 向量投影：确定性类型化嵌入文本 → 两遍流式构建 → 代际 manifest 与输入指纹去重建 → alias 原子发布/回滚 → 质量门与影子模式灰度。
 - 检索时意图 → 来源 → 候选 → 确定性融合（0.55 向量 + 0.25 词法 + 0.10 来源策略 + 0.10 精确命中 − 冲突惩罚）→ 评分排序；数值类 PARAMETER 意图双路召回。
-- 全链路开关默认关闭（`app.rag.multi-source.claim-vector.*`），按发布决策记录的灰度 6 阶段上线。
+- Claim 向量投影和检索链路仍默认关闭（`app.rag.multi-source.claim-vector.enabled/build-enabled/candidate-retrieval-enabled`）；语义增强默认开启（`semantic-enhancement-enabled=true`），仅在实际构建语义块时调用 `gpt-5.6-luna` 生成召回辅助文本，不改变 SQLite 权威 Claim/Evidence。
 
 ### 代码智能：不仅是“搜到一段代码”
 
@@ -175,7 +175,18 @@ cp .env.example .env
 ./scripts/nexus.sh start
 ```
 
-Embedding 与 LLM 默认通过 OpenAI 兼容网关访问；Qdrant 由本地脚本或 Docker Compose 启动。启动后打开：
+Embedding 与 LLM 默认通过 OpenAI 兼容网关访问；Qdrant 由本地脚本或 Docker Compose 启动。
+
+Claim 语义块的 LLM 召回增强默认开启，模型为 `gpt-5.6-luna`。它只生成向量召回辅助文本，不能修改 SQLite 中的 Claim、Evidence、版本或事实；调用失败时自动回退到确定性事实文本。该增强只在 Claim 向量构建实际开启时调用，Claim 向量投影、构建和候选检索仍默认关闭。如需调整，可在 `.env` 中设置：
+
+```bash
+KNOWLEDGE_CLAIM_VECTOR_SEMANTIC_ENHANCEMENT_ENABLED=true
+KNOWLEDGE_CLAIM_VECTOR_SEMANTIC_ENHANCEMENT_MODEL=gpt-5.6-luna
+```
+
+启动前请确保 `OPENAI_BASE_URL` 与 `OPENAI_API_KEY` 可用；不使用 LLM 召回增强时可将开关设为 `false`。
+
+启动后打开：
 
 | 页面 | 地址 | 用途 |
 |---|---|---|
@@ -375,12 +386,12 @@ flowchart TB
 - 知识管理、导入状态和安全降级。
 - 默认关闭的需求语义图实验能力。
 - 多源知识库：需求 × 数值 × 测试 × 存疑统一为 Claim 三元组（SQLite 权威）。
-- 0.9.6 Claim 向量投影：代际 manifest、alias 原子发布/回滚、质量门、影子模式与确定性融合评分。
+- 0.9.6 Claim 向量投影：代际 manifest、alias 原子发布/回滚、质量门、影子模式与确定性融合评分；语义块默认启用 `gpt-5.6-luna` 召回增强，失败自动回退确定性事实文本。
 
 后续重点：
 
 - 更完整的 SSO、配额和多实例共享状态。
-- 0.9.6 灰度发布收尾：影子数据达标后按发布决策记录正式启用 Claim 向量融合。
+- 0.9.6 灰度发布收尾：影子数据达标后按发布决策记录正式启用 Claim 向量融合；启用构建前请配置 OpenAI 兼容网关和 `OPENAI_API_KEY`。
 - 需求实体关系与代码符号的审核式关联。
 - 需求实体关系与代码符号的审核式关联。
 - 更大规模、更多业务语义查询的独立评测集。

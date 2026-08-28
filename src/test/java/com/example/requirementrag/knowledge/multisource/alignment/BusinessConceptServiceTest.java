@@ -2,6 +2,7 @@ package com.example.requirementrag.knowledge.multisource.alignment;
 
 import com.example.requirementrag.conflict.KnowledgeConflictModels.Authority;
 import com.example.requirementrag.conflict.KnowledgeConflictModels.SourceType;
+import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeDocument;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeDocumentVersion;
 import com.example.requirementrag.knowledge.multisource.KnowledgeCatalogModels.KnowledgeClaimRecord;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.DoubtClaim;
@@ -258,6 +259,71 @@ class BusinessConceptServiceTest {
     }
 
     @Test
+    void gameplayCardPagesAndTablesShareOneCanonicalEntity() {
+        AlignmentTestSupport.Stores stores = AlignmentTestSupport.stores(tempDir);
+        publishedDocumentVersion(stores, "dv-immortal-5.1-prd-山河图_ver_2_", SourceType.REQUIREMENT);
+        publishedDocumentVersion(stores, "dv-immortal-5.1-data-ImmortalFarmChest", SourceType.PARAMETER_TABLE);
+        publishedDocumentVersion(stores, "dv-immortal-5.1-case-山河图", SourceType.TEST_CASE);
+
+        stores.multiSource().saveClaim(new KnowledgeClaimRecord(
+                "req-shanhe", "immortal", "dv-immortal-5.1-prd-山河图_ver_2_", SourceType.REQUIREMENT,
+                Authority.PRIMARY, "immortal|5.1|等级上限|等级上限|document", "等级上限",
+                "document", "山河图规则", "TEXT", null, "SUPPORTED", null, null, null,
+                "RULE", null, null, null));
+        stores.multiSource().saveClaim(new KnowledgeClaimRecord(
+                "param-shanhe", "immortal", "dv-immortal-5.1-data-ImmortalFarmChest", SourceType.PARAMETER_TABLE,
+                Authority.PRIMARY, "immortal|5.1|Sheet1|chestId|value", "chestId",
+                "value", "1001", "INTEGER", "个", "SUPPORTED", null, null, null,
+                "RULE", null, null, null));
+        stores.multiSource().saveClaim(new KnowledgeClaimRecord(
+                "case-shanhe", "immortal", "dv-immortal-5.1-case-山河图", SourceType.TEST_CASE,
+                Authority.SECONDARY, "immortal|5.1||山河图|expectedResult", "山河图",
+                "expectedResult", "进入玩法", "TEXT", null, "SUPPORTED", null, null, null,
+                "RULE", null, null, null));
+
+        BusinessConceptService service = new BusinessConceptService(
+                stores.multiSource(), stores.alignment(), AlignmentTestSupport.stubLoader(LoadedCode.empty()),
+                new VersionContextService(stores.alignment(), AlignmentTestSupport.stubLoader(LoadedCode.empty())));
+        service.build("immortal", "5.1");
+
+        BusinessConcept card = stores.alignment().findConceptByKey("immortal", "山河图").orElseThrow();
+        assertThat(card.displayName()).isEqualTo("山河图");
+        assertThat(card.conceptType()).isEqualTo("GAMEPLAY_CARD");
+        assertThat(stores.alignment().findMembers("immortal", card.conceptId(), "5.1"))
+                .extracting(ConceptMember::sourceType)
+                .containsExactlyInAnyOrder("REQUIREMENT", "PARAMETER_TABLE", "TEST_CASE");
+        assertThat(stores.alignment().findAliases("immortal", card.conceptId()))
+                .extracting(ConceptAlias::alias)
+                .contains("山河图_ver_2_", "ImmortalFarmChest", "等级上限");
+    }
+
+    @Test
+    void gameplayCardKeepsAllCodeMembersWithoutArtificialLimit() {
+        AlignmentTestSupport.Stores stores = AlignmentTestSupport.stores(tempDir);
+        publishedDocumentVersion(stores, "dv-immortal-5.1-prd-山河图", SourceType.REQUIREMENT);
+        stores.multiSource().saveClaim(new KnowledgeClaimRecord(
+                "req-shanhe-code", "immortal", "dv-immortal-5.1-prd-山河图", SourceType.REQUIREMENT,
+                Authority.PRIMARY, "immortal|5.1|山河图|rule", "玩法规则", "rule", "支持",
+                "TEXT", null, "SUPPORTED", null, null, null, "RULE", null, null, null));
+        List<CodeSymbolView> symbols = java.util.stream.IntStream.range(0, 201)
+                .mapToObj(index -> AlignmentTestSupport.symbol("code-" + index, "method",
+                        "com.game.farm.FarmFeature" + index, "FarmFeature" + index,
+                        "FarmFeature" + index + ".java", index + 1, index + 3, false))
+                .toList();
+        LoadedCode loaded = AlignmentTestSupport.loadedCode(symbols);
+        BusinessConceptService service = new BusinessConceptService(
+                stores.multiSource(), stores.alignment(), AlignmentTestSupport.stubLoader(loaded),
+                new VersionContextService(stores.alignment(), AlignmentTestSupport.stubLoader(loaded)));
+
+        service.build("immortal", "5.1");
+
+        BusinessConcept card = stores.alignment().findConceptByKey("immortal", "山河图").orElseThrow();
+        assertThat(stores.alignment().findMembers("immortal", card.conceptId(), "5.1")).filteredOn(
+                        member -> "CODE".equals(member.sourceType()))
+                .hasSize(201);
+    }
+
+    @Test
     void sameSubjectInDifferentModulesDoesNotMerge() {
         AlignmentTestSupport.Stores stores = AlignmentTestSupport.stores(tempDir);
         seedParameter(stores, "5.1", "传播时间", "30", "auth");
@@ -278,6 +344,17 @@ class BusinessConceptServiceTest {
     private void seedParameter(AlignmentTestSupport.Stores stores, String version, String parameter,
                                String value) {
         seedParameter(stores, version, parameter, value, "combat");
+    }
+
+    private void publishedDocumentVersion(AlignmentTestSupport.Stores stores, String documentVersionId,
+                                          SourceType sourceType) {
+        String documentId = "doc-" + documentVersionId;
+        stores.multiSource().registerDocument(new KnowledgeDocument(
+                documentId, "immortal", sourceType, documentId, documentId, "file://" + documentId,
+                Authority.PRIMARY, null));
+        stores.multiSource().upsertDocumentVersion(new KnowledgeDocumentVersion(
+                documentVersionId, documentId, "immortal", "5.1", "hash-" + documentVersionId,
+                "v1", "v1", null, "PUBLISHED", null, null));
     }
 
     private void seedParameter(AlignmentTestSupport.Stores stores, String version, String parameter,

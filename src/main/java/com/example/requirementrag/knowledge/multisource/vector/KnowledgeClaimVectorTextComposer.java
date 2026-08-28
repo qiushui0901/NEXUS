@@ -14,8 +14,9 @@ import java.util.Set;
  * 确定性类型化检索文本组合器（§5.3）。
  * <p>
  * 按 SourceType 选择固定字段顺序渲染嵌入文本。同一 Claim 的文本稳定不漂移——
- * 字段顺序不因数据库行序、字段填充顺序变化。Raw ID、时间戳、状态标签、孤立数值、
- * 完整重复 Evidence 片段不得主导嵌入文本。
+ * 字段顺序不因数据库行序、字段填充顺序变化。每个事实单元都显式表达主体、条件/行为、
+ * 结果/数值、单位、版本和事实键；缺失字段标记为“未提供”，不由 LLM 补造。Raw ID、时间戳、
+ * 状态标签、孤立数值、完整重复 Evidence 片段不得主导嵌入文本。
  * <p>
  * 空文本（Optional.empty）表示该 Claim 不符合投影入选条件（如值-only 参数），
  * 调用方应跳过该 Claim 不为其创建 Qdrant 点。
@@ -62,10 +63,10 @@ public class KnowledgeClaimVectorTextComposer {
             return Optional.empty();
         }
         String text = switch (claim.sourceType()) {
-            case REQUIREMENT -> composeRequirement(claim);
+            case REQUIREMENT -> composeRequirement(claim, businessVersion);
             case PARAMETER_TABLE -> composeParameter(claim, businessVersion);
-            case TEST_CASE -> composeTestCase(claim);
-            case DOUBT -> composeDoubt(claim);
+            case TEST_CASE -> composeTestCase(claim, businessVersion);
+            case DOUBT -> composeDoubt(claim, businessVersion);
             default -> "";
         };
         return text.isBlank() ? Optional.empty() : Optional.of(text);
@@ -85,15 +86,18 @@ public class KnowledgeClaimVectorTextComposer {
 
     // ===== 按来源类型的固定字段顺序渲染 =====
 
-    private String composeRequirement(KnowledgeClaimRecord claim) {
+    private String composeRequirement(KnowledgeClaimRecord claim, String businessVersion) {
         StringBuilder sb = new StringBuilder();
-        sb.append("[Requirement]\n");
-        appendField(sb, "Subject", claim.subject());
-        appendField(sb, "Predicate", claim.predicate());
-        appendField(sb, "Value", claim.objectValue());
-        appendField(sb, "Module", extractModule(claim.factKey()));
-        appendField(sb, "Fact key", claim.factKey());
-        // 至少需要 Subject + (Value 或 Predicate) 才有检索价值
+        sb.append("[Requirement fact]\n");
+        appendRequiredField(sb, "Subject", claim.subject());
+        appendRequiredField(sb, "Condition or action", claim.predicate());
+        appendRequiredField(sb, "Result or value", claim.objectValue());
+        appendRequiredField(sb, "Unit", claim.unit());
+        appendRequiredField(sb, "Version", versionLabel(businessVersion));
+        appendRequiredField(sb, "Module", extractModule(claim.factKey()));
+        appendRequiredField(sb, "Fact key", claim.factKey());
+        appendRequiredField(sb, "Source type", claim.sourceType().name());
+        appendRequiredField(sb, "Document version", claim.documentVersionId());
         if (isBlank(claim.objectValue()) && isBlank(claim.predicate())) {
             return "";
         }
@@ -101,9 +105,7 @@ public class KnowledgeClaimVectorTextComposer {
     }
 
     private String composeParameter(KnowledgeClaimRecord claim, String businessVersion) {
-        // §5.1: "Embed name, purpose, type, scope, and business description;
-        //         do not create value-only points"
-        // 值-only（有 Name 但无 Purpose/Description/Unit/ValueType）不建点
+        // §5.1: value-only parameters do not provide enough meaning for retrieval.
         if (isBlank(claim.predicate())
                 && isBlank(claim.objectValue())
                 && isBlank(claim.unit())
@@ -111,48 +113,58 @@ public class KnowledgeClaimVectorTextComposer {
             return "";
         }
         StringBuilder sb = new StringBuilder();
-        sb.append("[Parameter]\n");
-        appendField(sb, "Name", claim.subject());
-        appendField(sb, "Purpose", claim.predicate());
-        appendField(sb, "Value type", claim.valueType());
-        appendField(sb, "Unit", claim.unit());
-        appendField(sb, "Value", claim.objectValue());
-        appendField(sb, "Scope", "Version " + businessVersion);
-        appendField(sb, "Fact key", claim.factKey());
+        sb.append("[Parameter fact]\n");
+        appendRequiredField(sb, "Subject", claim.subject());
+        appendRequiredField(sb, "Condition or action", claim.predicate());
+        appendRequiredField(sb, "Result or value", claim.objectValue());
+        appendRequiredField(sb, "Unit", claim.unit());
+        appendRequiredField(sb, "Value type", claim.valueType());
+        appendRequiredField(sb, "Version", versionLabel(businessVersion));
+        appendRequiredField(sb, "Module", extractModule(claim.factKey()));
+        appendRequiredField(sb, "Fact key", claim.factKey());
+        appendRequiredField(sb, "Source type", claim.sourceType().name());
+        appendRequiredField(sb, "Document version", claim.documentVersionId());
         return sb.toString().trim();
     }
 
-    private String composeTestCase(KnowledgeClaimRecord claim) {
+    private String composeTestCase(KnowledgeClaimRecord claim, String businessVersion) {
         StringBuilder sb = new StringBuilder();
-        sb.append("[Test Case]\n");
-        appendField(sb, "Title", claim.subject());
-        appendField(sb, "Preconditions", claim.predicate());
-        appendField(sb, "Expected result", claim.objectValue());
-        appendField(sb, "Module", extractModule(claim.factKey()));
-        appendField(sb, "Fact key", claim.factKey());
-        // 至少需要 Title + (Expected 或 Preconditions) 才有检索价值
+        sb.append("[Test case fact]\n");
+        appendRequiredField(sb, "Subject", claim.subject());
+        appendRequiredField(sb, "Condition or action", claim.predicate());
+        appendRequiredField(sb, "Result or value", claim.objectValue());
+        appendRequiredField(sb, "Unit", claim.unit());
+        appendRequiredField(sb, "Version", versionLabel(businessVersion));
+        appendRequiredField(sb, "Module", extractModule(claim.factKey()));
+        appendRequiredField(sb, "Fact key", claim.factKey());
+        appendRequiredField(sb, "Source type", claim.sourceType().name());
+        appendRequiredField(sb, "Document version", claim.documentVersionId());
         if (isBlank(claim.objectValue()) && isBlank(claim.predicate())) {
             return "";
         }
         return sb.toString().trim();
     }
 
-    private String composeDoubt(KnowledgeClaimRecord claim) {
+    private String composeDoubt(KnowledgeClaimRecord claim, String businessVersion) {
         StringBuilder sb = new StringBuilder();
-        sb.append("[Doubt]\n");
-        appendField(sb, "Question", claim.subject());
-        appendField(sb, "Answer", claim.objectValue());
-        appendField(sb, "Module", extractModule(claim.factKey()));
-        appendField(sb, "Fact key", claim.factKey());
-        // 至少需要 Question（subject 一定非空，所以 Doubt 总可投影）
+        sb.append("[Doubt fact]\n");
+        appendRequiredField(sb, "Subject", claim.subject());
+        appendRequiredField(sb, "Condition or action", claim.predicate());
+        appendRequiredField(sb, "Result or value", claim.objectValue());
+        appendRequiredField(sb, "Unit", claim.unit());
+        appendRequiredField(sb, "Version", versionLabel(businessVersion));
+        appendRequiredField(sb, "Module", extractModule(claim.factKey()));
+        appendRequiredField(sb, "Fact key", claim.factKey());
+        appendRequiredField(sb, "Source type", claim.sourceType().name());
+        appendRequiredField(sb, "Document version", claim.documentVersionId());
         return sb.toString().trim();
     }
 
     // ===== 工具方法 =====
 
-    private static void appendField(StringBuilder sb, String label, String value) {
-        if (isBlank(value)) return;
-        sb.append(label).append(": ").append(value.trim()).append('\n');
+    private static void appendRequiredField(StringBuilder sb, String label, String value) {
+        sb.append(label).append(": ")
+                .append(isBlank(value) ? "未提供" : value.trim()).append('\n');
     }
 
     /** 从 factKey 提取模块名：第一段（第一个点之前的部分）。 */
@@ -160,6 +172,10 @@ public class KnowledgeClaimVectorTextComposer {
         if (isBlank(factKey)) return "";
         int dot = factKey.indexOf('.');
         return dot > 0 ? factKey.substring(0, dot).trim() : factKey.trim();
+    }
+
+    private static String versionLabel(String businessVersion) {
+        return isBlank(businessVersion) ? "未提供" : "Version " + businessVersion.trim();
     }
 
     private static boolean isBlank(String value) {

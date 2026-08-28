@@ -1,5 +1,92 @@
 ## 0.9.7 — 2026-08-27
 
+### Added（0.9.7 — 按玩法卡归并实体与语义块）
+
+- 新增 `GameplayCardModuleResolver`，按玩法卡生成规则归并多版本页、子页面、优化页面、支撑数值表、QA/用例和代码关键词到统一 `canonical_module`。
+- `BusinessConceptService` 使用 `GAMEPLAY_CARD` 作为真实资料的实体类型；原始 Claim、Evidence、页面名、表名、模块名和参数名继续逐条保留为成员/别名，不改变 SQLite 事实粒度。
+- Claim 向量生产路径按 `sourceType + canonical_module` 合并同一玩法的语义资料；玩法卡实体不按成员数量截断，所有代码符号和原始 Claim/Evidence 均可回查。
+- Qdrant 语义块仅按 `block-max-chars` 的文本载荷容量切分，不把数量上限误当作“一玩法一卡”的业务规则；补充跨来源归并和完整成员保留回归测试。
+- 语义块确定性文本升级为可独立回答的事实结构（主体、条件/行为、结果/数值、单位、版本和来源）；文本组合器版本升级为 `knowledge-claim-text-v2`。
+- 语义增强配置默认使用 `gpt-5.6-luna` 且默认开启；仅在启用向量构建时将 LLM 输出用于召回文本，不改变权威 Claim/Evidence，失败时回退确定性事实文本。
+
+### Changed（0.9.7 — 语义增强默认配置）
+
+- `semantic-enhancement-enabled` 默认值改为 `true`，并同步 `application.yml`、`.env.example`、README、开发计划和运维手册；Claim 向量投影、构建和候选检索总开关仍保持默认关闭。
+
+### Added（0.9.7 — 图/向量增强的可选召回方式）
+
+实现 dev md §13 的可选召回（借鉴图RAG“实体 → 局部图 → 向量 → LLM”思想，不指名实现）：在确定性实体检索之上叠加**局部图扩展 + 可选向量补召回**，默认关闭（DETERMINISTIC），不影响现有行为：
+
+- **`RecallMode`**（`DETERMINISTIC | GRAPH_VECTOR | HYBRID`）：
+  - DETERMINISTIC：规则/结构化召回（现状默认，行为不变）；
+  - GRAPH_VECTOR：实体识别 → 局部图一跳/二跳扩展 + 可选 Claim 向量补召回 → 实体/关系/证据组织；
+  - HYBRID：两路并集（图/向量只做召回增强，不改变事实权威——代码/数值表优先级、引用校验、发布边界仍生效）。
+- **`EntityRecallService`**：确定性检索（复用 `EntityQueryService`）→ `EntityGraphExpansionService.expand`（一跳/二跳关系实体）→ 可选 `ClaimVectorCandidateAdapter`（ObjectProvider 可选装配，无代际/失败降级为空 + 诊断告警透传）→ 种子 + 图 + 向量命中映射实体并集水化；**证据包基于合并实体集**（图/向量实体的事实、引用、评估同态并入回答）。
+- **`KnowledgeAnswerService.answerWithRecall`**：证据包基于合并实体集 + `[RELATED_GRAPH]/[RELATED_ENTITIES]/[VECTOR_HITS]` 上下文集入包；**引用校验只认真实 Evidence ID（Claim ID 不得冒充证据）**，分节类型校验照旧。
+- **API**：`POST /api/knowledge/entity-search` 与 `/entity-answer` 请求体新增可选 `recallMode`；GRAPH_VECTOR/HYBRID 走召回服务，默认/非法值回退 DETERMINISTIC；`entity-answer` 响应带完整召回包（recall），前端可单请求完成检索+回答。
+- **前端**：/knowledge 检索测试页新增“实体检索”tab——召回方式下拉（确定性/图+向量/并集）+“同时生成 AI 带证据回答”；展示实体/当前事实/冲突/时间轴/局部图/向量命中/AI 回答。
+- **测试**：新增 14 例，全量 1105 tests 通过（含四、五、六轮新增）。
+
+### Fixed（0.9.7 — 可选召回第三轮 review：引用安全、向量进证据、版本对齐）
+
+按第三轮 review 修复 4 项 High + 6 项 Medium：
+
+1. **[High] Claim ID 冒充 Evidence ID**：`answerWithRecall` 不再把扩展实体的事实 Claim ID 注册进允许集——引用校验只认真实 Evidence ID（citations 与当前代码事实的 evidenceIds），Claim ID 一律拒绝并回退模板。
+2. **[High] 向量召回未进实体事实/证据包**：向量命中 Claim 通过 `mapVectorHitsToEntities` 映射为实体并入集合水化——向量命中的当前事实、时间轴、引用与评估同态进证据包与回答。
+3. **[High] 扩展实体事实未进 LLM 输入**：证据包改为基于合并实体集构建（`evidence.entities` = 种子 + 图 + 向量），扩展事实的 subject/value/unit/代码摘录/Evidence 全部入包。
+4. **[High] 点 ID 算法变更未升投影 schema**：点 ID 从 64-hex 改为 UUID（Qdrant v1.15+ 拒绝任意字符串点 ID）后，`projectionSchemaVersion` 默认升为 `knowledge-claim-vector-v2`——投影契约变更，旧代际不被指纹误复用，旧集合保留待回收。
+5. **[Med] 图扩展/向量映射仍绑 active manifest**：改用实体层同态查询（`findPublishedClaimIdsByIdsAll` + `isPublishedEvidenceAll`）——并行已发布文档的 Claim 与关系证据同态可见。
+6. **[Med] ALL_PUBLISHED 水化未校验真实业务版本**：新增 `findPublishedClaimsByIdsAll(projectId, businessVersion, claimIds)`——SQLite 以文档关联业务版本为权威收窄，Qdrant payload 可伪造/缺失不再单独可信。
+7. **[Med] 多版本请求向量只查第一版**：向量补召回覆盖全部已发布业务版本（确定性聚合的覆盖范围），逐版本检索并去重。
+8. **[Med] 向量诊断被静默丢弃**：`CLAIM_VECTOR_NO_ACTIVE_GENERATION` / `CLAIM_VECTOR_SEARCH_FAILED` / `STALE_HITS` / `SCOPE_MISMATCH` 等透传到响应 warnings（有具体诊断时不再叠加泛化的 VECTOR_RECALL_EMPTY）。
+9. **[Med] 前端开启 AI 回答重复召回**：`entity-answer` 响应携带完整召回包（recall），前端开启回答时只调一次接口完成检索+回答，避免重复执行解析/聚合/图/向量。
+10. **[Med] 测试计数与 CHANGELOG 不一致**：全量重跑 1092 tests、0 failures，已同步。
+
+### Fixed（0.9.7 — 可选召回第四轮 review：投影契约 fail-close 与证据注册完备）
+
+1. **[High] 向量检索未强制校验 active 代际 schema 与 payload 完整性**：`findActiveGeneration` 按当前配置 schema 过滤（旧 v1 ACTIVE 代际不再可读取）；adapter 在检索前校验 active 代际 schema == 配置（不等 → `CLAIM_VECTOR_SCHEMA_MISMATCH` fail-close 不查 Qdrant）；命中点五字段（generation/schema/model/project/version）任一缺失或不匹配即丢弃，不再“字段为空则跳过”；payload 构造器对缺失 schema/model 直接抛错（移除 v1 回退默认）。
+2. **[Med] 实体层关系状态仍用 active-manifest Evidence 校验**：`EntityEvidenceAggregator` 关系状态改 `isPublishedEvidenceAll`（与图扩展同语义——并行已发布文档的证据同态判 CONFIRMED）。
+3. **[Med] Qdrant 检索异常伪装成“没有命中”**：`KnowledgeClaimVectorQdrantStore.search` 不再吞异常（上抛）→ adapter 转为 `CLAIM_VECTOR_SEARCH_FAILED` 稳定告警透传，可区分“无命中”与“向量服务不可用”。
+4. **[Med] buildScope 无配置绑定入口**：application.yml 补 `build-scope: ${KNOWLEDGE_CLAIM_VECTOR_BUILD_SCOPE:ACTIVE_DOC}`——环境变量与 API 显式指定两条入口都生效，配置契约一致。
+5. **[Med] 前端实体请求未纳入统一取消/清理**：`revokeRetrievalRequests()` 递增 entity.requestId、释放 loading、调 `resetEntityState()`（切页/切项目/返回不再写回过期结果）。
+6. **[Med] 第二及后续 Evidence ID 无法被引用**：`evidenceTypeById` 改为从**全部输出事实**（代码/数值表/测试/时间轴分区）的 evidenceIds 建注册表，citations 首条之外的真实证据也可引用并被类型校验。
+- 测试：新增 6 例（QdrantStore 2：检索故障上抛/点构造缺 schema 抛错；Store 1：findActiveGeneration schema 过滤；Adapter 2：残缺/串货 payload 丢弃 + active schema 不匹配 fail-close；回答服务 1：第二 Evidence ID 可引用）。全量 **1098 tests 通过**。真实 Qdrant/嵌入回归由 `ImmortalClaimVectorBuildIT`（`-Dimmortal.vector=true`）覆盖。
+
+### Fixed（0.9.7 — 可选召回第五轮 review：关系证据端点绑定、版本边界与文档契约）
+
+1. **[High] 关系 Evidence 未校验属于关系端点**：`isPublishedEvidenceAll` 只校验“同项目+同版本+已发布”，会把并行文档中与本关系无关的证据误判 CONFIRMED。改为 `isPublishedEvidenceForRelation(projectId, version, evidenceId, sourceClaimId, targetClaimId)`——必须通过 `knowledge_claim_evidence` 绑定到 source/target Claim 之一（聚合器与图扩展两处统一）；跨来源独立关系证据若存在，需单独建模校验。
+2. **[Med] 前端版本输入未传给实体 API**：`runEntitySearch()` 请求补 `versions: [retrieval.version]`（空则聚合全部已发布版本）——修复历史版本 entity-answer 的版本边界回归。
+3. **[Med] 切换检索模式未清理实体结果/请求**：`setRetrievalMode()` 离开实体模式时递增 entity.requestId、释放 loading、`resetEntityState()`（再切回不显示旧上下文结果）。
+4. **[Med] 多版本向量召回单版本失败丢弃全部命中**：版本循环逐版本独立 try/catch——失败版本按 `VECTOR_RECALL_UNAVAILABLE:版本 X` 告警透传，保留其它版本成功命中（不再整轮清空）。
+- 文档一致性：`docs/multi-source-claim-vector-retrieval-development-plan-0.9.6.md` 同步 v2 + UUID 点 ID + build-scope 配置项（旧 v1/64-hex 契约描述已清除）。
+- 测试：新增 2 例（store：关系证据必须属于端点 Claim——绑定端点 true / 并行无关文档 false；召回服务：单版本失败保留其它版本命中 + 版本级告警）。全量 **1100 tests 通过**。
+
+### Added（0.9.7 — 实现文档）
+
+- 新增 `docs/graph-vector-recall-implementation.md`：实体中心检索 + 可选召回（DETERMINISTIC / GRAPH_VECTOR / HYBRID）实现文档，含架构总览、GRAPH_VECTOR 时序、发布语义/投影范围、向量代际构建流水线、投影契约 fail-close 树、引用校验、前端交互等 8 张流程图。
+
+### Fixed（0.9.7 — 可选召回第六轮 review：版本生效、关系证据完备、向量代际完整性）
+
+1. **[High] 请求体 versions 未生效**：`EntityQueryService.search` 用 `request.versions()`（非空时）覆盖分析器推导——前端版本输入真正限制实体聚合/向量补召回/回答范围（测试：versions=["5.0"] → timeline 仅 5.0）。
+2. **[Med] 关系证据校验误伤 Claim→代码符号关系**：`isPublishedEvidenceForRelation` 对 targetClaimId 为空（READS_CONFIG/VERIFIES 等代码对齐）只绑定 source Claim，不再强制两端都有 Claim ID；仍校验同文档+同来源。
+3. **[Med] 关系证据未校验文档/来源一致**：校验 `c.document_version_id=e.document_version_id` 与 `c.source_type=e.source_type`——错误绑定端点但文档/类型不符的证据判 UNVERIFIED（测试覆盖文档不符/类型不符/无关三场景）。
+4. **[Med] 单条损坏 payload 整次失败**：`KnowledgeClaimVectorQdrantStore.search` 逐点解析失败跳过该点、保留同批合法命中；仅响应结构损坏才整次上抛。
+5. **[Med] active 代际未完整校验运行时代际身份**：adapter 增加（a）查询向量维度 == 代际构建维度（`CLAIM_VECTOR_EMBEDDING_DIMENSION_MISMATCH` fail-close）；（b）运行时 EmbeddingBatcher 模型指纹（class:dim）== 代际模型（`CLAIM_VECTOR_EMBEDDING_MODEL_MISMATCH` fail-close）。
+6. **[Med] 可复用代际不确认物理集合存在**：`findReusableGeneration` 命中后 `qdrantStore.collectionExists(physicalCollection)` 确认；物理集合缺失 → 标记 FAILED + 重建（避免 UNIQUE 约束挡住 recordBuildStart）。
+- 规范一致性：`.trellis/spec` 修复 evidenceTypeById 注册范围的自相矛盾描述（以“全部输出事实”为准），并新增本轮契约。
+- 测试：新增 5 例（版本范围限制 / 维度不匹配 / 模型身份不匹配 / 物理集合缺失重建 / 坏点与合法点共存）。全量 **1105 tests 通过**。
+
+### Changed（0.9.7 — 实体中心真实数据链路：发布并行化 + 实体层与向量层发布语义分离）
+
+按真实数据验证（ImmortalEntityViewIT 全链路）修复实体视图无数据的根因，并落实 Path B 发布语义：
+
+- **发布可并行多文档（Path B）**：`publishDocumentVersion` / `rollbackActiveVersion` 的降级条件改为“仅同一 document_id 的新版本才替换降级”——同一业务版本下的不同文档（如 immortal 的 case/data/qa/prd 并行来源）可同时保持 PUBLISHED；`knowledge_active_version` 仍为单文档，仅作向量投影定位。新增 `findDocumentVersionIds(projectId, businessVersion)`（发布/回滚枚举用）。
+- **实体层与向量层的“已发布”语义分离（根因修复）**：上一轮 Review（第三轮“发布边界与版本水化”）把实体层查询也统一绑定 active manifest（单文档），导致实体聚合永远只见 active 单文档（immortal 场景只剩存疑 2100 条）。现拆开：
+  - 实体层（aggregator/graph/query 用）：新增 `findPublishedClaimsByIdsAll` / `findPublishedEvidenceIdsByClaimIdsAll`，`findPublishedClaimVersions`、`findPublishedClaimsByProjectVersionAll`、`findPublishedBusinessVersions`、`findPublishedDocumentVersionIds` 改为仅按 `status='PUBLISHED'` 过滤、不绑 manifest（同一版本并行来源全量可见）；
+  - 向量层（保留绑定）：`findPublishedClaimsByIds` + `publishedDocumentFilter()` 仍按 active 单文档投影（Claim 向量按设计一个业务版本一个激活文档）。
+- **真实链路验证**（`ImmortalEntityViewIT`，`-Dimmortal.import=true` 门控）：导入（缓存幂等）→ 发布 199 文档（全部 PUBLISHED）→ `buildProject`（26,319 概念 / 201,186 别名 / 201,281 成员）→ `entity-search` 真实数据：`等级上限` → 实体“等级”7 条真实参数（50/100/300/…/2500）+ timeline + 冲突 + 引用；`击杀奖励` → 2 个“奖励”实体（需求/测试）。
+- 测试：发布语义调整（兄弟共存 + 同文档替换两例替代旧互斥断言），全量 1077 tests 通过。
+
 ### Fixed（0.9.7 — 实体中心检索 Review 第三轮：发布边界与版本水化）
 
 补齐实体、关系和 Claim 向量读取的发布边界：已发布 Claim 查询统一排除 DRAFT/REJECTED/STALE/OBSOLETE 状态并绑定 active manifest；向量命中水化限定项目与业务版本；局部图关系要求两端 Claim 均属于同一已发布业务版本；版本级概念构建拒绝未发布版本；项目成员批量替换按版本事务删除后重建，避免大规模 `NOT IN` 参数列表；答案引用注册不再接受 Claim ID 作为 Evidence；代码事实补充同 commit 的有界源码摘录，发布版本全部下线时清理实体成员。全量 1076 tests 通过，0 failures，0 errors，0 skipped。
@@ -38,7 +125,7 @@
 
 - **事实优先级与实现偏差**（`EntityFactPriorityService`，dev md §9）：按问题类型选主证据视图——当前行为 CODE &gt; TEST_RESULT &gt; PARAMETER_TABLE &gt; REQUIREMENT；当前数值 PARAMETER_TABLE 优先；`FactAssessment` 升级为结构化条目（AssessmentItem：type/value/sourceType/status），五个分区（currentBehavior/currentValues/validation/requirementTarget/implementationGaps）。确定性偏差信号：需求目标 ≠ 当前数值表 → `REQUIREMENT_PARAMETER_MISMATCH`（CONFLICTED）；FAILED 测试 → `REQUIREMENT_IMPLEMENTATION_GAP`（REVIEW_REQUIRED）；代码+数值表+FAILED 测试并存 → `CODE_PARAMETER_MISMATCH`（REVIEW_REQUIRED）。数值比较剥离单位后数值化比较。不做来源仲裁、不修改任何来源事实。`EntityQueryService` 接线：响应 factAssessment 从空骨架变为首实体的评估。
 - **AI 带证据回答**（`KnowledgeAnswerService`，dev md §11）：只吃受限证据包（CURRENT_CODE/CURRENT_PARAMETER_TABLE/TEST_RESULT/HISTORICAL_REQUIREMENT/CONFLICTS，有界 40 条）；系统 Prompt 强制“只基于证据/冲突必须同时报告/引用必须附 evidence/不足回答无法确定”；模型返回的分节 evidenceIds **服务端校验**（∈ citations/代码证据允许集，非法引用丢弃 → citationQuality=PARTIAL/UNVERIFIED/VERIFIED）；LLM 不可用/失败 → 确定性模板降级（偏差模板 / 确认模板 / “无法确定+缺失来源”），绝不编造结论；状态按偏差 CONFLICTED/REVIEW_REQUIRED → REVIEW_REQUIRED。新增 `POST /api/knowledge/entity-answer`（内部先跑 entity-search 再回答，返回 answer/sections/status/citationQuality/证据包）。
-- **LightRAG 式局部图扩展**（`EntityGraphExpansionService`，dev md §14 Phase 6）：实体一跳/两跳关系召回（`findAlignmentRelationsForClaim` + `findRelationsForClaims`，深度≤2、节点≤30、边≤60）；向量/Claim 命中映射回实体（`findConceptIdsByClaim`，idx_concept_member_claim）；检索指标（entityCount/relationCount/versionCoverage/hasCode/hasParameters/hasTests）。新增 `POST /api/knowledge/entity-search/related` 返回局部图 + 指标。项目级历史 Claim collection 与更大向量范围按 dev md §10.3 第 3 种保持评测驱动（本阶段不接 Qdrant）。
+- **图扩展（局部图一跳/两跳）**（`EntityGraphExpansionService`，dev md §14 Phase 6）：实体一跳/两跳关系召回（`findAlignmentRelationsForClaim` + `findRelationsForClaims`，深度≤2、节点≤30、边≤60）；向量/Claim 命中映射回实体（`findConceptIdsByClaim`，idx_concept_member_claim）；检索指标（entityCount/relationCount/versionCoverage/hasCode/hasParameters/hasTests）。新增 `POST /api/knowledge/entity-search/related` 返回局部图 + 指标。项目级历史 Claim collection 与更大向量范围按 dev md §10.3 第 3 种保持评测驱动（本阶段不接 Qdrant）。
 - **测试**：新增 10 例——事实优先级 4（CODE 优先/需求-参数 mismatch/FAILED 测试 gap/通过测试无 gap）；答案服务 4（有效引用保留 PARTIAL/全有效 VERIFIED/模板降级报偏差/无证据无法确定）；局部图 2（一跳扩展+向量命中映射、指标覆盖）。全量 1060 tests 通过。
 
 ### Added（0.9.7 — 实体中心检索 Phase 3：实体证据查询 API）
@@ -78,7 +165,7 @@
 
 ### Added
 
-- **Entity-centric multi-version knowledge retrieval implementation** (`docs/entity-centric-knowledge-retrieval-implementation.md`): defines LLM-assisted question/entity extraction, cross-version entity aggregation, code and parameter-table fact precedence, evidence-bound answer generation, vector projection responsibilities, LightRAG comparison, API/frontend changes, phased implementation, and quality gates.
+- **Entity-centric multi-version knowledge retrieval implementation** (`docs/entity-centric-knowledge-retrieval-implementation.md`): defines LLM-assisted question/entity extraction, cross-version entity aggregation, code and parameter-table fact precedence, evidence-bound answer generation, vector projection responsibilities, optional graph/vector recall comparison, API/frontend changes, phased implementation, and quality gates.
 - **Multi-source Claim vector retrieval development plan** (`docs/multi-source-claim-vector-retrieval-development-plan-0.9.6.md`): defines a dedicated Qdrant Claim projection with SQLite as the source of truth, deterministic typed embedding text, versioned generation manifests, verified alias publication and rollback, SQLite hit hydration, deterministic candidate fusion, fail-safe feature flags, shadow rollout, and approximately 201,000-Claim quality/scale gates.
 
 ### Added（0.9.6 — Phase A：投影契约与代际 Manifest）
@@ -86,7 +173,7 @@
 实现 0.9.6 方案 Phase A（§10），新增包 `knowledge/multisource/vector`，所有开关默认关闭（`app.rag.multi-source.claim-vector.enabled=false`）：
 
 - **投影契约模型**（`KnowledgeClaimVectorModels`）：`KnowledgeClaimVectorPoint`（Qdrant payload 契约——一个点代表一个 Claim 而非一行 Evidence，治理字段在命中后从 SQLite 重新读取不依赖 payload）；`ClaimVectorGenerationManifest`（代际 manifest——generationId/projectId/businessVersion/inputFingerprint/schema/composer/model/dim/physicalCollection/status/pointCount/warnings/timestamps）；`ClaimVectorGenerationInput`（构建输入——generationId/claimId/documentVersionId/textHash/updatedAt，active 代际只暴露输入集合中记录的 claim，已删除窗口的旧成功记录不可被重新激活）；`GenerationStatus` 枚举（BUILDING/VERIFYING/SUCCESS/FAILED/ACTIVE/RETIRED）；`WarningCode` 稳定告警码（DISABLED/UNAVAILABLE/GENERATION_MISSING/STALE/TRUNCATED/HYDRATION_INCOMPLETE/SCOPE_MISMATCH/BUDGET_EXCEEDED/BUILD_FAILED/VERIFICATION_FAILED）；确定性 Qdrant point ID（SHA-256(projectId|businessVersion|claimId|schemaVersion)，schema 升级生成新 ID）；输入指纹（SHA-256(sorted(claimId|documentVersionId|updatedAt|textHash)+schema+composer+model+dim)，输入顺序无关，任何变化生成新指纹）。
-- **配置**（`KnowledgeClaimVectorProperties`）：`@ConfigurationProperties("app.rag.multi-source.claim-vector")`，所有开关默认 false（enabled/build-enabled/candidate-retrieval-enabled/shadow-query-enabled）；alias 默认 `knowledge_claims_live`；schema 版本 `knowledge-claim-vector-v1`；text composer 版本 `knowledge-claim-text-v1`；candidate-limit=200/over-fetch-factor=3/batch-size=32/representative-evidence-limit=3/retain-physical-collections=2；databasePath 默认 `data/multi-source-knowledge.db`（与 MultiSourceKnowledgeStore 共用同一数据库）；注册于 `WebMvcConfig`。
+- **配置**（`KnowledgeClaimVectorProperties`）：`@ConfigurationProperties("app.rag.multi-source.claim-vector")`，所有开关默认 false（enabled/build-enabled/candidate-retrieval-enabled/shadow-query-enabled/semantic-enhancement-enabled）；alias 默认 `knowledge_claims_live`；schema 版本 `knowledge-claim-vector-v2`；text composer 版本 `knowledge-claim-text-v2`；语义增强模型默认 `gpt-5.6-luna`；candidate-limit=200/over-fetch-factor=3/batch-size=32/representative-evidence-limit=3/retain-physical-collections=2；databasePath 默认 `data/multi-source-knowledge.db`（与 MultiSourceKnowledgeStore 共用同一数据库）；注册于 `WebMvcConfig`。
 - **确定性文本组合器**（`KnowledgeClaimVectorTextComposer`）：按 SourceType 选择固定字段顺序渲染嵌入文本——[Requirement] Subject/Predicate/Value/Module/Fact key；[Parameter] Name/Purpose/Value type/Unit/Value/Scope/Fact key（值-only 参数排除——有 Name 但无 Purpose/Value/Unit/ValueType 不建点）；[Test Case] Title/Preconditions/Expected result/Module/Fact key；[Doubt] Question/Answer/Module/Fact key；空字段跳过不渲染空行；Module 从 factKey 第一段提取；CODE/TEST_RESULT/REQUIREMENT_SEMANTIC/WIKI 不纳入投影。
 - **SQLite 代际存储**（`SQLiteKnowledgeClaimVectorStore`）：`knowledge_claim_vector_generation` + `knowledge_claim_vector_generation_input` 两张表（幂等迁移，FK 级联，WAL+busy_timeout=5000）；`recordBuildStart`（begin immediate 单事务插入 manifest+输入集合）；`updateStatus`（VERIFYING/SUCCESS/FAILED 状态转换+finished_at+warnings）；`markActive`（单事务退役旧 ACTIVE+激活新代际+返回被退役代际供物理集合清理）；`rollbackTo`（RETIRED→ACTIVE 回滚）；`findActiveGeneration`/`findGeneration`/`findLatestGeneration`/`listRetiredForRollback`/`findGenerationInputs`/`findReusableGeneration`（同一 fingerprint 的 SUCCESS/ACTIVE 代际可跳过重复构建）。
 - **测试**：新增 38 例——文本组合器 14 例（四种来源类型确定性快照、值-only 参数排除、空字段跳过、模块提取、来源排除）；模型 11 例（point ID 确定性+schema 变化、指纹排序无关+text/schema/composer/model/dim/updatedAt 变化检测、空输入）；存储 13 例（幂等初始化、代际 CRUD+输入集合、状态转换+失败警告、active/retired 切换+至多一个 ACTIVE、回滚、可复用代际跳过）。全量 915 tests 通过。

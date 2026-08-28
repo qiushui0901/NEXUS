@@ -137,6 +137,30 @@ public final class EntityEvidenceModels {
     ) {
     }
 
+    /** 向量补召回命中（Claim 级，Qdrant 代际存在时可选返回）。 */
+    public record VectorHit(String claimId, String subject, String sourceType) {
+    }
+
+    /** 图/向量增强召回方式的响应：确定性证据 + 局部图 + 可选向量补召回。
+     * evidence 为确定性检索结果（种子实体的事实/引用），entities 为扩展后的实体集。 */
+    public record EntityRecallResponse(
+            String query,
+            EntityQueryPlan plan,
+            List<EntityView> entities,
+            FactAssessment factAssessment,
+            List<Citation> citations,
+            List<String> warnings,
+            String recallMode,
+            EntitySearchResponse evidence,
+            EntityGraphExpansionService.RelatedGraph graph,
+            List<VectorHit> vectorHits,
+            int relatedEntityCount
+    ) {
+        public EntityRecallResponse {
+            vectorHits = vectorHits == null ? List.of() : vectorHits;
+        }
+    }
+
     /** 来源类型判断辅助（避免前端依赖内部枚举名）。 */
     public static boolean isParameter(SourceType type) {
         return type == SourceType.PARAMETER_TABLE;

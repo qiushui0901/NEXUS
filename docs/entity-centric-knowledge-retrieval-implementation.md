@@ -233,6 +233,10 @@ LLM 提议的别名默认不能直接成为高置信全局别名。系统应根�
 
 ### 4.3 实体成员
 
+`GameplayCardModuleResolver` 是玩法卡实体边界的唯一解析入口：优先按资料类别和
+`document_version_id` 提取页面/表名，清理版本、UI 和优化后缀，再应用已确认的玩法卡/配置表族映射。
+`BusinessConceptService`、代码符号挂载和 Claim 向量语义块必须复用该解析结果，避免三套模块口径。
+
 现有 `business_concept_member` 已接近这个模型，应优先扩展而不是另建重复表：
 
 ```text
@@ -252,6 +256,12 @@ business_concept_member
 ```text
 一个 BusinessConcept = 一个跨版本实体
 一个 ConceptMember = 一个版本中的一条来源事实或代码证据
+
+对于按玩法卡生成的资料，BusinessConcept 的边界进一步遵循
+`ragflow-kb-generation-prompt.md`：一个玩法/系统对应一个 `canonical_module`。
+同一玩法的多版本页面、子页面、优化页面、支撑数值表和 QA/用例归并到同一实体；
+原始页面名、表名、模块名和参数/规则名只作为确认别名或 Claim 成员保留，不能覆盖原始事实。
+无法从资料目录边界识别的兼容数据继续使用旧的 `<module>.<subject>` 键，不做无证据的跨玩法猜测。
 ```
 
 现有 `BusinessConceptService.build(projectId, version)` 需要增加项目级增量构建入口：
@@ -802,6 +812,10 @@ SQLite：参数结构化值、测试结果、Evidence、关系和实体成员
 ```
 
 Claim 向量点必须保留：
+
+语义块按 `sourceType + canonical_module` 聚合同一玩法的多个资料；块只降低 Qdrant 点数量，
+不改变 SQLite Claim/Evidence 粒度。一个玩法/系统只建立一张玩法卡实体，实体成员不按数量截断，命中后仍批量回 SQLite 水化全部原始 Claim。
+Qdrant 语义块仅按 `block-max-chars` 的文本载荷容量切分，这是传输和检索的工程边界，不是玩法卡或事实数量限制；所有代码符号均挂到对应玩法卡并保留独立代码索引回查。
 
 ```text
 projectId

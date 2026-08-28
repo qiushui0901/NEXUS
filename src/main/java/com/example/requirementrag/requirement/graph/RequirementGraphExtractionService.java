@@ -22,7 +22,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/** 借鉴 LightRAG 的实体/关系抽取，但要求每个结果回指当前需求父块原文证据。 */
+/** 借鉴图RAG式实体/关系抽取思想（不指名实现），但要求每个结果回指当前需求父块原文证据。 */
 @Service
 @ConditionalOnProperty(prefix = "app.rag.requirement-graph", name = "enabled",
         havingValue = "true", matchIfMissing = false)

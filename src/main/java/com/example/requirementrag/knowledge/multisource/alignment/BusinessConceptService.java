@@ -37,20 +37,32 @@ public class BusinessConceptService {
 
     /** 包含匹配仅在索引小时启用，避免 8.5k 代码符号 × 数十万别名的全量扫描。 */
     private static final int CONTAINS_MATCH_MAX_INDEX_SIZE = 2000;
-
     private final MultiSourceKnowledgeStore knowledgeStore;
     private final CodeCentricAlignmentStore alignmentStore;
     private final CodeSymbolLoader codeSymbolLoader;
     private final VersionContextService versionContextService;
+    private final GameplayCardModuleResolver gameplayCardResolver;
 
     public BusinessConceptService(MultiSourceKnowledgeStore knowledgeStore,
                                   CodeCentricAlignmentStore alignmentStore,
                                   CodeSymbolLoader codeSymbolLoader,
                                   VersionContextService versionContextService) {
+        this(knowledgeStore, alignmentStore, codeSymbolLoader, versionContextService,
+                new GameplayCardModuleResolver());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public BusinessConceptService(MultiSourceKnowledgeStore knowledgeStore,
+                                  CodeCentricAlignmentStore alignmentStore,
+                                  CodeSymbolLoader codeSymbolLoader,
+                                  VersionContextService versionContextService,
+                                  GameplayCardModuleResolver gameplayCardResolver) {
         this.knowledgeStore = knowledgeStore;
         this.alignmentStore = alignmentStore;
         this.codeSymbolLoader = codeSymbolLoader;
         this.versionContextService = versionContextService;
+        this.gameplayCardResolver = gameplayCardResolver == null
+                ? new GameplayCardModuleResolver() : gameplayCardResolver;
     }
 
     /** 重建项目/版本的概念层（版本级增量）：概念 + 别名 + 成员。
@@ -127,7 +139,6 @@ public class BusinessConceptService {
         int concepts = 0;
         int aliases = 0;
         int members = 0;
-
         for (KnowledgeClaimRecord claim : claims) {
             if (claim.sourceType() == SourceType.CODE) continue;
             ConceptKey key = conceptFor(claim);
@@ -144,8 +155,7 @@ public class BusinessConceptService {
                 conceptId = conceptId(projectId, key.canonicalKey());
             }
 
-            String aliasName = claim.subject();
-            if (aliasName != null && !aliasName.isBlank()) {
+            for (String aliasName : gameplayCardResolver.aliases(claim)) {
                 String aliasId = aliasId(projectId, conceptId, aliasName, claim.sourceType().name());
                 aliasBatch.add(new ConceptAlias(
                         aliasId, projectId, conceptId, aliasName, claim.sourceType().name(),
@@ -167,7 +177,15 @@ public class BusinessConceptService {
         // 代码符号挂到匹配的业务概念（truthRole = IMPLEMENTATION）
         if (attachCode && loaded != null && loaded.commitSha() != null) {
             for (CodeSymbolView symbol : loaded.symbols()) {
-                for (String conceptId : matchConcepts(aliasToConcept, symbol.simpleName())) {
+                Set<String> matchedConcepts = new HashSet<>(matchConcepts(aliasToConcept, symbol.simpleName()));
+                String codeCard = gameplayCardResolver.resolveCode(symbol);
+                if (!codeCard.isBlank()) {
+                    String codeCardKey = AlignmentNaming.keySegment(codeCard);
+                    if (conceptKeys.contains(codeCardKey)) {
+                        matchedConcepts.add(conceptId(projectId, codeCardKey));
+                    }
+                }
+                for (String conceptId : matchedConcepts) {
                     memberBatch.add(new ConceptMember(
                             memberId(projectId, conceptId, "CODE", symbol.id(), version),
                             projectId, conceptId, null, "CODE",
@@ -229,17 +247,20 @@ public class BusinessConceptService {
 
     private ConceptKey conceptFor(KnowledgeClaimRecord claim) {
         String subject = safe(claim.subject());
-        String module = AlignmentNaming.moduleOf(claim.sourceType(), claim.factKey(), subject);
+        String module = gameplayCardResolver.resolve(claim);
         if (subject.isBlank() && module.isBlank()) return null;
+        if (gameplayCardResolver.hasGameplayCardBoundary(claim)) {
+            // One gameplay/system card is one alignment anchor. The atomic Claim remains the
+            // member, while its subject, page and table names become searchable aliases.
+            return new ConceptKey(gameplayCardResolver.canonicalKey(claim), module,
+                    "GAMEPLAY_CARD", module);
+        }
+        String canonicalKey = AlignmentNaming.conceptKey(module, subject);
         return switch (claim.sourceType()) {
-            case PARAMETER_TABLE -> new ConceptKey(
-                    AlignmentNaming.conceptKey(module, subject), subject, "PARAMETER", module);
-            case REQUIREMENT -> new ConceptKey(
-                    AlignmentNaming.conceptKey(module, subject), subject, "REQUIREMENT", module);
-            case TEST_CASE -> new ConceptKey(
-                    AlignmentNaming.conceptKey(module, subject), subject, "TEST_MODULE", module);
-            case TEST_RESULT -> new ConceptKey(
-                    AlignmentNaming.conceptKey(module, subject), subject, "OBSERVATION", module);
+            case PARAMETER_TABLE -> new ConceptKey(canonicalKey, subject, "PARAMETER", module);
+            case REQUIREMENT -> new ConceptKey(canonicalKey, subject, "REQUIREMENT", module);
+            case TEST_CASE -> new ConceptKey(canonicalKey, subject, "TEST_MODULE", module);
+            case TEST_RESULT -> new ConceptKey(canonicalKey, subject, "OBSERVATION", module);
             case DOUBT -> new ConceptKey(
                     AlignmentNaming.conceptKey(module.isBlank() ? "QA存疑" : module, ""),
                     subject, "RISK_AREA", module);

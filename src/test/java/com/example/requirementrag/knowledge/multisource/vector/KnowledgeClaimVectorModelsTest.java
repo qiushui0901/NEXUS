@@ -4,6 +4,7 @@ import com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVec
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -19,7 +20,9 @@ class KnowledgeClaimVectorModelsTest {
                 "immortal", "5.1", "claim-abc", "knowledge-claim-vector-v1");
 
         assertThat(id1).isEqualTo(id2);
-        assertThat(id1).hasSize(64); // SHA-256 hex
+        // Qdrant v1.15+ 只接受无符号整数或标准 UUID；64-hex 会被 400 拒绝
+        assertThat(id1).hasSize(36);
+        assertThat(UUID.fromString(id1).version()).isEqualTo(5);
     }
 
     @Test
@@ -122,6 +125,24 @@ class KnowledgeClaimVectorModelsTest {
                 inputs, "v1", "text-v1", "test-model", 768);
 
         assertThat(fp1).isNotEqualTo(fp2);
+    }
+
+    @Test
+    void fingerprintChangesForSemanticEnhancementIdentity() {
+        List<ClaimVectorGenerationInput> inputs = List.of(input("claim-1", "dv-1", "hash-1", "2026-01-01"));
+
+        String disabled = KnowledgeClaimVectorModels.computeInputFingerprint(
+                inputs, "v1", "text-v2", "test-model", 1024,
+                "ACTIVE_DOC", false, "gpt-5.6-luna");
+        String enabled = KnowledgeClaimVectorModels.computeInputFingerprint(
+                inputs, "v1", "text-v2", "test-model", 1024,
+                "ACTIVE_DOC", true, "gpt-5.6-luna");
+        String otherModel = KnowledgeClaimVectorModels.computeInputFingerprint(
+                inputs, "v1", "text-v2", "test-model", 1024,
+                "ACTIVE_DOC", true, "other-model");
+
+        assertThat(disabled).isNotEqualTo(enabled);
+        assertThat(enabled).isNotEqualTo(otherModel);
     }
 
     @Test

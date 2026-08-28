@@ -178,15 +178,22 @@ public class KnowledgeClaimVectorQdrantStore {
             Object points = resultMap.isEmpty() ? result : resultMap.get("points");
             List<ClaimVectorHit> hits = new ArrayList<>();
             for (Object raw : list(points)) {
-                Map<String, Object> entry = map(raw);
-                KnowledgeClaimVectorPoint point = toPoint(raw);
-                double score = entry.get("score") instanceof Number n ? n.doubleValue() : 0.0;
-                hits.add(new ClaimVectorHit(point.claimId(), score, point));
+                try {
+                    Map<String, Object> entry = map(raw);
+                    KnowledgeClaimVectorPoint point = toPoint(raw);
+                    double score = entry.get("score") instanceof Number n ? n.doubleValue() : 0.0;
+                    hits.add(new ClaimVectorHit(point.claimId(), score, point));
+                } catch (RuntimeException exception) {
+                    // 单个损坏 payload（缺必填字段/解析失败）只跳过该点，保留同批其它合法命中；
+                    // 只有响应结构本身损坏才由外层 catch 整次失败
+                    LOGGER.warn("跳过损坏的 Qdrant 命中点 alias={} error={}", alias, exception.getMessage());
+                }
             }
             return hits;
         } catch (RuntimeException exception) {
+            // Med：不允许把向量服务故障伪装成“没有命中”——抛出由适配器转成 CLAIM_VECTOR_SEARCH_FAILED 稳定告警
             LOGGER.warn("向量检索失败 alias={} error={}", alias, exception.getMessage());
-            return List.of();
+            throw exception;
         }
     }
 
@@ -229,9 +236,9 @@ public class KnowledgeClaimVectorQdrantStore {
      */
     Map<String, Object> buildPointMap(KnowledgeClaimVectorPoint point, float[] vector) {
         return Map.of(
-                "id", KnowledgeClaimVectorModels.deterministicPointId(
+                "id", KnowledgeClaimVectorModels.deterministicBlockPointId(
                         point.projectId(), point.businessVersion(),
-                        point.claimId(), point.projectionSchemaVersion()),
+                        point.blockId(), point.projectionSchemaVersion()),
                 "vector", Map.of("dense", vector),
                 "payload", Map.ofEntries(
                         Map.entry("projectId", point.projectId()),
@@ -250,7 +257,10 @@ public class KnowledgeClaimVectorQdrantStore {
                         Map.entry("projectionGenerationId", nullSafe(point.projectionGenerationId())),
                         Map.entry("projectionSchemaVersion", nullSafe(point.projectionSchemaVersion())),
                         Map.entry("embeddingModel", nullSafe(point.embeddingModel())),
-                        Map.entry("textHash", nullSafe(point.textHash()))));
+                        Map.entry("textHash", nullSafe(point.textHash())),
+                        Map.entry("blockId", nullSafe(point.blockId())),
+                        Map.entry("claimIds", point.claimIds()),
+                        Map.entry("semanticText", nullSafe(point.semanticText()))));
     }
 
     /**
@@ -461,7 +471,10 @@ public class KnowledgeClaimVectorQdrantStore {
                 string(p, "projectionGenerationId"),
                 string(p, "projectionSchemaVersion"),
                 string(p, "embeddingModel"),
-                string(p, "textHash"));
+                string(p, "textHash"),
+                string(p, "blockId"),
+                list(p.get("claimIds")).stream().map(String::valueOf).toList(),
+                string(p, "semanticText"));
     }
 
     private String string(Map<String, Object> map, String key) {

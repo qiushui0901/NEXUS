@@ -13,8 +13,8 @@ class KnowledgeClaimVectorTextComposerTest {
 
     private final KnowledgeClaimVectorProperties properties = new KnowledgeClaimVectorProperties(
             false, false, false, false,
-            "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
-            200, 3, 32, 3, 2, "data/test.db");
+            "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v2",
+            200, 3, 32, 3, 2, "data/test.db", "ACTIVE_DOC");
     private final KnowledgeClaimVectorTextComposer composer = new KnowledgeClaimVectorTextComposer(properties);
 
     // ===== 确定性快照 =====
@@ -29,12 +29,16 @@ class KnowledgeClaimVectorTextComposerTest {
         String text = composer.compose(claim, "5.1").orElseThrow();
 
         assertThat(text).isEqualTo("""
-                [Requirement]
+                [Requirement fact]
                 Subject: Guild war reward
-                Predicate: Distribution condition
-                Value: Rewards are distributed after settlement to eligible members
+                Condition or action: Distribution condition
+                Result or value: Rewards are distributed after settlement to eligible members
+                Unit: 未提供
+                Version: Version 5.1
                 Module: guild_war
-                Fact key: guild_war.reward.distribution""");
+                Fact key: guild_war.reward.distribution
+                Source type: REQUIREMENT
+                Document version: dv-1""");
 
         // 二次调用结果一致
         assertThat(composer.compose(claim, "5.1")).contains(text);
@@ -49,14 +53,17 @@ class KnowledgeClaimVectorTextComposerTest {
         String text = composer.compose(claim, "5.1").orElseThrow();
 
         assertThat(text).isEqualTo("""
-                [Parameter]
-                Name: guild_war_reward_limit
-                Purpose: Limits reward claims
-                Value type: INTEGER
+                [Parameter fact]
+                Subject: guild_war_reward_limit
+                Condition or action: Limits reward claims
+                Result or value: 100
                 Unit: count
-                Value: 100
-                Scope: Version 5.1
-                Fact key: guild_war_reward_limit""");
+                Value type: INTEGER
+                Version: Version 5.1
+                Module: guild_war_reward_limit
+                Fact key: guild_war_reward_limit
+                Source type: PARAMETER_TABLE
+                Document version: dv-1""");
     }
 
     @Test
@@ -70,12 +77,16 @@ class KnowledgeClaimVectorTextComposerTest {
         String text = composer.compose(claim, "5.1").orElseThrow();
 
         assertThat(text).isEqualTo("""
-                [Test Case]
-                Title: Guild war reward settlement
-                Preconditions: The player belongs to a guild
-                Expected result: Rewards are distributed according to ranking
+                [Test case fact]
+                Subject: Guild war reward settlement
+                Condition or action: The player belongs to a guild
+                Result or value: Rewards are distributed according to ranking
+                Unit: 未提供
+                Version: Version 5.1
                 Module: guild_war
-                Fact key: guild_war.test.settlement""");
+                Fact key: guild_war.test.settlement
+                Source type: TEST_CASE
+                Document version: dv-1""");
     }
 
     @Test
@@ -87,11 +98,16 @@ class KnowledgeClaimVectorTextComposerTest {
         String text = composer.compose(claim, "5.1").orElseThrow();
 
         assertThat(text).isEqualTo("""
-                [Doubt]
-                Question: What if rewards exceed the limit?
-                Answer: The system caps at the maximum.
+                [Doubt fact]
+                Subject: What if rewards exceed the limit?
+                Condition or action: 未提供
+                Result or value: The system caps at the maximum.
+                Unit: 未提供
+                Version: Version 5.1
                 Module: guild_war
-                Fact key: guild_war.doubt.limit""");
+                Fact key: guild_war.doubt.limit
+                Source type: DOUBT
+                Document version: dv-1""");
     }
 
     // ===== 入选/排除 =====
@@ -147,15 +163,16 @@ class KnowledgeClaimVectorTextComposerTest {
 
     @Test
     void blankFieldsAreOmittedNotEmpty() {
-        // 有 predicate 但无 objectValue → Value 行不出现
+        // 有条件但无结果值：保留事实结构并显式标记缺失值。
         KnowledgeClaimRecord claim = claim("rc-no-val", SourceType.REQUIREMENT, Authority.PRIMARY,
                 "some.fact", "Subject", "Predicate", "", "STRING", null, "VERIFIED");
 
         String text = composer.compose(claim, "5.1").orElseThrow();
 
         assertThat(text).contains("Subject: Subject");
-        assertThat(text).contains("Predicate: Predicate");
-        assertThat(text).doesNotContain("Value:");
+        assertThat(text).contains("Condition or action: Predicate");
+        assertThat(text).contains("Result or value: 未提供");
+        assertThat(text).contains("Unit: 未提供");
         assertThat(text).contains("Module: some");
     }
 
@@ -192,7 +209,7 @@ class KnowledgeClaimVectorTextComposerTest {
 
     @Test
     void composerVersionExposed() {
-        assertThat(composer.composerVersion()).isEqualTo("knowledge-claim-text-v1");
+        assertThat(composer.composerVersion()).isEqualTo("knowledge-claim-text-v2");
     }
 
     // ===== 工具 =====

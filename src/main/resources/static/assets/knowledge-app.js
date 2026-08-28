@@ -43,6 +43,9 @@
           buildStatus:null,buildLoading:false,buildUnavailable:false,buildError:null,error:null,expandedClaimId:null},
         compare:{loading:false,requestId:0,legacyResponse:null,legacyElapsedMs:null,legacyError:null,
           semanticResponse:null,semanticElapsedMs:null,semanticError:null},
+        // 实体中心检索（§11/§12）：recallMode DETERMINISTIC/GRAPH_VECTOR/HYBRID；withAnswer 时单请求完成检索+回答。
+        entity:{query:"",recallMode:"DETERMINISTIC",withAnswer:false,loading:false,response:null,answer:null,error:null,elapsedMs:null,requestId:0},
+        recallModeOptions:["DETERMINISTIC","GRAPH_VECTOR","HYBRID"],
         intentOptions:["NORMATIVE","VALIDATION","PARAMETER","DOUBT","CONSISTENCY","IMPACT","GENERAL"],
         evaluations:[],
         pollTimer:null, failedPolls:0
@@ -225,7 +228,26 @@
       semanticAvailable(){
         return this.selectedBase&&this.selectedBase.type!=="CODE";
       },
-      evaluationSize(){return this.evaluations.length;}
+      evaluationSize(){return this.evaluations.length;},
+      // 实体中心检索：需要项目（projectId）即可用（规则链确定性召回不依赖语义构建）。
+      entityAvailable(){
+        return Boolean(this.selectedBase&&this.selectedBase.projectId);
+      },
+      entityIntent(){return (this.entity.response&&this.entity.response.plan&&this.entity.response.plan.intent)||"";},
+      entityMentions(){return (this.entity.response&&this.entity.response.plan&&this.entity.response.plan.mentions)||[];},
+      entityEntities(){return (this.entity.response&&this.entity.response.entities)||[];},
+      entityCitations(){return (this.entity.response&&this.entity.response.citations)||[];},
+      entityWarnings(){return (this.entity.response&&this.entity.response.warnings)||[];},
+      entityRecallMode(){return this.entity.response&&(this.entity.response.recallMode||this.entity.recallMode)||"";},
+      entityRelatedCount(){return (this.entity.response&&this.entity.response.relatedEntityCount)||0;},
+      entityVectorHits(){return (this.entity.response&&this.entity.response.vectorHits)||[];},
+      entityGraphLinks(){return (this.entity.response&&this.entity.response.graph&&this.entity.response.graph.links)||[];},
+      entityGraphDepth(){return (this.entity.response&&this.entity.response.graph&&this.entity.response.graph.depth)||0;},
+      // AI 带证据回答（entity-answer）。
+      entityAnswerText(){return (this.entity.answer&&this.entity.answer.answer)||"";},
+      entityAnswerStatus(){return (this.entity.answer&&this.entity.answer.status)||"";},
+      entityAnswerQuality(){return (this.entity.answer&&this.entity.answer.citationQuality)||"";},
+      entityAnswerSections(){return (this.entity.answer&&this.entity.answer.sections)||[];}
     },
     methods:{
       async loadBases(page=0){
@@ -261,7 +283,7 @@
       async retryDocument(doc){await this.action(()=>api.retryDocument(this.selectedBase.id,doc.id),"已提交文档重试任务");},
       async retryChunk(chunk){await this.action(()=>api.retryChunk(this.selectedBase.id,chunk.chunkId),"已按文档范围提交重试任务");this.selectedChunk=null;},
       async action(operation,message){this.actionBusy=true;try{await operation();NexusNotice.show(message,"success");await this.refresh();}catch(error){this.showError(error);}finally{this.actionBusy=false;}},
-      // #3（Review 高）：页面导航统一吊销三种检索请求（legacy / semantic / compare）——
+      // #3（Review 高）：页面导航统一吊销四种检索请求（legacy / semantic / compare / entity）——
       // 旧请求慢返回不得写回新页面，也不得让隐藏的 loading 继续禁用提交按钮。
       // 传统检索与对比检索都在这里递增自己的 requestId 并释放 loading；语义由 resetSemanticState 处理。
       revokeRetrievalRequests(){
@@ -271,12 +293,16 @@
         this.compare.loading=false;
         this.resetCompareState();
         this.resetSemanticState();
+        this.entity.requestId=(this.entity.requestId||0)+1;
+        this.entity.loading=false;
+        this.resetEntityState();
       },
       async runRetrieval(){if(!this.retrieval.query)return;const requestId=++this.retrieval.requestId;this.retrieval.loading=true;this.retrieval.response=null;this.retrieval.elapsedMs=null;const started=performance.now();try{const response=await api.retrieval(this.selectedBase.id,{query:this.retrieval.query,version:this.retrieval.version||null,limit:this.retrieval.limit});if(requestId!==this.retrieval.requestId)return;this.retrieval.response=response;}catch(error){if(requestId!==this.retrieval.requestId)return;this.showError(error);}finally{if(requestId===this.retrieval.requestId){this.retrieval.elapsedMs=Math.max(0,Math.round(performance.now()-started));this.retrieval.loading=false;}}},
       // ---------------- 检索模式切换（方案 §4.1） ----------------
       submitRetrieval(){
         if(this.retrievalMode==="semantic")return this.runSemanticSearch(0);
         if(this.retrievalMode==="compare")return this.runCompareSearch();
+        if(this.retrievalMode==="entity")return this.runEntitySearch();
         return this.runRetrieval();
       },
       setRetrievalMode(mode){
@@ -291,7 +317,82 @@
           this.compare.loading=false;
           this.resetCompareState();
         }
+        // 离开实体模式：吊销在飞实体请求 + 释放 loading + 清空结果（再切回不得显示旧上下文结果）
+        if(mode!=="entity"){
+          this.entity.requestId=(this.entity.requestId||0)+1;
+          this.entity.loading=false;
+          this.resetEntityState();
+        }
         if(mode!=="legacy"){this.retrieval.response=null;this.retrieval.elapsedMs=null;}
+      },
+      resetEntityState(){
+        this.entity.response=null;this.entity.answer=null;this.entity.error=null;this.entity.elapsedMs=null;
+      },
+      async runEntitySearch(){
+        if(!this.retrieval.query)return;
+        const base=this.selectedBase;
+        if(!base||!base.projectId){NexusNotice.show("缺少项目，无法执行实体检索","error");return;}
+        // 快照：请求发起后用户改表单不影响已发起的检索（与语义链路同约定）。
+        const params={
+          projectId:base.projectId,
+          query:this.retrieval.query,
+          recallMode:this.entity.recallMode||"DETERMINISTIC",
+          // 版本边界：页面版本输入必须传给实体 API（空则聚合全部已发布版本）
+          versions:this.retrieval.version?[this.retrieval.version]:[],
+          limit:this.retrieval.limit||20
+        };
+        const requestId=++this.entity.requestId;
+        this.entity.loading=true;this.entity.error=null;this.entity.response=null;this.entity.answer=null;this.entity.elapsedMs=null;
+        const started=performance.now();
+        try{
+          if(this.entity.withAnswer){
+            // 单请求链路：entity-answer 内部一次完成检索+回答（避免重复召回/前后不一致）。
+            const answer=await api.entityAnswer(params);
+            if(requestId!==this.entity.requestId)return;
+            this.entity.answer=answer;
+            this.entity.response=(answer.recall&&answer.recall.entities&&answer.recall.entities.length)
+              ? answer.recall
+              : (answer.evidence||null);
+          }else{
+            const response=await api.entitySearch(params);
+            if(requestId!==this.entity.requestId)return;
+            this.entity.response=response;
+          }
+        }catch(error){
+          if(requestId!==this.entity.requestId)return;
+          this.entity.error=error;this.showError(error);
+        }finally{
+          if(requestId===this.entity.requestId){
+            this.entity.elapsedMs=Math.max(0,Math.round(performance.now()-started));
+            this.entity.loading=false;
+          }
+        }
+      },
+      // 实体事实展示：CurrentFacts 三分区（代码/数值表/测试结果）拍平。
+      entityFactText(fact){
+        if(!fact)return "";
+        const parts=[];
+        if(fact.subject)parts.push(fact.subject);
+        if(fact.predicate)parts.push(fact.predicate);
+        const value=(fact.objectValue!=null&&fact.objectValue!=="")?fact.objectValue:"";
+        if(value!=="")parts.push(value+(fact.unit?" "+fact.unit:""));
+        return parts.join(" · ");
+      },
+      entityPartitionFacts(entity,key){
+        const cf=entity&&entity.currentFacts;
+        return (cf&&cf[key])||[];
+      },
+      // 召回方式说明（可选召回：确定性 / 图+向量增强 / 并集）。
+      recallModeLabel(mode){
+        if(mode==="GRAPH_VECTOR")return "图+向量增强";
+        if(mode==="HYBRID")return "并集";
+        return "确定性";
+      },
+      recallHint(){
+        const mode=this.entity.recallMode||"DETERMINISTIC";
+        if(mode==="GRAPH_VECTOR")return "图+向量：规则解析 + 局部图一跳/二跳 + 可选向量补召回";
+        if(mode==="HYBRID")return "并集：确定性 + 图/向量补召回全部进召回集";
+        return "确定性：规则/结构化召回（默认）";
       },
       resetSemanticState(){
         // #4（Review 高）：离开语义模式/切换项目/切换页面时吊销所有在飞语义请求——

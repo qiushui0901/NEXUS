@@ -42,13 +42,25 @@ public class RequirementCodeDriftService {
     private final MultiSourceKnowledgeStore knowledgeStore;
     private final CodeCentricAlignmentStore alignmentStore;
     private final VersionContextService versionContextService;
+    private final GameplayCardModuleResolver gameplayCardResolver;
 
     public RequirementCodeDriftService(MultiSourceKnowledgeStore knowledgeStore,
                                        CodeCentricAlignmentStore alignmentStore,
                                        VersionContextService versionContextService) {
+        this(knowledgeStore, alignmentStore, versionContextService,
+                new GameplayCardModuleResolver());
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public RequirementCodeDriftService(MultiSourceKnowledgeStore knowledgeStore,
+                                       CodeCentricAlignmentStore alignmentStore,
+                                       VersionContextService versionContextService,
+                                       GameplayCardModuleResolver gameplayCardResolver) {
         this.knowledgeStore = knowledgeStore;
         this.alignmentStore = alignmentStore;
         this.versionContextService = versionContextService;
+        this.gameplayCardResolver = gameplayCardResolver == null
+                ? new GameplayCardModuleResolver() : gameplayCardResolver;
     }
 
     /** 构建项目/版本的需求—代码漂移报告（按 VersionContext 隔离，幂等重建 Phase 4 结论）。 */
@@ -71,7 +83,9 @@ public class RequirementCodeDriftService {
 
         int drifts = 0;
         for (KnowledgeClaimRecord requirement : requirements) {
-            String conceptKey = AlignmentNaming.conceptKey(
+            String conceptKey = gameplayCardResolver.hasGameplayCardBoundary(requirement)
+                    ? gameplayCardResolver.canonicalKey(requirement)
+                    : AlignmentNaming.conceptKey(
                     AlignmentNaming.moduleOf(requirement.sourceType(), requirement.factKey(),
                             requirement.subject()),
                     requirement.subject());

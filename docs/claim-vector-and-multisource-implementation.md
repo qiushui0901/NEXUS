@@ -16,8 +16,8 @@ flowchart TB
         A[导入编排<br/>ImmortalKnowledgeImporter] --> B[统一知识目录<br/>document → version → evidence]
         A --> C[统一 Claim 主表（SQLite）]
         A --> D[业务表<br/>参数/测试/存疑]
-        C --> E[Claim 向量投影 0.9.6<br/>composer→embedding→Qdrant]
-        E --> F[(Qdrant<br/>一点一 Claim)]
+        C --> E[语义块向量投影 0.9.6<br/>composer→可选 gpt-5.6-luna→embedding→Qdrant]
+        E --> F[(Qdrant<br/>语义块投影)]
     end
 
     subgraph 召回翼["召回（读取侧）"]
@@ -118,7 +118,7 @@ flowchart LR
     SYN --> COMP[文本组合器<br/>类型化渲染]
     COMP --> TXT[类型化检索文本<br/>参数名/用途/类型/单位/值/范围<br/>固定字段顺序，不含原始行号]
     TXT --> EMB[嵌入 text-embedding-v4<br/>via ai-gateway.momo.com]
-    EMB --> Q[(Qdrant 一点一 Claim)]
+    EMB --> Q[(Qdrant 语义块投影<br/>可选 gpt-5.6-luna 增强)]
 ```
 
 **数值的三个层次**：
@@ -193,6 +193,10 @@ flowchart TD
     MARK --> PRUNE[裁剪超期退役代际]
     PRUNE --> ACTIVE[发布完成]
 ```
+
+生产路径在组合文本前先按 `sourceType + canonical_module` 聚合同一玩法的多版本页、
+子页、优化页和支撑表；一个玩法/系统在实体层只建立一张玩法卡，原始 Claim、数值、版本和 Evidence 逐条保留。
+Qdrant 语义块仅在组合文本超过 `block-max-chars` 时按稳定顺序切分，切分只改变召回粒度，命中后仍批量水化全部原始事实。
 
 ### 5.2 代际状态机与失败保护
 

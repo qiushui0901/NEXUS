@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -55,6 +56,28 @@ class EntityQueryServiceTest {
         // Phase 4：事实评估已填充（当前数值分区非空），不再是无内容骨架
         assertThat(response.factAssessment().currentValues()).isNotEmpty();
         assertThat(response.factAssessment()).isNotEqualTo(EntityEvidenceModels.FactAssessment.EMPTY);
+    }
+
+    @Test
+    void explicitRequestVersionsRestrictAggregationScope() {
+        // High：request.versions() 必须真正限制聚合范围（覆盖分析器空版本推导）
+        AlignmentTestSupport.Stores stores = AlignmentTestSupport.stores(tempDir);
+        AlignmentTestSupport.seedParameter(stores, "5.0", "攻击力", "100", "combat");
+        AlignmentTestSupport.seedParameter(stores, "5.1", "攻击力", "150", "combat");
+        BusinessConceptService builder = new BusinessConceptService(
+                stores.multiSource(), stores.alignment(), AlignmentTestSupport.stubLoader(LoadedCode.empty()),
+                new VersionContextService(stores.alignment(), AlignmentTestSupport.stubLoader(LoadedCode.empty())));
+        builder.buildProject("immortal");
+
+        EntitySearchResponse response = service(stores).search(new EntitySearchRequest(
+                "immortal", "攻击力是多少？", List.of("5.0"), null,
+                true, true, true, 20));
+
+        // 版本范围被限制为 5.0（不再聚合 5.1）
+        assertThat(response.plan().requestedVersions()).containsExactly("5.0");
+        assertThat(response.entities()).isNotEmpty();
+        assertThat(response.entities().get(0).timeline()).hasSize(1);
+        assertThat(response.entities().get(0).timeline().get(0).businessVersion()).isEqualTo("5.0");
     }
 
     @Test

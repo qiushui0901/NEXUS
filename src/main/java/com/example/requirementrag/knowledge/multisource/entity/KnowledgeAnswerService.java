@@ -2,8 +2,10 @@ package com.example.requirementrag.knowledge.multisource.entity;
 
 import com.example.requirementrag.config.RagProperties;
 import com.example.requirementrag.knowledge.multisource.entity.EntityEvidenceModels.AssessmentItem;
+import com.example.requirementrag.knowledge.multisource.entity.EntityEvidenceModels.EntityRecallResponse;
 import com.example.requirementrag.knowledge.multisource.entity.EntityEvidenceModels.EntitySearchResponse;
 import com.example.requirementrag.knowledge.multisource.entity.EntityEvidenceModels.FactAssessment;
+import com.example.requirementrag.knowledge.multisource.entity.EntityEvidenceModels.FactRef;
 import com.example.requirementrag.service.GenerationChatOptions;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -58,14 +60,34 @@ public class KnowledgeAnswerService {
     private static final java.util.Set<String> VALID_SECTION_TYPES =
             java.util.Set.of("CODE", "PARAMETER_TABLE", "TEST_RESULT", "REQUIREMENT");
 
-    /** 基于实体检索证据生成回答。 */
+    /** 基于实体检索证据生成回答（确定性/默认召回）。 */
     public AnswerOutcome answer(EntitySearchResponse evidence) {
-        List<String> warnings = new ArrayList<>();
-        Map<String, String> typeById = evidenceTypeById(evidence);
-        Set<String> allowed = Set.copyOf(typeById.keySet());
-        String packageText = buildEvidencePackage(evidence);
+        return answerInternal(buildEvidencePackage(evidence), evidenceTypeById(evidence), evidence);
+    }
 
-        if (llmAvailable() && packageText != null && packageText.length() <= 200_000) {
+    /** 图/向量增强召回的回答：证据包基于合并实体集（确定性 + 图 + 向量），
+     * 引用校验仍只认真实 Evidence ID（Claim ID 不能冒充证据）。 */
+    public AnswerOutcome answerWithRecall(EntityRecallResponse recall) {
+        EntitySearchResponse evidence = recall.evidence();
+        if (evidence == null) {
+            return answerInternal(null, java.util.Map.of(), null);
+        }
+        // 只注册真实 Evidence ID：citations 与当前代码事实的 evidenceIds（Claim ID 不得进入允许集）
+        Map<String, String> typeById = evidenceTypeById(evidence);
+        String base = buildEvidencePackage(evidence);
+        String context = buildRecallContext(recall);
+        String packageText = (base == null ? "" : base) + "\n" + context;
+        return answerInternal(packageText, typeById, evidence);
+    }
+
+    /** 回答内部流程：LLM 调用 + 类型校验 normalize / 模板降级。 */
+    private AnswerOutcome answerInternal(String packageText, Map<String, String> typeById,
+                                         EntitySearchResponse evidence) {
+        List<String> warnings = new ArrayList<>();
+        Set<String> allowed = Set.copyOf(typeById.keySet());
+
+        if (llmAvailable() && packageText != null && !packageText.isBlank()
+                && packageText.length() <= 200_000) {
             try {
                 AgentAnswerRaw raw = chatClient.prompt()
                         .system(systemPrompt())
@@ -136,7 +158,10 @@ public class KnowledgeAnswerService {
         return new AnswerOutcome(answer, sections, status, quality, true, List.of());
     }
 
-    /** 引用 ID → 来源类型：只注册真实 Evidence ID；Claim ID 不能冒充证据。 */
+    /** 引用 ID → 来源类型：从**全部输出事实**的 evidenceIds 建立注册表（Claim ID 不能冒充证据；
+     * 同一 Claim 的第二及后续 Evidence ID 也必须可引用——仅登记 citations 首条会误拒合法证据）。
+     * 事实本身已由聚合器按项目/版本/文档发布过滤，注册即通过发布边界校验。
+     */
     private Map<String, String> evidenceTypeById(EntitySearchResponse evidence) {
         Map<String, String> typeById = new java.util.HashMap<>();
         for (var citation : evidence.citations()) {
@@ -145,18 +170,68 @@ public class KnowledgeAnswerService {
             }
         }
         for (var view : evidence.entities()) {
-            for (var ref : view.currentFacts().code()) {
-                if (ref.evidenceIds() != null) {
-                    for (String evidenceId : ref.evidenceIds()) {
-                        typeById.putIfAbsent(evidenceId, "CODE");
-                    }
-                }
+            registerFactEvidence(typeById, view.currentFacts().code(), "CODE");
+            registerFactEvidence(typeById, view.currentFacts().parameterTables(), "PARAMETER_TABLE");
+            registerFactEvidence(typeById, view.currentFacts().testResults(), "TEST_RESULT");
+            for (var block : view.timeline()) {
+                registerFactEvidence(typeById, block.requirements(), "REQUIREMENT");
+                registerFactEvidence(typeById, block.parameterTables(), "PARAMETER_TABLE");
+                registerFactEvidence(typeById, block.tests(), "TEST_RESULT");
             }
         }
         return typeById;
     }
 
+    private static void registerFactEvidence(Map<String, String> typeById, List<FactRef> facts, String sourceType) {
+        if (facts == null) {
+            return;
+        }
+        for (var ref : facts) {
+            if (ref.evidenceIds() == null) {
+                continue;
+            }
+            for (String evidenceId : ref.evidenceIds()) {
+                if (evidenceId != null && !evidenceId.isBlank()) {
+                    typeById.putIfAbsent(evidenceId, sourceType);
+                }
+            }
+        }
+    }
+
     /** 构建受限证据包（分节 + 引用 ID），有界。 */
+    /** 相关图/向量上下文集：相关实体 + 图关系 + 向量补召回（有界，供 LLM 补召回线索）。 */
+    private String buildRecallContext(EntityRecallResponse recall) {
+        StringBuilder sb = new StringBuilder();
+        int used = 0;
+        if (recall.graph() != null && !recall.graph().links().isEmpty()) {
+            sb.append("[RELATED_GRAPH]\n");
+            for (var link : recall.graph().links()) {
+                if (used++ >= 30) break;
+                sb.append("- ").append(link.relationType())
+                        .append(" ").append(link.sourceClaimId())
+                        .append(" -> ").append(link.targetClaimId())
+                        .append(" status=").append(link.status()).append('\n');
+            }
+        }
+        if (recall.graph() != null && !recall.graph().entities().isEmpty()) {
+            sb.append("[RELATED_ENTITIES]\n");
+            for (var entity : recall.graph().entities()) {
+                if (used++ >= 30) break;
+                sb.append("- ").append(entity.canonicalName())
+                        .append(" (via ").append(entity.viaClaimId()).append(")\n");
+            }
+        }
+        if (!recall.vectorHits().isEmpty()) {
+            sb.append("[VECTOR_HITS]\n");
+            for (var hit : recall.vectorHits()) {
+                if (used++ >= 30) break;
+                sb.append("- ").append(hit.claimId()).append(" ")
+                        .append(hit.subject()).append(" [").append(hit.sourceType()).append("]\n");
+            }
+        }
+        return sb.toString();
+    }
+
     private String buildEvidencePackage(EntitySearchResponse evidence) {
         StringBuilder sb = new StringBuilder();
         int used = 0;

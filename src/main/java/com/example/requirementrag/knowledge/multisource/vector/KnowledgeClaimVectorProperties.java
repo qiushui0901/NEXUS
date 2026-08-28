@@ -1,11 +1,15 @@
 package com.example.requirementrag.knowledge.multisource.vector;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.boot.context.properties.bind.ConstructorBinding;
+
+import java.util.Locale;
 
 /**
  * 多源 Claim 向量投影配置（§8）。
  * <p>
- * 所有开关默认关闭。Rollout 阶段：build-only → shadow query → internal fusion → limited prod → default-on。
+ * Claim 向量投影开关默认关闭；语义增强默认开启，但仅在向量构建启用时参与召回文本生成。
+ * Rollout 阶段：build-only → shadow query → internal fusion → limited prod → default-on。
  * 前缀：{@code app.rag.multi-source.claim-vector}
  */
 @ConfigurationProperties("app.rag.multi-source.claim-vector")
@@ -22,13 +26,24 @@ public record KnowledgeClaimVectorProperties(
         int batchSize,
         int representativeEvidenceLimit,
         int retainPhysicalCollections,
-        String databasePath
+        String databasePath,
+        String buildScope,
+        int blockMaxChars,
+        boolean semanticEnhancementEnabled,
+        String semanticEnhancementModel
 ) {
+    @ConstructorBinding
     public KnowledgeClaimVectorProperties {
         alias = textOr(alias, "knowledge_claims_live");
-        projectionSchemaVersion = textOr(projectionSchemaVersion, "knowledge-claim-vector-v1");
-        textComposerVersion = textOr(textComposerVersion, "knowledge-claim-text-v1");
+        // v2：点 ID 从 64-hex 改为 UUID（Qdrant v1.15+ 拒绝任意字符串点 ID）。
+        // 投影 schema 属于契约的一部分——点 ID 算法变更必须换 schema，否则旧代际会被指纹命中而误复用。
+        projectionSchemaVersion = textOr(projectionSchemaVersion, "knowledge-claim-vector-v2");
+        textComposerVersion = textOr(textComposerVersion, "knowledge-claim-text-v2");
         databasePath = textOr(databasePath, "data/multi-source-knowledge.db");
+        buildScope = normalizeBuildScope(buildScope);
+        blockMaxChars = bounded(blockMaxChars, 4_000, 100_000, 24_000);
+        // One gameplay card may span many facts. blockMaxChars bounds the Qdrant payload, not entity membership.
+        semanticEnhancementModel = textOr(semanticEnhancementModel, "gpt-5.6-luna");
         candidateLimit = bounded(candidateLimit, 1, 1000, 200);
         overFetchFactor = bounded(overFetchFactor, 1, 10, 3);
         batchSize = bounded(batchSize, 1, 64, 32);
@@ -36,6 +51,19 @@ public record KnowledgeClaimVectorProperties(
         // 中（第七批 Review 2）：下限必须 ≥2——retain=1 时 switchAlias 尾部会立即删除前序集合，
         // markActive 失败补偿 rollbackAlias(前序目标) 与运维 /rollback 双双失去回滚目标，产生悬空 ACTIVE。
         retainPhysicalCollections = bounded(retainPhysicalCollections, 2, 10, 2);
+    }
+
+    /** Compatibility constructor for callers that use the pre-block projection contract. */
+    public KnowledgeClaimVectorProperties(
+            boolean enabled, boolean buildEnabled, boolean candidateRetrievalEnabled,
+            boolean shadowQueryEnabled, String alias, String projectionSchemaVersion,
+            String textComposerVersion, int candidateLimit, int overFetchFactor, int batchSize,
+            int representativeEvidenceLimit, int retainPhysicalCollections, String databasePath,
+            String buildScope) {
+        this(enabled, buildEnabled, candidateRetrievalEnabled, shadowQueryEnabled, alias,
+                projectionSchemaVersion, textComposerVersion, candidateLimit, overFetchFactor,
+                batchSize, representativeEvidenceLimit, retainPhysicalCollections, databasePath,
+                buildScope, 24_000, true, "gpt-5.6-luna");
     }
 
     /**
@@ -87,6 +115,19 @@ public record KnowledgeClaimVectorProperties(
         } catch (java.security.NoSuchAlgorithmException exception) {
             throw new IllegalStateException("SHA-256 不可用", exception);
         }
+    }
+
+    /** buildScope 合法值：ACTIVE_DOC（默认，投影 active manifest 单文档）/ ALL_PUBLISHED（投影全部已发布文档，与实体层同态）。 */
+    public static final String SCOPE_ACTIVE_DOC = "ACTIVE_DOC";
+    public static final String SCOPE_ALL_PUBLISHED = "ALL_PUBLISHED";
+
+    /** 非法/空值一律回退 ACTIVE_DOC（默认行为不变，契约优先）。 */
+    private static String normalizeBuildScope(String value) {
+        if (value == null || value.isBlank()) {
+            return SCOPE_ACTIVE_DOC;
+        }
+        String normalized = value.trim().toUpperCase(Locale.ROOT);
+        return SCOPE_ALL_PUBLISHED.equals(normalized) ? SCOPE_ALL_PUBLISHED : SCOPE_ACTIVE_DOC;
     }
 
     private static String textOr(String value, String fallback) {

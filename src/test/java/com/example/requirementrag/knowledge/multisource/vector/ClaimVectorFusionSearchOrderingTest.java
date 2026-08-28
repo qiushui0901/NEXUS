@@ -57,7 +57,7 @@ class ClaimVectorFusionSearchOrderingTest {
             new KnowledgeClaimVectorProperties(
                     true, true, true, true,
                     "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
-                    200, 3, 32, 3, 2, null)
+                    200, 3, 32, 3, 2, null, "ACTIVE_DOC")
                     .liveAlias("proj-1", "v1");
 
     private SQLiteKnowledgeClaimVectorStore vectorStore;
@@ -78,7 +78,7 @@ class ClaimVectorFusionSearchOrderingTest {
         properties = new KnowledgeClaimVectorProperties(
                 true, true, true, true,
                 "knowledge_claims_live", "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
-                200, 3, 32, 3, 2, tempDir.resolve("fusion.db").toString());
+                200, 3, 32, 3, 2, tempDir.resolve("fusion.db").toString(), "ACTIVE_DOC");
         adapter = new ClaimVectorCandidateAdapter(
                 hydrationStore, vectorStore, qdrantStore, embeddingBatcher,
                 new SourceFilterStrategy(), properties);
@@ -89,9 +89,9 @@ class ClaimVectorFusionSearchOrderingTest {
                 "model:8", 8, "knowledge_claims_live-proj-1-v1-1",
                 GenerationStatus.ACTIVE, 3, 3, "[]",
                 "2025-01-01T00:00:00Z", "2025-01-01T00:00:00Z",
-                "2025-01-01T00:00:00Z");
+                "2025-01-01T00:00:00Z", "ACTIVE_DOC");
         when(vectorStore.findActiveGeneration("proj-1", "v1")).thenReturn(Optional.of(active));
-        when(embeddingBatcher.embedAll(any())).thenReturn(List.of(new float[]{0.1f, 0.2f}));
+        when(embeddingBatcher.embedAll(any())).thenReturn(List.of(new float[]{0.1f, 0.2f, 0.3f, 0.4f, 0.5f, 0.6f, 0.7f, 0.8f}));
 
         realStore = new MultiSourceKnowledgeStore(
                 tempDir.resolve("search.db").toString(), new ObjectMapper());

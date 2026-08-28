@@ -46,7 +46,7 @@ public class ClaimVectorAdminController {
     @RequiresPermission(Permission.WRITE)
     @PostMapping("/build")
     public ClaimVectorGenerationManifest build(@Valid @RequestBody BuildRequest request) {
-        return buildService.build(request.projectId(), request.businessVersion());
+        return buildService.build(request.projectId(), request.businessVersion(), request.buildScope());
     }
 
     /** 查询当前 ACTIVE 代际；无则 404。 */
@@ -89,7 +89,9 @@ public class ClaimVectorAdminController {
     }
 
     /** 构建请求体。 */
-    public record BuildRequest(@NotBlank String projectId, @NotBlank String businessVersion) {}
+    /** buildScope 可选：ACTIVE_DOC（默认）/ ALL_PUBLISHED（全部已发布文档，图/向量补召回用）。 */
+    public record BuildRequest(@NotBlank String projectId, @NotBlank String businessVersion,
+                               String buildScope) {}
 
     /** scope 请求体（回滚用）。 */
     public record ScopeRequest(@NotBlank String projectId, @NotBlank String businessVersion) {}

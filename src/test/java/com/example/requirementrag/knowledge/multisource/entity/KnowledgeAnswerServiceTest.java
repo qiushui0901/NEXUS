@@ -2,6 +2,7 @@ package com.example.requirementrag.knowledge.multisource.entity;
 
 import com.example.requirementrag.knowledge.multisource.entity.EntityEvidenceModels.AssessmentItem;
 import com.example.requirementrag.knowledge.multisource.entity.EntityEvidenceModels.CurrentFacts;
+import com.example.requirementrag.knowledge.multisource.entity.EntityEvidenceModels.EntityRecallResponse;
 import com.example.requirementrag.knowledge.multisource.entity.EntityEvidenceModels.EntitySearchResponse;
 import com.example.requirementrag.knowledge.multisource.entity.EntityEvidenceModels.EntityView;
 import com.example.requirementrag.knowledge.multisource.entity.EntityEvidenceModels.FactAssessment;
@@ -132,6 +133,112 @@ class KnowledgeAnswerServiceTest {
         assertThat(outcome.llmUsed()).isFalse();
         assertThat(outcome.answer()).doesNotContain("999");
         assertThat(outcome.citationQuality()).isEqualTo("UNVERIFIED");
+    }
+
+    @Test
+    void answerWithRecallIncludesRecallContextAndTypedValidation() {
+        // 图/向量增强回答：确定性证据 + 相关图/向量上下文；分节类型校验仍生效
+        EntitySearchResponse evidence = gapEvidence();
+        EntityRecallResponse recall = new EntityRecallResponse("等级上限", evidence.plan(),
+                evidence.entities(), evidence.factAssessment(), evidence.citations(), List.of(),
+                "GRAPH_VECTOR", evidence,
+                new com.example.requirementrag.knowledge.multisource.entity.EntityGraphExpansionService.RelatedGraph(
+                        List.of(), List.of(new com.example.requirementrag.knowledge.multisource.entity.EntityGraphExpansionService.RelatedLink(
+                                "rel-1", "c-param", "c-test", "RELATED_TO", "RULE_CONFIRMED", "CONFIRMED")), 1),
+                List.of(new EntityEvidenceModels.VectorHit("c-test", "TC-001", "TEST_RESULT")), 1);
+        KnowledgeAnswerService service = new KnowledgeAnswerService(null, null, props());
+
+        AnswerOutcome outcome = service.answerWithRecall(recall);
+
+        assertThat(outcome.llmUsed()).isFalse();
+        assertThat(outcome.status()).isEqualTo("REVIEW_REQUIRED");
+        assertThat(outcome.answer()).contains("REQUIREMENT_PARAMETER_MISMATCH");
+    }
+
+    @Test
+    void claimIdCannotImpersonateEvidenceInRecallAnswer() {
+        // High 1：图/向量增强回答中，模型引用 Claim ID（c-param）不得被当作合法 Evidence——
+        // 允许集只注册真实 Evidence ID（citations / currentFacts 的 evidenceIds）
+        EntitySearchResponse evidence = gapEvidence();
+        EntityRecallResponse recall = new EntityRecallResponse("等级上限", evidence.plan(),
+                evidence.entities(), evidence.factAssessment(), evidence.citations(), List.of(),
+                "GRAPH_VECTOR", evidence,
+                new com.example.requirementrag.knowledge.multisource.entity.EntityGraphExpansionService.RelatedGraph(
+                        List.of(), List.of(), 0),
+                List.of(), 0);
+        KnowledgeAnswerService service = llmAnswer(new SectionRaw(
+                new AgentAnswerRaw("数值表 100。",
+                        List.of(new AnswerSection("当前数值", "数值表 100。", "PARAMETER_TABLE",
+                                List.of("c-param"))))));  // c-param 是 Claim ID，不是 Evidence ID
+
+        AnswerOutcome outcome = service.answerWithRecall(recall);
+
+        // 引用不可信 → 回退模板，模型文本不保留
+        assertThat(outcome.llmUsed()).isFalse();
+        assertThat(outcome.citationQuality()).isEqualTo("UNVERIFIED");
+        assertThat(outcome.answer()).doesNotContain("数值表 100。");
+    }
+
+    @Test
+    void expandedEntityFactsAndEvidenceAreReferenceableInRecall() {
+        // High 3 正向：合并实体集（含扩展实体 Speed）的事实与真实 Evidence 必须进入包，可被引用 → VERIFIED
+        EntitySearchResponse evidence = gapEvidence();
+        EntityView speedView = new EntityView("con:2", "Speed", List.of("Speed"),
+                new CurrentFacts(List.of(),
+                        List.of(new FactRef("c-speed", null, "PARAMETER_TABLE", "Speed", "300", "",
+                                "5.1", List.of("ev-speed"), "xlsx#Sheet1!3")),
+                        List.of()),
+                List.of(), List.of(), List.of(), List.of());
+        EntitySearchResponse merged = new EntitySearchResponse(evidence.query(), evidence.plan(),
+                List.of(evidence.entities().get(0), speedView), evidence.factAssessment(),
+                List.of(new EntityEvidenceModels.Citation("c-speed", "PARAMETER_TABLE", "5.1", "ev-speed")),
+                evidence.warnings());
+        EntityRecallResponse recall = new EntityRecallResponse("等级上限", merged.plan(), merged.entities(),
+                merged.factAssessment(), merged.citations(), merged.warnings(), "GRAPH_VECTOR", merged,
+                new com.example.requirementrag.knowledge.multisource.entity.EntityGraphExpansionService.RelatedGraph(
+                        List.of(), List.of(), 0),
+                List.of(), 1);
+        KnowledgeAnswerService service = llmAnswer(new SectionRaw(
+                new AgentAnswerRaw("Speed 配置 300。",
+                        List.of(new AnswerSection("当前数值", "Speed 300。", "PARAMETER_TABLE",
+                                List.of("ev-speed"))))));
+
+        AnswerOutcome outcome = service.answerWithRecall(recall);
+
+        assertThat(outcome.llmUsed()).isTrue();
+        assertThat(outcome.citationQuality()).isEqualTo("VERIFIED");
+    }
+
+    @Test
+    void secondEvidenceIdOfSameClaimIsReferenceable() {
+        // Med：同 Claim 的第二及后续 Evidence ID 必须可引用——citations 只登记首条，
+        // 但证据注册表从全部输出事实的 evidenceIds 建立
+        EntitySearchResponse evidence = gapEvidence();
+        EntityView view = evidence.entities().get(0);
+        // 参数事实带两个 Evidence：ev-table（citations 首条）+ ev-table-backup（第二条）
+        EntityView doubled = new EntityView(view.entityId(), view.canonicalName(), view.aliases(),
+                new CurrentFacts(
+                        view.currentFacts().code(),
+                        List.of(new FactRef("c-param", null, "PARAMETER_TABLE", "LevelCap", "100", "级",
+                                "5.1", List.of("ev-table", "ev-table-backup"), "skills.xlsx#Sheet1!2")),
+                        view.currentFacts().testResults()),
+                view.timeline(), view.relations(), view.conflicts(), view.warnings());
+        EntitySearchResponse merged = new EntitySearchResponse(evidence.query(), evidence.plan(),
+                List.of(doubled), evidence.factAssessment(), evidence.citations(), evidence.warnings());
+        EntityRecallResponse recall = new EntityRecallResponse("等级上限", merged.plan(), merged.entities(),
+                merged.factAssessment(), merged.citations(), merged.warnings(), "GRAPH_VECTOR", merged,
+                new com.example.requirementrag.knowledge.multisource.entity.EntityGraphExpansionService.RelatedGraph(
+                        List.of(), List.of(), 0),
+                List.of(), 0);
+        KnowledgeAnswerService service = llmAnswer(new SectionRaw(
+                new AgentAnswerRaw("配置 100 级。",
+                        List.of(new AnswerSection("当前数值", "数值表 100。", "PARAMETER_TABLE",
+                                List.of("ev-table-backup"))))));  // 第二条 Evidence，citations 里没有
+
+        AnswerOutcome outcome = service.answerWithRecall(recall);
+
+        assertThat(outcome.llmUsed()).isTrue();
+        assertThat(outcome.citationQuality()).isEqualTo("VERIFIED");
     }
 
     @Test
