@@ -100,6 +100,21 @@ class CodeCentricAlignmentControllerTest {
     }
 
     @Test
+    void buildsProjectConceptsAcrossPublishedVersions() throws Exception {
+        when(businessConceptService.buildProject("immortal"))
+                .thenReturn(new BuildResult(9, 12, 20, 0, 0));
+
+        mvc.perform(post("/api/knowledge/alignment/concepts/build-project")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"projectId\":\"immortal\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.concepts").value(9))
+                .andExpect(jsonPath("$.members").value(20));
+
+        verify(businessConceptService).buildProject("immortal");
+    }
+
+    @Test
     void buildsCodeParameterAndCodeTest() throws Exception {
         when(codeParameterAlignmentService.build("immortal", "5.1", null))
                 .thenReturn(new BuildResult(0, 0, 0, 3, 1));

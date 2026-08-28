@@ -104,7 +104,7 @@ class ClaimVectorCandidateAdapterTest {
                 .thenReturn(List.of(
                         hit("c-1", 0.95),
                         hit("c-2", 0.80)));
-        when(knowledgeStore.findClaimsByIds(any()))
+        when(knowledgeStore.findPublishedClaimsByIds(eq("proj-1"), eq("v1"), any()))
                 .thenReturn(List.of(
                         claim("c-1", SourceType.REQUIREMENT),
                         claim("c-2", SourceType.PARAMETER_TABLE)));
@@ -132,7 +132,7 @@ class ClaimVectorCandidateAdapterTest {
                 .thenReturn(List.of(
                         hit("c-1", 0.95),
                         hit("c-deleted", 0.80)));
-        when(knowledgeStore.findClaimsByIds(any()))
+        when(knowledgeStore.findPublishedClaimsByIds(eq("proj-1"), eq("v1"), any()))
                 .thenReturn(List.of(claim("c-1", SourceType.REQUIREMENT)));
 
         CandidateLoad loaded = adapter.loadDetailed("proj-1", "v1", "登录", null);
@@ -240,7 +240,7 @@ class ClaimVectorCandidateAdapterTest {
                         hit("c-1", 0.95),
                         hit("c-2", 0.80),
                         hit("c-3", 0.70)));
-        when(knowledgeStore.findClaimsByIds(any()))
+        when(knowledgeStore.findPublishedClaimsByIds(eq("proj-1"), eq("v1"), any()))
                 .thenReturn(List.of(
                         claim("c-1", SourceType.REQUIREMENT),
                         claim("c-2", SourceType.PARAMETER_TABLE),

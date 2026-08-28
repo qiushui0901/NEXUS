@@ -40,6 +40,19 @@ public class VersionContextService {
         return context;
     }
 
+    /** 为历史业务版本创建不携带当前代码 commit 的上下文，避免把当前实现伪装成历史实现。 */
+    public VersionContext resolveHistorical(String projectId, String businessVersion, String environment) {
+        String codeProjectId = codeSymbolLoader.codeProjectId(projectId);
+        String env = environment == null || environment.isBlank() ? "default" : environment;
+        String contextId = "vc:" + sha256(projectId + "|" + businessVersion + "|" + env
+                + "|" + codeProjectId + "|historical").substring(0, 24);
+        VersionContext context = new VersionContext(
+                contextId, projectId, businessVersion, codeProjectId, null, env,
+                "HISTORICAL", null, Instant.now().toString());
+        store.upsertVersionContext(context);
+        return context;
+    }
+
     /** 查询已保存的版本上下文。 */
     public Optional<VersionContext> find(String projectId, String businessVersion, String environment) {
         return store.findVersionContext(projectId, businessVersion, environment);

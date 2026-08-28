@@ -400,7 +400,10 @@ public final class RequirementSemanticModels {
             int latestRunFailedChunks,
             List<String> latestRunWarnings,
             boolean candidateRetrievalEnabled,
-            boolean normativeRetrievalEnabled
+            boolean normativeRetrievalEnabled,
+            /** 中（第七批 Review M3）：项目级多源检索开关——关闭时语义候选无法参与 /multi-source/search，
+             * 前端据此把“已发布”降级为警示，而不是误导用户以为检索链路可用。 */
+            boolean multiSourceEnabledForProject
     ) {
         public SemanticBuildAggregateView {
             activeDocumentIds = immutable(activeDocumentIds);

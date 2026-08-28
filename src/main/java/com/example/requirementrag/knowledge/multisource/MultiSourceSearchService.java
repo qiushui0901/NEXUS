@@ -137,6 +137,10 @@ public class MultiSourceSearchService {
 
     public MultiSourceSearchResponse search(String projectId, String version, String query,
                                             KnowledgeQueryIntent intentOverride, int limit, int page) {
+        // 中（vaxr M6，已文档化为接受项）：offset 分页在“单次请求快照”上计算（候选集/评分/冲突分析
+        // 每次请求重新求值）——两次请求之间发布/回滚新代际会让首页与次页来自不同快照，产生重复或
+        // 缺口。检索链路按次提供确定性排序（score desc → sourceType → claimId），正常浏览频率下
+        // 影响极小；若需严格一致性请改用快照游标或单次拉全量页。
         int effectiveLimit = Math.max(1, Math.min(limit <= 0 ? 20 : limit, 50));
         int effectivePage = Math.max(0, page);
         // 高（Review）：检索响应回传本次实际读取的语义构建代际 ids（来自适配器单查询快照），
@@ -177,35 +181,47 @@ public class MultiSourceSearchService {
                 .filter(claim -> gate.isRetrievable(claim.status()))
                 .toList();
         if (fusionEligible) {
-            KnowledgeClaimVectorFusion.ScoredCandidateLoad scoredVectorLoad =
-                    claimVectorAdapter.loadScored(projectId, version, query, intent);
-            // 高（Review 7）：语义适配器的诊断（NO_ACTIVE_GENERATION/嵌入失败等）与
-            // 本次实际读取的构建代际 ids 必须回传 API——不因零命中或跳过融合而丢失。
-            warnings.addAll(scoredVectorLoad.warnings());
-            semanticBuildIds.addAll(scoredVectorLoad.buildIds());
-            // 影子模式：记录向量 vs 结构化对比指标，不影响主检索路径
-            if (shadowEvaluator != null) {
-                shadowEvaluator.recordQuery(projectId, version, query,
-                        scoredVectorLoad.claims(), candidates, 0);
-            }
-            if (!scoredVectorLoad.claims().isEmpty()) {
-                // 高（Review 3）：只有词法相关的直接候选才交给融合——融合给直接候选固定 lexScore=1.0，
-                // 若把全部直接候选（含词法不相关）喂入，向量一次命中会让该意图下所有参数/测试等 Claim
-                // 拿到融合分数进入排序/冲突分析/totalCount。词法门槛前置后，融合分数只影响排序不决定准入。
-                List<UnifiedKnowledgeClaim> directRelevant = candidates.stream()
-                        .filter(claim -> normalizedQuery.isEmpty()
-                                || score(claim, normalizedQuery, tokens) > 0)
-                        .toList();
-                KnowledgeClaimVectorFusion.FusionResult fusionResult =
-                        claimVectorFusion.fuse(scoredVectorLoad, directRelevant, query);
-                // gate 统一应用在融合之后——向量候选同样受状态门禁约束（Review 4）
-                candidates = fusionResult.candidates().stream()
-                        .filter(claim -> gate.isRetrievable(claim.status()))
-                        .toList();
-                fusedScores = fusionResult.scores();
-                if (fusionResult.duplicateRemovedCount() > 0) {
-                    warnings.add("CLAIM_VECTOR_FUSION_DEDUP:" + fusionResult.duplicateRemovedCount());
+            // 中（vaxr M1）：向量/融合/影子段不在 per-source 故障保护内——loadScored 虽对
+            // Qdrant/嵌入降级，但融合或影子记录的任何未捕获异常都会让整个检索 500，违背
+            // "来源故障必须降级为警告而非伪装成无结果"契约。回退到纯结构化候选继续。
+            List<UnifiedKnowledgeClaim> structuredCandidates = candidates;
+            try {
+                KnowledgeClaimVectorFusion.ScoredCandidateLoad scoredVectorLoad =
+                        claimVectorAdapter.loadScored(projectId, version, query, intent);
+                // 高（Review 7）：语义适配器的诊断（NO_ACTIVE_GENERATION/嵌入失败等）与
+                // 本次实际读取的构建代际 ids 必须回传 API——不因零命中或跳过融合而丢失。
+                warnings.addAll(scoredVectorLoad.warnings());
+                semanticBuildIds.addAll(scoredVectorLoad.buildIds());
+                // 影子模式：记录向量 vs 结构化对比指标，不影响主检索路径
+                if (shadowEvaluator != null) {
+                    shadowEvaluator.recordQuery(projectId, version, query,
+                            scoredVectorLoad.claims(), candidates, 0);
                 }
+                if (!scoredVectorLoad.claims().isEmpty()) {
+                    // 高（Review 3）：只有词法相关的直接候选才交给融合——融合给直接候选固定 lexScore=1.0，
+                    // 若把全部直接候选（含词法不相关）喂入，向量一次命中会让该意图下所有参数/测试等 Claim
+                    // 拿到融合分数进入排序/冲突分析/totalCount。词法门槛前置后，融合分数只影响排序不决定准入。
+                    List<UnifiedKnowledgeClaim> directRelevant = candidates.stream()
+                            .filter(claim -> normalizedQuery.isEmpty()
+                                    || score(claim, normalizedQuery, tokens) > 0)
+                            .toList();
+                    KnowledgeClaimVectorFusion.FusionResult fusionResult =
+                            claimVectorFusion.fuse(scoredVectorLoad, directRelevant, query);
+                    // gate 统一应用在融合之后——向量候选同样受状态门禁约束（Review 4）
+                    candidates = fusionResult.candidates().stream()
+                            .filter(claim -> gate.isRetrievable(claim.status()))
+                            .toList();
+                    fusedScores = fusionResult.scores();
+                    if (fusionResult.duplicateRemovedCount() > 0) {
+                        warnings.add("CLAIM_VECTOR_FUSION_DEDUP:" + fusionResult.duplicateRemovedCount());
+                    }
+                }
+            } catch (RuntimeException fusionFailure) {
+                candidates = structuredCandidates;
+                fusedScores = Map.of();
+                warnings.add("MULTI_SOURCE_CANDIDATE_LOAD_FAILED:CLAIM_VECTOR");
+                log.warn("Claim 向量融合路径失败，回退结构化候选 project={} version={} error={}",
+                        projectId, version, fusionFailure.getClass().getSimpleName());
             }
         }
         Set<String> conflictGroups = conflictAnalyzer.conflictGroups(candidates);
@@ -218,8 +234,10 @@ public class MultiSourceSearchService {
             double penalty = conflictPenalty(claim, conflictGroups);
             Double fusionScore = fusedScores.get(claim.claimId());
             if (fusionScore != null) {
-                // 高（Review 5）：用融合分数排序——向量相似度真正参与最终排序
-                scored.add(new ScoredClaim(claim, Math.max(0, fusionScore - penalty)));
+                // 高（Review 5）：用融合分数排序——向量相似度真正参与最终排序。
+                // 中（vaxr M5）：融合分数已内嵌状态冲突惩罚（0.10），此处不再叠加检索层
+                // 组冲突惩罚（0.20），避免对同一 Claim 双重扣分造成排序偏置。
+                scored.add(new ScoredClaim(claim, Math.max(0, fusionScore)));
             } else {
                 double base = score(claim, normalizedQuery, tokens);
                 if (normalizedQuery.isEmpty() || base > 0) {
@@ -239,6 +257,10 @@ public class MultiSourceSearchService {
         List<DoubtClaim> doubts = intent == KnowledgeQueryIntent.DOUBT || intent == KnowledgeQueryIntent.CONSISTENCY
                 ? gate.filterDoubts(store.findDoubts(projectId, version), intent)
                 : List.of();
+        // 中（vaxr M8）：NORMATIVE 意图不返回 OPEN 存疑（结果契约不变），但该版本若存在 OPEN 存疑
+        // 应显式提示——此前 NORMATIVE 分支永远为空，下方警告恒不触发（死代码）。
+        boolean hasOpenDoubts = intent == KnowledgeQueryIntent.NORMATIVE
+                && !gate.filterDoubts(store.findDoubts(projectId, version), KnowledgeQueryIntent.DOUBT).isEmpty();
 
         // 跨来源关系：查询只读预生成关系（knowledge_relation），并裁剪到当前命中页的一跳邻域；
         // 不再在查询侧生成/持久化/调用 LLM。旧 multi_source_relation 作为迁移期只读回退。
@@ -258,7 +280,7 @@ public class MultiSourceSearchService {
                 .filter(location -> location != null && !location.isBlank())
                 .distinct().toList();
         List<String> explanations = explanations(claims, intent);
-        if (intent == KnowledgeQueryIntent.NORMATIVE && !doubts.isEmpty()) {
+        if (hasOpenDoubts) {
             warnings.add("普通规范查询默认不返回 OPEN 存疑");
         }
         if (llmUsed) {
@@ -378,7 +400,15 @@ public class MultiSourceSearchService {
                 try {
                     MultiSourceCandidateAdapter.CandidateLoad loaded =
                             adapter.loadDetailed(projectId, version, query, intent);
-                    loaded.claims().forEach(result::add);
+                    // 中（vaxr M3）：单来源候选硬上限 20000（与语义源 SQL 硬顶一致）——空查询/超大版本等
+                    // 病态输入会让单个来源物化全量行，融合/评分/冲突分析/分页全部放大这份开销；
+                    // 超过上限的部分裁剪并给出截断警告，调用方可感知结果不完整而非误读为全集。
+                    List<UnifiedKnowledgeClaim> sourceClaims = loaded.claims();
+                    if (sourceClaims.size() > 20_000) {
+                        sourceClaims = sourceClaims.subList(0, 20_000);
+                        warnings.add("MULTI_SOURCE_CANDIDATE_TRUNCATED:" + adapter.sourceType().name());
+                    }
+                    sourceClaims.forEach(result::add);
                     // 适配器级非致命警告（如候选截断）进入响应，保证调用方能感知结果不完整。
                     warnings.addAll(loaded.warnings());
                     // 高（Review）：候选适配器在同一查询快照中读取的实际构建代际 ids 汇总进响应。

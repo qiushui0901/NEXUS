@@ -48,7 +48,9 @@ public record RequirementSemanticProperties(
         maxWallClockSeconds = bounded(maxWallClockSeconds, 1, 86_400, 1_800);
         maxEstimatedTokens = bounded(maxEstimatedTokens, 0, 100_000_000, 1_000_000);
         windowOverlapChars = bounded(windowOverlapChars, 0, 20_000, 400);
-        maxCandidateAnnotations = bounded(maxCandidateAnnotations, 100, 100_000, 5_000);
+        // 中（第七批 Review M5）：上限 20000 与检索路径 SQL 侧硬性 limit 封顶一致——
+        // 100k 配置会让候选加载一次物化数万行 result_json（每行约 12k 字符），瞬时堆可达数百 MB。
+        maxCandidateAnnotations = bounded(maxCandidateAnnotations, 100, 20_000, 5_000);
     }
 
     private static String textOr(String value, String fallback) {

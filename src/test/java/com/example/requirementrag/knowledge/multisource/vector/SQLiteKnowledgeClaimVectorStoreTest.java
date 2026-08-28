@@ -174,6 +174,34 @@ class SQLiteKnowledgeClaimVectorStoreTest {
         assertThat(retired.get(1).generationId()).isEqualTo("gen-1");
     }
 
+    @Test
+    void pruneRetiredGenerationsKeepsNewestWithinRetainWindow() {
+        SQLiteKnowledgeClaimVectorStore store = store();
+        // gen-1 → gen-2 → gen-3 → gen-4 依次 ACTIVE（前 3 个退役），保留窗口 2
+        store.recordBuildStart(manifest("gen-1", "SUCCESS"), List.of());
+        store.markActive("gen-1", "col-1");
+        store.recordBuildStart(manifest("gen-2", "SUCCESS"), List.of());
+        store.markActive("gen-2", "col-2");
+        store.recordBuildStart(manifest("gen-3", "SUCCESS"), List.of());
+        store.markActive("gen-3", "col-3");
+        store.recordBuildStart(manifest("gen-4", "SUCCESS"), List.of());
+        store.markActive("gen-4", "col-4");
+
+        // 中（第七批 Review 4）：只保留最近 2 个 RETIRED（与 Qdrant retain 窗口对齐）
+        store.pruneRetiredGenerations("immortal", "5.1", 2);
+
+        List<ClaimVectorGenerationManifest> retired = store.listRetiredForRollback("immortal", "5.1");
+        assertThat(retired).hasSize(2);
+        assertThat(retired).extracting(ClaimVectorGenerationManifest::generationId)
+                .containsExactlyInAnyOrder("gen-2", "gen-3");
+        // 超出窗口的 gen-1 连同 input 行被清理；窗口内 gen-2 的 input 保留
+        assertThat(store.findGeneration("gen-1")).isEmpty();
+        assertThat(store.findGenerationInputs("gen-1")).isEmpty();
+        assertThat(store.findGeneration("gen-2")).isPresent();
+        // ACTIVE 代际永不被裁剪
+        assertThat(store.findGeneration("gen-4")).isPresent();
+    }
+
     // ===== 可复用代际 =====
 
     @Test
@@ -182,7 +210,7 @@ class SQLiteKnowledgeClaimVectorStoreTest {
         ClaimVectorGenerationManifest manifest = new ClaimVectorGenerationManifest(
                 "gen-reuse", "immortal", "5.1", "fp-abc",
                 "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
-                "test-model", 1024, null, GenerationStatus.SUCCESS,
+                "test-model", 1024, "reuse-collection", GenerationStatus.SUCCESS,
                 10, 10, "[]", Instant.now().toString(), null, null);
         store.recordBuildStart(manifest, List.of());
 
@@ -192,6 +220,25 @@ class SQLiteKnowledgeClaimVectorStoreTest {
 
         assertThat(found).isPresent();
         assertThat(found.get().generationId()).isEqualTo("gen-reuse");
+    }
+
+    @Test
+    void findReusableSkipsSuccessGenerationWithoutPhysicalCollection() {
+        // 高（Review 9）：markActive 失败残留的 SUCCESS + physical_collection=null 代际不可复用——
+        // 否则后续构建直接返回无物理集合的 manifest，语义检索永远拿不到向量候选。
+        SQLiteKnowledgeClaimVectorStore store = store();
+        ClaimVectorGenerationManifest orphan = new ClaimVectorGenerationManifest(
+                "gen-orphan", "immortal", "5.1", "fp-abc",
+                "knowledge-claim-vector-v1", "knowledge-claim-text-v1",
+                "test-model", 1024, null, GenerationStatus.SUCCESS,
+                10, 10, "[]", Instant.now().toString(), null, null);
+        store.recordBuildStart(orphan, List.of());
+
+        Optional<ClaimVectorGenerationManifest> found = store.findReusableGeneration(
+                "immortal", "5.1", "fp-abc",
+                "knowledge-claim-vector-v1", "test-model");
+
+        assertThat(found).isEmpty();
     }
 
     @Test

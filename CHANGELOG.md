@@ -1,7 +1,84 @@
+## 0.9.7 — 2026-08-27
+
+### Fixed（0.9.7 — 实体中心检索 Review 第三轮：发布边界与版本水化）
+
+补齐实体、关系和 Claim 向量读取的发布边界：已发布 Claim 查询统一排除 DRAFT/REJECTED/STALE/OBSOLETE 状态并绑定 active manifest；向量命中水化限定项目与业务版本；局部图关系要求两端 Claim 均属于同一已发布业务版本；版本级概念构建拒绝未发布版本；项目成员批量替换按版本事务删除后重建，避免大规模 `NOT IN` 参数列表；答案引用注册不再接受 Claim ID 作为 Evidence；代码事实补充同 commit 的有界源码摘录，发布版本全部下线时清理实体成员。全量 1076 tests 通过，0 failures，0 errors，0 skipped。
+
+### Fixed（0.9.7 — 实体中心检索 Review 第二轮：8 项 High/Medium 全部修复）
+
+按第二轮 review 修复实体中心链路剩余的 8 个问题：
+
+1. **[High] 发布后实体索引不自动更新/陈旧 DRAFT 泄漏**：查询时按当前 PUBLISHED 文档版本重校验成员 Claim（`findPublishedDocumentVersionIds` 过滤水化结果）——发布降级旧文档后，旧成员对应 Claim 不再进入响应（权威防护，不依赖重建时序）；`POST /concepts/build-project` 仍作为显式重建入口。
+2. **[High] 版本级构建把当前代码挂到历史版本**：`build(projectId, version)` 仅当 version == 最新已发布版本时才挂当前代码符号，历史版本不再保存当前 commit（当前实现事实不冒充历史）。
+3. **[High] includeHistory=false 边界不完整**：关闭历史后 timeline 仅保留最新已发布版本块（当前版本）；**冲突只按输出内 Claim 计算**（历史冲突不再泄漏进响应与 LLM Prompt）；最新需求仍可被事实优先级评估（REQUIREMENT_PARAMETER_MISMATCH 不丢失）。
+4. **[High] 历史时间轴 FactRef 丢失 businessVersion**：时间轴 FactRef 携带所属版本块（引用回源与跨源关系查询可用）。
+5. **[High] 无 Evidence 的事实标记 CONFIRMED**：事实评估 `SUPPORTED` 仅在有 Evidence/代码定位时授予，缺失证据 → `UNVERIFIED`；模板回答对无证据情形返回 UNVERIFIED（无证据的确定结论 = 0）。
+6. **[High] MIXED 引用类型绕过 + 代码位置未进 Prompt**：分节必须声明单一合法 sourceType（CODE/PARAMETER_TABLE/TEST_RESULT/REQUIREMENT），MIXED/未知声明的证据整体丢弃；`[CURRENT_CODE]` 上下文携带 location（repository@commit:filePath:start-end）。
+7. **[High] 来源关系提取跨版本绑定错误 Claim**：关系端点解析按当前输入业务版本限定（`findMembers(concept, version)`），且**两端 Claim 必须属于输入批次**（硬校验），关系版本/Evidence/端点事实一致。
+8. **[Medium] canonical key 依赖不一致的 factKey 格式**：module 提取改为来源特定语义（`AlignmentNaming.moduleOf`）——需求/语义来源中第三段与 subject 相同（HTML 导入/需求图候选的自引用 module）时视为无模块、key 退化为 subject 锚定，不同来源的同一需求归一到同一实体而非“攻击力.攻击力”；BusinessConceptService 与 RequirementCodeDriftService 同步使用。
+
+新增回归测试 8 例（发布降级重校验 / 历史版本代码不挂 / includeHistory 冲突与最新需求 / 时间轴版本 / 无证据 UNVERIFIED / MIXED 绕过 / 跨版本关系端点 / 来源 module 归一），全量 1074 tests 通过。
+
+### Fixed（0.9.7 — 实体中心检索 Review 修复批次：6 项 High/Medium 全部修复）
+
+按外部 review 结果修复实体中心检索链路的 6 个问题：
+
+1. **[High] DRAFT 泄漏到公开读取与当前事实**：实体构建与查询改为已发布范围——新增 `findPublishedBusinessVersions`（仅 PUBLISHED）与 `findPublishedClaimsByProjectVersionAll`（PUBLISHED 文档的全部 Claim）；`BusinessConceptService.build/buildProject` 与 `EntityEvidenceAggregator.latestVersion` 只使用已发布版本，未来 DRAFT 版本不再可能覆盖当前事实。
+2. **[High] 跨版本构建无接入入口**：新增 `POST /api/knowledge/alignment/concepts/build-project`（WRITE 权限）调用 `buildProject`，配套控制器测试。
+3. **[High] includeHistory=false 失效**：`includeHistory` 贯穿 `Options`（界面 request 显式值覆盖规则推导）——false 时 timeline 为空；答案层 `[HISTORICAL_REQUIREMENT]` 按 `plan.includeHistory()` 门控。
+4. **[High] 代码事实无行为/位置信息**：`FactRef` 新增 `location` 字段；聚合器经 `CodeSymbolLoader` 回填 `repository@commit:filePath:start-end`（未匹配符号不编造），回答可定位到文件与行号。
+5. **[High] 答案引用不做结论支持校验**：分节模型输出声明 `sourceType`（CODE/PARAMETER_TABLE/TEST_RESULT/REQUIREMENT/MIXED），服务端按“允许集 + 类型”双重校验——参数表 Evidence 不可支撑代码行为结论；类型错配/非法引用丢弃并降级 citationQuality（PARTIAL），全部丢弃回退模板。
+6. **[Medium] 局部图反向遍历错误 + 二跳版本丢失**：`expand` 按当前 claim 是 source/target 判定另一端点（反向关系正确扩展）；遍历中维护 claimId→businessVersion（含二跳节点），跨源 knowledge_relation 查询不再跳过。
+
+新增回归测试 5 例（DRAFT 排除 / includeHistory=false / 代码定位 / 反向关系 / build-project 端点），全量 1068 tests 通过。
+
+### Added（0.9.7 — 实体中心检索 Phase 4/5/6：事实优先级 · 带证据回答 · 局部图扩展）
+
+完成实体中心方案 Phase 4/5/6（dev md §9/§11/§14），实体中心检索全部六个阶段落地：
+
+- **事实优先级与实现偏差**（`EntityFactPriorityService`，dev md §9）：按问题类型选主证据视图——当前行为 CODE &gt; TEST_RESULT &gt; PARAMETER_TABLE &gt; REQUIREMENT；当前数值 PARAMETER_TABLE 优先；`FactAssessment` 升级为结构化条目（AssessmentItem：type/value/sourceType/status），五个分区（currentBehavior/currentValues/validation/requirementTarget/implementationGaps）。确定性偏差信号：需求目标 ≠ 当前数值表 → `REQUIREMENT_PARAMETER_MISMATCH`（CONFLICTED）；FAILED 测试 → `REQUIREMENT_IMPLEMENTATION_GAP`（REVIEW_REQUIRED）；代码+数值表+FAILED 测试并存 → `CODE_PARAMETER_MISMATCH`（REVIEW_REQUIRED）。数值比较剥离单位后数值化比较。不做来源仲裁、不修改任何来源事实。`EntityQueryService` 接线：响应 factAssessment 从空骨架变为首实体的评估。
+- **AI 带证据回答**（`KnowledgeAnswerService`，dev md §11）：只吃受限证据包（CURRENT_CODE/CURRENT_PARAMETER_TABLE/TEST_RESULT/HISTORICAL_REQUIREMENT/CONFLICTS，有界 40 条）；系统 Prompt 强制“只基于证据/冲突必须同时报告/引用必须附 evidence/不足回答无法确定”；模型返回的分节 evidenceIds **服务端校验**（∈ citations/代码证据允许集，非法引用丢弃 → citationQuality=PARTIAL/UNVERIFIED/VERIFIED）；LLM 不可用/失败 → 确定性模板降级（偏差模板 / 确认模板 / “无法确定+缺失来源”），绝不编造结论；状态按偏差 CONFLICTED/REVIEW_REQUIRED → REVIEW_REQUIRED。新增 `POST /api/knowledge/entity-answer`（内部先跑 entity-search 再回答，返回 answer/sections/status/citationQuality/证据包）。
+- **LightRAG 式局部图扩展**（`EntityGraphExpansionService`，dev md §14 Phase 6）：实体一跳/两跳关系召回（`findAlignmentRelationsForClaim` + `findRelationsForClaims`，深度≤2、节点≤30、边≤60）；向量/Claim 命中映射回实体（`findConceptIdsByClaim`，idx_concept_member_claim）；检索指标（entityCount/relationCount/versionCoverage/hasCode/hasParameters/hasTests）。新增 `POST /api/knowledge/entity-search/related` 返回局部图 + 指标。项目级历史 Claim collection 与更大向量范围按 dev md §10.3 第 3 种保持评测驱动（本阶段不接 Qdrant）。
+- **测试**：新增 10 例——事实优先级 4（CODE 优先/需求-参数 mismatch/FAILED 测试 gap/通过测试无 gap）；答案服务 4（有效引用保留 PARTIAL/全有效 VERIFIED/模板降级报偏差/无证据无法确定）；局部图 2（一跳扩展+向量命中映射、指标覆盖）。全量 1060 tests 通过。
+
+### Added（0.9.7 — 实体中心检索 Phase 3：实体证据查询 API）
+
+实现实体中心方案 Phase 3（dev md §8/§12.1/§16 最小闭环），新增 `POST /api/knowledge/entity-search`（不改动现有 multi-source/search）：
+
+- **实体证据聚合器**（`EntityEvidenceAggregator`，dev md §8.3/§8.4）：按实体聚合——成员批量水化（`findClaimsByIds`）+ 批量证据（`findEvidenceIdsByClaimIds`）；时间轴 `timeline` 按 businessVersion 分块（requirements/parameterTables/tests）；`currentFacts` 分区分治（code/parameterTables/testResults，绝不混成一个数组）；关系（claim 端点命中，`findAlignmentRelationsForClaim`，保留 PROPOSED 状态位）；确定性冲突（同 factKey 不同值 → CONFLICTED，跨版本演进按时间轴展示不判冲突）；稳定告警（无代码成员 → `CODE_CONTEXT_UNAVAILABLE`、无数值 → `PARAMETER_TABLE_UNAVAILABLE`，不编造 commit）；每块/分区 20 条上限防全量物化。
+- **实体查询服务**（`EntityQueryService`）：问题 → 分析（规则优先）→ 解析（已解析 mentions 直通；规则未命中走成员名/代码符号 + LLM 受限选择）→ 全版本聚合 → 结构化证据响应（`EntitySearchResponse`：query/plan/entities/factAssessment（Phase 4 占位）/citations/warnings）。`versions` 为空 = 全部相关版本；填写 = 缩小时间轴。
+- **控制器**（`EntitySearchController`）：`POST /api/knowledge/entity-search`，projectId/query 必填（@NotBlank），limit 1..50 默认 20，含项目注册与访问控制；includeCode/includeParameters/includeTests 可关。
+- **存储**：`CodeCentricAlignmentStore.findAlignmentRelationsForClaim`（按 source/target claim 查关系）；`MultiSourceKnowledgeStore.findEvidenceIdsByClaimIds`（批量证据回源，避免 N+1）。
+- **测试**：新增 7 例——聚合器 4（跨版本时间轴 + 当前事实分组、版本过滤、同 factKey 冲突、需求/测试成员入块）；服务 2（无 LLM 端到端返回实体证据、未解析返回告警+空引用）；控制器 1（HTTP 200 + JSON + 项目访问校验）。全量 1050 tests 通过。
+
+### Added（0.9.7 — 实体中心检索 Phase 2：LLM 实体提取与归一化）
+
+实现实体中心方案 Phase 2（dev md §6/§7/§14），新增包 `knowledge/multisource/entity`（规则优先、LLM 辅助、全部降级安全）：
+
+- **问题实体提取器**（`QuestionEntityAnalyzer`）：规则优先——已确认别名在问题文本中的命中（`findConfirmedAliasesMentionedIn`，instr 扫描 + limit 封顶）→ mentions；意图/版本条件/asks* 标志为规则推导（`EntityQueryPlan`：intent/requestedVersions/includeHistory/asksCurrentState/asksImplementation/asksNumericValue）。LLM 辅助只做补召回：提议实体名必须能解析到真实概念（`findConceptIdsByAlias`）才成为 mention（LLM_SELECTED），否则丢弃并告警 `ENTITY_UNMAPPED`；LLM 不可用/解析失败时规则结果完整返回。
+- **实体解析器**（`EntityResolverService`，dev md §7.2 解析链 1-8）：已确认别名精确 → 成员名/代码符号（`findConceptIdsByMemberName`，含 CODE 成员 display_name）→ 单候选直接命中 → 多候选 LLM 受限选择（`EntityLlmAssistant.selectEntity`，只能选系统候选，校验 `ENTITY_UNKNOWN` 拒绝）→ 仍未命中返回多候选并标记 `ENTITY_NEEDS_REVIEW`；无命中返回 `ENTITY_UNRESOLVED`。绝不伪造 entityId。
+- **来源级提取器**（`SourceEntityExtractor`，dev md §6.2）：确定性事实已由导入器先落库（LLM 失败不丢来源事实）；LLM 仅提议额外别名（origin=LLM_PROPOSED/status=PROPOSED，不参与确认匹配）与关系（matchMethod=LLM_PROPOSED/status=PROPOSED/confidence/evidence，两端必须解析到 Claim 成员否则 `RELATION_UNMAPPED`）。**不写知识事实**（LLM 值不覆盖来源原始值）。
+- **提取校验**（`EntityExtractionValidator`）：实体非空/数量上限（ENTITY_BUDGET_EXCEEDED）；facts 的 sourceClaimId 必须属于输入批次（ENTITY_CLAIM_INVALID）；relationType 白名单（SUPPORTS/VERIFIES/IMPLEMENTED_BY/RAISES_DOUBT/SUPERSEDES/REFINES/REPEALS/SAME_FACT/RELATED_TO，ENTITY_RELATION_INVALID）；受限选择只能选系统候选（ENTITY_UNKNOWN）。
+- **LLM 辅助客户端**（`EntityLlmAssistant`）：`ChatClient.entity(Record.class)` 结构化输出 + 稳定错误码（ENTITY_JSON_PARSE_FAILED/TIMEOUT/RATE_LIMITED/UNAVAILABLE）；任何失败返回 empty 由调用方回退规则；`app.rag.entity-extraction.*` 可配（enabled/model/maxMentionsPerQuery/sourceBatchSize/reviewThreshold/allowLlmAssist 等）。
+- **别名来源与状态**（Phase 1 扩展）：`business_concept_alias` 新增 `origin/status/evidence_id` 列（addColumnIfMissing 幂等迁移），`ConceptAlias` 记录扩展（默认 RULE_NORMALIZED/CONFIRMED/null）；`BusinessConceptService` 写入 SOURCE_EXPLICIT/CONFIRMED；PROPOSED 别名不参与 `findConfirmedAliasesMentionedIn` 与 `findConceptIdsByAlias`（只匹配 CONFIRMED）。
+- **测试**：新增 23 例——问题提取 5（规则命中/意图标志/版本提取/未命中/LLM 补召回 resolve-or-drop）；解析器 5（别名命中/未命中/代码符号成员名/歧义 NEEDS_REVIEW/不伪造 ID）；来源提取 6（PROPOSED 别名不影响确认匹配/输入批次外 claim 拒绝/非法关系类型拒绝/LLM 失败降级/关闭时 ENTITY_LLM_UNAVAILABLE）；校验 7（预算/未知实体结构通过/claim 越界/关系白名单/受限选择/空选择）。全量 1043 tests 通过。
+
+### Added（0.9.7 — 实体中心检索 Phase 1：跨版本实体基础）
+
+按 `docs/entity-centric-knowledge-retrieval-implementation.md` 推进实体中心检索，首个批次（Phase 1）把 `BusinessConcept` 收敛为跨版本、跨来源的稳定实体：
+
+- **canonicalKey 去来源前缀**（`BusinessConceptService.conceptFor`）：去掉 `param:/req:/test:/obs:/doubt:` 拆分，统一为 `<module>.<subject>` 的稳定实体键（`AlignmentNaming.conceptKey`，module/subject 为空的退化规则；`AlignmentNaming.factKeyModule` 共享提取模块段）。同一业务实体在任何来源、任何业务版本下解析到同一 `entityId`；参数/需求/测试成员可共存于同一实体；同 subject 不同 module 不合并（防错误实体合并）。
+- **项目级重建**（`BusinessConceptService.buildProject(projectId)`）：枚举项目全部业务版本（`MultiSourceKnowledgeStore.findBusinessVersions`，数值感知排序——`5.9 < 5.10`，字典序会把 5.10 误排到 5.2 前）+ 当前代码符号，跨版本合并实体；每版本仅清理并重建该版本成员，**不删除其他版本历史成员**；当前代码符号只挂最新业务版本（不冒充历史版本代码，避免把当前 commit 伪装成历史事实）。原 `build(projectId, version)` 保留为版本级增量构建。
+- **版本上下文幂等修复**（`CodeCentricAlignmentStore.upsertVersionContext`）：冲突目标从 `unique(project,version,env,repository,commit)` 改为 `context_id`——SQLite UNIQUE 对 NULL 视为互不相等，repository/commit 为 null（无代码索引，即方案 §15.2 “代码索引不可用”场景）时重复 resolve 会撞主键；修复后无代码索引项目可正常构建。
+- **实体/别名/成员索引**：补齐方案 §5.2 索引——`idx_concept_alias_lookup(project_id,alias)`、`idx_concept_member_entity_version(project_id,concept_id,business_version)`、`idx_concept_member_claim(project_id,claim_id)`（对齐库）；`idx_claim_fact_subject(project_id,fact_key,subject,predicate)`、`idx_document_version_business_status(project_id,business_version,status)`（知识库，create index 幂等，老库自动生效）。
+- **下游对齐服务适配**（`RequirementCodeDriftService`）：需求概念查找改用共享 `AlignmentNaming.conceptKey`（去 `req:` 前缀），与实体基础保持一致。
+- **测试**：新增 5 例——同一实体跨 5.0/5.1 返回同一 conceptId 且成员两版本并存（无前缀断言）；参数/需求/测试成员同实体共存（同名同模块）；项目级重建后重建最新版本历史成员不消失；同 subject 不同 module 不合并；业务版本数值感知排序。全量 1019 tests 通过。
+
 ## 0.9.6 — 2026-08-26
 
 ### Added
 
+- **Entity-centric multi-version knowledge retrieval implementation** (`docs/entity-centric-knowledge-retrieval-implementation.md`): defines LLM-assisted question/entity extraction, cross-version entity aggregation, code and parameter-table fact precedence, evidence-bound answer generation, vector projection responsibilities, LightRAG comparison, API/frontend changes, phased implementation, and quality gates.
 - **Multi-source Claim vector retrieval development plan** (`docs/multi-source-claim-vector-retrieval-development-plan-0.9.6.md`): defines a dedicated Qdrant Claim projection with SQLite as the source of truth, deterministic typed embedding text, versioned generation manifests, verified alias publication and rollback, SQLite hit hydration, deterministic candidate fusion, fail-safe feature flags, shadow rollout, and approximately 201,000-Claim quality/scale gates.
 
 ### Added（0.9.6 — Phase A：投影契约与代际 Manifest）
@@ -51,6 +128,64 @@
 - **运维手册**（`docs/claim-vector-operator-runbook.md`）：架构概览、配置项表、构建流程（首次/增量/失败处理）、回滚流程（上一代际/指定代际/验证）、质量门检查项、影子模式监控、灾难恢复（Qdrant 丢失/SQLite 丢失）、监控指标与告警阈值。
 - **发布决策记录**（`docs/claim-vector-rollout-decision-record.md`）：发布范围与前置条件清单、灰度发布 6 阶段计划（关闭→构建→影子→候选→融合→正式）、回滚预案与触发条件、融合权重决策与风险评估、代码组件清单。
 - **测试**：新增 10 例——质量门 10 例（无活跃代际失败、全检查通过 readyToPublish、点数不匹配失败、alias 不匹配失败、物理点数不一致失败、Qdrant 不可用失败、影子数据不足失败、影子数据为 null 失败、影子关闭时跳过检查、报告汇总字段）。全量 979 tests 通过。
+
+### Added（0.9.6 — 实现说明文档）
+
+- **实现说明**（`docs/claim-vector-and-multisource-implementation.md`）：图文并茂（10 个 Mermaid 流程图），讲清需求文档、数值表、测试用例、存疑四类知识如何统一表达（document→version→evidence→claim + claim_evidence）、如何被数值化（xlsx→ParameterTableLoader→multi_source_parameter 结构化 + syncClaims 统一 claim + composer 类型化渲染→向量）、如何向量化（0.9.6 两遍流式构建流水线 / 代际状态机 / alias 切换与回滚 / 失败保护）、以及检索时如何结合（意图→来源→候选→融合（0.55 向量+0.25 词法+0.10 策略+0.10 精确-冲突）→评分排序→分页；数值类 PARAMETER 意图双路召回）。含发布语义（一次投影一个文档版本的限制与依据）与运维接口速查。
+
+### Changed（0.9.6 — 模型拓扑标注：嵌入 vs 重排不再混淆）
+
+- **运维状态标注**（`scripts/nexus.sh` status）：原 `BGE: 未运行（可降级）` 行改标为 `Reranker-BGE(:8081)`（重排器，仅影响 rerank 阶段），并新增 `Embedding(text-embedding-v4@网关)` 行（OpenAI 兼容网关 ai-gateway.momo.com，`/v1/embeddings`，1024 维）——向量化不再被误读为依赖 BGE。
+- **契约固化**（`.trellis/spec/backend/retrieval-and-version-knowledge.md` 新增 Model Topology 章节）：主嵌入 = OpenAI 兼容网关 `text-embedding-v4`（`EmbeddingConfiguration.primaryEmbeddingModel` @Primary，所有 `EmbeddingModel` 注入点都走它）；BGE = 本地重排器（:8081）/ Ollama 备选（bge-m3），均非主嵌入；模型族成员（GENERATION/LLM_RERANK/ANNOTATION/REQUIREMENT_GRAPH_EXTRACTION）均为 LLM 调用非嵌入。排查嵌入问题看网关，不看 :8081 也不看 Ollama。
+
+### Changed（0.9.6 — 文档维护：README 与运维手册收口）
+
+- **README 升级到 0.9.6**：版本徽章与「当前版本」由 0.9.4 更新；核心能力新增「多源知识：需求 × 数值 × 测试 × 存疑，统一成 Claim」小节；文档地图补录 0.9.5/0.9.6 六份新文档（0.9.6 四份 + 0.9.5 两份）；已具备/后续重点清单同步。
+- **运维手册校正**（`docs/claim-vector-operator-runbook.md`）：① 回滚流程补充 retain 窗口校验语义——§4.1 取「物理集合仍在 Qdrant」的最近 RETIRED（被清理的跳过），§4.2 目标集合已清理时明确拒绝回滚；② §7「Qdrant 数据丢失」重写——如实标注当前版本无全自动重建路径（`findReusableGeneration` 只查 SQLite `physical_collection is not null`、`rollback` 只回物理集合仍在的 RETIRED，质量门可检出但需人工介入），并给出可行恢复手段（输入指纹变化触发重建 / 人工清理代际行）。
+
+### Fixed（0.9.6 — Claim 向量投影 Review 第八批次）
+
+0.9.5 检索链路复查（vaxr）定位 8 项 Medium（无 High），全部处理，全量 1015 tests 通过：
+
+- **中·融合路径不在 per-source 故障保护内**（`MultiSourceSearchService`）：向量加载/融合/影子记录段任何未捕获异常都会让整个检索 500，违背“来源故障必须降级为警告”契约。修复：融合段包裹 try/catch，失败时回退纯结构化候选 + `MULTI_SOURCE_CANDIDATE_LOAD_FAILED:CLAIM_VECTOR` 告警码。（vaxr M1）
+- **中·截断探测被存储层钳制吞掉**（`SQLiteRequirementSemanticStore` + `RequirementSemanticCandidateAdapter`）：适配器用 limit+1 探测截断，恰好命中 SQL 硬顶 20000 时探测失效，后段相关候选静默丢失。修复：`ActiveAnnotations` 新增 `truncated` 标志（内部多取一行，命中数超过 effectiveLimit 即置位），适配器直接读标志，不再依赖尺寸比较。（vaxr M2）
+- **中·单来源全量物化放大开销**（`MultiSourceSearchService.loadCandidates`）：空查询/超大版本会让单个来源物化全量行，融合/评分/冲突分析/分页全部放大代价且可 OOM。修复：单来源候选硬上限 20000，超出裁剪并告警 `MULTI_SOURCE_CANDIDATE_TRUNCATED:<SOURCE>`。（vaxr M3）
+- **中·CODE 源故障静默成无结果**（`CodeKnowledgeCandidateAdapter`）：代码检索 catch 吞异常返回空候选，上层只见“无代码结果”。修复：覆写 `loadDetailed`，故障返回稳定告警码 `CODE_SEARCH_FAILED`；旧 `load()` 契约保留（直接调用方仍降级空候选）。（vaxr M4）
+- **中·冲突惩罚双重扣分**（`MultiSourceSearchService` 评分）：融合分数已内嵌状态冲突惩罚（0.10），检索层再叠加组冲突惩罚（0.20）造成排序偏置。修复：融合候选不再叠加检索层惩罚。（vaxr M5）
+- **中·偏移分页非快照一致**（`MultiSourceSearchService`）：候选集每次请求重新求值，两次请求间发布/回滚新代际会让首页与次页来自不同快照。已文档化为接受项（确定性排序键 + 注释说明；游标分页属特性变更不在本批）。（vaxr M6）
+- **中·只读方法单一锁串行化全部查询**（`MultiSourceKnowledgeStore`）：find* 只读方法持有单例 synchronized 锁，`open()` 每调用新建连接，并发读本就安全。修复：移除 5 个纯读方法（findParameters/findDoubts/findTestCases/findTestResults/findRelations）的 synchronized，写与读-改-写方法保留。（vaxr M7）
+- **中·NORMATIVE 存疑提示是死代码**（`MultiSourceSearchService`）：NORMATIVE 意图下 doubts 列表恒为空，警告分支永不触发。修复：NORMATIVE 时单独探测版本是否存在 OPEN 存疑（不改变结果契约），存在才告警。（vaxr M8）
+- **新增测试 4 例**：`fusionPathFailureFallsBackToStructuredCandidates`（融合故障回退+告警码）、`listActiveByProjectVersionWithBuildsFlagsTruncationWhenMoreThanLimitMatch`（超上限置位/恰上限不误报）、`CodeKnowledgeCandidateAdapterTest` 2 例（投影正常/故障告警码+旧契约降级）。全量 1015 tests 通过（上批 1011）。
+
+### Fixed（0.9.6 — Claim 向量投影 Review 第七批次）
+
+Reviews 定位 1 项 High + 4 项 Medium（0.9.6 向量子系统）+ 5 项 Medium（0.9.5 语义/前端），全部修复，全量 1014 tests 通过：
+
+- **High·并发 rollback/rollback-to 与 build 竞态导致 SQLite/Qdrant 永久分叉**（`KnowledgeClaimVectorBuildService`）：build 有 scope 条带锁而 rollback/rollbackTo 无锁，“读决定→写 Qdrant→写 SQLite”序列交叉会让 SQLite ACTIVE=genN 而 alias→旧 collection，且 findReusableGeneration 复用 ACTIVE 跳过 switchAlias 无法自愈。修复：build/rollback/rollbackTo 三入口共用 `withScopeLock(...)`（同 scope 同条带锁），rollbackTo 的校验（findGeneration/scope/status）移入锁内。（Review 1）
+- **Medium·retain-physical-collections 下限 1 导致补偿回滚失效**（`KnowledgeClaimVectorProperties`）：下限改为 2——retain=1 时 switchAlias 尾部立即删前序集合，markActive 失败补偿 rollbackAlias 与 rollback 双双失效。（Review 2）
+- **Medium·质量门检查 Qdrant 不可用时整个检查抛 500**（`ClaimVectorQualityGate.checkAlias`）：加 try/catch 降级为 `QualityCheck.fail("ALIAS_HEALTH", ...)`（Qdrant unavailable），与 countPointsIfAvailable 降级语义一致，不再掩盖其他检查项。（Review 3）
+- **Medium·代际/输入表无保留策略，跨指纹 RETIRED 永不清理、rollback-to 可指向已删集合**（`SQLiteKnowledgeClaimVectorStore` + `KnowledgeClaimVectorBuildService` + `KnowledgeClaimVectorQdrantStore`）：① 新增 `collectionExists(String)`（GET /collections，200→true/404→false，其他错误照常抛）；② rollback() 改为取“物理集合仍在 Qdrant”的最近 RETIRED，跳过被 retain 清理的；③ rollbackTo 目标集合已不存在时抛明确异常拒绝回滚（绝不把 alias 指向已删集合）；④ 新增 `pruneRetiredGenerations(projectId, businessVersion, keep)` 单事务（先删 input 再删 manifest），发布成功后按 `retainPhysicalCollections` 裁剪超期 RETIRED，与 Qdrant 清理窗口对齐，防止 generation/generation_input 无界增长。（Review 4）
+- **Medium·recordBuildRun 仍用 deferred 事务**（`SQLiteRequirementSemanticStore.recordBuildRun`）：镜像 save() 改为 `begin immediate`——并发构建提交恰在读写之间时 deferred 事务以 SQLITE_BUSY_SNAPSHOT 失败且 run 行回滚丢失（聚合状态条不反映失败）。（Review M1）
+- **Medium·前端死代码与误导文案**（`knowledge-api.js` / `knowledge-app.js`）：删除全仓库无调用者的 `buildSemantic`；状态条“请先执行语义构建/重新构建”文案改为指向真实入口 `POST /api/requirement-semantic/builds`（页面暂无构建按钮），避免用户点错 chunk 重建按钮。（Review M2）
+- **Medium·项目级多源开关关闭时状态条仍显示“已发布”**（`RequirementSemanticModels` / `RequirementSemanticBuildController` / `knowledge-app.js`）：`SemanticBuildAggregateView` 新增 `multiSourceEnabledForProject`（controller 注入 `MultiSourceKnowledgeProperties.enabledFor`），前端在开关关闭时把绿条降级为警示，与 candidateRetrievalEnabled 同处理。（Review M3）
+- **Medium·评测拒绝文案恒为“被配置关闭”**（`knowledge-app.js`）：新增 `semanticRefusalReason()` 按真实原因派生（快照缺失/构建状态错误/语义源未参与/无 active 代际/空 buildIds/开关关闭/候选拦截），`markJudgement`/`markMissedRecall` 拒绝提示改为动态原因。（Review M4）
+- **Medium·检索路径整表物化 raw_text+result_json 有 OOM 风险**（`SQLiteRequirementSemanticStore.listActiveByProjectVersionWithBuilds` + `RequirementSemanticProperties`）：① SQL 显式投影列并 `substr(raw_text,1,2000)`（raw_text 仅作 searchText 兜底）；② 行数硬上限 `min(limit, 20000)`，`maxCandidateAnnotations` 配置上限 100k→20k 对齐。（Review M5）
+- **新增测试 2 例**：`rollbackToMissingPhysicalCollectionFails`（目标集合已清理→拒绝回滚+不动 alias）、`pruneRetiredGenerationsKeepsNewestWithinRetainWindow`（窗口裁剪+input 连带删除+ACTIVE 不裁剪）；既有两条 rollback 测试补 `collectionExists` stub，`RequirementSemanticAssemblyTest` 补 `MultiSourceKnowledgeProperties.disabledDefault` bean，controller 测试补 `multiSourceEnabledForProject` 断言。全量 1011 tests 通过（上批 1009）。
+
+### Fixed（0.9.6 — Claim 向量投影 Review 第六批次）
+
+Reviews 定位 1 项问题（1 High，含 1 项连带发现），全部修复，全量 1009 tests 通过：
+
+- **High·markActive 失败后代际残留 SUCCESS 被错误复用**（`KnowledgeClaimVectorBuildService` / `SQLiteKnowledgeClaimVectorStore`）：旧流程先 `updateStatus(SUCCESS)` 再 `markActive()`，后者失败时 catch 只做 alias 补偿未标 FAILED——SQLite 残留 `status=SUCCESS, physical_collection=null`，下次构建 `findReusableGeneration()` 直接返回该代际：构建接口返回 SUCCESS manifest、无 ACTIVE、语义检索永远拿不到向量候选。修复三层：① markActive 失败时先 `failGeneration(BUILD_FAILED)`（包裹 try/catch，状态落库失败不阻断 alias 补偿）；② `findReusableGeneration` SQL 增加 `and physical_collection is not null`（兑现 javadoc 已承诺的“且物理集合存在才跳过”——只有 markActive 才写 physical_collection，天然挡住 SUCCESS 残留）；③ switchAlias 失败路径的 `failGeneration` 同样加保护，状态落库失败不再跳过 alias 补偿，并修正其告警文案（实际标记 FAILED 而非“保持 SUCCESS”）。（Review 9）
+- **连带发现·同指纹重试被 unique 约束阻塞**（`SQLiteKnowledgeClaimVectorStore`）：表上有 `unique(project_id, business_version, input_fingerprint, projection_schema_version, embedding_model)`，而全库无任何删除代际的代码——任何 FAILED 代际（含嵌入/Qdrant 写入失败）重试同输入时 `recordBuildStart` 直接报“记录构建失败”。新增 `deleteSupersededGenerations(...)`（单事务先删 input 再删 `status != 'ACTIVE'` 代际），构建步骤 3 在 `recordBuildStart` 前调用，重试可正常重建；ACTIVE 代际不受影响。
+- **新增测试 4 例**：三条 markActive 失败路径均补断言 latest generation=FAILED+physical_collection=null；`rebuildAfterMarkActiveFailureDoesNotReuseFailedGeneration`（失败后重建→新代际 ACTIVE、switchAlias 调用两次）；store 层 `findReusableSkipsSuccessGenerationWithoutPhysicalCollection`（SUCCESS+null 集合不可复用），并把既有 `findReusableGenerationFindsSuccessWithSameFingerprint` 的 manifest 补上物理集合（原测试恰恰固化了 bug 行为）。全量 1009 tests 通过（上批 1007）。
+
+### Fixed（0.9.6 — Claim 向量投影 Review 第五批次）
+
+Reviews 定位 1 项问题（1 High），全部修复，全量 1007 tests 通过：
+
+- **High·alias 状态查询失败时补偿不得删除线上 collection**（`KnowledgeClaimVectorBuildService`）：旧实现把 `aliasTarget()` 查询失败与“确认 alias 不存在”混为一谈（两种 null 语义）：构建前读旧 alias 超时→`previousAliasTarget=null`；`switchAlias()` 在 Qdrant 端已生效但客户端超时抛异常；补偿复查 alias 仍超时→`currentTarget=null` 被当作“未指向本代际”→直接 `cleanupFailedCollection` 删除仍被 alias 引用的集合，留下悬空 alias。改为三态区分（确认指向/确认不存在/状态未知）：① 首次查询失败时标记 `previousAliasTargetKnown=false`，不再当作“确认无前序目标”；② 补偿复查失败（状态未知）时保留半成品 collection 与 alias 现状、仅记 ERROR 对账日志，不执行任何写操作；③ 复查确认已指向本代际但前序目标未知时，不回滚不删 alias（回滚无从回退、删除会切断数据面），整体保留待人工对账；④ markActive 失败补偿同理——前序目标未知时不删 alias/集合。查询成功且确认不指向本代际（含确认不存在）时维持原安全清理路径。（Review 7）
+- **新增测试 3 例**：switchAlias 异常+前后两次 alias 查询均失败→不删集合/不动 alias；复查确认已指向本代际但前序目标查询失败→不回滚/不删 alias/不删集合；markActive 失败且前序目标查询失败→保守保留。全量 1007 tests 通过（上批 1004）。
 
 ### Fixed（0.9.6 — Claim 向量投影 Review 修复批次）
 

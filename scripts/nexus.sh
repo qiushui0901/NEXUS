@@ -232,7 +232,12 @@ show_status() {
   fi
   echo "Qdrant: $(http_ok "$(qdrant_url)/collections" && echo 运行中 || echo 未运行)"
   echo "Ollama: $(http_ok "${OLLAMA_BASE_URL:-http://127.0.0.1:11434}/api/tags" && echo 运行中 || echo 未运行)"
-  echo "BGE: $(http_ok "${BGE_RERANK_URL:-http://127.0.0.1:8081}/health" && echo 运行中 || echo 未运行（可降级）)"
+  # 注意：BGE 这里指【重排器 Reranker】（端口 8081，/rerank），不是嵌入模型。
+  # 向量化（Embedding）走 OpenAI 兼容网关 ai-gateway（text-embedding-v4），见下一行。
+  echo "Reranker-BGE(:8081): $(http_ok "${BGE_RERANK_URL:-http://127.0.0.1:8081}/health" && echo 运行中 || echo 未运行（可降级）)"
+  local embed_model="${OPENAI_EMBEDDING_MODEL:-text-embedding-v4}"
+  local embed_gw="${OPENAI_BASE_URL:-http://ai-gateway.momo.com}"
+  echo "Embedding(${embed_model}@网关): $(http_ok "${embed_gw}" && echo 运行中 || echo 未运行/未确认)"
   if http_ok "$base/api/runtime/status"; then curl -fsS "$base/api/runtime/status"; echo; fi
 }
 

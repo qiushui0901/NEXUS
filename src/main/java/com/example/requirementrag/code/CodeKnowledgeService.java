@@ -530,6 +530,29 @@ public class CodeKnowledgeService {
         return sourceFromRoot(repositoryPath, filePath, startLine, endLine);
     }
 
+    /** 按代码快照 commit 读取源码片段，供跨源证据引用使用。 */
+    public SourceSnippet sourceAtCommit(String projectId, String commitSha, String filePath,
+                                        Integer startLine, Integer endLine) throws IOException {
+        if (commitSha == null || commitSha.isBlank() || filePath == null || filePath.isBlank()) {
+            throw new IllegalArgumentException("commitSha/filePath required");
+        }
+        List<String> lines = snapshotSourceLines(projectId, commitSha, filePath);
+        if (lines == null || lines.isEmpty()) {
+            throw new IOException("代码快照不可用: " + commitSha + ":" + filePath);
+        }
+        int start = startLine == null ? 1 : startLine;
+        int end = endLine == null ? start + 40 : endLine;
+        if (start < 1 || start > lines.size() || end < start) {
+            throw new IllegalArgumentException("非法代码行范围");
+        }
+        end = Math.min(end, lines.size());
+        StringBuilder text = new StringBuilder();
+        for (int line = start; line <= end; line++) {
+            text.append(String.format("%5d  %s%n", line, lines.get(line - 1)));
+        }
+        return new SourceSnippet(filePath, start, end, text.toString());
+    }
+
     /** 读取源码片段，用于前端点击检索结果后展示。 */
     public SourceSnippet source(String projectId, String filePath, Integer startLine, Integer endLine) throws IOException {
         if (filePath == null || filePath.isBlank()) {

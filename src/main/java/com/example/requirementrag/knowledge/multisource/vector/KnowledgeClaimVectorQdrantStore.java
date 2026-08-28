@@ -397,6 +397,21 @@ public class KnowledgeClaimVectorQdrantStore {
         deleteCollectionQuietly(collection);
     }
 
+    /**
+     * 中（第七批 Review 4）：确认物理 collection 是否存在（GET /collections/{c}，200→true，404→false）。
+     * 回滚前必须确认目标集合仍在 retain 窗口内，否则 rollbackAlias 会指向已删集合。
+     * Qdrant 不可达等其他错误照常抛出——不可把“无法确认”当成“不存在”。
+     */
+    public boolean collectionExists(String collection) {
+        try {
+            client.get().uri("/collections/{collection}", collection)
+                    .retrieve().toBodilessEntity();
+            return true;
+        } catch (HttpClientErrorException.NotFound exception) {
+            return false;
+        }
+    }
+
     private void deleteCollectionQuietly(String collection) {
         try {
             client.delete().uri("/collections/{collection}", collection)

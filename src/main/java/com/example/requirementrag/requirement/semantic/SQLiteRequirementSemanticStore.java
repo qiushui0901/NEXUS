@@ -43,7 +43,14 @@ public class SQLiteRequirementSemanticStore {
      * active 标注 + 实际读取的构建代际 ids（单查询单快照）：检索层用它把"本次检索实际读取的
      * 代际"回传给响应，评测上下文必须绑定实际读取的 build ids 而非另行查询的状态。
      */
-    public record ActiveAnnotations(List<SemanticAnnotationRecord> annotations, List<String> buildIds) {
+    public record ActiveAnnotations(List<SemanticAnnotationRecord> annotations, List<String> buildIds,
+                                    boolean truncated) {
+
+        /** 兼容旧签名：不区分是否被截断。 */
+        ActiveAnnotations(List<SemanticAnnotationRecord> annotations, List<String> buildIds) {
+            this(annotations, buildIds, false);
+        }
+
         public ActiveAnnotations {
             annotations = annotations == null ? List.of() : List.copyOf(annotations);
             buildIds = buildIds == null ? List.of() : List.copyOf(buildIds);
@@ -512,7 +519,14 @@ public class SQLiteRequirementSemanticStore {
                                                                   String query) {
         List<String> terms = likeTerms(query);
         StringBuilder sql = new StringBuilder("""
-                select a.*, b.build_id as read_build_id from requirement_semantic_annotation a
+                select a.annotation_id, a.project_id, a.document_id, a.requirement_version, a.source_revision,
+                       a.source_chunk_id, a.parent_id, a.window_id, a.window_index, a.start_offset, a.end_offset,
+                       a.source_file, a.parent_order, a.content_hash,
+                       substr(a.raw_text, 1, 2000) as raw_text,
+                       a.semantic_summary, a.semantic_text, a.result_json, a.model, a.prompt_version, a.schema_version,
+                       a.extraction_status, a.claim_status, a.confidence, a.attempt_count, a.model_calls,
+                       a.latency_ms, a.token_estimate, a.error_code, a.created_at, a.updated_at,
+                       b.build_id as read_build_id from requirement_semantic_annotation a
                 join requirement_semantic_build b
                   on a.project_id=b.project_id and a.document_id=b.document_id
                  and a.requirement_version=b.requirement_version
@@ -542,7 +556,13 @@ public class SQLiteRequirementSemanticStore {
             sql.append(')');
         }
         sql.append(" order by a.source_file, a.parent_order, a.window_index, a.start_offset, a.source_chunk_id limit ?");
-        params.add(Integer.toString(Math.max(1, limit)));
+        // 中（第七批 Review M5）：检索路径硬上限 20000 行——maxCandidateAnnotations 配置上限（100k）
+        // 会让一次查询物化上万元数据（raw_text+result_json）造成瞬时百 MB 堆；raw_text 已截断到 2000 字符，
+        // 行数再硬性封顶，双重限幅。result_json 是候选投影（entities/conditions/numericFacts）必需，不能裁剪。
+        int effectiveLimit = Math.min(Math.max(1, limit), 20_000);
+        // 中（第七批 Review M2）：内部多取一行探测截断——否则恰好命中上限（含 SQL 硬顶 20000）时
+        // 适配器无法区分“刚好等于上限”与“被上限截断”，静默丢失后段相关候选。
+        params.add(Integer.toString(effectiveLimit + 1));
         // 高（Review #1）：buildIds 必须包含本次被查询的全部 active 代际，而非只返回产生候选行的代际——
         // 零命中时（语义源确实查询了 active 代际但无匹配标注）返回空 IDs，前端无法与"语义源未参与"区分。
         // 两条查询在同一只读事务中执行，保证单快照一致。
@@ -566,6 +586,11 @@ public class SQLiteRequirementSemanticStore {
                     }
                 }
             }
+            // 多取的那一行仅用于截断探测，不进入返回集。
+            boolean truncated = records.size() > effectiveLimit;
+            if (truncated) {
+                records = new ArrayList<>(records.subList(0, effectiveLimit));
+            }
             java.util.LinkedHashSet<String> buildIds = new java.util.LinkedHashSet<>();
             try (PreparedStatement statement = connection.prepareStatement(activeBuildIdsSql)) {
                 statement.setString(1, safe(projectId));
@@ -580,7 +605,7 @@ public class SQLiteRequirementSemanticStore {
             try (Statement transaction = connection.createStatement()) {
                 transaction.execute("commit");
             }
-            return new ActiveAnnotations(List.copyOf(records), List.copyOf(buildIds));
+            return new ActiveAnnotations(List.copyOf(records), List.copyOf(buildIds), truncated);
         } catch (SQLException exception) {
             throw new IllegalStateException("Unable to list active requirement semantic annotations", exception);
         }
@@ -657,7 +682,8 @@ public class SQLiteRequirementSemanticStore {
     public Optional<RequirementSemanticModels.SemanticBuildAggregateView> aggregateBuildStatus(String projectId,
                                                                                                String requirementVersion,
                                                                                                boolean candidateRetrievalEnabled,
-                                                                                               boolean normativeRetrievalEnabled) {
+                                                                                               boolean normativeRetrievalEnabled,
+                                                                                               boolean multiSourceEnabledForProject) {
         // 1) 最新一次 run（跨文档，按时间）：决定“最新执行状态”提示。
         String latestRunSql = """
                 select r.run_id as run_id, r.build_id as build_id, r.build_status as status,
@@ -728,7 +754,7 @@ public class SQLiteRequirementSemanticStore {
                     activeDocumentIds, activeBuildIds, runId, buildId,
                     RequirementSemanticModels.SemanticBuildStatus.valueOf(status),
                     total, completed, failed, warnings,
-                    candidateRetrievalEnabled, normativeRetrievalEnabled));
+                    candidateRetrievalEnabled, normativeRetrievalEnabled, multiSourceEnabledForProject));
         } catch (SQLException exception) {
             throw new IllegalStateException("Unable to query aggregate requirement semantic build status", exception);
         }
@@ -751,7 +777,12 @@ public class SQLiteRequirementSemanticStore {
         boolean active = run.buildStatus() == SemanticBuildStatus.SUCCESS;
         Instant now = Instant.now();
         try (Connection connection = open()) {
-            connection.setAutoCommit(false);
+            // 中（第七批 Review M1）：镜像 save() 的 begin immediate——deferred 事务先读后写会升级写锁，
+            // 并发构建提交恰在读写之间时当前连接以 SQLITE_BUSY_SNAPSHOT 失败且 busy_timeout 无效，
+            // run 行随之回滚丢失（聚合状态条不反映失败）。IMMEDIATE 让竞争构建排队而非快照失效。
+            try (Statement transaction = connection.createStatement()) {
+                transaction.execute("begin immediate");
+            }
             try {
                 boolean keepExistingGeneration = !active && isGenerationActive(connection, run.buildId());
                 if (!keepExistingGeneration) {
@@ -765,9 +796,15 @@ public class SQLiteRequirementSemanticStore {
                     replaceBuildInputs(connection, run.buildId(), inputs);
                 }
                 insertRunRow(connection, run, now);
-                connection.commit();
+                try (Statement commit = connection.createStatement()) {
+                    commit.execute("commit");
+                }
             } catch (SQLException | RuntimeException exception) {
-                connection.rollback();
+                try (Statement rollback = connection.createStatement()) {
+                    rollback.execute("rollback");
+                } catch (SQLException rollbackFailure) {
+                    exception.addSuppressed(rollbackFailure);
+                }
                 throw exception;
             }
         } catch (SQLException exception) {

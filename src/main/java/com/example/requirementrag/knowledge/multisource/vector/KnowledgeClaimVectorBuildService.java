@@ -37,6 +37,9 @@ import java.util.UUID;
  *       投影只读取已发布(PUBLISHED)资料版本（findPublishedClaimsByProjectVersionPage）。</li>
  *   <li>高（Review 4）：markActive 失败时补偿把 alias 切回前序目标；回滚 alias 失败时补偿把
  *       SQLite 恢复到原 ACTIVE 代际——消除 Qdrant/SQLite 分叉窗口。</li>
+ *   <li>高（Review 9）：markActive 失败时代际必须标记 FAILED（且状态落库失败不得跳过 alias 补偿）
+ *       ——否则 SUCCESS + physical_collection=null 的代际会被 findReusableGeneration
+ *       当作可复用结果返回，后续构建跳过重建且语义检索永远无向量可用。</li>
  *   <li>高（Review 8）：两遍分页流式读取 + 分块嵌入 + 逐块写点，20 万 Claim 构建
  *       不驻留全量文本与向量（任一时刻内存仅一页 + 一块）。</li>
  * </ul>
@@ -97,11 +100,7 @@ public class KnowledgeClaimVectorBuildService {
         if (businessVersion == null || businessVersion.isBlank()) {
             throw new IllegalArgumentException("businessVersion 不能为空");
         }
-        int stripe = Math.floorMod(
-                (projectId + "\u0000" + businessVersion).hashCode(), BUILD_LOCK_STRIPES);
-        synchronized (buildLocks[stripe]) {
-            return doBuild(projectId, businessVersion);
-        }
+        return withScopeLock(projectId, businessVersion, () -> doBuild(projectId, businessVersion));
     }
 
     /**
@@ -110,12 +109,25 @@ public class KnowledgeClaimVectorBuildService {
      * SQLite rollbackTo 恢复 RETIRED→ACTIVE，Qdrant rollbackAlias 切回旧物理 collection。
      */
     public Optional<ClaimVectorGenerationManifest> rollback(String projectId, String businessVersion) {
-        List<ClaimVectorGenerationManifest> retired = vectorStore.listRetiredForRollback(projectId, businessVersion);
-        if (retired.isEmpty()) {
-            return Optional.empty();
-        }
-        ClaimVectorGenerationManifest target = retired.get(0);
-        return restoreGeneration(projectId, businessVersion, target);
+        // 高（第七批 Review 1）：与 build 共用同一把 scope 条带锁——否则并发 rollback 与 build 的
+        // “读决定→写 Qdrant→写 SQLite”序列交叉会造成 SQLite/Qdrant 永久分叉且无法自愈。
+        return withScopeLock(projectId, businessVersion, () -> {
+            List<ClaimVectorGenerationManifest> retired = vectorStore.listRetiredForRollback(projectId, businessVersion);
+            // 中（第七批 Review 4）：按发布时间降序取第一个“物理集合仍在 Qdrant”的 RETIRED 代际——
+            // retain 窗口之外的代际集合已被清理，不可作为回滚目标。
+            for (ClaimVectorGenerationManifest candidate : retired) {
+                if (candidate.physicalCollection() == null) {
+                    continue;
+                }
+                if (!qdrantStore.collectionExists(candidate.physicalCollection())) {
+                    LOGGER.warn("跳过回滚候选 {}：物理集合 [{}] 已被 retain 清理",
+                            candidate.generationId(), candidate.physicalCollection());
+                    continue;
+                }
+                return restoreGeneration(projectId, businessVersion, candidate);
+            }
+            return Optional.<ClaimVectorGenerationManifest>empty();
+        });
     }
 
     /**
@@ -128,21 +140,25 @@ public class KnowledgeClaimVectorBuildService {
         if (generationId == null || generationId.isBlank()) {
             return Optional.empty();
         }
-        Optional<ClaimVectorGenerationManifest> target = vectorStore.findGeneration(generationId);
-        if (target.isEmpty()) {
-            return Optional.empty();
-        }
-        ClaimVectorGenerationManifest manifest = target.get();
-        if (!projectId.equals(manifest.projectId()) || !businessVersion.equals(manifest.businessVersion())) {
-            LOGGER.warn("rollbackTo scope mismatch: target gen {} belongs to {}/{} not {}/{}",
-                    generationId, manifest.projectId(), manifest.businessVersion(), projectId, businessVersion);
-            return Optional.empty();
-        }
-        if (manifest.status() != GenerationStatus.RETIRED) {
-            LOGGER.warn("rollbackTo target {} status {} (expected RETIRED)", generationId, manifest.status());
-            return Optional.empty();
-        }
-        return restoreGeneration(projectId, businessVersion, manifest);
+        // 高（第七批 Review 1）：同上——rollbackTo 也必须在 scope 锁内完成校验与恢复，
+        // 校验（findGeneration/status 检查）若在锁外做，锁内状态可能已被并发 build 改变。
+        return withScopeLock(projectId, businessVersion, () -> {
+            Optional<ClaimVectorGenerationManifest> target = vectorStore.findGeneration(generationId);
+            if (target.isEmpty()) {
+                return Optional.<ClaimVectorGenerationManifest>empty();
+            }
+            ClaimVectorGenerationManifest manifest = target.get();
+            if (!projectId.equals(manifest.projectId()) || !businessVersion.equals(manifest.businessVersion())) {
+                LOGGER.warn("rollbackTo scope mismatch: target gen {} belongs to {}/{} not {}/{}",
+                        generationId, manifest.projectId(), manifest.businessVersion(), projectId, businessVersion);
+                return Optional.empty();
+            }
+            if (manifest.status() != GenerationStatus.RETIRED) {
+                LOGGER.warn("rollbackTo target {} status {} (expected RETIRED)", generationId, manifest.status());
+                return Optional.empty();
+            }
+            return restoreGeneration(projectId, businessVersion, manifest);
+        });
     }
 
     /** 查询当前 ACTIVE 代际。 */
@@ -152,8 +168,31 @@ public class KnowledgeClaimVectorBuildService {
 
     // ── 内部 ─────────────────────────────────────────────────────────────
 
+    /**
+     * 高（第七批 Review 1）：同一 scope 的 build/rollback/rollbackTo 共用同一把条带锁串行。
+     * 旧实现只锁 build：并发 rollback 在 build 的 switchAlias→markActive 序列中间提交，
+     * 可造成 SQLite ACTIVE 与 Qdrant alias 永久分叉；此后代际一致性校验 fail-close 导致
+     * 向量召回静默归零，而 findReusableGeneration 复用 ACTIVE 代际又跳过 switchAlias，分叉无法自愈。
+     */
+    private <T> T withScopeLock(String projectId, String businessVersion, java.util.function.Supplier<T> action) {
+        int stripe = Math.floorMod(
+                (projectId + "\u0000" + businessVersion).hashCode(), BUILD_LOCK_STRIPES);
+        synchronized (buildLocks[stripe]) {
+            return action.get();
+        }
+    }
+
     private Optional<ClaimVectorGenerationManifest> restoreGeneration(String projectId, String businessVersion,
                                                                        ClaimVectorGenerationManifest target) {
+        // 中（第七批 Review 4）：目标物理集合可能已被 retain 窗口清理——先确认存在再切 alias，
+        // 否则 rollbackAlias 会把线上 alias 指向已删集合（悬空 alias，向量召回静默归零）。
+        if (target.physicalCollection() == null
+                || !qdrantStore.collectionExists(target.physicalCollection())) {
+            LOGGER.error("回滚目标 {} 的物理集合 [{}] 不存在（可能已被 retain 清理），拒绝回滚",
+                    target.generationId(), target.physicalCollection());
+            throw new IllegalStateException(
+                    "回滚目标物理集合已不存在: " + target.physicalCollection());
+        }
         // 高（Review 4）：SQLite 先提交、Qdrant 后切换——若 alias 切换失败，SQLite 与 Qdrant 会出现分叉窗口。
         // 补偿：把 SQLite 回滚到本次回滚前的 ACTIVE 代际，恢复双端一致（best-effort）。
         Optional<ClaimVectorGenerationManifest> previousActive = vectorStore.findActiveGeneration(projectId, businessVersion);
@@ -238,6 +277,10 @@ public class KnowledgeClaimVectorBuildService {
                         generationId, i.claimId(), i.documentVersionId(),
                         i.textHash(), i.updatedAt()))
                 .toList();
+        // 高（Review 9）：同一构建意图重试——先清理不可复用的旧代际（FAILED/无物理集合残留），
+        // 否则 unique(scope+fingerprint+schema+model) 约束会让重试直接报“记录构建失败”。
+        vectorStore.deleteSupersededGenerations(projectId, businessVersion, fingerprint,
+                properties.projectionSchemaVersion(), embeddingModelName);
         vectorStore.recordBuildStart(manifest, finalInputs);
 
         // 4. 第二遍流式：重读分页 → 组合文本 → 分块嵌入 → 逐块写点（内存只驻留一页 + 一块）
@@ -355,40 +398,71 @@ public class KnowledgeClaimVectorBuildService {
         vectorStore.updateStatus(generationId, GenerationStatus.SUCCESS, (int) written, null);
 
         // 7. Qdrant alias 切换（高：Review 6——先于 SQLite ACTIVE；失败则 FAILED 且保持非 ACTIVE）
-        String previousAliasTarget = null;
+        //    高（Review 7）：alias 状态查询失败 ≠ 确认 alias 不存在——必须区分
+        //    “确认无前序目标”与“无法确认远端状态”，后者一律保守保留现状并留人工对账。
+        String previousAliasTarget = null;   // 查询成功时：前序目标（null=确认 alias 不存在）
+        boolean previousAliasTargetKnown = false; // false=查询失败，远端状态未知
         try {
             previousAliasTarget = qdrantStore.aliasTarget(liveAlias);
-        } catch (RuntimeException ignored) {
-            // alias 尚不存在或不可达——切换失败补偿时按无前序目标处理
+            previousAliasTargetKnown = true;
+        } catch (RuntimeException unknownState) {
+            // 前序 alias 状态未知——不得当作“确认无前序目标”处理（否则补偿可能误删 alias/集合）
+            LOGGER.error("读取 alias [{}] 前序目标失败，远端状态未知，后续补偿将保守处理: {}",
+                    liveAlias, unknownState.getMessage());
         }
         try {
             qdrantStore.switchAlias(liveAlias, physicalCollection);
         } catch (RuntimeException exception) {
-            failGeneration(generationId, WarningCode.ALIAS_SWITCH_FAILED, "alias 切换失败",
-                    "SQLite 代际保持 SUCCESS（未 ACTIVE），旧 ACTIVE 与旧 alias 不变: " + exception.getMessage());
-            // 高（Review 4）：switchAlias 内部回收已 best-effort，此处异常必为 alias 操作本身失败——
-            // 但作防御性确认：若 alias 当前竟指向本代际 collection（切换实际已生效），
-            // 则必须回滚/删除 alias 后再清理，绝不能删除 alias 指向的线上 collection。
-            String currentTarget = null;
+            // 高（Review 9）：状态落库失败不得跳过 alias 补偿——否则 alias 可能长期指向半成品集合
+            try {
+                failGeneration(generationId, WarningCode.ALIAS_SWITCH_FAILED, "alias 切换失败",
+                        "SQLite 代际标记 FAILED（未 ACTIVE），旧 ACTIVE 与旧 alias 不变: " + exception.getMessage());
+            } catch (RuntimeException statusFailure) {
+                LOGGER.error("alias 切换失败后代际标记 FAILED 也失败（generationId={}），需人工对账",
+                        generationId, statusFailure);
+            }
+            // 高（Review 4）：switchAlias 内部回收已 best-effort，此处异常必为 alias 操作本身失败。
+            // 防御性复查当前 alias 指向：若已指向本代际 collection（切换实际已生效），
+            // 必须先回滚/删除 alias 再清理，绝不能删除 alias 指向的线上 collection。
+            String currentTarget = null;         // 查询成功时：当前指向（null=确认 alias 不存在）
+            boolean currentTargetKnown = false;  // false=查询失败，远端状态未知
             try {
                 currentTarget = qdrantStore.aliasTarget(liveAlias);
-            } catch (RuntimeException ignored) {
-                // alias 不可达时按未指向本代际处理
+                currentTargetKnown = true;
+            } catch (RuntimeException unknownState) {
+                // 高（Review 7）：查询失败时 alias 可能仍指向本代际 collection——
+                // 此时删除集合会制造悬空 alias，必须保留现状留待对账。
+                LOGGER.error("alias [{}] 切换失败且事后状态查询仍失败（switchAlias 异常: {}；"
+                        + "复查异常: {}）——保留半成品 collection [{}] 与 alias 现状，"
+                        + "需人工对账确认 alias 指向后再决定恢复/清理",
+                        liveAlias, exception.getMessage(), unknownState.getMessage(), physicalCollection,
+                        unknownState);
             }
-            if (physicalCollection.equals(currentTarget)) {
+            if (!currentTargetKnown) {
+                // 状态未知：不碰 alias、不删 collection——任何写操作都可能加剧不一致。
+            } else if (physicalCollection.equals(currentTarget)) {
                 LOGGER.warn("alias 切换实际已生效但返回异常，先恢复 alias 再清理半成品 collection");
-                try {
-                    if (previousAliasTarget != null) {
-                        qdrantStore.rollbackAlias(liveAlias, previousAliasTarget);
-                    } else {
-                        qdrantStore.deleteAlias(liveAlias);
+                if (!previousAliasTargetKnown) {
+                    // 高（Review 7）：alias 已确认指向本代际，但前序目标未知——
+                    // 回滚无从回退，删除 alias 会彻底切断数据面，只能整体保留待人工对账。
+                    LOGGER.error("alias [{}] 已指向本代际 collection [{}]，但前序目标状态未知——"
+                            + "保留 alias 与 collection 现状，需人工对账回滚或清理",
+                            liveAlias, physicalCollection);
+                } else {
+                    try {
+                        if (previousAliasTarget != null) {
+                            qdrantStore.rollbackAlias(liveAlias, previousAliasTarget);
+                        } else {
+                            qdrantStore.deleteAlias(liveAlias);
+                        }
+                        cleanupFailedCollection(physicalCollection, collectionReady);
+                    } catch (RuntimeException compensationFailure) {
+                        LOGGER.error("alias 已指向本代际但补偿恢复失败，SQLite 与 Qdrant 可能不一致",
+                                compensationFailure);
                     }
-                    cleanupFailedCollection(physicalCollection, collectionReady);
-                } catch (RuntimeException compensationFailure) {
-                    LOGGER.error("alias 已指向本代际但补偿恢复失败，SQLite 与 Qdrant 可能不一致",
-                            compensationFailure);
                 }
             } else {
+                // 已确认 alias 不指向本代际（指向别处或不存在）——可安全清理半成品集合
                 cleanupFailedCollection(physicalCollection, collectionReady);
             }
             throw new IllegalStateException("Claim 向量 alias 切换失败: " + exception.getMessage(), exception);
@@ -400,8 +474,24 @@ public class KnowledgeClaimVectorBuildService {
         try {
             vectorStore.markActive(generationId, physicalCollection);
         } catch (RuntimeException exception) {
-            LOGGER.error("markActive 失败，补偿回滚 alias 到前序目标: {}", previousAliasTarget, exception);
-            if (previousAliasTarget != null) {
+            // 高（Review 9）：代际必须标记 FAILED——否则 SUCCESS + physical_collection=null 的代际
+            // 会被 findReusableGeneration 当作可复用结果直接返回：后续构建跳过重建、无 ACTIVE 可查、
+            // 语义检索永远拿不到向量候选。状态落库失败也不得跳过 alias 补偿。
+            try {
+                failGeneration(generationId, WarningCode.BUILD_FAILED, "代际激活失败", exception.getMessage());
+            } catch (RuntimeException statusFailure) {
+                LOGGER.error("markActive 失败后代际标记 FAILED 也失败（generationId={}），"
+                        + "该代际不可复用，需人工对账", generationId, statusFailure);
+            }
+            LOGGER.error("markActive 失败，补偿回滚 alias 到前序目标: {}（known={}）",
+                    previousAliasTarget, previousAliasTargetKnown, exception);
+            if (!previousAliasTargetKnown) {
+                // 高（Review 7）：前序 alias 目标未知——alias 当前确指向本代际（switchAlias 已成功），
+                // 但无从回退；删除 alias 会彻底切断数据面。保留现状待人工对账。
+                LOGGER.error("alias [{}] 已指向本代际 collection [{}]，但前序目标状态未知——"
+                        + "保留 alias 与 collection 现状，需人工对账回滚或清理",
+                        liveAlias, physicalCollection);
+            } else if (previousAliasTarget != null) {
                 try {
                     qdrantStore.rollbackAlias(liveAlias, previousAliasTarget);
                     // 高（Review 5）：alias 已切回前序目标，本代际物理 collection 成孤儿——删除
@@ -410,7 +500,7 @@ public class KnowledgeClaimVectorBuildService {
                     LOGGER.error("markActive 补偿回滚 alias 失败，SQLite 与 Qdrant 可能不一致", compensationFailure);
                 }
             } else {
-                // 高（Review 4）：首次构建无前序目标——删除新 alias（恢复无 alias 状态），
+                // 高（Review 4）：确认首次构建无前序目标——删除新 alias（恢复无 alias 状态），
                 // 并清理本代际物理 collection，避免残留错误 alias/孤儿集合。
                 try {
                     qdrantStore.deleteAlias(liveAlias);
@@ -420,6 +510,13 @@ public class KnowledgeClaimVectorBuildService {
                 }
             }
             throw new IllegalStateException("Claim 向量代际激活失败: " + exception.getMessage(), exception);
+        }
+        // 中（第七批 Review 4）：发布完成后同步裁剪超期 RETIRED 代际（与 Qdrant retain 窗口对齐），
+        // 避免 generation/generation_input 无界增长；best-effort——裁剪失败不影响本次发布结果。
+        try {
+            vectorStore.pruneRetiredGenerations(projectId, businessVersion, properties.retainPhysicalCollections());
+        } catch (RuntimeException pruneFailure) {
+            LOGGER.warn("裁剪超期 RETIRED 代际失败（不影响本次发布）", pruneFailure);
         }
         return vectorStore.findGeneration(generationId)
                 .orElseThrow(() -> new IllegalStateException("代际写入后消失: " + generationId));

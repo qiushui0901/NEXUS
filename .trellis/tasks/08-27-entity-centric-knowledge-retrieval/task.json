@@ -1,0 +1,33 @@
+{
+  "id": "entity-centric-knowledge-retrieval",
+  "name": "entity-centric-knowledge-retrieval",
+  "title": "实体中心的多版本知识检索",
+  "description": "按 docs/entity-centric-knowledge-retrieval-implementation.md 开发：实体跨版本主索引 + 当前代码/数值表事实优先 + 带引用 LLM 回答。增量改造，不重写现有 RAG 链路。",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P0",
+  "creator": "qiushui",
+  "assignee": "qiushui",
+  "createdAt": "2026-08-27",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-27-ec-phase1-entity-base",
+    "08-27-ec-phase2-llm-extraction",
+    "08-27-ec-phase3-entity-query",
+    "08-27-ec-phase4-fact-priority",
+    "08-27-ec-phase5-answer",
+    "08-27-ec-phase6-lightrag-graph"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

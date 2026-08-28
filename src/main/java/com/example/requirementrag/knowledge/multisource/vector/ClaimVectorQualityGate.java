@@ -129,7 +129,16 @@ public class ClaimVectorQualityGate {
         // 高（Review 2）：alias 按 project+version 隔离，检查本 scope 的 live alias
         String alias = properties.liveAlias(manifest.projectId(), manifest.businessVersion());
         String expectedPhysical = manifest.physicalCollection();
-        String actualTarget = qdrantStore.aliasTarget(alias);
+        // 中（第七批 Review 3）：Qdrant 不可用时降级为检查项失败而非抛异常——质量门契约是
+        // “只读取和报告”；抛异常会让 /quality-gate 返回 500，掩盖其余检查项（ACTIVE/POINT_COUNT）的结果。
+        String actualTarget;
+        try {
+            actualTarget = qdrantStore.aliasTarget(alias);
+        } catch (RuntimeException exception) {
+            log.warn("质量门读取 alias [{}] 目标失败（Qdrant 不可达?）: {}", alias, exception.getMessage());
+            return QualityCheck.fail("ALIAS_HEALTH",
+                    "Cannot read alias '%s' target (Qdrant unavailable)".formatted(alias));
+        }
         if (actualTarget == null || actualTarget.isBlank()) {
             return QualityCheck.fail("ALIAS_HEALTH",
                     "Alias '%s' does not point to any collection".formatted(alias));

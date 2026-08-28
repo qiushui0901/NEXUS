@@ -49,20 +49,28 @@ class CodeCentricAlignmentStoreTest {
 
     @Test
     void conceptAliasMemberCrudRoundTrips() {
-        BusinessConcept concept = new BusinessConcept("con-1", "immortal", "param:combat.fireballcd",
+        BusinessConcept concept = new BusinessConcept("con-1", "immortal", "combat.fireballcd",
                 "火球冷却时间", "PARAMETER", "combat", "火球冷却", "ACTIVE", null, null);
         store.upsertConcept(concept);
 
         ConceptAlias alias = new ConceptAlias("cal-1", "immortal", "con-1", "Fireball_CD",
-                "PARAMETER_TABLE", "SOURCE_NAME", 1.0, null);
+                "PARAMETER_TABLE", "SOURCE_NAME", 1.0, null,
+                "SOURCE_EXPLICIT", "CONFIRMED", null);
         store.upsertAlias(alias);
+
+        // origin/status/evidence_id 往返
+        assertThat(store.findAliases("immortal", "con-1"))
+                .first().satisfies(a -> {
+                    assertThat(a.origin()).isEqualTo("SOURCE_EXPLICIT");
+                    assertThat(a.status()).isEqualTo("CONFIRMED");
+                });
 
         ConceptMember member = new ConceptMember("cm-1", "immortal", "con-1", "p-1",
                 "PARAMETER_TABLE", "CONFIGURATION", "p-1", "Fireball_CD",
                 null, null, "ev-1", "5.1", "vc-1", null);
         store.upsertMember(member);
 
-        assertThat(store.findConceptByKey("immortal", "param:combat.fireballcd"))
+        assertThat(store.findConceptByKey("immortal", "combat.fireballcd"))
                 .contains(concept);
         assertThat(store.findAliases("immortal", "con-1")).extracting(ConceptAlias::alias)
                 .containsExactly("Fireball_CD");

@@ -104,8 +104,12 @@ curl -X GET "http://localhost:8080/api/knowledge/multi-source/claim-vector/quali
 ```java
 // 通过 BuildService.rollback
 buildService.rollback("immortal", "5.1");
-// → listRetiredForRollback → rollbackTo (RETIRED→ACTIVE) → rollbackAlias (Qdrant 切回)
+// → listRetiredForRollback → 取物理集合仍在 Qdrant 的最近 RETIRED（被 retain 清理的跳过）
+//   → rollbackTo (RETIRED→ACTIVE) → rollbackAlias (Qdrant 切回)
 ```
+
+> 中（第七批 Review 4）：回滚目标必须是**物理集合仍在 Qdrant** 的 RETIRED 代际——
+> 被 `retain-physical-collections` 窗口清理过的旧集合已删除，不可作为回滚目标（跳过并继续向前找更旧的候选）。
 
 ### 4.2 回滚到指定代际
 
@@ -118,6 +122,9 @@ curl -X POST http://localhost:8080/api/knowledge/multi-source/claim-vector/rollb
 # 等价：通过 BuildService
 buildService.rollbackTo("immortal", "5.1", "cv-xxx");
 ```
+
+> 中（第七批 Review 4）：目标代际的物理集合已被 retain 清理（或不存在）时，**明确拒绝回滚并报错**，
+> 绝不把 alias 指向已删除的集合（悬空 alias = 向量召回静默归零）。
 
 ### 4.3 回滚后验证
 
@@ -163,15 +170,27 @@ curl -X GET http://localhost:8080/api/knowledge/multi-source/claim-vector/qualit
 
 ### Qdrant 数据丢失
 
-```bash
-# 1. SQLite 仍保存所有 manifest，Qdrant 可重建
-# 2. 找到当前 ACTIVE 代际
-curl -X GET http://localhost:8080/api/knowledge/multi-source/claim-vector/status?projectId=immortal&businessVersion=5.1
+**已知局限**：当前版本**没有全自动重建路径**。SQLite manifest 未动、输入指纹不变时，
+`findReusableGeneration`（只检查 SQLite `physical_collection is not null`，不检查 Qdrant 物理集合是否存在）
+会直接复用旧 ACTIVE 代际，`build()` 返回旧 manifest **不会重建**；`rollback()` 只回滚物理集合仍在的
+RETIRED 代际，Qdrant 全丢时同样无目标。**质量门能检出**（`ALIAS_HEALTH` / `PHYSICAL_CONSISTENCY` 失败），
+但修复需人工介入。
 
-# 3. 触发重建（会跳过嵌入因为指纹不变 → findReusableGeneration 命中 → 但物理 collection 已丢失）
-# 需要强制重建：删除 ACTIVE 代际的物理记录后重新构建
-# 或直接调用 buildService.build() —— findReusableGeneration 会跳过，需要先 rollback 再 build
+```bash
+# 1. 确认故障：质量门 ALIAS_HEALTH / PHYSICAL_CONSISTENCY 失败
+curl -X GET "http://localhost:8080/api/knowledge/multi-source/claim-vector/quality-gate?projectId=immortal&businessVersion=5.1"
+
+# 2. 恢复手段（二选一）：
+#    a. 让输入指纹变化后重建——编辑任一 claim / 重导数据（updatedAt 变化 → 新指纹 → 全新构建 → markActive → alias 切换）
+#    b. 人工清理 SQLite 代际行（备份后删除该 scope 的 generation / generation_input 记录），再全量构建
+#       （注意：无 API 可删除 ACTIVE 代际——deleteSupersededGenerations 只清理 status != 'ACTIVE' 的行）
+
+# 3. 重建完成后核对
+curl -X GET "http://localhost:8080/api/knowledge/multi-source/claim-vector/status?projectId=immortal&businessVersion=5.1"
+curl -X GET "http://localhost:8080/api/knowledge/multi-source/claim-vector/quality-gate?projectId=immortal&businessVersion=5.1"
 ```
+
+> 建议把「Qdrant 全量丢失后的重建」纳入发布前演练清单（见发布决策记录 §3 第 6 项），并按上述手段确认恢复可行。
 
 ### SQLite 数据丢失
 

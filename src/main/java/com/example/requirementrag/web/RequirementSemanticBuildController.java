@@ -1,5 +1,6 @@
 package com.example.requirementrag.web;
 
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeProperties;
 import com.example.requirementrag.model.Permission;
 import com.example.requirementrag.project.BusinessProjectCatalogService;
 import com.example.requirementrag.requirement.semantic.RequirementSemanticBuildService;
@@ -37,17 +38,20 @@ public class RequirementSemanticBuildController {
     private final ProjectAccessGuard accessGuard;
     private final BusinessProjectCatalogService businessProjects;
     private final RequirementSemanticProperties properties;
+    private final MultiSourceKnowledgeProperties multiSourceProperties;
 
     public RequirementSemanticBuildController(RequirementSemanticBuildService buildService,
                                               SQLiteRequirementSemanticStore store,
                                               ProjectAccessGuard accessGuard,
                                               BusinessProjectCatalogService businessProjects,
-                                              RequirementSemanticProperties properties) {
+                                              RequirementSemanticProperties properties,
+                                              MultiSourceKnowledgeProperties multiSourceProperties) {
         this.buildService = buildService;
         this.store = store;
         this.accessGuard = accessGuard;
         this.businessProjects = businessProjects;
         this.properties = properties;
+        this.multiSourceProperties = multiSourceProperties;
     }
 
     /**
@@ -110,7 +114,10 @@ public class RequirementSemanticBuildController {
                                                                HttpServletRequest httpRequest) {
         String normalized = normalizeProjectId(projectId);
         accessGuard.requireProjectAccess(httpRequest, normalized);
+        // 中（第七批 Review M3）：项目级多源检索开关随聚合状态下发——关闭时语义候选不参与
+        // /multi-source/search，前端必须把“已发布”降级为警示而非误导“检索链路可用”。
         return store.aggregateBuildStatus(normalized, requirementVersion,
-                properties.candidateRetrievalEnabled(), properties.normativeRetrievalEnabled());
+                properties.candidateRetrievalEnabled(), properties.normativeRetrievalEnabled(),
+                multiSourceProperties.enabledFor(normalized));
     }
 }

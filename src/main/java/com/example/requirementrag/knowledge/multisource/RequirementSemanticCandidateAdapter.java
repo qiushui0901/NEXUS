@@ -86,16 +86,16 @@ public class RequirementSemanticCandidateAdapter implements MultiSourceCandidate
                     List.of("SEMANTIC_NORMATIVE_RETRIEVAL_DISABLED:规范事实意图下语义候选被开关拦截（normative-retrieval-enabled=false），本次结果不含语义候选；请勿将其作为召回评测数据"));
         }
         try {
-            // limit + 1 探测截断：命中上限说明候选被按文档位置截断，后段相关候选不可见，
-            // 必须作为非致命警告进入检索响应，而不是只写日志让上层把"截断"误读为"无召回能力"。
+            // 中（第七批 Review M2）：截断探测改由存储层显式标志（truncated）——存储内部多取一行并
+            // 区分“刚好等于上限”与“被上限截断”；此前用 limit+1 探测，在恰好命中 SQL 硬顶 20000 时
+            // 探测被存储钳制吞掉，后段相关候选静默丢失却无警告。
             int limit = properties.maxCandidateAnnotations();
             // 高（Review）：同一查询同时返回实际读取的构建代际 ids（buildIds）——评测上下文
             // 必须绑定本次检索实际读取的代际，而非前端另行请求的构建状态（两请求间可能已发布新代际）。
             SQLiteRequirementSemanticStore.ActiveAnnotations loaded =
-                    store.listActiveByProjectVersionWithBuilds(projectId, version, limit + 1, query);
-            boolean truncated = loaded.annotations().size() > limit;
-            List<SemanticAnnotationRecord> annotations =
-                    truncated ? List.copyOf(loaded.annotations().subList(0, limit)) : loaded.annotations();
+                    store.listActiveByProjectVersionWithBuilds(projectId, version, limit, query);
+            boolean truncated = loaded.truncated();
+            List<SemanticAnnotationRecord> annotations = loaded.annotations();
             if (truncated) {
                 log.warn("SEMANTIC_CANDIDATE_TRUNCATED project={} version={} limit={}",
                         safe(projectId), safe(version), limit);

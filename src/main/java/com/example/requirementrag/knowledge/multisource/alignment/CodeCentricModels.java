@@ -137,7 +137,8 @@ public final class CodeCentricModels {
         }
     }
 
-    /** 概念别名：必须标记来源；LLM 推断的别名不得直接变成全局 canonical 名称。 */
+    /** 概念别名：必须标记来源；LLM 推断的别名不得直接变成全局 canonical 名称。
+     * origin 取值见 {@code EntityExtractionModels.AliasOrigin}；status=PROPOSED 的别名不参与确认匹配。 */
     public record ConceptAlias(
             String aliasId,
             String projectId,
@@ -146,7 +147,10 @@ public final class CodeCentricModels {
             String sourceType,
             String normalizationMethod,
             Double confidence,
-            String createdAt
+            String createdAt,
+            String origin,
+            String status,
+            String evidenceId
     ) {
         public ConceptAlias {
             if (aliasId == null || aliasId.isBlank()) throw new IllegalArgumentException("aliasId 不能为空");
@@ -155,6 +159,8 @@ public final class CodeCentricModels {
             if (alias == null || alias.isBlank()) throw new IllegalArgumentException("alias 不能为空");
             normalizationMethod = normalizationMethod == null || normalizationMethod.isBlank()
                     ? "NORMALIZED_NAME" : normalizationMethod;
+            origin = origin == null || origin.isBlank() ? "RULE_NORMALIZED" : origin;
+            status = status == null || status.isBlank() ? "CONFIRMED" : status;
             createdAt = createdAt == null ? java.time.Instant.now().toString() : createdAt;
         }
     }
@@ -334,6 +340,11 @@ public final class CodeCentricModels {
     public record LoadedCode(String codeProjectId, String commitSha, List<CodeSymbolView> symbols) {
         public LoadedCode {
             symbols = symbols == null ? List.of() : List.copyOf(symbols);
+        }
+
+        /** 空代码加载结果（无符号、无 commit）：用于无代码索引的项目/版本。 */
+        public static LoadedCode empty() {
+            return new LoadedCode(null, null, List.of());
         }
     }
 

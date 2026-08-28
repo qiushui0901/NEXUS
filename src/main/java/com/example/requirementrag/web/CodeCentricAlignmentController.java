@@ -82,13 +82,22 @@ public class CodeCentricAlignmentController {
         return versionContextService.list(projectId, version);
     }
 
-    /** 构建业务概念层（Phase 1）。 */
+    /** 构建业务概念层（Phase 1，版本级增量）。 */
     @RequiresPermission(Permission.WRITE)
     @PostMapping("/concepts/build")
     public BuildResult buildConcepts(@RequestBody ScopeRequest request, HttpServletRequest httpRequest) {
         projectRegistry.require(request.projectId());
         accessGuard.requireProjectAccess(httpRequest, request.projectId());
         return businessConceptService.build(request.projectId(), request.version());
+    }
+
+    /** 项目级跨版本概念重建（实体中心检索的前置：只处理已发布版本，历史成员不丢失）。 */
+    @RequiresPermission(Permission.WRITE)
+    @PostMapping("/concepts/build-project")
+    public BuildResult buildProjectConcepts(@RequestBody ProjectRequest request, HttpServletRequest httpRequest) {
+        projectRegistry.require(request.projectId());
+        accessGuard.requireProjectAccess(httpRequest, request.projectId());
+        return businessConceptService.buildProject(request.projectId());
     }
 
     /** 查询项目业务概念。 */
@@ -217,5 +226,9 @@ public class CodeCentricAlignmentController {
 
     /** 对齐作用域请求。 */
     public record ScopeRequest(String projectId, String version, String environment) {
+    }
+
+    /** 项目级请求。 */
+    public record ProjectRequest(String projectId) {
     }
 }

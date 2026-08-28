@@ -126,7 +126,7 @@ class ClaimVectorFusionSearchOrderingTest {
                 hit("c-v1", 0.95),
                 hit("c-rejected", 0.70),
                 hit("c-v2", 0.55)));
-        when(hydrationStore.findClaimsByIds(any())).thenReturn(List.of(
+        when(hydrationStore.findPublishedClaimsByIds(eq("proj-1"), eq("v1"), any())).thenReturn(List.of(
                 record("c-v1", "ACTIVE"),
                 record("c-v2", "ACTIVE"),
                 record("c-rejected", "REJECTED")));
@@ -160,7 +160,7 @@ class ClaimVectorFusionSearchOrderingTest {
         org.mockito.Mockito.verify(qdrantStore, org.mockito.Mockito.times(1))
                 .search(anyString(), any(), anyInt());
         org.mockito.Mockito.verify(hydrationStore, org.mockito.Mockito.times(1))
-                .findClaimsByIds(any());
+                .findPublishedClaimsByIds(eq("proj-1"), eq("v1"), any());
     }
 
     /** 意图过滤（Review 4）：NORMATIVE 意图不允许 DOUBT 来源，DOUBT 向量候选被丢弃。 */
@@ -169,7 +169,7 @@ class ClaimVectorFusionSearchOrderingTest {
         when(qdrantStore.search(anyString(), any(), anyInt())).thenReturn(List.of(
                 hit("c-doubt", 0.90),
                 hit("c-req", 0.80)));
-        when(hydrationStore.findClaimsByIds(any())).thenReturn(List.of(
+        when(hydrationStore.findPublishedClaimsByIds(eq("proj-1"), eq("v1"), any())).thenReturn(List.of(
                 new KnowledgeClaimRecord("c-doubt", "proj-1", "doc-1",
                         SourceType.DOUBT, Authority.PRIMARY, "doubt#q", "该参数是否必要",
                         "", "", "", "", "OPEN", 0.5, null, null,

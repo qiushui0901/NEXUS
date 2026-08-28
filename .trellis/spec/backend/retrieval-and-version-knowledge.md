@@ -1291,6 +1291,27 @@ QueryPlan RequirementGraphQueryPlanner.plan(SearchRequest request)
 **Correct:** create overlapping offset-addressable windows, persist each result, retain uncertainty/conflict claims, require verified claims and resolved evidence at publication, and keep the previous published snapshot immutable.
 
 
+## Model Topology（模型拓扑，易混淆项——请勿再搞混）
+
+> 反复出现的坑：把 BGE 当嵌入模型。实际拓扑如下，检索/向量代码里见到 `EmbeddingModel` 一律按主嵌入理解。
+
+- **向量化 Embedding（主嵌入）＝ OpenAI 兼容网关**：`spring.ai.embedding=openai`，
+  `options.model=${OPENAI_EMBEDDING_MODEL:text-embedding-v4}`，
+  base-url `http://ai-gateway.momo.com`（LiteLLM）。
+  `EmbeddingConfiguration.primaryEmbeddingModel(@Qualifier("openAiEmbeddingModel"))` 是 `@Primary` 主 bean——
+  所有 `EmbeddingModel` 注入点（QdrantHybridStore、KnowledgeClaimVectorBuildService、适配器）都走它。
+  实测 `POST /v1/embeddings {model:text-embedding-v4}` → 200，1024 维。
+- **重排器 Reranker ＝ 本地 BGE（端口 8081）**：`BGE_RERANK_URL=http://localhost:8081`，`/rerank`，
+  `tools/start-bge-reranker.sh` / `.venv-bge-reranker`。`scripts/nexus.sh status` 里的
+  `BGE: 未运行（可降级）` 行指的是**这个重排器**，与嵌入无关，只影响 rerank 阶段，不影响向量化。
+- **Ollama 里的 bge-m3 只是可选的备选嵌入路径**（`OLLAMA_EMBEDDING_MODEL=bge-m3`），不是主 bean，
+  默认 `AI_MODEL_EMBEDDING=openai` 不启用它。
+- **其他模型**：GENERATION_MODEL=claude-sonnet-5、LLM_RERANK_MODEL=claude-sonnet-4.6、
+  ANNOTATION_MODEL=gpt-5.6-sol、REQUIREMENT_GRAPH_EXTRACTION_MODEL=deepseek-v4-flash——均为 LLM 调用，不是嵌入。
+- 排查嵌入问题时：看网关 `ai-gateway.momo.com`（`/v1/embeddings`，需 `OPENAI_API_KEY`），
+  **不要**看 `:8081`（那是重排器）也**不要**看 Ollama bge-m3（那是备选）。
+
+
 ### Requirement graph operational additions
 
 - Asynchronous graph jobs use `POST /api/requirement-graphs/builds`, `GET /builds/{buildId}`, `POST /builds/{buildId}/resume`, and `POST /builds/{buildId}/cancel`; the original synchronous `/build` remains compatible.
@@ -1298,3 +1319,11 @@ QueryPlan RequirementGraphQueryPlanner.plan(SearchRequest request)
 - `/snapshots/{snapshotId}/neighborhood/{entityId}` and `/snapshots/{snapshotId}/paths` return bounded graph data and explicit truncation/evidence warnings.
 - `REQUIREMENT_GRAPH_PRIVACY_POLICY_REQUIRED=true` requires a matching `project-policies.<businessProjectId>` entry before model calls. Project policy cannot widen the global external-transmission ban.
 - Metrics are tagged only with project and safe status values; requirement text, quotes, prompts, and model responses are never metric labels or log fields.
+
+### Entity extraction and alias governance (0.9.7)
+
+- Entity resolution chain is rule-first: confirmed alias → member/code-symbol name → single candidate → LLM restricted selection → `NEEDS_REVIEW` with candidates. The chain must never fabricate an `entityId`; unknown LLM names are resolve-or-drop (analyzer), not hard-rejected in the validator.
+- Alias rows carry `origin` (`SOURCE_EXPLICIT / RULE_NORMALIZED / LLM_PROPOSED / HUMAN_CONFIRMED`) and `status` (`CONFIRMED / PROPOSED`). Only `CONFIRMED` aliases participate in exact matching (`findConceptIdsByAlias`, `findConfirmedAliasesMentionedIn`). LLM-proposed aliases are always `LLM_PROPOSED` + `PROPOSED` until reviewed.
+- LLM proposals never write knowledge facts; values from LLM must not overwrite source original values. Relations proposed by LLM are saved as `matchMethod=LLM_PROPOSED`, `status=PROPOSED`, with confidence and evidence.
+- SQLite `UNIQUE` treats NULLs as distinct: an `ON CONFLICT(<unique column list>)` upsert never matches when any conflict column is NULL. Use a deterministic NOT-NULL key (e.g. derived `context_id`) as the conflict target for idempotent re-resolve.
+- Membership/alias text lookup uses `instr(?, name) > 0` (query text contains the name), always with a `limit` cap; never a full unscanned scan.

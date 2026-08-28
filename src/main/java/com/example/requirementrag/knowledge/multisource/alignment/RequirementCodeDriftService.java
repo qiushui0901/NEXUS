@@ -71,7 +71,10 @@ public class RequirementCodeDriftService {
 
         int drifts = 0;
         for (KnowledgeClaimRecord requirement : requirements) {
-            String conceptKey = "req:" + AlignmentNaming.keySegment(requirement.subject());
+            String conceptKey = AlignmentNaming.conceptKey(
+                    AlignmentNaming.moduleOf(requirement.sourceType(), requirement.factKey(),
+                            requirement.subject()),
+                    requirement.subject());
             BusinessConcept concept = alignmentStore.findConceptByKey(projectId, conceptKey).orElse(null);
             List<ConceptMember> codeMembers = concept == null ? List.of()
                     : alignmentStore.findMembers(projectId, concept.conceptId(), version).stream()

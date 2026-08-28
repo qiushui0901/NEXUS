@@ -14,7 +14,7 @@
 </p>
 
 <p>
-  <strong>0.9.4</strong> · Java 21 · Spring Boot 4.1 · Spring AI 2.0 · Qdrant · Tree-sitter · SQLite
+  <strong>0.9.6</strong> · Java 21 · Spring Boot 4.1 · Spring AI 2.0 · Qdrant · Tree-sitter · SQLite
 </p>
 
 </div>
@@ -89,6 +89,13 @@ NEXUS 会把它拆成可验证的证据链：
 - 知识管理台可查看导入任务、文档、分块和 `DISCOVER → PUBLISH` 全阶段状态。
 - 需求语义图是默认关闭的受控实验能力：按项目/文档/版本构建结构化窗口，支持证据跨度、可恢复抽取、声明审核、审计发布和可选混合图检索；仍不替换 Qdrant 需求主检索。
 - 需求图工作台位于 `/requirement-graph.html`，支持异步构建、失败恢复、Local/Global/Hybrid 查询、邻域浏览和声明审核。
+
+### 多源知识：需求 × 数值 × 测试 × 存疑，统一成 Claim
+
+- 四类输入（需求 PRD、immortal-data 数值参数表、immortal-case 测试用例、immortal-qa 存疑）统一入库为 `document → version → evidence → Claim` 三元组，SQLite 为权威、Qdrant 为可弃投影；按项目与业务版本隔离。
+- 0.9.6 Claim 向量投影：确定性类型化嵌入文本 → 两遍流式构建 → 代际 manifest 与输入指纹去重建 → alias 原子发布/回滚 → 质量门与影子模式灰度。
+- 检索时意图 → 来源 → 候选 → 确定性融合（0.55 向量 + 0.25 词法 + 0.10 来源策略 + 0.10 精确命中 − 冲突惩罚）→ 评分排序；数值类 PARAMETER 意图双路召回。
+- 全链路开关默认关闭（`app.rag.multi-source.claim-vector.*`），按发布决策记录的灰度 6 阶段上线。
 
 ### 代码智能：不仅是“搜到一段代码”
 
@@ -344,6 +351,12 @@ flowchart TB
 | [四向检索评测](docs/fengshen-code-retrieval-four-way-comparison.md) | NEXUS、BM25 MCP、RAGFlow、LightRAG 对照 |
 | [知识库价值与验证方案](docs/code-knowledge-base-value-and-validation-plan.md) | 需求、代码、测试、数值和版本关联方向 |
 | [multipow × NEXUS](docs/multipow-nexus-integration.md) | Agent 工作区脚手架与证据闸门 |
+| [多源 Claim 向量检索方案 0.9.6](docs/multi-source-claim-vector-retrieval-development-plan-0.9.6.md) | Claim 投影契约、代际/发布/回滚、融合权重与质量门方案 |
+| [多源知识实现说明](docs/claim-vector-and-multisource-implementation.md) | 四类输入 → 统一 Claim → 向量化 → 检索结合的流程图解 |
+| [Claim 向量运维手册](docs/claim-vector-operator-runbook.md) | 构建、回滚、质量门、影子监控与灾难恢复 |
+| [Claim 向量发布决策记录](docs/claim-vector-rollout-decision-record.md) | 灰度 6 阶段、回滚预案与风险评估 |
+| [需求语义分块与混合检索方案 0.9.5](docs/requirement-semantic-chunk-and-hybrid-retrieval-development-plan-0.9.5.md) | 语义分块 + 混合检索的方案设计 |
+| [语义检索前端集成方案 0.9.5](docs/semantic-retrieval-frontend-integration-plan-0.9.5.md) | 语义检索前端集成与工作台计划 |
 | [更新日志](CHANGELOG.md) | 版本变更记录 |
 | [后端检索规范](.trellis/spec/backend/retrieval-and-version-knowledge.md) | 版本、证据、权限、降级和 Wiki 契约 |
 
@@ -351,7 +364,7 @@ flowchart TB
 
 ## 当前状态与路线
 
-当前版本：**0.9.4**，活跃开发中。
+当前版本：**0.9.6**，活跃开发中。
 
 已具备：
 
@@ -361,10 +374,14 @@ flowchart TB
 - 多仓库业务项目模型与 GitLab 自动接入。
 - 知识管理、导入状态和安全降级。
 - 默认关闭的需求语义图实验能力。
+- 多源知识库：需求 × 数值 × 测试 × 存疑统一为 Claim 三元组（SQLite 权威）。
+- 0.9.6 Claim 向量投影：代际 manifest、alias 原子发布/回滚、质量门、影子模式与确定性融合评分。
 
 后续重点：
 
 - 更完整的 SSO、配额和多实例共享状态。
+- 0.9.6 灰度发布收尾：影子数据达标后按发布决策记录正式启用 Claim 向量融合。
+- 需求实体关系与代码符号的审核式关联。
 - 需求实体关系与代码符号的审核式关联。
 - 更大规模、更多业务语义查询的独立评测集。
 - Wiki、需求、代码、测试之间更细粒度的过期传播。

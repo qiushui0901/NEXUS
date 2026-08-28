@@ -1030,3 +1030,206 @@ Phase 2-6 全部落地：341 测试 verify 全绿；状态契约注册表 + CONT
 ### Next Steps
 
 - None - task complete
+
+## Session 26: 实体中心检索 Phase 1——跨版本实体基础
+
+**Date**: 2026-08-27
+**Task**: 08-27-ec-phase1-entity-base（父：08-27-entity-centric-knowledge-retrieval）
+**Branch**: `main`
+
+### Summary
+
+按 `docs/entity-centric-knowledge-retrieval-implementation.md` 开发实体中心检索首个批次：把 `BusinessConcept` 收敛为跨版本、跨来源稳定实体。canonicalKey 去除 `param:/req:/test:/obs:/doubt:` 前缀统一为 `<module>.<subject>`；新增 `BusinessConceptService.buildProject(projectId)`（枚举全部业务版本 + 当前代码，跨版本合并实体、保留历史成员、代码只挂最新版本）；补 5 个实体/别名/成员/Claim 索引；修复 `upsertVersionContext` 在 repository/commit 为 null（无代码索引）时重复 resolve 撞主键的 bug；`RequirementCodeDriftService` 改用共享 `AlignmentNaming.conceptKey`。
+
+### Main Changes
+
+- `AlignmentNaming`：新增 `conceptKey(module, subject)`（跨来源/版本稳定实体键）、`factKeyModule(factKey)` 共享 helper。
+- `BusinessConceptService`：`conceptFor` 去来源前缀；新增 `buildProject`（数值感知版本排序后逐版本重建、代码挂最新版本）；`buildForVersion` 抽取共享重建逻辑。
+- `MultiSourceKnowledgeStore`：新增 `findBusinessVersions(projectId)`（VERSION_ORDER 数值感知排序，5.9 < 5.10）；补 `idx_claim_fact_subject`、`idx_document_version_business_status`。
+- `CodeCentricAlignmentStore`：补 `idx_concept_alias_lookup`、`idx_concept_member_entity_version`、`idx_concept_member_claim`；`upsertVersionContext` 冲突目标改 `context_id`（修复 NULL unique 语义）。
+- `CodeCentricModels`：`LoadedCode.empty()`。
+- `RequirementCodeDriftService`：需求概念查找改用 `AlignmentNaming.conceptKey`。
+- 测试：BusinessConceptServiceTest 新增 5 例（跨版本同实体、参数/需求/测试成员同实体、历史成员保留、同 subject 不同 module 不合并、版本数值排序）。
+
+### Testing
+
+- `./mvnw test`：1020 tests，0 failures。
+
+### Status
+
+[OK] **Phase 1 complete；下一步 Phase 2（LLM 实体提取）或按最小闭环优先 Phase 3（entity-search API）**
+
+## Session 27: 实体中心检索 Phase 2——LLM 实体提取与归一化
+
+**Date**: 2026-08-27
+**Task**: 08-27-ec-phase2-llm-extraction（父：08-27-entity-centric-knowledge-retrieval）
+**Branch**: `main`
+
+### Summary
+
+新增 `knowledge/multisource/entity` 包：问题实体提取器（规则优先 + LLM 受限补召回）、实体解析器（§7.2 解析链 1-8 + NEEDS_REVIEW）、来源级提取器（LLM 只提议别名/关系，不写知识事实）、提取校验器（预算/claim 归属/关系白名单/受限选择）、LLM 辅助客户端（任何失败回退规则）。`business_concept_alias` 新增 origin/status/evidence_id 列；PROPOSED 别名不参与确认匹配。
+
+### Main Changes
+
+- `QuestionEntityAnalyzer`：规则命中已确认别名→mentions；意图/版本/标志规则推导；LLM 提议名 resolve-or-drop（可解析才成为 LLM_SELECTED mention）。
+- `EntityResolverService`：别名命中 → 成员名/代码符号（`findConceptIdsByMemberName`）→ 单候选命中 → 多候选 LLM 受限选择 → NEEDS_REVIEW；无命中 ENTITY_UNRESOLVED。
+- `SourceEntityExtractor`：LLM 提议别名 PROPOSED + 关系 PROPOSED（matchMethod=LLM_PROPOSED、evidence 取自源端），不写 facts。
+- `EntityExtractionValidator`：结构化校验（预算/claim 输入批次归属/关系白名单/受限选择）；法学原则：校验层不硬拒未知名字（resolve-or-drop 交给 analyzer，防伪造 ID 机制在解析层）。
+- `EntityLlmAssistant`：ChatClient.entity() 结构化输出 + 稳定错误码；失败返回 empty。
+- `CodeCentricAlignmentStore`：alias 表加 origin/status/evidence_id（addColumnIfMissing）；新增 `findConfirmedAliasesMentionedIn`（instr+limit）、`findConceptIdsByAlias`（CONFIRMED only）、`findConceptIdsByMemberName`。
+- `AlignmentTestSupport` 提升为 public 供 entity 包测试复用；新增共享 `seedParameter`。
+
+### 踩坑记录
+
+- **SQLite UNIQUE 对 NULL 互不相等**：`on conflict(unique_tuple)` 在 repository/commit 为 null 时永不命中 → 重复 resolve 撞 PK。修复：冲突目标用确定性的 `context_id`（Phase 1 批次已修，本轮回归确认）。
+- **ImmutableCollections$SetN.contains(null) 抛 NPE**：白名单判断必须先判 null 再 contains。
+- **resolver instr 方向**：`instr(?, display_name)>0` 是“查询文本包含成员名”——测试构造必须让查询包含成员名本身。
+- **LLM 成员挂靠约束**：代码符号只有匹配到别名才成为成员，因此成员名可能与其别名存在包含关系，测试用直插 upsertMember 构造纯成员场景。
+
+### Testing
+
+- `./mvnw test`：1043 tests，0 failures（+23 Phase 2）。
+
+### Status
+
+[OK] **Phase 2 complete；下一步 Phase 3（EntityQueryService + entity-search API，最小闭环）**
+
+## Session 28: 实体中心检索 Phase 3——实体证据查询 API（最小闭环达成）
+
+**Date**: 2026-08-27
+**Task**: 08-27-ec-phase3-entity-query（父：08-27-entity-centric-knowledge-retrieval）
+**Branch**: `main`
+
+### Summary
+
+实现 dev md §16 最小闭环：`POST /api/knowledge/entity-search` —— 用户免选版本，问题 → 规则/LLM 提取实体 → 解析 → 全版本聚合（currentFacts + timeline 分治）→ 结构化证据响应。新增 `EntityEvidenceAggregator` / `EntityQueryService` / `EntitySearchController`，存储层补 `findAlignmentRelationsForClaim` 与批量 `findEvidenceIdsByClaimIds`。
+
+### Main Changes
+
+- `EntityEvidenceAggregator`：成员批量水化 + 批量证据；timeline 按业务版本分块；currentFacts 分区分治（code/parameterTables/testResults）；确定性冲突（同 factKey 不同值 CONFLICTED）；稳定告警（CODE_CONTEXT_UNAVAILABLE / PARAMETER_TABLE_UNAVAILABLE，不编造 commit）；20 条/块上限。
+- `EntityQueryService`：analyze → resolve（已解析直通 + 未命中兜底）→ aggregate → EntitySearchResponse（factAssessment 为 Phase 4 占位）。
+- `EntitySearchController`：@Valid 请求 + 项目注册/访问控制。
+- `CodeCentricAlignmentStore.findAlignmentRelationsForClaim`；`MultiSourceKnowledgeStore.findEvidenceIdsByClaimIds`（批量回源防 N+1）。
+
+### 关键设计决策
+
+- **跨版本值演进不是冲突**：factKey 含版本，同 factKey 分组只在同版本生效；5.0=100 → 5.1=120 走时间轴展示，不判 CONFLICTED（冲突测试用同版本同 factKey 双来源不同值）。
+- **需求归并到实体需要 module 对齐**：AlignmentTestSupport.requirement 的 factKey 模块为空会导致概念 key 退化为 subject（与 comb 前缀参数实体不同）——测试需手动构造带模块的 factKey。
+
+### Testing
+
+- `./mvnw test`：1050 tests，0 failures（+7 Phase 3）。
+
+### Status
+
+[OK] **Phase 3 complete，最小闭环可用；下一步 Phase 4（实体事实优先级与实现偏差）或 Phase 5（AI 带证据回答）**
+
+## Session 29: 实体中心检索 Phase 4/5/6——事实优先级·带证据回答·局部图扩展（六阶段完成）
+
+**Date**: 2026-08-27
+**Task**: 08-27-ec-phase4-fact-priority / ec-phase5-answer / ec-phase6-lightrag-graph
+**Branch**: `main`
+
+### Summary
+
+- **Phase 4**：`EntityFactPriorityService`——按问题类型选主证据视图（当前行为 CODE>TEST_RESULT>PARAMETER_TABLE>REQUIREMENT，当前数值 PARAMETER_TABLE 优先）；FactAssessment 升级为结构化 AssessmentItem；确定性偏差信号 REQUIREMENT_PARAMETER_MISMATCH / REQUIREMENT_IMPLEMENTATION_GAP / CODE_PARAMETER_MISMATCH；不做来源仲裁。
+- **Phase 5**：`KnowledgeAnswerService`——受限证据包 + 模型引用服务端校验（PARTIAL/UNVERIFIED/VERIFIED）+ 确定性模板降级；`POST /api/knowledge/entity-answer`。
+- **Phase 6**：`EntityGraphExpansionService`——一跳/两跳关系召回 + 向量命中映射回实体 + 检索指标；`POST /api/knowledge/entity-search/related`。向量索引扩大保持评测驱动。
+
+### 关键设计决策
+
+- **CODE_PARAMETER_MISMATCH 用确定性信号而非读代码值**：成员不携带代码配置值，偏差信号用“代码成员存在 + 数值表 + FAILED 测试”三元信号，避免伪造代码值；需求-参数 mismatch 用数值化比较（剥离单位）。
+- **FactAssessment 结构性升级**：从 List<String> 改为 AssessmentItem(type/value/sourceType/status)，实体评估作为响应级摘要（多实体取首个），兼容旧 EMPTY 常量。
+- **答案引用允许集** = citations(claimId/evidenceId) + 代码成员 evidence；模型返回非法引用丢弃并降级质量，不信任模型输出。
+- **Phase 6 不接 Qdrant**：只提供映射能力与指标，符合 dev md §10.3 第 3 种（评测证明收益后再扩大）。
+
+### Testing
+
+- `./mvnw test`：1060 tests，0 failures（+10：Phase4 4 + Phase5 4 + Phase6 2）。
+
+### Status
+
+[OK] **Phase 1-6 全部完成；下一步：全量自评审直到无 High/Medium 风险**
+
+## Session 30: 实体中心检索 Phase 1-6 全量自评审（直到无 High/Medium）
+
+**Date**: 2026-08-27
+**Task**: 08-27-entity-centric-knowledge-retrieval（全阶段自评审）
+**Branch**: `main`
+
+### 评审发现并修复（按严重度）
+
+1. **[High] `QuestionEntityAnalyzer` 空 Optional.get()**：allowLlmAssist=true 且规则已命中、LLM 返回空时走 else 分支执行 `raw.get()` → NoSuchElementException。重构为 `isPresent()/else if` 三分支，新增回归测试 `llmAssistEmptyDoesNotBreakWhenRuleMentionsExist`。
+2. **[Medium] resolver 3 参重载静默丢弃歧义候选**：preResolved 含 entityId=null 的 CANDIDATE mention 时无 `ENTITY_NEEDS_REVIEW` 告警 → 补 unresolved 统计 + 告警。
+3. **[Medium] `EntityFactPriorityService` 用遍历顺序第一条需求当"最新需求"**：版本块顺序不保证 → 改为按数值感知版本比较取最新块（`versionCompare`，5.9<5.10），新增测试覆盖 5.0=100/5.1=120 场景。
+4. **[Medium] 时间轴版本块未排序**：成员遍历序展示 → `capped()` 按数值版本升序排序。
+5. **[Medium] 时间轴缺历史 TEST_RESULT**：dev md §8.3 要求"所有版本测试结果"进时间轴，原实现仅最新版 currentFacts → `appendToBlock` 对 TEST_RESULT 一并入块。
+6. **[Medium] `KnowledgeAnswerService` 证据全非法时模型文本与模板混杂**：kept==0 时整体回退模板（带 ANSWER_EVIDENCE_UNVERIFIED 告警），不混用。
+7. **[Medium] 噪音告警**：规则命中成功时误报 `ENTITY_LLM_UNAVAILABLE` → 仅在规则一无所获时提示。
+8. **[Low] 清理**：`EntityLlmAssistant.unusedCall` 死代码、控制器 `NotNull` 未用 import、聚合器 `isTestResult` 死方法、buildEvidencePackage 未用局部变量。
+
+### 验证
+
+- 全量 `./mvnw test`：1062 tests，0 failures。
+- 新增回归测试 2 例（空 Optional 路径、最新版本需求 mismatch）。
+- 评审确认的质量门：跨项目/版本泄漏=0（projectRegistry+版本过滤）、无 Evidence 结论=0（引用校验）、代码/参数冲突不静默丢失（factAssessment gaps）、LLM 无来源实体不落库（PROPOSED + resolve-or-drop）。
+
+### 已知接受的限制（Low）
+
+- `findConfirmedAliasesMentionedIn` 为 instr 全表扫描（limit 封顶）；大别名库下为后续优化项。
+- 并发概念构建无锁（沿用 alignment 子系统既有行为）。
+- 项目级历史 Claim collection / 向量索引扩大按 dev md §10.3 评测驱动，未接 Qdrant。
+
+### Status
+
+[OK] **自评审完成，无 High/Medium 剩余；实体中心检索 Phase 1-6 全部落地（1062 tests 绿）**
+
+## Session 31: 实体中心检索外部 Review 修复（6 项 High/Medium 全部修复）
+
+**Date**: 2026-08-27
+**Task**: 08-27-entity-centric-knowledge-retrieval（review → fix → re-review）
+**Branch**: `main`
+
+### 修复清单
+
+1. **DRAFT 泄漏（High）**：`findPublishedBusinessVersions` + `findPublishedClaimsByProjectVersionAll`（PUBLISHED 过滤）；`BusinessConceptService.build/buildProject`、`EntityEvidenceAggregator.latestVersion` 全部切到已发布范围；测试 seed 改 PUBLISHED；新增 `buildProjectExcludesDraftVersions`。**决策**：实体层聚合全部已发布文档（时间轴需要），knowledge_active_version 单文档激活绑定仍由 Claim 向量投影契约负责（dev md Review 3）。
+2. **无项目级构建入口（High）**：新增 `POST /api/knowledge/alignment/concepts/build-project`（WRITE），controller 测试。
+3. **includeHistory 失效（High）**：request 显式值覆盖规则推导 → effectivePlan；Options 增加 includeHistory；false 时 timeline 空；答案层按 plan 门控 [HISTORICAL_REQUIREMENT]。
+4. **代码事实无位置（High）**：FactRef 增加 location；聚合器注入 CodeSymbolLoader，按 symbol.id 回填 repository@commit:filePath:start-end；测试 `codeFactsCarryFileLocationAndCommit`。
+5. **引用不做结论支持校验（High）**：分节声明 sourceType，服务端“允许集 + 类型”双重校验；参数表证据不能支撑代码行为结论；`evidenceTypeById` 映射 + `llmAnswerKeepsOnlyValidEvidenceReferences`/`evidenceTypeMismatchIsDroppedAndDowngradesQuality`。
+6. **反向遍历 + 二跳版本（Medium）**：按 source/target 判定另一端点；遍历维护 claimVersion；测试 `reverseRelationExpandsWhenSeedIsTarget`。
+
+### 验证
+
+- `./mvnw test`：1068 tests，0 failures（+5 回归测试）。
+- `git diff --check` 通过；无 High/Medium 剩余。
+
+### Status
+
+[OK] **Review 6 项全部修复并回归覆盖；实体中心检索链路（Phase 1-6 + review 修复）完成**
+
+## Session 32: 实体中心检索 Review 第二轮修复（8 项 High/Medium 全部修复）
+
+**Date**: 2026-08-27
+**Task**: 08-27-entity-centric-knowledge-retrieval（review → fix → re-review 第二轮）
+**Branch**: `main`
+
+### 修复清单
+
+1. **发布后陈旧成员泄漏（High）**：查询时按 `findPublishedDocumentVersionIds` 重校验水化 Claim（权威防护）；`queryFiltersClaimsOfDemotedDocumentVersions`。
+2. **版本级构建挂历史代码（High）**：`build()` 仅最新已发布版本挂代码；`versionLevelBuildDoesNotAttachCurrentCodeToHistoricalVersion`。
+3. **includeHistory=false 边界（High）**：timeline 保留最新块；冲突按输出内 Claim 计算；最新需求仍可评估。
+4. **时间轴 FactRef 版本丢失（High）**：appendToBlock 带块版本；`timelineFactRefsCarryBusinessVersion`。
+5. **无证据标记 CONFIRMED（High）**：`statusFor` 有证据才 SUPPORTED；模板无证据 UNVERIFIED；`factWithoutEvidenceIsNeverSupported`。
+6. **MIXED 绕过 + 代码位置（High）**：分节强制单一类型，MIXED 证据丢弃；CURRENT_CODE 带 location；`mixedSectionCannotBypassTypeValidation`。
+7. **跨版本关系端点（High）**：`memberClaimFor` 按版本 + 输入批次硬校验；`relationEndpointsAreScopedToCurrentVersion`。
+8. **factKey 第三段 module 猜测（Medium）**：`AlignmentNaming.moduleOf` 来源特定语义（需求自引用 module → subject 锚定）。
+
+### 验证
+
+- `./mvnw test`：1074 tests，0 failures（+8 回归测试）。
+- `git diff --check` 通过。
+
+### Status
+
+[OK] **Review 第二轮 8 项全部修复并回归覆盖**

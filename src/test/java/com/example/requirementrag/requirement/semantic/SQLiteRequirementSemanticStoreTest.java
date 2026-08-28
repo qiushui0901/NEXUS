@@ -701,6 +701,37 @@ class SQLiteRequirementSemanticStoreTest {
     }
 
     @Test
+    void listActiveByProjectVersionWithBuildsFlagsTruncationWhenMoreThanLimitMatch() {
+        // 中（vaxr M2）：超过上限时必须由存储层显式报告截断（truncated=true）——
+        // 此前适配器用 limit+1 探测，在恰好命中 SQL 硬顶 20000 时探测被钳制吞掉，
+        // 后段相关候选静默丢失却无警告。
+        SQLiteRequirementSemanticStore store = store();
+        store.save(record("p1", "doc", "5.1", "file.md|p|0", "hash-1", "model-a", "v1", "v1",
+                ExtractionStatus.SUCCEEDED));
+        store.save(record("p1", "doc", "5.1", "file.md|p|1", "hash-2", "model-a", "v1", "v1",
+                ExtractionStatus.SUCCEEDED));
+        store.save(record("p1", "doc", "5.1", "file.md|p|2", "hash-3", "model-a", "v1", "v1",
+                ExtractionStatus.SUCCEEDED));
+        SemanticBuildRecord build = build("p1", "rev-1", true);
+        store.recordBuildRun(build, List.of(
+                new RequirementSemanticModels.SemanticBuildInput("file.md|p|0", null, "hash-1"),
+                new RequirementSemanticModels.SemanticBuildInput("file.md|p|1", null, "hash-2"),
+                new RequirementSemanticModels.SemanticBuildInput("file.md|p|2", null, "hash-3")));
+
+        // limit=2 < 命中 3 → truncated=true，且返回恰 2 条（不把探测行泄漏进结果）。
+        SQLiteRequirementSemanticStore.ActiveAnnotations truncated =
+                store.listActiveByProjectVersionWithBuilds("p1", "5.1", 2, "");
+        assertThat(truncated.truncated()).isTrue();
+        assertThat(truncated.annotations()).hasSize(2);
+
+        // limit=3 恰好等于命中数 → truncated=false（不误报截断）。
+        SQLiteRequirementSemanticStore.ActiveAnnotations exact =
+                store.listActiveByProjectVersionWithBuilds("p1", "5.1", 3, "");
+        assertThat(exact.truncated()).isFalse();
+        assertThat(exact.annotations()).hasSize(3);
+    }
+
+    @Test
     void listOrdersWindowsByWindowIndexAndOffset() {
         SQLiteRequirementSemanticStore store = store();
         store.save(windowRecord("file.md|p|0", "hash-1", "win-2", 2, 400, 800));
@@ -739,7 +770,7 @@ class SQLiteRequirementSemanticStoreTest {
         store.recordBuildRun(buildForDocument("p1", "doc-a", "rev-1", true, SemanticBuildStatus.SUCCESS), List.of());
         store.recordBuildRun(buildForDocument("p1", "doc-b", "rev-1", true, SemanticBuildStatus.SUCCESS), List.of());
 
-        var aggregate = store.aggregateBuildStatus("p1", "5.1", true, false);
+        var aggregate = store.aggregateBuildStatus("p1", "5.1", true, false, true);
 
         assertThat(aggregate).isPresent();
         assertThat(aggregate.get().hasActiveGeneration()).isTrue();
@@ -760,7 +791,7 @@ class SQLiteRequirementSemanticStoreTest {
         store.recordBuildRun(buildForDocument("p1", "doc-a", "rev-1", true, SemanticBuildStatus.SUCCESS), List.of());
         store.recordBuildRun(buildForDocument("p1", "doc-b", "rev-1", false, SemanticBuildStatus.FAILED), List.of());
 
-        var aggregate = store.aggregateBuildStatus("p1", "5.1", true, true);
+        var aggregate = store.aggregateBuildStatus("p1", "5.1", true, true, true);
 
         assertThat(aggregate).isPresent();
         assertThat(aggregate.get().hasActiveGeneration()).isTrue();
@@ -778,8 +809,8 @@ class SQLiteRequirementSemanticStoreTest {
         store.recordBuildRun(buildForDocument("p1", "doc-b", "rev-1", true, SemanticBuildStatus.SUCCESS), List.of());
         store.recordBuildRun(buildForDocument("p1", "doc-a", "rev-1", true, SemanticBuildStatus.SUCCESS), List.of());
 
-        var first = store.aggregateBuildStatus("p1", "5.1", true, true);
-        var second = store.aggregateBuildStatus("p1", "5.1", true, true);
+        var first = store.aggregateBuildStatus("p1", "5.1", true, true, true);
+        var second = store.aggregateBuildStatus("p1", "5.1", true, true, true);
 
         assertThat(first).isPresent();
         assertThat(first.get().activeDocumentIds()).isEqualTo(second.get().activeDocumentIds());
@@ -793,7 +824,7 @@ class SQLiteRequirementSemanticStoreTest {
         // 没有任何 run 的版本：Optional.empty()，Controller 层映射为空体（前端“未构建”提示）。
         SQLiteRequirementSemanticStore store = store();
 
-        assertThat(store.aggregateBuildStatus("p1", "5.1", true, true)).isEmpty();
+        assertThat(store.aggregateBuildStatus("p1", "5.1", true, true, true)).isEmpty();
     }
 
     @Test
@@ -812,7 +843,7 @@ class SQLiteRequirementSemanticStoreTest {
                 Instant.now(), Instant.now(), true);
         store.recordBuildRun(otherVersion, List.of());
 
-        var aggregate = store.aggregateBuildStatus("p1", "5.1", true, true);
+        var aggregate = store.aggregateBuildStatus("p1", "5.1", true, true, true);
 
         assertThat(aggregate).isPresent();
         assertThat(aggregate.get().activeDocumentCount()).isEqualTo(1);
@@ -833,7 +864,7 @@ class SQLiteRequirementSemanticStoreTest {
         store.recordBuildRun(buildForDocument("p1", "doc-a", "rev-ok", true, SemanticBuildStatus.SUCCESS),
                 List.of());
 
-        var aggregate = store.aggregateBuildStatus("p1", "5.1", true, true);
+        var aggregate = store.aggregateBuildStatus("p1", "5.1", true, true, true);
 
         assertThat(aggregate).isPresent();
         // latest run 与 active 代际来自同一次快照：最新执行已是 rev-ok 的 SUCCESS，active 集合必须非空；

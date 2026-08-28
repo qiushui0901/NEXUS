@@ -22,7 +22,6 @@
     // 语义构建状态：模块未启用（Controller 未装配）或无构建记录时后端返回 404，由调用方区分提示。
     semanticBuildStatus(params) { return request("/api/requirement-semantic/builds/latest" + query(params)); },
     // 项目/版本级聚合构建状态：与多源检索范围一致（按 projectId+version 聚合全部 active 文档）。
-    semanticBuildAggregate(params) { return request("/api/requirement-semantic/builds/aggregate" + query(params)); },
-    buildSemantic(body) { return request("/api/requirement-semantic/builds", {method: "POST", body: JSON.stringify(body), timeout: 600000}); }
+    semanticBuildAggregate(params) { return request("/api/requirement-semantic/builds/aggregate" + query(params)); }
   };
 })(window);

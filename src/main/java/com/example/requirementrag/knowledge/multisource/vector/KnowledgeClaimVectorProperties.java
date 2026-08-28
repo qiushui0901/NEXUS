@@ -33,7 +33,9 @@ public record KnowledgeClaimVectorProperties(
         overFetchFactor = bounded(overFetchFactor, 1, 10, 3);
         batchSize = bounded(batchSize, 1, 64, 32);
         representativeEvidenceLimit = bounded(representativeEvidenceLimit, 0, 10, 3);
-        retainPhysicalCollections = bounded(retainPhysicalCollections, 1, 10, 2);
+        // 中（第七批 Review 2）：下限必须 ≥2——retain=1 时 switchAlias 尾部会立即删除前序集合，
+        // markActive 失败补偿 rollbackAlias(前序目标) 与运维 /rollback 双双失去回滚目标，产生悬空 ACTIVE。
+        retainPhysicalCollections = bounded(retainPhysicalCollections, 2, 10, 2);
     }
 
     /**

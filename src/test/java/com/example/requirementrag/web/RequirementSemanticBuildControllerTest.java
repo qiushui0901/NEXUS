@@ -1,5 +1,6 @@
 package com.example.requirementrag.web;
 
+import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeProperties;
 import com.example.requirementrag.project.BusinessProjectCatalogService;
 import com.example.requirementrag.requirement.semantic.RequirementSemanticBuildService;
 import com.example.requirementrag.requirement.semantic.RequirementSemanticException;
@@ -17,6 +18,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,9 +45,11 @@ class RequirementSemanticBuildControllerTest {
                     "requirement-semantic-v1", "v1", 12_000, 30, 30, 30, 30, 20, 30, 2,
                     1_000, 1_800, 1_000_000, 400, true, 5_000);
     private final HttpServletRequest httpRequest = mock(HttpServletRequest.class);
+    private final MultiSourceKnowledgeProperties multiSourceProperties =
+            new MultiSourceKnowledgeProperties(true, false, null, Map.of("p1", true), false);
 
     private final RequirementSemanticBuildController controller = new RequirementSemanticBuildController(
-            buildService, store, accessGuard, businessProjects, properties);
+            buildService, store, accessGuard, businessProjects, properties, multiSourceProperties);
 
     /** 默认：请求的业务 ID 即规范 ID（mock resolveProjectId 返回 null 会让 requireProject(null) 空转）。 */
     private void stubIdentityResolution() {
@@ -183,7 +187,7 @@ class RequirementSemanticBuildControllerTest {
                 "p1", "5.1", true, 2,
                 List.of("doc-a", "doc-b"), List.of("build-1", "build-2"),
                 "run-9", "build-2", SemanticBuildStatus.SUCCESS, 10, 10, 0, List.of(),
-                true, true);
+                true, true, true);
     }
 
     @Test
@@ -191,7 +195,7 @@ class RequirementSemanticBuildControllerTest {
         stubIdentityResolution();
         // 聚合接口是前端状态条的契约：必须返回代际聚合字段与检索开关，供前端区分
         // "配置关闭"与"召回质量差"（P1），并携带 active 代际身份集合（评测键依赖）。
-        when(store.aggregateBuildStatus("p1", "5.1", true, true))
+        when(store.aggregateBuildStatus("p1", "5.1", true, true, true))
                 .thenReturn(Optional.of(aggregateView()));
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
 
@@ -207,7 +211,8 @@ class RequirementSemanticBuildControllerTest {
                 .andExpect(jsonPath("$.activeBuildIds[1]").value("build-2"))
                 .andExpect(jsonPath("$.latestRunStatus").value("SUCCESS"))
                 .andExpect(jsonPath("$.candidateRetrievalEnabled").value(true))
-                .andExpect(jsonPath("$.normativeRetrievalEnabled").value(true));
+                .andExpect(jsonPath("$.normativeRetrievalEnabled").value(true))
+                .andExpect(jsonPath("$.multiSourceEnabledForProject").value(true));
         verify(businessProjects).requireProject("p1");
         // MockMvc 使用的是 MockHttpServletRequest，而非上面的 httpRequest mock。
         verify(accessGuard).requireProjectAccess(org.mockito.ArgumentMatchers.any(HttpServletRequest.class),
@@ -231,7 +236,7 @@ class RequirementSemanticBuildControllerTest {
         stubIdentityResolution();
         // 没有任何构建 run 的版本：接口返回空体（200），前端据此进入"未构建"提示，
         // 而非把 404 误判成"模块未启用"之外的情形。
-        when(store.aggregateBuildStatus("p1", "5.1", true, true)).thenReturn(Optional.empty());
+        when(store.aggregateBuildStatus("p1", "5.1", true, true, true)).thenReturn(Optional.empty());
         MockMvc mvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         mvc.perform(get("/api/requirement-semantic/builds/aggregate")

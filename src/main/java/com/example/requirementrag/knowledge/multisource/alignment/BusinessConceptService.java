@@ -10,6 +10,9 @@ import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricMod
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.CodeSymbolView;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.LoadedCode;
 import com.example.requirementrag.knowledge.multisource.alignment.CodeCentricModels.TruthRole;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.security.MessageDigest;
@@ -30,6 +33,7 @@ import java.util.Set;
  */
 @Service
 public class BusinessConceptService {
+    private static final Logger log = LoggerFactory.getLogger(BusinessConceptService.class);
 
     /** 包含匹配仅在索引小时启用，避免 8.5k 代码符号 × 数十万别名的全量扫描。 */
     private static final int CONTAINS_MATCH_MAX_INDEX_SIZE = 2000;
@@ -49,16 +53,77 @@ public class BusinessConceptService {
         this.versionContextService = versionContextService;
     }
 
-    /** 重建项目/版本的概念层：概念 + 别名 + 成员（先原子清理该业务版本的旧成员，避免旧 commit 残留）。 */
+    /** 重建项目/版本的概念层（版本级增量）：概念 + 别名 + 成员。
+     * 只替换该业务版本的成员（先原子清理该业务版本的旧成员，避免旧 commit 残留），
+     * 历史版本成员不受影响。仅处理已发布（PUBLISHED）Claim，DRAFT 不进入实体层。
+     * 当前代码符号只挂载到最新已发布业务版本（当前实现事实，不冒充历史版本的代码）。 */
     public BuildResult build(String projectId, String version) {
-        String contextId = versionContextService.resolve(projectId, version, "default").contextId();
-        alignmentStore.deleteMembersByVersion(projectId, version);
-        List<KnowledgeClaimRecord> claims = knowledgeStore.findClaimsByProjectVersion(projectId, version);
-        LoadedCode loaded = codeSymbolLoader.load(projectId);
+        List<String> publishedVersions = knowledgeStore.findPublishedBusinessVersions(projectId);
+        if (version == null || version.isBlank() || !publishedVersions.contains(version)) {
+            throw new IllegalArgumentException("只能构建已发布业务版本: " + projectId + "|" + version);
+        }
+        boolean isLatest = version.equals(publishedVersions.get(publishedVersions.size() - 1));
+        String contextId = isLatest
+                ? versionContextService.resolve(projectId, version, "default").contextId()
+                : versionContextService.resolveHistorical(projectId, version, "default").contextId();
+        List<KnowledgeClaimRecord> claims =
+                knowledgeStore.findPublishedClaimsByProjectVersionAll(projectId, version);
+        VersionBuild build = buildForVersion(projectId, version, contextId, claims,
+                isLatest ? codeSymbolLoader.load(projectId) : LoadedCode.empty(), true);
+        alignmentStore.replaceProjectIndex(projectId,
+                Map.of(version, build.members()), build.concepts(), build.aliases());
+        return build.result();
+    }
 
+    /** 项目级重建：枚举全部已发布业务版本 + 当前代码符号，跨版本合并实体。
+     *
+     * <p>概念/别名按 {@code con:sha256(projectId|canonicalKey)} 跨版本共享；成员按版本增量 upsert。
+     * 不删除任何版本的历史成员（每版本仅清理并重建该版本自身成员）。
+     * 仅使用 PUBLISHED 版本（DRAFT 不进入实体层，避免未发布数据泄漏到公开读取与当前事实）；
+     * 当前代码符号只挂到最新业务版本（当前实现事实，不冒充历史版本的代码）。
+     */
+    public BuildResult buildProject(String projectId) {
+        List<String> versions = knowledgeStore.findPublishedBusinessVersions(projectId);
+        if (versions.isEmpty()) {
+            alignmentStore.clearProjectMembers(projectId);
+            return new BuildResult(0, 0, 0, 0, 0);
+        }
+        LoadedCode loaded = codeSymbolLoader.load(projectId);
+        String latestVersion = versions.get(versions.size() - 1);
+        int concepts = 0;
+        int aliases = 0;
+        int members = 0;
+        List<BusinessConcept> conceptBatch = new ArrayList<>();
+        List<ConceptAlias> aliasBatch = new ArrayList<>();
+        Map<String, List<ConceptMember>> membersByVersion = new LinkedHashMap<>();
+        for (String version : versions) {
+            String contextId = version.equals(latestVersion)
+                    ? versionContextService.resolve(projectId, version, "default").contextId()
+                    : versionContextService.resolveHistorical(projectId, version, "default").contextId();
+            List<KnowledgeClaimRecord> claims =
+                    knowledgeStore.findPublishedClaimsByProjectVersionAll(projectId, version);
+            VersionBuild build = buildForVersion(projectId, version, contextId, claims,
+                    version.equals(latestVersion) ? loaded : LoadedCode.empty(), true);
+            concepts += build.result().concepts();
+            aliases += build.result().aliases();
+            members += build.result().members();
+            conceptBatch.addAll(build.concepts());
+            aliasBatch.addAll(build.aliases());
+            membersByVersion.put(version, build.members());
+        }
+        alignmentStore.replaceWholeProjectIndex(projectId, membersByVersion, conceptBatch, aliasBatch);
+        return new BuildResult(concepts, aliases, members, 0, 0);
+    }
+
+    /** 单个业务版本的成员/概念/别名重建（共享概念与别名，跨版本累积）。 */
+    private VersionBuild buildForVersion(String projectId, String version, String contextId,
+                                         List<KnowledgeClaimRecord> claims, LoadedCode loaded,
+                                         boolean attachCode) {
         Set<String> conceptKeys = new HashSet<>();
         Map<String, List<String>> aliasToConcept = new LinkedHashMap<>();
         List<ConceptMember> memberBatch = new ArrayList<>();
+        List<BusinessConcept> conceptBatch = new ArrayList<>();
+        List<ConceptAlias> aliasBatch = new ArrayList<>();
         int concepts = 0;
         int aliases = 0;
         int members = 0;
@@ -71,7 +136,7 @@ public class BusinessConceptService {
             String conceptId;
             if (conceptKeys.add(key.canonicalKey())) {
                 conceptId = conceptId(projectId, key.canonicalKey());
-                alignmentStore.upsertConcept(new BusinessConcept(
+                conceptBatch.add(new BusinessConcept(
                         conceptId, projectId, key.canonicalKey(), key.displayName(), key.type(),
                         key.module(), null, "ACTIVE", null, Instant.now().toString()));
                 concepts++;
@@ -82,9 +147,10 @@ public class BusinessConceptService {
             String aliasName = claim.subject();
             if (aliasName != null && !aliasName.isBlank()) {
                 String aliasId = aliasId(projectId, conceptId, aliasName, claim.sourceType().name());
-                alignmentStore.upsertAlias(new ConceptAlias(
+                aliasBatch.add(new ConceptAlias(
                         aliasId, projectId, conceptId, aliasName, claim.sourceType().name(),
-                        "SOURCE_NAME", 1.0, Instant.now().toString()));
+                        "SOURCE_NAME", 1.0, Instant.now().toString(),
+                        "SOURCE_EXPLICIT", "CONFIRMED", null));
                 aliases++;
                 aliasToConcept.computeIfAbsent(AlignmentNaming.normalize(aliasName),
                         ignored -> new ArrayList<>()).add(conceptId);
@@ -99,7 +165,7 @@ public class BusinessConceptService {
         }
 
         // 代码符号挂到匹配的业务概念（truthRole = IMPLEMENTATION）
-        if (loaded.commitSha() != null) {
+        if (attachCode && loaded != null && loaded.commitSha() != null) {
             for (CodeSymbolView symbol : loaded.symbols()) {
                 for (String conceptId : matchConcepts(aliasToConcept, symbol.simpleName())) {
                     memberBatch.add(new ConceptMember(
@@ -113,8 +179,19 @@ public class BusinessConceptService {
             }
         }
 
-        alignmentStore.upsertMembers(memberBatch);
-        return new BuildResult(concepts, aliases, members, 0, 0);
+        return new VersionBuild(new BuildResult(concepts, aliases, members, 0, 0), memberBatch,
+                conceptBatch, aliasBatch);
+    }
+
+    /** 发布完成后自动刷新派生实体索引；失败记录日志，不回滚已经提交的事实发布。 */
+    @EventListener
+    public void onDocumentVersionPublished(MultiSourceKnowledgeStore.DocumentVersionPublished event) {
+        try {
+            buildProject(event.projectId());
+        } catch (RuntimeException exception) {
+            log.error("发布后实体索引重建失败: projectId={} businessVersion={}",
+                    event.projectId(), event.businessVersion(), exception);
+        }
     }
 
     /** 查询项目全部概念（含成员与别名）。 */
@@ -151,23 +228,20 @@ public class BusinessConceptService {
     }
 
     private ConceptKey conceptFor(KnowledgeClaimRecord claim) {
-        String module = moduleFromFactKey(claim.factKey());
         String subject = safe(claim.subject());
-        if (subject.isBlank()) return null;
+        String module = AlignmentNaming.moduleOf(claim.sourceType(), claim.factKey(), subject);
+        if (subject.isBlank() && module.isBlank()) return null;
         return switch (claim.sourceType()) {
             case PARAMETER_TABLE -> new ConceptKey(
-                    "param:" + AlignmentNaming.keySegment(module) + "." + AlignmentNaming.keySegment(subject),
-                    subject, "PARAMETER", module);
+                    AlignmentNaming.conceptKey(module, subject), subject, "PARAMETER", module);
             case REQUIREMENT -> new ConceptKey(
-                    "req:" + AlignmentNaming.keySegment(subject), subject, "REQUIREMENT", module);
+                    AlignmentNaming.conceptKey(module, subject), subject, "REQUIREMENT", module);
             case TEST_CASE -> new ConceptKey(
-                    "test:" + AlignmentNaming.keySegment(module.isBlank() ? subject : module),
-                    subject, "TEST_MODULE", module);
+                    AlignmentNaming.conceptKey(module, subject), subject, "TEST_MODULE", module);
             case TEST_RESULT -> new ConceptKey(
-                    "obs:" + AlignmentNaming.keySegment(module.isBlank() ? subject : module),
-                    subject, "OBSERVATION", module);
+                    AlignmentNaming.conceptKey(module, subject), subject, "OBSERVATION", module);
             case DOUBT -> new ConceptKey(
-                    "doubt:" + AlignmentNaming.keySegment(module.isBlank() ? "QA存疑" : module),
+                    AlignmentNaming.conceptKey(module.isBlank() ? "QA存疑" : module, ""),
                     subject, "RISK_AREA", module);
             default -> null;
         };
@@ -183,12 +257,6 @@ public class BusinessConceptService {
             case CODE -> TruthRole.IMPLEMENTATION;
             default -> TruthRole.DERIVED;
         };
-    }
-
-    private String moduleFromFactKey(String factKey) {
-        if (factKey == null) return "";
-        String[] parts = factKey.split("\\|");
-        return parts.length >= 3 ? safe(parts[2]) : "";
     }
 
     private String safe(String value) {
@@ -209,8 +277,12 @@ public class BusinessConceptService {
                 + "|" + businessVersion).substring(0, 24);
     }
 
+    /**
+     * 代码成员只有结构化符号定位，没有可回源的 KnowledgeEvidence excerpt；不能伪造 Evidence ID。
+     * 代码事实会以 TRACEABLE 而非 SUPPORTED 暴露，回答层因此不会把位置误当成行为证明。
+     */
     private String codeEvidenceId(CodeSymbolView symbol) {
-        return "code:" + symbol.projectId() + ":" + symbol.commitSha() + ":" + symbol.id();
+        return null;
     }
 
     private String sha256(String value) {
@@ -224,5 +296,9 @@ public class BusinessConceptService {
     }
 
     private record ConceptKey(String canonicalKey, String displayName, String type, String module) {
+    }
+
+    private record VersionBuild(BuildResult result, List<ConceptMember> members,
+                                 List<BusinessConcept> concepts, List<ConceptAlias> aliases) {
     }
 }

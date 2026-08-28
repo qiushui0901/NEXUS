@@ -150,7 +150,8 @@ public class ClaimVectorCandidateAdapter implements MultiSourceCandidateAdapter 
             }
 
             List<String> claimIds = hits.stream().map(ClaimVectorHit::claimId).toList();
-            Map<String, KnowledgeClaimRecord> records = knowledgeStore.findClaimsByIds(claimIds).stream()
+            Map<String, KnowledgeClaimRecord> records = knowledgeStore.findPublishedClaimsByIds(
+                            projectId, version, claimIds).stream()
                     .collect(Collectors.toMap(KnowledgeClaimRecord::claimId, Function.identity(), (a, b) -> a));
 
             List<UnifiedKnowledgeClaim> candidates = new ArrayList<>();

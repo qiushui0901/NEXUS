@@ -141,6 +141,11 @@
         if(build.candidateRetrievalEnabled===false){
           return{tone:"warn",text:"语义候选检索当前被配置关闭（candidate-retrieval-enabled=false）：构建已发布但候选不参与本次检索，本次结果不得作为语义召回评测数据。"};
         }
+        // 中（第七批 Review M3）：项目级多源开关关闭时 /multi-source/search 直接降级 MULTI_SOURCE_DISABLED，
+        // 语义构建虽已发布也不会产生任何语义候选——状态条必须降级警示，不能保持“已发布”绿灯误导用户。
+        if(build.multiSourceEnabledForProject===false){
+          return{tone:"warn",text:"多源检索对该项目未启用（multi-source.enabled=false 或 project-enabled 未开启）：语义构建虽已发布，但检索不会返回语义候选；本次结果不得作为语义召回评测数据。"};
+        }
         // #6：当前响应自身携带不可评测 warning（normative 开关拦截/候选截断/来源加载失败）时，
         // 结果展示但不计入评测——与 semanticEvaluationUsable 的拒绝条件保持一致。
         const warnings=(this.semantic.response&&this.semantic.response.warnings)||[];
@@ -160,9 +165,9 @@
           return{tone:"warn",text:"语义构建部分失败，本次结果仅供调试，不建议作为正式评测结果。"};
         }
         if(build.latestRunStatus==="FAILED"){
-          return{tone:"bad",text:"语义构建失败，不能把失败伪装成无召回结果；请先重新构建并确认成功。"};
+          return{tone:"bad",text:"语义构建失败，不能把失败伪装成无召回结果；请通过构建接口重新执行语义构建（POST /api/requirement-semantic/builds，页面暂无构建按钮）并确认成功。"};
         }
-        return{tone:"warn",text:"语义构建尚未发布（无 active 代际），当前无法使用语义 Claim 检索；请先执行语义构建并确认构建成功。"};
+        return{tone:"warn",text:"语义构建尚未发布（无 active 代际），当前无法使用语义 Claim 检索；请通过构建接口发起语义构建（POST /api/requirement-semantic/builds，页面暂无构建按钮）并确认构建成功。"};
       },
       // #6（Review 中）+ #5（Review 高）：本次语义结果是否可作评测——
       // #5：评测资格必须要求已捕获 active 代际（hasActiveGeneration=true、非空 activeBuildIds），
@@ -189,6 +194,26 @@
           return /^SEMANTIC_NORMATIVE_RETRIEVAL_DISABLED|^SEMANTIC_CANDIDATE_TRUNCATED|^SEMANTIC_CANDIDATE_LOAD_FAILED|^SEMANTIC_CANDIDATE_RETRIEVAL_DISABLED|^MULTI_SOURCE_CANDIDATE_LOAD_FAILED/.test(w||"");
         }))return false;
         return true;
+      },
+      // 中（第七批 Review M4）：评测拒绝文案按真实原因派生——不能恒为“被配置关闭”，
+      // 否则用户面对 DOUBT 意图（未参与）/无 active 代际/加载失败时被错误归因为开关。
+      semanticRefusalReason(){
+        if(!this.semantic.response||!this.semantic.responseContext){
+          return "本次结果无可评测的响应快照（检索未完成或响应已重置）";
+        }
+        const ctx=this.semantic.responseContext;
+        if(ctx.buildError)return "语义构建状态查询失败（非未启用），评测资格不可确认";
+        if(ctx.buildUnavailable)return "语义模块可能未启用或尚未构建，评测资格不可确认";
+        if(!ctx.semanticSourceAttempted)return "本次查询意图下语义源未参与检索（semanticSourceAttempted=false），无语义候选可评测";
+        if(!ctx.hasActiveGeneration)return "该项目/版本当前无 active 语义代际，本次结果不是语义检索产物";
+        if(!(ctx.activeBuildIds||[]).length)return "本次响应未绑定任何 active 构建代际（semanticBuildIds 为空），不可评测";
+        if(ctx.candidateRetrievalEnabled===false)return "语义候选检索被配置关闭（candidate-retrieval-enabled=false）";
+        const warnings=this.semantic.response.warnings||[];
+        const blocked=warnings.find(function(w){
+          return /^SEMANTIC_NORMATIVE_RETRIEVAL_DISABLED|^SEMANTIC_CANDIDATE_TRUNCATED|^SEMANTIC_CANDIDATE_LOAD_FAILED|^SEMANTIC_CANDIDATE_RETRIEVAL_DISABLED|^MULTI_SOURCE_CANDIDATE_LOAD_FAILED/.test(w||"");
+        });
+        if(blocked)return "语义候选被拦截："+blocked;
+        return "语义评测当前不可用";
       },
       semanticScope(){
         const base=this.selectedBase;
@@ -514,7 +539,7 @@
       markJudgement(mode,resultId,rank,judgement){
         // P1-1：语义候选被配置关闭时，本次结果不得作为评测数据——直接拒绝写入并提示。
         if(mode==="SEMANTIC"&&!this.semanticEvaluationUsable){
-          NexusNotice.show("语义候选检索当前被配置关闭，本次结果不可作为评测数据","error");
+          NexusNotice.show(this.semanticRefusalReason()+"；本次结果不可作为评测数据","error");
           return;
         }
         const key=this.evaluationKey(mode,resultId);
@@ -529,7 +554,7 @@
       markMissedRecall(mode){
         // P1-1：配置关闭时标记"漏召回"会把配置问题误记为召回问题，同样拒绝。
         if(mode==="SEMANTIC"&&!this.semanticEvaluationUsable){
-          NexusNotice.show("语义候选检索当前被配置关闭，本次结果不可作为评测数据","error");
+          NexusNotice.show(this.semanticRefusalReason()+"；本次结果不可作为评测数据","error");
           return;
         }
         const key=this.evaluationKey(mode,null);

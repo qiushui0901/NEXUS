@@ -144,6 +144,55 @@ public class SQLiteKnowledgeClaimVectorStore {
     }
 
     /**
+     * 高（Review 9）：同一构建意图（scope+指纹+schema+模型）重试时，删除不可复用的旧代际
+     * （FAILED / BUILDING 残留 / SUCCESS 但无物理集合的旧 bug 残留），
+     * 使 recordBuildStart 不受 unique(project_id, business_version, input_fingerprint, ...) 约束阻塞。
+     * ACTIVE 代际不受影响（可复用路径不会走到重试）。
+     */
+    public void deleteSupersededGenerations(String projectId, String businessVersion, String inputFingerprint,
+                                            String projectionSchemaVersion, String embeddingModel) {
+        try (Connection connection = open()) {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("begin immediate");
+            }
+            try (PreparedStatement inputs = connection.prepareStatement("""
+                    delete from knowledge_claim_vector_generation_input
+                    where generation_id in (
+                      select generation_id from knowledge_claim_vector_generation
+                      where project_id=? and business_version=? and input_fingerprint=?
+                        and projection_schema_version=? and embedding_model=?
+                        and status != 'ACTIVE'
+                    )
+                    """)) {
+                inputs.setString(1, projectId);
+                inputs.setString(2, businessVersion);
+                inputs.setString(3, inputFingerprint);
+                inputs.setString(4, projectionSchemaVersion);
+                inputs.setString(5, embeddingModel);
+                inputs.executeUpdate();
+            }
+            try (PreparedStatement generations = connection.prepareStatement("""
+                    delete from knowledge_claim_vector_generation
+                    where project_id=? and business_version=? and input_fingerprint=?
+                      and projection_schema_version=? and embedding_model=?
+                      and status != 'ACTIVE'
+                    """)) {
+                generations.setString(1, projectId);
+                generations.setString(2, businessVersion);
+                generations.setString(3, inputFingerprint);
+                generations.setString(4, projectionSchemaVersion);
+                generations.setString(5, embeddingModel);
+                generations.executeUpdate();
+            }
+            try (Statement commit = connection.createStatement()) {
+                commit.execute("commit");
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("清理被取代的 Claim 向量代际失败", exception);
+        }
+    }
+
+    /**
      * 更新代际状态（VERIFYING/SUCCESS/FAILED）及关联字段。
      * 不修改 generation_id/project_id/business_version/input_fingerprint——这些不可变。
      */
@@ -332,6 +381,62 @@ public class SQLiteKnowledgeClaimVectorStore {
         return result;
     }
 
+    /**
+     * 中（第七批 Review 4）：按 scope 保留最近 keepRetired 个 RETIRED 代际，删除更早的（连带 input 行）。
+     * 与 Qdrant 侧 retainPhysicalCollections 清理窗口对齐——被删集合对应的代际不再可回滚，
+     * SQLite 行同步清理，避免 generation_input 无界增长与 rollbackTo 打到已删集合。
+     */
+    public void pruneRetiredGenerations(String projectId, String businessVersion, int keepRetired) {
+        List<String> doomed = new ArrayList<>();
+        try (Connection connection = open();
+             PreparedStatement statement = connection.prepareStatement("""
+                     select generation_id from knowledge_claim_vector_generation
+                     where project_id=? and business_version=? and status='RETIRED'
+                     order by published_at desc
+                     limit -1 offset ?
+                     """)) {
+            statement.setString(1, projectId);
+            statement.setString(2, businessVersion);
+            statement.setInt(3, Math.max(0, keepRetired));
+            try (ResultSet rows = statement.executeQuery()) {
+                while (rows.next()) {
+                    doomed.add(rows.getString(1));
+                }
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("列出待清理 RETIRED 代际失败", exception);
+        }
+        if (doomed.isEmpty()) {
+            return;
+        }
+        try (Connection connection = open()) {
+            try (Statement begin = connection.createStatement()) {
+                begin.execute("begin immediate");
+            }
+            try (PreparedStatement inputs = connection.prepareStatement(
+                    "delete from knowledge_claim_vector_generation_input where generation_id=?")) {
+                for (String generationId : doomed) {
+                    inputs.setString(1, generationId);
+                    inputs.addBatch();
+                }
+                inputs.executeBatch();
+            }
+            try (PreparedStatement generations = connection.prepareStatement(
+                    "delete from knowledge_claim_vector_generation where generation_id=?")) {
+                for (String generationId : doomed) {
+                    generations.setString(1, generationId);
+                    generations.addBatch();
+                }
+                generations.executeBatch();
+            }
+            try (Statement commit = connection.createStatement()) {
+                commit.execute("commit");
+            }
+        } catch (SQLException exception) {
+            throw new IllegalStateException("清理超期 RETIRED 代际失败", exception);
+        }
+    }
+
     /** 查找代际的输入集合（用于 active 代际限定可见 Claim）。 */
     public List<ClaimVectorGenerationInput> findGenerationInputs(String generationId) {
         List<ClaimVectorGenerationInput> result = new ArrayList<>();
@@ -371,6 +476,7 @@ public class SQLiteKnowledgeClaimVectorStore {
                      where project_id=? and business_version=? and input_fingerprint=?
                        and projection_schema_version=? and embedding_model=?
                        and status in ('SUCCESS', 'ACTIVE')
+                       and physical_collection is not null
                      order by started_at desc limit 1
                      """)) {
             statement.setString(1, projectId);

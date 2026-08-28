@@ -6,10 +6,13 @@ import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeMode
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.KnowledgeQueryIntent;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.MultiSourceSearchResponse;
 import com.example.requirementrag.knowledge.multisource.MultiSourceKnowledgeModels.UnifiedKnowledgeClaim;
+import com.example.requirementrag.knowledge.multisource.vector.ClaimVectorCandidateAdapter;
+import com.example.requirementrag.knowledge.multisource.vector.KnowledgeClaimVectorFusion;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.mockito.Mockito;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -17,6 +20,10 @@ import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class MultiSourceSearchServiceTest {
     @TempDir Path tempDir;
@@ -28,6 +35,13 @@ class MultiSourceSearchServiceTest {
         ObjectMapper objectMapper = new ObjectMapper();
         MultiSourceKnowledgeStore store = new MultiSourceKnowledgeStore(
                 tempDir.resolve("search.db").toString(), objectMapper);
+        seedParameterStore(store);
+        service = new MultiSourceSearchService(store,
+                new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer());
+    }
+
+    private void seedParameterStore(MultiSourceKnowledgeStore store) {
         ParameterTableLoader loader = new ParameterTableLoader();
         DoubtClaimParser doubtParser = new DoubtClaimParser();
         var layout = loader.parseHeaders(List.of("模块", "参数", "值", "单位", "版本"));
@@ -37,9 +51,6 @@ class MultiSourceSearchServiceTest {
                 List.of(doubtParser.parse(Map.of("问题", "权限撤销未确认", "状态", "OPEN"),
                         "fengshen", "5.1", "5.1存疑", 1)),
                 List.of(), List.of());
-        service = new MultiSourceSearchService(store,
-                new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
-                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer());
     }
 
     @Test
@@ -362,6 +373,35 @@ class MultiSourceSearchServiceTest {
         // DOUBT 排除语义源 → 未参与 → 空 buildIds + semanticSourceAttempted=false。
         assertThat(response.semanticBuildIds()).isEmpty();
         assertThat(response.semanticSourceAttempted()).isFalse();
+    }
+
+    @Test
+    void fusionPathFailureFallsBackToStructuredCandidates() {
+        // 中（vaxr M1）：向量/融合/影子段不在 per-source 故障保护内——任何未捕获异常都曾让
+        // 整个检索 500。修复后：融合路径故障降级为结构化候选 + MULTI_SOURCE_CANDIDATE_LOAD_FAILED:CLAIM_VECTOR 警告。
+        MultiSourceKnowledgeStore localStore = newStore();
+        seedParameterStore(localStore);
+        ClaimVectorCandidateAdapter throwingAdapter = mock(ClaimVectorCandidateAdapter.class);
+        when(throwingAdapter.sourceType()).thenReturn(SourceType.CLAIM_VECTOR);
+        when(throwingAdapter.loadScored(anyString(), anyString(), anyString(), any()))
+                .thenThrow(new RuntimeException("qdrant unavailable"));
+        KnowledgeClaimVectorFusion fusion = mock(KnowledgeClaimVectorFusion.class);
+
+        MultiSourceSearchService fused = new MultiSourceSearchService(localStore,
+                new KnowledgeQueryIntentClassifier(), new MultiSourceKnowledgeGate(),
+                new SourceFilterStrategy(), new MultiSourceConflictAnalyzer(),
+                List.of(), new CrossSourceRelationExtractor(), null,
+                MultiSourceKnowledgeProperties.enabledDefault(), null, fusion, null, throwingAdapter);
+
+        // PARAMETER 意图含 CLAIM_VECTOR 与 PARAMETER_TABLE → 触发融合路径（负载段抛异常）
+        // 且结构化参数候选仍在。
+        MultiSourceSearchResponse response = fused.search("fengshen", "5.1", "权限撤销 传播时间",
+                KnowledgeQueryIntent.PARAMETER);
+
+        // 结构化候选不受影响，检索不 500。
+        assertThat(response.claims()).isNotEmpty();
+        // 融合故障以稳定告警码暴露，而非伪装成无向量结果。
+        assertThat(response.warnings()).contains("MULTI_SOURCE_CANDIDATE_LOAD_FAILED:CLAIM_VECTOR");
     }
 
     private MultiSourceKnowledgeStore newStore() {

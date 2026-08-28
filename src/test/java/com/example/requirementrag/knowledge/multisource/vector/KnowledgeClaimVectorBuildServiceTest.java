@@ -301,6 +301,13 @@ class KnowledgeClaimVectorBuildServiceTest {
         verify(qdrantStore).rollbackAlias(eq(liveAlias()), eq(previousTarget));
         verify(qdrantStore).deleteCollection(anyString());
         assertThat(spyStore.findActiveGeneration("proj-1", "v1")).isEmpty();
+        // 高（Review 9）：代际必须 FAILED——不得残留 SUCCESS+无物理集合的“可复用”代际
+        assertThat(spyStore.findLatestGeneration("proj-1", "v1")).isPresent();
+        assertThat(spyStore.findLatestGeneration("proj-1", "v1").get().status())
+                .isEqualTo(GenerationStatus.FAILED);
+        assertThat(spyStore.findLatestGeneration("proj-1", "v1").get().physicalCollection()).isNull();
+        assertThat(spyStore.findLatestGeneration("proj-1", "v1").get().warningsJson())
+                .contains("KNOWLEDGE_CLAIM_VECTOR_BUILD_FAILED");
     }
 
     @Test
@@ -328,6 +335,11 @@ class KnowledgeClaimVectorBuildServiceTest {
         verify(qdrantStore, never()).rollbackAlias(anyString(), anyString());
         verify(qdrantStore).deleteCollection(anyString());
         assertThat(spyStore.findActiveGeneration("proj-1", "v1")).isEmpty();
+        // 高（Review 9）：代际必须 FAILED——首次构建补偿路径同样不得残留 SUCCESS
+        assertThat(spyStore.findLatestGeneration("proj-1", "v1")).isPresent();
+        assertThat(spyStore.findLatestGeneration("proj-1", "v1").get().status())
+                .isEqualTo(GenerationStatus.FAILED);
+        assertThat(spyStore.findLatestGeneration("proj-1", "v1").get().physicalCollection()).isNull();
     }
 
     @Test
@@ -360,6 +372,129 @@ class KnowledgeClaimVectorBuildServiceTest {
         assertThat(gen.get().status()).isEqualTo(GenerationStatus.FAILED);
         assertThat(gen.get().warningsJson()).contains("KNOWLEDGE_CLAIM_VECTOR_ALIAS_SWITCH_FAILED");
         assertThat(vectorStore.findActiveGeneration("proj-1", "v1")).isEmpty();
+    }
+
+    @Test
+    void aliasSwitchFailureWithUnknownAliasStateKeepsCollectionForReconciliation() {
+        // 高（Review 7）：switchAlias 异常后防御性复查 alias 仍失败（远端状态未知）——
+        // 绝不能按“未指向本代际”处理而删除集合：切换可能已生效，删除会制造悬空 alias。
+        // 必须保留 collection 与 alias 现状，留待人工对账。
+        stubClaims(List.of(claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a")));
+        stubEmbeddings();
+        doThrow(new RuntimeException("alias switch timeout"))
+                .when(qdrantStore).switchAlias(anyString(), anyString());
+        // 前序目标查询与防御复查均持续失败——远端状态未知
+        when(qdrantStore.aliasTarget(eq(liveAlias())))
+                .thenThrow(new RuntimeException("alias read timeout"));
+
+        assertThatThrownBy(() -> buildService.build("proj-1", "v1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("alias 切换失败");
+
+        // 保守保留：不删集合、不动 alias——状态未知时任何写操作都可能加剧不一致
+        verify(qdrantStore, never()).deleteCollection(anyString());
+        verify(qdrantStore, never()).rollbackAlias(anyString(), anyString());
+        verify(qdrantStore, never()).deleteAlias(anyString());
+        Optional<ClaimVectorGenerationManifest> gen = vectorStore.findLatestGeneration("proj-1", "v1");
+        assertThat(gen).isPresent();
+        assertThat(gen.get().status()).isEqualTo(GenerationStatus.FAILED);
+        assertThat(gen.get().warningsJson()).contains("KNOWLEDGE_CLAIM_VECTOR_ALIAS_SWITCH_FAILED");
+        assertThat(vectorStore.findActiveGeneration("proj-1", "v1")).isEmpty();
+    }
+
+    @Test
+    void aliasSwitchFailureConfirmedSwitchedButUnknownPreviousTargetKeepsEverything() {
+        // 高（Review 7）：复查确认 alias 已指向本代际（切换实际已生效），但前序目标查询失败——
+        // 回滚无从回退，删除 alias 会彻底切断数据面，只能整体保留待人工对账。
+        stubClaims(List.of(claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a")));
+        stubEmbeddings();
+        AtomicReference<String> capturedPhysical = new AtomicReference<>();
+        doAnswer(invocation -> {
+            capturedPhysical.set(invocation.getArgument(1));
+            throw new RuntimeException("alias switch timeout after actual switch");
+        }).when(qdrantStore).switchAlias(anyString(), anyString());
+        // 第一次 aliasTarget（记录前序目标）→ 查询失败（未知）；第二次（防御复查）→ 已指向本代际
+        when(qdrantStore.aliasTarget(eq(liveAlias())))
+                .thenThrow(new RuntimeException("alias read timeout"))
+                .thenAnswer(invocation -> capturedPhysical.get());
+
+        assertThatThrownBy(() -> buildService.build("proj-1", "v1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("alias 切换失败");
+
+        // 前序目标未知：不回滚、不删 alias、不删集合
+        verify(qdrantStore, never()).rollbackAlias(anyString(), anyString());
+        verify(qdrantStore, never()).deleteAlias(anyString());
+        verify(qdrantStore, never()).deleteCollection(anyString());
+        Optional<ClaimVectorGenerationManifest> gen = vectorStore.findLatestGeneration("proj-1", "v1");
+        assertThat(gen).isPresent();
+        assertThat(gen.get().status()).isEqualTo(GenerationStatus.FAILED);
+    }
+
+    @Test
+    void markActiveFailureWithUnknownPreviousTargetKeepsEverything() {
+        // 高（Review 7）：markActive 失败时前序 alias 目标状态未知（首次查询已失败）——
+        // alias 当前确指向本代际（switchAlias 已成功），但无从回退；
+        // 不得删除 alias（切断数据面）也不得删除集合，保留现状待人工对账。
+        SQLiteKnowledgeClaimVectorStore spyStore = spy(vectorStore);
+        doThrow(new RuntimeException("SQLite busy"))
+                .when(spyStore).markActive(anyString(), anyString());
+        KnowledgeClaimVectorBuildService spyBuildService = new KnowledgeClaimVectorBuildService(
+                knowledgeStore, spyStore, qdrantStore, textComposer,
+                embeddingBatcher, embeddingModel, properties);
+        stubClaims(List.of(claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a")));
+        stubEmbeddings();
+        // 前序目标查询失败——远端是否存在旧目标未知
+        when(qdrantStore.aliasTarget(eq(liveAlias())))
+                .thenThrow(new RuntimeException("alias read timeout"));
+
+        assertThatThrownBy(() -> spyBuildService.build("proj-1", "v1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("代际激活失败");
+
+        // 保守保留：不动 alias、不删集合
+        verify(qdrantStore, never()).rollbackAlias(anyString(), anyString());
+        verify(qdrantStore, never()).deleteAlias(anyString());
+        verify(qdrantStore, never()).deleteCollection(anyString());
+        assertThat(spyStore.findActiveGeneration("proj-1", "v1")).isEmpty();
+        // 高（Review 9）：状态未知的保守路径同样必须把代际标为 FAILED
+        assertThat(spyStore.findLatestGeneration("proj-1", "v1")).isPresent();
+        assertThat(spyStore.findLatestGeneration("proj-1", "v1").get().status())
+                .isEqualTo(GenerationStatus.FAILED);
+        assertThat(spyStore.findLatestGeneration("proj-1", "v1").get().warningsJson())
+                .contains("KNOWLEDGE_CLAIM_VECTOR_BUILD_FAILED");
+    }
+
+    @Test
+    void rebuildAfterMarkActiveFailureDoesNotReuseFailedGeneration() {
+        // 高（Review 9）：markActive 失败的代际必须 FAILED 且不可复用——
+        // 下一次构建必须重新投影并成功激活，而不是返回无物理集合的代际 manifest。
+        SQLiteKnowledgeClaimVectorStore spyStore = spy(vectorStore);
+        doThrow(new RuntimeException("SQLite busy")).doCallRealMethod()
+                .when(spyStore).markActive(anyString(), anyString());
+        KnowledgeClaimVectorBuildService spyBuildService = new KnowledgeClaimVectorBuildService(
+                knowledgeStore, spyStore, qdrantStore, textComposer,
+                embeddingBatcher, embeddingModel, properties);
+        stubClaims(List.of(claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a")));
+        stubEmbeddings();
+        String previousTarget = "old-collection-1";
+        when(qdrantStore.aliasTarget(eq(liveAlias()))).thenReturn(previousTarget);
+
+        // 第一次构建：markActive 失败 → 代际 FAILED + alias 回滚到前序目标
+        assertThatThrownBy(() -> spyBuildService.build("proj-1", "v1"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("代际激活失败");
+        assertThat(spyStore.findLatestGeneration("proj-1", "v1")).isPresent();
+        assertThat(spyStore.findLatestGeneration("proj-1", "v1").get().status())
+                .isEqualTo(GenerationStatus.FAILED);
+
+        // 第二次构建同一指纹——不得复用 FAILED 代际，必须重新投影并激活
+        ClaimVectorGenerationManifest second = spyBuildService.build("proj-1", "v1");
+        assertThat(second.status()).isEqualTo(GenerationStatus.ACTIVE);
+        assertThat(second.physicalCollection()).isNotBlank();
+        assertThat(spyStore.findActiveGeneration("proj-1", "v1")).isPresent();
+        // 两次构建各自 switchAlias（若误复用则第二次不会切 alias）
+        verify(qdrantStore, times(2)).switchAlias(eq(liveAlias()), anyString());
     }
 
     @Test
@@ -440,6 +575,8 @@ class KnowledgeClaimVectorBuildServiceTest {
 
         assertThat(first.generationId()).isNotEqualTo(second.generationId());
         assertThat(second.status()).isEqualTo(GenerationStatus.ACTIVE);
+        // 中（第七批 Review 4）：回滚候选的物理集合必须仍在 Qdrant（未被 retain 清理）才可回滚
+        when(qdrantStore.collectionExists(anyString())).thenReturn(true);
 
         // 回滚到上一代（高：Review 9——取最近退役代际，而非最旧）
         Optional<ClaimVectorGenerationManifest> restored = buildService.rollback("proj-1", "v1");
@@ -474,6 +611,8 @@ class KnowledgeClaimVectorBuildServiceTest {
 
         stubClaims(List.of(claim("c-1", SourceType.REQUIREMENT, "需求A已变更", "fk-a")));
         ClaimVectorGenerationManifest second = buildService.build("proj-1", "v1");
+        // 中（第七批 Review 4）：回滚目标物理集合必须仍在 Qdrant
+        when(qdrantStore.collectionExists(anyString())).thenReturn(true);
 
         Optional<ClaimVectorGenerationManifest> restored =
                 buildService.rollbackTo("proj-1", "v1", first.generationId());
@@ -498,6 +637,23 @@ class KnowledgeClaimVectorBuildServiceTest {
         ClaimVectorGenerationManifest active = buildService.build("proj-1", "v1");
         // 其他项目尝试回滚到本 scope 代际——scope 不匹配拒绝
         assertThat(buildService.rollbackTo("proj-other", "v1", active.generationId())).isEmpty();
+    }
+
+    @Test
+    void rollbackToMissingPhysicalCollectionFails() {
+        // 中（第七批 Review 4）：回滚目标集合已被 retain 清理时，拒绝回滚（抛明确异常）——
+        // 绝不能把线上 alias 切向已删除的集合制造悬空 alias。
+        stubClaims(List.of(claim("c-1", SourceType.REQUIREMENT, "需求A", "fk-a")));
+        stubEmbeddings();
+        ClaimVectorGenerationManifest first = buildService.build("proj-1", "v1");
+        stubClaims(List.of(claim("c-1", SourceType.REQUIREMENT, "需求A已变更", "fk-a")));
+        ClaimVectorGenerationManifest second = buildService.build("proj-1", "v1");
+        assertThat(second.status()).isEqualTo(GenerationStatus.ACTIVE);
+        // 未 stub collectionExists → mock 默认 false = 集合不存在
+        assertThatThrownBy(() -> buildService.rollbackTo("proj-1", "v1", first.generationId()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("回滚目标物理集合已不存在");
+        verify(qdrantStore, never()).rollbackAlias(anyString(), anyString());
     }
 
     // ── findActive ──────────────────────────────────────────────────────
